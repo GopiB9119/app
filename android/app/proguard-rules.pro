@@ -1,0 +1,6 @@
+-keepattributes Signature,RuntimeVisibleAnnotations,AnnotationDefault
+-keep class com.community.platform.feature.identity.*Dto { *; }
+-keep class com.community.platform.feature.planning.*Dto { *; }
+-keep class com.community.platform.feature.scheduling.*Dto { *; }
+-keep class com.community.platform.feature.spaces.*Dto { *; }
+-keep class com.community.platform.feature.spaces.*Dto { *; }

@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "file": "idea.md",
+      "sha256": "6f6e8de9e4645df54c069cf5263a28552e956b53e53d419068512d2b37d9473c",
+      "bytes": 202753
+    },
+    {
+      "file": "Chapter1.md",
+      "sha256": "63916e09baf6b1b8eebf01336e6780b6aa23d47c2dcad317dc8d97df0e199bc6",
+      "bytes": 71246
+    },
+    {
+      "file": "Chapter2.md",
+      "sha256": "88b975e154fea3e870fa22590b973a7c285cb2bbb773def0d14cb37541412061",
+      "bytes": 24837
+    },
+    {
+      "file": "Chapter3.md",
+      "sha256": "5a09dc01686b4ce852f04142bc6dd028ed30b9b73fac9df4b908588a715bee4c",
+      "bytes": 30247
+    },
+    {
+      "file": "Chapter4.md",
+      "sha256": "be2a3280177dfae0c52feb9dc96822b525b980212d38e696debd4de09a9842be",
+      "bytes": 19242
+    },
+    {
+      "file": "Chapter5.md",
+      "sha256": "703f7a91cad8dcca72a5d51464447539cf3002c93b6ed96a795c55ca0a66d832",
+      "bytes": 31351
+    },
+    {
+      "file": "Chapter6.md",
+      "sha256": "244b52179c5ec9288001b28b83c58c4c0023564b9d5e3a86d2c8ca6f070195c6",
+      "bytes": 33262
+    },
+    {
+      "file": "Chapter7.md",
+      "sha256": "0d5b852b7b18cb9b584760881897da1665472f787853c5b56e2a85431d877bef",
+      "bytes": 22561
+    },
+    {
+      "file": "Chapter8.md",
+      "sha256": "6bb7ed7b8a6ecbedd9f0078af5c24b6ac6e56011ff16709790869ca2d8a562aa",
+      "bytes": 31779
+    },
+    {
+      "file": "Chapter9.md",
+      "sha256": "efb1b29d51ea15c12e08a2756d5c8ffd2345854c0908c68edc9a24a9060518d8",
+      "bytes": 41190
+    },
+    {
+      "file": "Chapter10.md",
+      "sha256": "301a03a194efdc530cb3192c8b513a10f0ef8986e67edecc3351964ed39ada89",
+      "bytes": 33251
+    },
+    {
+      "file": "Chapter11.md",
+      "sha256": "fa045a437c79b2d54eac9bf75eed9eb59558faa377f05d38746e4997cbe523e8",
+      "bytes": 28595
+    },
+    {
+      "file": "Chapter12.md",
+      "sha256": "ec0c7a2e96a372dcee1a31fcca8cb1f3ca14cbf73f4383defbfe03a7276aaf32",
+      "bytes": 38162
+    },
+    {
+      "file": "Chapter13.md",
+      "sha256": "a22e98cf296a9d965dc212ec0fcd8c65a1ae5a42094ab4d7e50ead8d003a616c",
+      "bytes": 21983
+    },
+    {
+      "file": "Chapter14.md",
+      "sha256": "0410a97d86f64bb92a93e9fb16529bbd48c15e6f053f821d932d31c11e08a3cf",
+      "bytes": 26783
+    },
+    {
+      "file": "Chapter15.md",
+      "sha256": "81fb78bf865cf46323656d5f4646a907e8b98a9daa62a2cbe098bbe86ad93fb5",
+      "bytes": 38686
+    },
+    {
+      "file": "Chapter16.md",
+      "sha256": "a7f9b6de1fc4fb8b8d1b42fdaa716fd203e28f016e5240e8828a5aff1917babc",
+      "bytes": 35737
+    },
+    {
+      "file": "Chapter17.md",
+      "sha256": "fcfce3214c45c8278de2fb070d1d6796f30614af085614631fa3cccfff99d94c",
+      "bytes": 32208
+    },
+    {
+      "file": "Chapter18.md",
+      "sha256": "1bcd7b75ce0e048ca73b7ccdef9c439f08762fbe95b605703a8534e83dbaad1e",
+      "bytes": 45655
+    },
+    {
+      "file": "Chapter19.md",
+      "sha256": "4dba81c2ee07fdba2dd351f1bbc904846a491f50dcbc3f1aa2784ccd3b491e8b",
+      "bytes": 33694
+    },
+    {
+      "file": "Chapter20.md",
+      "sha256": "902f9645d3c7d2b1b10aea51616ef38802e9be37ebcf62be8dca57fa6dd99ea4",
+      "bytes": 38408
+    }
+  ]
+}

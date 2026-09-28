@@ -1,0 +1,12 @@
+{
+  "name": "community-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public community and private coordination, built one verified feature at a time.",
+  "scripts": {
+    "test:structure": "node --test scripts/feature-catalog.test.mjs",
+    "structure": "node scripts/feature-catalog.mjs --materialize",
+    "check:structure": "node scripts/feature-catalog.mjs --check"
+  },
+  "engines": { "node": ">=22" }
+}

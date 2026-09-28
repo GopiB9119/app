@@ -1,0 +1,9 @@
+# Native Reminder And Inbox Workflow
+
+Implemented typed Retrofit transport and account-isolated ViewModel/Compose flows for self-reminder preview/save/cancel, inbox pagination, separate read/acknowledgment and versioned preferences. Task details expose **Remind me**; the account notification icon opens the inbox. Date/time inputs preserve local fields for backend resolution, and DST overlaps require an explicit selection.
+
+Uses existing Keystore sessions and no offline mutation queue. Unknown commands retain exact token/key or stable notification identity; draft persistence is limited to the retained ViewModel. No native alarm, background push, external recipient or medical promise is introduced.
+
+Task managers can propose an exact time to the current assignee; the **Requests** tab holds received/sent proposals with explicit recipient review/acceptance, decline and sender withdrawal. Repository validation binds current account, task, recipient, local/UTC time, lifecycle and pagination. Pending proposals never create a personal schedule until the recipient confirms. Generation isolation drops stale account work; unknown responses preserve the original review token, identity and command.
+
+The request review dialog has a scrollable body and separate action area. Twelve offline reminder screen tests pass, including measured 200% dialog text at an actual 320 dp width; the guarded system font-scale rule restores the original setting. See [verification and limits](../../../../../../../../../../docs/runbooks/SELF_REMINDERS.md) for evidence distinct from the separately tracked live server journey. Future scheduling scope remains in the [feature catalog](../../../../../../../../../../packages/feature-catalog/features.json).

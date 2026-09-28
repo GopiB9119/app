@@ -1,0 +1,1 @@
+"""Private in-app notification records and recipient preferences."""

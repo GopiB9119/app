@@ -1,0 +1,32 @@
+{
+  "name": "community-platform-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test --test-concurrency=1 ../tests/unit/identity-ui.test.mjs ../tests/unit/planning-ui.test.mjs ../tests/unit/reminder-ui.test.mjs ../tests/unit/reminder-controls.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 ../tests/e2e/identity.test.mjs"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "https://registry.npmjs.org/@hookform/resolvers/-/resolvers-3.10.0.tgz",
+    "@tanstack/query-core": "https://registry.npmjs.org/@tanstack/query-core/-/query-core-5.90.19.tgz",
+    "@tanstack/react-query": "https://registry.npmjs.org/@tanstack/react-query/-/react-query-5.90.19.tgz",
+    "lucide-react": "0.541.0",
+    "next": "16.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "https://registry.npmjs.org/react-hook-form/-/react-hook-form-7.68.0.tgz",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "esbuild": "https://registry.npmjs.org/esbuild/-/esbuild-0.27.7.tgz",
+    "playwright": "1.60.0",
+    "typescript": "5.9.3"
+  }
+}

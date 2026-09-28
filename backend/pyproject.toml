@@ -1,0 +1,37 @@
+[project]
+name = "community-platform-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.32,<1",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
+    "psycopg[binary]>=3.2,<4",
+    "argon2-cffi>=21.1,<26",
+    "cryptography>=43,<49",
+    "pydantic-settings>=2.6,<3",
+    "email-validator>=2.2,<3",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<10", "httpx>=0.28,<1", "ruff>=0.9,<1"]
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

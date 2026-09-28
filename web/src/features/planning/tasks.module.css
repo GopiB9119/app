@@ -1,0 +1,55 @@
+.main { width: min(1140px, calc(100% - 80px)); margin: 0 auto; padding: 28px 0 64px; flex: 1; min-width: 0; }
+.navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; min-height: 46px; border-bottom: 1px solid var(--line); }
+.navigation a, .navigation span { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; text-decoration: none; }
+.navigation [aria-current] { color: var(--ink); font-weight: 650; border-bottom: 2px solid var(--green); }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 32px 0 24px; }
+.heading h1 { margin-top: 6px; font-size: 30px; }
+.private { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 14px; }
+.spaceSelector { max-width: 420px; margin: 0 0 28px; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 40px; }
+.taskSection, .createSection { min-width: 0; }
+.createSection { border-left: 1px solid var(--line); padding-left: 32px; }
+.sectionHeading { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-bottom: 18px; }
+.sectionHeading h2 { font-size: 18px; }
+.sectionHeading button { margin-left: auto; }
+.filter { max-width: 230px; margin-bottom: 22px; }
+.taskList { list-style: none; margin: 0; padding: 0; }
+.taskList > li { border-bottom: 1px solid var(--line); padding: 22px 0; min-width: 0; }
+.taskList > li:first-child { border-top: 1px solid var(--line); }
+.taskRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.taskRow h3 { margin: 0; font-size: 19px; line-height: 1.35; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.taskStatus { font-size: 13px; line-height: 24px; flex-shrink: 0; color: var(--muted); }
+.taskStatus[data-status="in_progress"] { color: var(--accent); }
+.taskStatus[data-status="completed"] { color: var(--green); }
+.taskMetadata { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; color: var(--muted); font-size: 14px; }
+.taskMetadata span { display: inline-flex; gap: 6px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.notes { margin: 12px 0; font-size: 15px; }
+.notes summary { color: var(--muted); cursor: pointer; width: fit-content; padding: 4px 0; }
+.notes p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; }
+.notes summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.completedAt { font-size: 13px; color: var(--muted); margin-top: 10px; }
+.taskActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 12px; min-height: 44px; }
+.taskActions button { width: 44px; height: 44px; }
+.empty { display: grid; justify-items: start; gap: 12px; color: var(--muted); padding: 30px 0; }
+.empty h3 { font-size: 18px; font-weight: 500; margin: 0; }
+.form { display: grid; gap: 18px; }
+.form fieldset { display: grid; gap: 16px; margin: 0; padding: 0; min-width: 0; border: 0; }
+.form textarea { width: 100%; min-width: 0; min-height: 96px; resize: vertical; font: inherit; font-weight: 400; color: var(--ink); background: var(--white); border: 1px solid #acbcb3; border-radius: var(--radius); padding: 10px 12px; }
+.form textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.formActions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.formActions button { min-height: 46px; }
+.dialog { width: min(560px, calc(100% - 32px)); max-width: calc(100% - 32px); max-height: calc(100dvh - 40px); overflow: auto; }
+.dialog h2, .reviewTitle { overflow-wrap: anywhere; }
+.reviewTitle { margin: 20px 0; font-weight: 600; }
+
+@media (max-width: 780px) {
+  .main { width: calc(100% - 40px); padding-top: 16px; }
+  .navigation { gap: 16px; }
+  .heading { margin: 24px 0; }
+  .heading h1 { font-size: 28px; }
+  .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  .createSection { border-left: 0; border-top: 1px solid var(--line); padding: 22px 0 0; }
+  .taskRow { flex-wrap: wrap; }
+  .taskStatus { flex-shrink: 1; }
+  .taskRow h3 { width: 100%; }
+}

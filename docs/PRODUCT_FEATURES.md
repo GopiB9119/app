@@ -1,0 +1,375 @@
+# Product Features and Delivery Ledger
+
+Updated: 2026-09-28. Product: Community Platform. Build the human-operated product first; Agent runtime work belongs to a separate workstream.
+
+## Scope and Evidence
+
+This is the implementation-facing checklist, not a replacement specification or a production-readiness certificate. The [catalog](../packages/feature-catalog/features.json) contains **190 feature groups in 15 domains**, including **16 deferred Agent groups**. The remaining **174 groups are not 174 equally sized tickets**: several span many screens and safety requirements. The [source inventory](../packages/feature-catalog/requirements.json) retains all 21 originals, 2,208 headings, 90 priority entries, 17 final outcomes and 39 acceptance entries. Preserve the [source fingerprints](../packages/feature-catalog/sources.lock.json); do not regenerate them to hide source changes.
+
+Status columns are backend / web / Kotlin Android. `P` means a limited implementation exists, not the entire feature. `U` means undelivered: no working end-to-end implementation is established, including absent or unqualified in-progress code. `N` means no implementation found in the owning module. `D` means explicitly deferred to the separate Agent workstream. No row is marked complete based on a directory, README, mocked response, successful compile or historical test name. Historical results remain in [build status](BUILD_STATUS.md); fresh checks must name their scope and limitations.
+
+Current source inspection found no runtime implementation in the owning community, messaging, events, files, discovery, safety, integrations or realtime modules on any of the three platforms. Those eight domains contain **95 undelivered feature groups**; reserved READMEs are not implementations. Identity export code and Agent parser/tool files have appeared in separate work and are preserved, but their existence alone is not client integration or verification. The 21 original source fingerprints match the previously completed full chapter review; this batch reused that review and rechecked the current catalog, implementation paths and owning scheduling/client contracts, not a new line-by-line reread of every Markdown file.
+
+## Source Map
+
+| Original | Product responsibility and controlling contract |
+| --- | --- |
+| [idea.md](../idea.md) | Overall product, public/private separation, workflows and delivery principles |
+| [Chapter1.md](../Chapter1.md) | Release scope and acceptance: [release plan](CHAPTER_01_RELEASE_PLAN.md) |
+| [Chapter2.md](../Chapter2.md) | Public pages, posts, comments, following: [public content](CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md) |
+| [Chapter3.md](../Chapter3.md) | Family/couple/solo/custom/temporary Spaces: [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
+| [Chapter4.md](../Chapter4.md) | Messaging, events and delivery: [reconciliation](CONTRACT_RECONCILIATION.md) |
+| [Chapter5.md](../Chapter5.md) | Agent baseline; retained but deferred: [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
+| [Chapter6.md](../Chapter6.md) | Database, ownership, transactions: [data](CHAPTER_06_DATA_CONTRACT.md) |
+| [Chapter7.md](../Chapter7.md) | HTTP, realtime, jobs and sync: [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
+| [Chapter8.md](../Chapter8.md) | Kotlin app, navigation, state and offline behavior: [Android](CHAPTER_08_ANDROID_CONTRACT.md) |
+| [Chapter9.md](../Chapter9.md) | Web routes, session BFF and responsive UI: [web](CHAPTER_09_WEB_CONTRACT.md) |
+| [Chapter10.md](../Chapter10.md) | Workers, operations and recovery: [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |
+| [Chapter11.md](../Chapter11.md) | Privacy, security and care boundaries: [security](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
+| [Chapter12.md](../Chapter12.md) | Agent engine, tools, memory and approvals; deferred |
+| [Chapter13.md](../Chapter13.md) | Reminders, dates, recurrence and calendar: [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
+| [Chapter14.md](../Chapter14.md) | Files, scan, extraction and retrieval: [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
+| [Chapter15.md](../Chapter15.md) | Home, search, ranking and personalization: [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
+| [Chapter16.md](../Chapter16.md) | Reporting, blocking, moderation and appeals: [safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
+| [Chapter17.md](../Chapter17.md) | Events, RSVP, polls, expenses and workspaces: [events](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
+| [Chapter18.md](../Chapter18.md) | Authentication, profiles, sessions and data rights: [identity](CHAPTER_18_IDENTITY_CONTRACT.md) |
+| [Chapter19.md](../Chapter19.md) | Messaging and encryption: [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
+| [Chapter20.md](../Chapter20.md) | Inbox, providers, consent and delivery truth: [delivery](CHAPTER_20_DELIVERY_CONTRACT.md) |
+
+The two Chapter 19 drafts and two Chapter 20 drafts are retained alternatives, routed through the reconciliation document. Their similarly named decision IDs are not interchangeable. Original Chapters 3, 4, 7, 12, 13 and 15 have incomplete endings; absent requirements must not be invented or silently declared delivered. Proposed/open policy choices remain proposed/open.
+
+## Feature Checklist
+
+Every catalog key appears exactly once below. Scope notes identify the next missing work; they do not erase fuller chapter requirements.
+
+### Identity
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| identity.account-access | P/P/P | Synthetic email/password registration and sign-in; real-user rollout remains gated |
+| identity.email-verification | P/P/P | Context-bound local mail proof; production delivery not enabled |
+| identity.phone-verification | U/U/U | Verified phone linking, recycled-number and recovery policy |
+| identity.sessions-devices | P/P/P | Sessions/revocation; trusted cryptographic device management remains |
+| identity.profiles-handles | P/P/P | Name/timezone; handles, avatar and field audiences remain |
+| identity.account-recovery | P/P/P | Local email recovery; production abuse/recovery review remains |
+| identity.contact-linking | U/U/U | Explicit verified endpoint association; no identity merge by matching text |
+| identity.contact-discovery | U/U/U | Optional consented lookup without address-book leakage |
+| identity.relationships | U/U/U | Explicit relationships distinct from legal/care authority |
+| identity.privacy-consent | P/P/P | Narrow reminder preferences; wider purpose/version/withdrawal controls remain |
+| identity.account-lifecycle | U/U/U | Deactivation/deletion, revocation and resumable purge |
+| identity.data-export | U/U/U | Fresh-auth scoped export, protected download and expiry |
+| identity.delegations | D/D/D | Shared authority contracts retained; Agent delegation deferred |
+
+### Public Community
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| community.pages | U/U/U | Public page list/detail and lifecycle |
+| community.page-onboarding | U/U/U | Explicit page creation and publication review |
+| community.page-roles | U/U/U | Actual human plus acting page, target-aware role changes |
+| community.page-membership | U/U/U | Admission separate from following |
+| community.following | U/U/U | Follow/unfollow and current audience checks |
+| community.posts-drafts | U/U/U | Private drafts, explicit publish, author edits and history |
+| community.publication-review | U/U/U | Exact revision/media clearance, withdraw and remoderation |
+| community.media-posts | U/U/U | Safe ready media with compatible audience |
+| community.comments-replies | U/U/U | Bounded threads, author edits, attributed moderation, locks |
+| community.reactions | U/U/U | Idempotent reactions and repairable counts |
+| community.shares | U/U/U | References respect current source audience; no private-to-public leak |
+| community.saved-posts | U/U/U | Personal saves, not public interest/visibility consent |
+| community.topics-hashtags | U/U/U | Controlled taxonomy and public topic views |
+| community.page-analytics | U/U/U | Authorized aggregate analytics and small-cohort privacy |
+| community.scheduled-publication | U/U/U | Reviewed source version and current authority at execution |
+
+### Private Spaces
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| spaces.family | P/P/P | Create/list/detail; full settings/lifecycle remain |
+| spaces.couple | U/U/U | Exactly two active human partners, explicit acceptance and separation rules |
+| spaces.solo | U/U/U | Exactly one human owner; no invitation backdoor |
+| spaces.custom | U/U/U | Reviewed membership/features/policy configuration |
+| spaces.temporary-event | U/U/U | Explicit expiry, read-only/archive and retained-data policy |
+| spaces.invitations | P/P/P | Existing verified account, inbox/review/accept/decline/revoke; no external contact send |
+| spaces.admission | P/P/P | Exact admission epochs, new invitation for return, no old task grants |
+| spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; delegated roles and restrictions remain |
+| spaces.join-requests | U/U/U | Explicit requests, approved admission and expiry |
+| spaces.ownership-transfer | P/P/P | Two-party exact review and one-owner continuity; native device evidence pending |
+| spaces.history-policy | P/P/P | Creation-time task grants; configurable history sharing not implemented |
+| spaces.privacy | P/P/P | Private family scope; per-object/field consent controls remain |
+| spaces.conversion | U/U/U | Reviewed type/capacity/audience migration, never automatic history sharing |
+| spaces.archive-expiry | U/U/U | Current gates for archive/restore/expiry, no revived jobs or invites |
+
+### Messaging and Encryption
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| messaging.direct-conversations | U/U/U | Explicit participants, blocks and account/admission isolation |
+| messaging.group-conversations | U/U/U | Conversation access distinct from Space membership |
+| messaging.messages | U/U/U | Durable message/outbox commit, immutable send identity, attributed sender |
+| messaging.offline-outbox | U/U/U | Crash-safe pending command, explicit reconciliation after unknown acceptance |
+| messaging.history-sync | U/U/U | Current-authorized history and coherent snapshot/event cursor |
+| messaging.delivery-read-receipts | U/U/U | Accepted, received, decrypted, read and business acknowledgment distinct |
+| messaging.unread-counts | U/U/U | Eligible unread coverage, not sequence subtraction |
+| messaging.typing-presence | U/U/U | Ephemeral privacy-aware leases; no availability guarantees |
+| messaging.edits-deletion | U/U/U | Author edit, moderator removal and local hide distinct; no remote recall promise |
+| messaging.threads-replies | U/U/U | Same-conversation references and current history authorization |
+| messaging.attachments | U/U/U | Immutable file version, mode-aware safety and key handling |
+| messaging.encryption-modes | U/U/U | Maintained reviewed protocol; no homemade crypto or plaintext fallback |
+| messaging.devices-keys | U/U/U | Verified device continuity, authenticated roster epochs and revocation |
+| messaging.key-recovery | U/U/U | Account recovery is not key recovery; explicit history limits |
+| messaging.calls | U/U/U | Optional calling remains separate from reliable messaging |
+
+### Tasks and Calendar
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| planning.tasks | P/P/P | Create/list/detail/edit/progress/complete/reopen/cancel; wider lifecycle remains |
+| planning.assignments | P/P/P | Eligible original audience only; owner cannot bypass task history |
+| planning.due-dates | P/P/P | Calendar date, not a timed reminder or timezone-shifted instant |
+| planning.checklists | U/U/U | Stable items, concurrent edits and actual completion attribution |
+| planning.dependencies | U/U/U | Same-scope acyclic graph and explicit blocked/override behavior |
+| planning.recurring-tasks | U/U/U | Stable occurrences, exceptions and bounded generation |
+| planning.calendar-views | P/P/P | Month agenda over current authorized tasks and personal reminders; web live verified, native built/JVM checked; events/recurrence/external calendars remain |
+| planning.planning-workspaces | U/U/U | Shared operational overview without broadening source permissions |
+
+### Scheduling and Care
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| scheduling.one-time-reminders | P/P/P | Explicit task-linked personal schedule and independent worker |
+| scheduling.recurrence | U/U/U | Maintained recurrence engine, bounded expansion and reviewed DST policy |
+| scheduling.timezone-dst | P/P/P | One-time gaps rejected, folds explicitly selected; recurrence/travel remain |
+| scheduling.occurrences | P/P/P | One logical one-time delivery; recurring slot/revision/exception model remains |
+| scheduling.recipient-policy | P/P/P | Self opt-in or explicit assignee acceptance; no owner opt-in for another person |
+| scheduling.exceptions | U/U/U | This occurrence/future series edits and source revision consistency |
+| scheduling.snooze | U/U/U | Separate follow-up, never an inferred extra medication dose |
+| scheduling.acknowledgment | P/P/P | Explicit recipient response, distinct from read/task completion/adherence |
+| scheduling.cancellation | P/P/P | Prevent pending delivery; already committed history cannot be recalled |
+| scheduling.quiet-hours | U/U/U | Recipient-local windows, DST and expiry; no clinical rescheduling |
+| scheduling.escalation | U/U/U | Bounded consented steps, stop races and no emergency guarantee |
+| scheduling.care-instruction-records | U/U/U | Confirmed human/professional instructions, subject authority and sensitive-data gates |
+
+### Events
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| events.shared-events | U/U/U | Versioned event time/location/audience and explicit review |
+| events.public-events | U/U/U | Public projection excludes private workspace/roster/finance |
+| events.organizer-workspaces | U/U/U | Role-scoped event modules |
+| events.rsvp | U/U/U | Response separate from admission, reservation and attendance |
+| events.registration-capacity | U/U/U | Serialized capacity including guests and idempotent reservations |
+| events.waitlists | U/U/U | Explicit promotion/expiry/release |
+| events.attendance | U/U/U | Attributed check-in, not inferred from Going |
+| events.polls-ballots | U/U/U | Exact electorate, deadlines, ballot privacy and close/finalize separation |
+| events.budgets | U/U/U | Estimated/proposed/approved/actual amounts distinct |
+| events.expenses | U/U/U | Exact money/currency, correction history and protected evidence |
+| events.contributions | U/U/U | Pledges/reported/verified receipt/refund distinct; no implied payment |
+| events.cancellation-postponement | U/U/U | Coordinated stop/version changes without invented refunds or completion |
+| events.event-permissions | U/U/U | Location, participants, polls, files and finance audiences independent |
+
+### Notifications
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| notifications.in-app-inbox | P/P/P | Private task reminder list/read/ack; other categories/dismiss/read-all remain |
+| notifications.preferences | P/P/P | Versioned task reminder preference; categories/channels/previews remain |
+| notifications.verified-endpoints | P/P/P | Local identity email only; delivery/device bindings remain |
+| notifications.delivery-consent | P/P/P | Task-linked personal consent; channel/purpose/expiry grants remain |
+| notifications.templates-locales | P/P/P | Local identity email and reminder content; localization/template lifecycle remain |
+| notifications.push | U/U/U | Approved provider, device binding, OS permission, redacted background payload |
+| notifications.email | P/P/P | Local synthetic identity mail only, not production notification email |
+| notifications.sms | U/U/U | Provider/consent/region/cost gates; no live sends |
+| notifications.whatsapp | U/U/U | Official supported capabilities only; separate authorization |
+| notifications.voice | U/U/U | Explicit opt-in/window/disclosure/limits; no autonomous emergency calls |
+| notifications.provider-attempts | P/U/U | Local SMTP attempts; external acceptance/delivery/uncertainty model remains |
+| notifications.webhooks | U/U/U | Exact signature/account/environment, durable dedup and ordered fact reduction |
+| notifications.reconciliation | P/P/P | Local stable effect/retry; unknown external effect needs provider evidence |
+| notifications.digests | U/U/U | Stable membership/window and fresh source authorization |
+| notifications.delivery-budgets | U/U/U | Shared quotas/reservations/cost limits across retry and fallback |
+
+### Agent Workstream: Deferred
+
+| Feature | B/W/A | Boundary |
+| --- | --- | --- |
+| agents.scoped-chat | D/D/D | Separate Agent owner |
+| agents.configuration | D/D/D | Separate Agent owner |
+| agents.context-policy | D/D/D | Separate Agent owner |
+| agents.task-drafting | D/D/D | Manual task service remains independent |
+| agents.reminder-drafting | D/D/D | Manual scheduler remains independent |
+| agents.public-search-assistance | D/D/D | Public discovery must work without a model |
+| agents.exact-action-approvals | D/D/D | No Agent execution authority added here |
+| agents.tool-registry | D/D/D | Future tools call the same authorized domain services |
+| agents.tool-audit | D/D/D | Separate Agent owner |
+| agents.run-control | D/D/D | Separate Agent owner |
+| agents.memory-controls | D/D/D | Separate Agent owner |
+| agents.memory-consent | D/D/D | Separate Agent owner |
+| agents.memory-provenance | D/D/D | Separate Agent owner |
+| agents.child-delegation | D/D/D | Separate Agent owner |
+| agents.evaluation | D/D/D | Separate Agent owner |
+| agents.provider-budgets | D/D/D | No model/provider credentials or spending enabled |
+
+### Files and Documents
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| files.uploads | U/U/U | Bounded reservation, immutable commitment and current scope |
+| files.immutable-versions | U/U/U | Exact bytes/version/digest; later upload cannot replace scanned object |
+| files.quarantine-scanning | U/U/U | Fail closed, distinguish threat/unavailable/unsupported |
+| files.media-processing | U/U/U | Isolated bounded transforms; safe previews and metadata |
+| files.documents-pages | U/U/U | Real page/slide/sheet identity, partial coverage |
+| files.ocr | U/U/U | Unconfirmed extraction, preserve units/negation/provenance |
+| files.extraction | U/U/U | Supported formats and explicit failures/gaps |
+| files.chunks-embeddings | U/U/U | Versioned lineage; model integration deferred until separately approved |
+| files.authorized-retrieval | U/U/U | Current access before candidates/context, not only final display |
+| files.citations | U/U/U | Immutable source/anchor, no invented pages |
+| files.sharing | U/U/U | Reviewed recipient/audience/expiry; downloaded bytes not recalled |
+| files.deletion-lineage | U/U/U | Revoke eligibility first, resumable derivative purge |
+
+### Home and Discovery
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| discovery.public-search | U/U/U | Public eligible content only, bounded search and safe highlights |
+| discovery.private-scoped-search | U/U/U | Separate current-authorized private query |
+| discovery.home-feed | U/U/U | Public feed and separately authorized private modules |
+| discovery.following-feed | U/U/U | Current follow/audience/blocks/mutes |
+| discovery.topics | U/U/U | Public taxonomy and topic results |
+| discovery.local-discovery | U/U/U | Coarse explicit region, no precise/private location inference |
+| discovery.trending | U/U/U | Eligible public aggregates with cohort/abuse limits |
+| discovery.suggestions | U/U/U | Private query history never leaked as public suggestion |
+| discovery.ranking | U/U/U | Eligibility before scoring; stable ordering and honest explanations |
+| discovery.personalization-controls | U/U/U | Opt-out disables collection/use, not just a label |
+| discovery.feedback | U/U/U | Hide/mute/not interested/report distinct and reversible where appropriate |
+| discovery.eligibility-projections | U/U/U | Current source authority; stale index cannot restore revoked visibility |
+| discovery.translations | U/U/U | Original source and translation provenance |
+
+### Safety and Data Rights
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| safety.reports | U/U/U | Durable private report receipt, not a finding |
+| safety.blocking | U/U/U | Explicit identity/resource effects across communication and discovery |
+| safety.muting | U/U/U | Personal notification/feed preference, not send restriction |
+| safety.moderation-cases | U/U/U | Scoped evidence, actual human decisions and notices |
+| safety.policies | U/U/U | Versioned applicable rules and governed publication |
+| safety.evidence | U/U/U | Minimal immutable lawful evidence and access audit |
+| safety.reviewer-queues | U/U/U | Assignment, conflict of interest, expiry and current authority |
+| safety.restrictions | U/U/U | Exact scoped reversible/expiring enforcement where applicable |
+| safety.appeals | U/U/U | Independent review; overturn does not erase other restrictions |
+| safety.privileged-access | U/U/U | Workforce identity, step-up, purpose and time bounds |
+| safety.incidents | U/U/U | Runbooks, containment, evidence and recovery ownership |
+| safety.retention-legal-holds | U/U/U | Reviewed retention and protected exceptions, not indefinite storage |
+| safety.data-rights | U/U/U | Export/delete across original and derived data |
+| safety.age-guardian-policy | U/U/U | Qualified policy; family owner is not automatically a guardian |
+
+### Integrations
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| integrations.calendar-connections | U/U/U | Official provider, minimal scopes and explicit account binding |
+| integrations.calendar-sync | U/U/U | Atomic pages/cursors, conflict review and echo suppression |
+| integrations.provider-capabilities | U/U/U | Verify real status/cancel/idempotency/region capabilities |
+| integrations.oauth-credentials | U/U/U | Protected token references, rotation/revocation, no client secrets |
+| integrations.webhook-inbox | U/U/U | Durable authenticated scoped intake before acknowledgment |
+| integrations.external-effect-reconciliation | U/U/U | Unknown outcome is not safe to resend with a new key |
+| integrations.payment-gates | U/U/U | Record-only finance first; no live money movement |
+
+### Realtime
+
+| Feature | B/W/A | Required scope |
+| --- | --- | --- |
+| realtime.websocket-gateway | U/U/U | Authenticated bounded session transport |
+| realtime.subscriptions | U/U/U | Current resource authorization on subscribe and delivery |
+| realtime.authorized-replay | U/U/U | No old history grant through replay |
+| realtime.snapshot-cursors | U/U/U | Coherent snapshot/log boundary and account/scope-bound cursors |
+| realtime.client-reconciliation | U/U/U | Stable logical IDs across REST/event orderings |
+| realtime.backpressure | U/U/U | Bounded memory, reconnect and explicit full-resync behavior |
+
+### Platform and Client Quality
+
+| Feature | B/W/A | Implemented boundary or remaining work |
+| --- | --- | --- |
+| platform.database-migrations | P/P/P | Additive Alembic/current schema checks; Room migrations not yet delivered |
+| platform.api-contracts | P/P/P | Implemented OpenAPI/typed clients; future APIs are not advertised |
+| platform.state-machines | P/P/P | Current domain states; broader canonical registry remains |
+| platform.authorization | P/P/P | Session/account/admission/object checks for implemented domains |
+| platform.audit | P/P/P | Atomic domain audit, no private payload logging; operations hardening remains |
+| platform.transactional-outbox | P/U/U | Database effects/audit/outbox; general fanout remains |
+| platform.durable-jobs | P/U/U | Identity mail and task reminders; other workers remain |
+| platform.worker-recovery | P/U/U | Bounded retries, suppression and local restart checks |
+| platform.observability | P/U/U | Limited diagnostics; private-safe metrics/SLOs/on-call remain |
+| platform.rate-limits | P/P/P | Local bounded inputs/quotas; full abuse controls remain |
+| platform.feature-gates | P/P/P | Development-only configuration; governed release gates remain |
+| platform.backup-restore | P/U/U | Recorded isolated local restore; production/PITR/key custody not qualified |
+| platform.deployment | P/P/P | Local builds/Compose; no production deployment |
+| platform.design-system | P/P/P | Existing operational styles and Compose theme; wider components remain |
+| platform.accessibility | U/P/P | Some measured narrow/large-text checks; full assistive technology review remains |
+| platform.localization | U/P/P | English and timezone handling; Telugu/Hindi/RTL coverage remains |
+| platform.client-offline-state | U/P/P | Visible failure and in-memory intents; no durable process-death outbox |
+
+## Screens and Navigation
+
+Current manual surfaces: sign-in, registration, proof verification/recovery, account/profile/timezone, sessions/security activity, family Space list/create/detail, invitation inbox/review/sent history, member roster/remove/leave/ownership review, tasks/list/detail/editor/status, reminder preview/request/acceptance/list/cancel, private notification inbox/read/ack and preferences. Web routes include `/login`, `/register`, `/recover`, `/app/settings/account`, `/app/spaces`, `/app/tasks`, `/app/reminders`, `/app/notifications`.
+
+Still required: usable Home and Discover; public page/post/comment/topic/search/detail/editor flows; complete Space type/settings/history/lifecycle screens; direct/group conversation list/chat/info/key/device/recovery views; calendar/occurrence/event/RSVP/poll/budget views; file picker/progress/quarantine/viewer/shares; safety/report/block/appeal; privacy/export/delete; native deep links and durable offline recovery. Do not add navigation to empty mock pages or label unavailable encryption as secure.
+
+Every implemented screen must handle loading, empty, failed, denied, offline, stale/conflicting, uncertain command outcome, unsaved edits and account change where applicable. Keep exact selected person/Space/source/time in confirmation. Use visible canonical outcomes, accessible controls, large text, keyboard/IME handling and stable responsive layouts.
+
+## Stack and Boundaries
+
+Use the existing stack, not a rewrite: Python/FastAPI/Pydantic/SQLAlchemy/Alembic/PostgreSQL for domain truth; TypeScript/Next.js/React with the existing Zod/TanStack Query/React Hook Form and same-origin session BFF; Kotlin/Jetpack Compose/Coroutines/StateFlow/ViewModel/Hilt/Retrofit/OkHttp/Keystore for Android. Node test runner, pytest, JUnit and existing browser/Compose harnesses supply focused developer checks. Actual pinned versions live in the package/build manifests and lockfiles, not this document.
+
+| Layer | Current manifest and package choices |
+| --- | --- |
+| Android | [Application build](../android/app/build.gradle.kts): min SDK 26, compile/target 35, Compose BOM 2024.09.00, Coroutines 1.9.0, Hilt 2.52, Retrofit 2.9.0, OkHttp 4.12.0; [build plugins](../android/build.gradle.kts) own Kotlin/AGP versions. JDK 21 runs the checked wrapper; bytecode targets Java 17. |
+| Web | [Package manifest](../web/package.json): Next 16.2.3, React 19.2.4, TypeScript 5.9.3, Zod 3.25.76, TanStack Query 5.90.19, React Hook Form 7.68.0, Lucide icons. |
+| Backend | [Python manifest](../backend/pyproject.toml): Python >=3.11, FastAPI, Pydantic settings, SQLAlchemy 2, Alembic, psycopg 3, Argon2, cryptography, tzdata. Version ranges are not a locked production bill of materials; the existing container supplies the tested environment. |
+| Local services | [Compose](../infra/compose.yaml): PostgreSQL 17 and local Mailpit; separate API/mail/reminder workers. No cloud/provider migration or paid service was added. |
+
+No new dependency was needed for the calendar. Browser Intl, Java time, Python zoneinfo and PostgreSQL timezone handling are used for their existing supported date/time roles; this is not a handwritten recurrence or encryption engine.
+
+Room, WorkManager, a maintained recurrence library, reviewed E2E protocol implementation, object storage/scanning, realtime infrastructure and external providers are added only for their real feature requirements. Do not introduce placeholder dependencies or claim a protocol works from an interface. Agent/LangGraph/model integration is deferred. Manual tasks, calendar and reminders must keep working without any model.
+
+Non-negotiable rules:
+
+- Backend derives the actor; check current account/session, parent scope, admission, object grant and subject consent. Owner/admin status never grants another person's health data or historical tasks.
+- Commit domain change, required audit and durable work atomically. Keep stable intent/key and expected version; unknown response is not failure, success or permission for a new automatic mutation.
+- Date-only deadlines remain dates. Timed occurrences retain local intent, IANA zone and exact UTC choice. Read, acknowledgment, task completion and medication adherence are different facts.
+- Do not claim E2E for server-readable text. Do not invent a cipher/ratchet, weaken TLS, silently downgrade or treat account recovery as key recovery.
+- Public discovery never receives private chat, family tasks, calendars, health records or Agent memory as content or recommendation signals.
+- Medication features only organize confirmed instructions with explicit subject/representative authority. No diagnosis, prescribing, inferred dose, missed-dose doubling or emergency guarantee. Clinical/privacy policy gates stay visible.
+- Push is a hint, not durable truth or guaranteed alarm. OS permission is not recipient consent. External destinations, providers, legal basis and cost need separate approval; no live external sends are enabled by this backlog.
+- Revocation stops future authorized disclosure/effects; it cannot recall downloaded bytes or already committed external effects. Rejoin receives a new admission, not old grants.
+- Preserve existing development data/keys, source chapters and concurrent changes. Never use personal devices or reset data to make a check pass.
+
+## Execution Order
+
+1. Preserve and qualify existing manual foundations; build missing task/calendar and Space settings workflows through the real API and both clients.
+2. Finish other private Space types and lifecycle with enforceable capacity/history rules, then reliable private conversations. Resolve actual cross-platform encryption library/mode/device policy before sending messages under an encryption claim.
+3. Build public authoring/discovery together with reporting, blocks, moderation and visibility withdrawal. A public feed is not production-ready before those controls exist.
+4. Add event collaboration, recurring schedules and safe care records under their distinct permission/time/policy gates; add files with quarantine and current-authorized access.
+5. Complete data rights, process-death/offline recovery, locale/accessibility and operations. The independent testing workstream qualifies security, devices, failure recovery, load and release, but implementation work still runs focused checks after changes.
+6. Integrate the separately built Agent only through existing authorized domain services after the structured human product is usable.
+
+## Current Build Batch
+
+Implemented this batch: an authorized calendar agenda over existing date-only tasks and personal timed reminders on backend, web and Android. This does not manufacture event, recurrence, external-calendar or medication support.
+
+- [Backend calendar](../backend/app/modules/planning/calendar.py): authenticated `GET /v1/calendar`, exact Space/admission/task grant, only the caller's reminders, 1-31 inclusive days within 1900-2100, named timezone, current status/source-change facts, opaque account/admission/range/zone-bound 15-minute cursor and bounded pages. One UNION query applies the existing access joins to both sources. No new tables, schedules or delivery effects.
+- [Web calendar](../web/src/features/planning/calendar-screen.tsx): `/app/calendar`, family selector, month/date controls, profile timezone or UTC, date-grouped agenda, explicit refresh/paging and source links. Typed validation rejects wrong-Space/out-of-range/malformed/duplicate/reordered entries and repeated cursors. Failed refresh hides old private rows. The shared header exposes the calendar.
+- [Native calendar](../android/app/src/main/java/com/community/platform/feature/planning/CalendarScreen.kt): account-page entry, family/zone/month selection, date picker, bounded agenda/paging and links to existing tasks/reminders. Hilt repository and account-isolated ViewModel use the shared Keystore/session path. Failure/account changes clear entries; no mutation queue or additional permissions. The native screen is built, not device-qualified.
+
+| Fresh check on 2026-09-28 | Result and boundary |
+| --- | --- |
+| PostgreSQL task/calendar/authorization/migration suite | 65 passed, 79.02 s. Includes 12 calendar cases for date-only versus instant, DST fold ordering, recipient privacy, grant revocation/rejoin, range validation and cursor scope. Local artifact: `backend/.local/calendar-backend-20260928.xml`. Not a full backend suite. |
+| Web typed client/BFF checks | 36 passed. Simulated transport, real serialization/validation/allowlist code; not 36 live journeys. |
+| Web production build | Isolated `calendar-20260928` artifact passed compilation/typecheck and includes `/app/calendar`. |
+| Real browser/BFF/API/PostgreSQL journey | 1 passed, 6.946 s. Real synthetic registration, persisted task/reminder, date/timezone selection, cancellation, source navigation, unavailable Space, offline hide/retry and 320/390/768 width/control bounds. Artifact: `.local/calendar-live-web.xml`; captures: `.local/screenshots/calendar-live-desktop.png` and `calendar-live-mobile.png`. |
+| Native task/calendar JVM checks | 26 passed across TaskRepositoryTest (14) and TaskViewModelTest (12), no failures/errors/skips. Five new calendar cases cover transport, schemas, month/zone, failed refresh and account changes. Simulated transport, not Android-to-server execution. |
+| Native packaging/lint | Debug application and instrumentation APKs built; lint has 0 errors and 11 existing warnings. No device install, native calendar screenshot, release-R8/runtime, process-death or full accessibility claim. |
+
+The first live browser run exposed a real paused-offline-query defect: explicit refresh did not produce an error because TanStack Query paused it. Calendar reads now use `networkMode: always`; the live rerun passed offline failure/hiding. A later test-only navigation ambiguity was corrected by waiting for the Tasks page before resolving a title shared with the calendar. Neither failed run is counted as a pass.
+
+Preview: `http://127.0.0.1:3007/app/calendar`. Local synthetic accounts only. The independent testing handoff should first qualify the native calendar on an owned disposable device, verify large text/TalkBack/date picker/back navigation, then process-death/account switching and current-grant revocation. The remaining 190-group ledger is not closed by this calendar batch.
+
+No full-product or production completion is claimed. Each batch below must record changed paths, exact checks actually run, results, screenshots when applicable, and remaining gaps; the independent testing agent receives these boundaries rather than a blanket 'done'.

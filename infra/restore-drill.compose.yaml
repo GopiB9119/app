@@ -1,0 +1,52 @@
+name: community-restore-drill
+services:
+  restore-db:
+    image: postgres:17-alpine
+    pull_policy: never
+    environment:
+      POSTGRES_USER: restore_drill
+      POSTGRES_PASSWORD: ${RESTORE_DRILL_DB_PASSWORD:?run scripts/restore-drill.ps1}
+      POSTGRES_DB: community_restore
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - type: bind
+        source: ${RESTORE_DRILL_BACKUP_DIR:?run scripts/restore-drill.ps1}
+        target: /drill
+        read_only: true
+    networks: [isolated]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U restore_drill -d community_restore"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  verify:
+    image: community-platform-api:latest
+    pull_policy: never
+    profiles: ["verify"]
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://restore_drill:${RESTORE_DRILL_DB_PASSWORD:?run scripts/restore-drill.ps1}@restore-db:5432/community_restore
+      COMMUNITY_SECRET_FILE: /run/drill-key/identity.key
+      COMMUNITY_REMINDER_DISPATCH_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: ../backend
+        target: /app
+        read_only: true
+      - type: bind
+        source: ${RESTORE_DRILL_BACKUP_DIR:?run scripts/restore-drill.ps1}
+        target: /drill
+        read_only: true
+      - type: bind
+        source: ${RESTORE_DRILL_KEY_FILE:?run scripts/restore-drill.ps1}
+        target: /run/drill-key/identity.key
+        read_only: true
+    networks: [isolated]
+    depends_on:
+      restore-db:
+        condition: service_healthy
+    command: ["python3", "-m", "app.modules.platform.restore", "--manifest", "/drill/manifest.json", "--seal"]
+networks:
+  isolated:
+    internal: true

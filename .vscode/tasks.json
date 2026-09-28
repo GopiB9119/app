@@ -1,0 +1,109 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Community Platform: start local backend",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"-f",
+				"infra/compose.yaml",
+				"up",
+				"-d",
+				"--build",
+				"api",
+				"identity-mail-worker"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Community Platform: preview reminder requests",
+			"type": "process",
+			"command": "node",
+			"args": ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", "3003"],
+			"options": {
+				"cwd": "${workspaceFolder}/web",
+				"env": {
+					"COMMUNITY_BUILD_LABEL": "reminder-requests-20260920",
+					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3003,http://localhost:3003",
+					"NEXT_TELEMETRY_DISABLED": "1"
+				}
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: preview ownership transfers",
+			"type": "process",
+			"command": "node",
+			"args": ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", "3005"],
+			"options": {
+				"cwd": "${workspaceFolder}/web",
+				"env": {
+					"COMMUNITY_BUILD_LABEL": "ownership-20260923",
+					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3005,http://localhost:3005",
+					"NEXT_TELEMETRY_DISABLED": "1"
+				}
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: test live reminder requests",
+			"type": "process",
+			"command": "node",
+			"args": ["--test", "--test-reporter=spec", "--test-reporter-destination=stdout", "--test-reporter=junit", "--test-reporter-destination=.local/reminder-request-live-web.xml", "--test-name-pattern=^reminder requests:", "tests/e2e/identity.test.mjs"],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3003",
+					"COMMUNITY_CHROMIUM_PATH": "${env:LOCALAPPDATA}/ms-playwright/chromium-1228/chrome-win64/chrome.exe"
+				}
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify offline reminder screens",
+			"type": "shell",
+			"command": "& .\\scripts\\verify-android-reminders.ps1",
+			"options": { "cwd": "${workspaceFolder}" },
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify live native reminder requests",
+			"type": "shell",
+			"command": "& .\\scripts\\verify-android-reminders.ps1 -LocalRequestJourney",
+			"options": { "cwd": "${workspaceFolder}" },
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify offline Space screens",
+			"type": "shell",
+			"command": "& { $ErrorActionPreference='Stop'; $env:JAVA_HOME='C:\\Program Files\\Android\\Android Studio\\jbr'; $env:ANDROID_HOME=Join-Path $env:LOCALAPPDATA 'Android\\sdk'; $env:ANDROID_SDK_ROOT=$env:ANDROID_HOME; $adb=Join-Path $env:ANDROID_HOME 'platform-tools\\adb.exe'; $serial='emulator-5582'; $avd='community_membership_20260923'; $name=@(& $adb -s $serial emu avd name | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne 'OK' -and $_ -ne '' }); if ($LASTEXITCODE -ne 0 -or $name.Count -ne 1 -or $name[0] -ne $avd) { throw 'Unexpected test emulator' }; $owned=@(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^qemu-system-x86_64(-headless)?\\.exe$' -and $_.CommandLine -match ('-avd\\s+' + [regex]::Escape($avd) + '\\b') -and $_.CommandLine -match '-read-only' -and $_.CommandLine -match '-no-snapshot-save' -and $_.CommandLine -match '-port\\s+5582\\b' }); if ($owned.Count -ne 1) { throw 'A single read-only test emulator on port 5582 is required' }; $boot=(& $adb -s $serial shell getprop sys.boot_completed | Out-String).Trim(); if ($LASTEXITCODE -ne 0 -or $boot -ne '1') { throw 'Emulator has not completed boot' }; & $adb -s $serial shell cmd connectivity airplane-mode enable; if ($LASTEXITCODE -ne 0) { throw 'Cannot enable guest airplane mode' }; & $adb -s $serial shell svc wifi disable; if ($LASTEXITCODE -ne 0) { throw 'Cannot disable test Wi-Fi' }; & $adb -s $serial shell svc data disable; if ($LASTEXITCODE -ne 0) { throw 'Cannot disable test mobile data' }; $wifi=(& $adb -s $serial shell cmd wifi status | Out-String).Trim(); if ($LASTEXITCODE -ne 0 -or $wifi -notmatch 'Wifi is disabled') { throw 'Wi-Fi is not confirmed disabled' }; $mobile=(& $adb -s $serial shell settings get global mobile_data | Out-String).Trim(); if ($LASTEXITCODE -ne 0 -or $mobile -ne '0') { throw 'Mobile data is not confirmed disabled' }; & $adb -s $serial shell wm size 640x1280; if ($LASTEXITCODE -ne 0) { throw 'Cannot set the 320 dp fixture viewport' }; & $adb -s $serial shell wm density 320; if ($LASTEXITCODE -ne 0) { throw 'Cannot set fixture density' }; $fontBefore=(& $adb -s $serial shell settings get system font_scale | Out-String).Trim(); if ($LASTEXITCODE -ne 0) { throw 'Cannot read original font scale' }; & .\\android\\gradlew.bat -p android :app:assembleDebug :app:assembleDebugAndroidTest --offline --console=plain; if ($LASTEXITCODE -ne 0) { throw 'Native test build failed' }; & $adb -s $serial install -r --no-incremental .\\android\\app\\build\\outputs\\apk\\debug\\app-debug.apk; if ($LASTEXITCODE -ne 0) { throw 'Debug update failed' }; & $adb -s $serial install -r --no-incremental .\\android\\app\\build\\outputs\\apk\\androidTest\\debug\\app-debug-androidTest.apk; if ($LASTEXITCODE -ne 0) { throw 'Test update failed' }; $result=@(& $adb -s $serial shell am instrument -w -r -e community_disposable_ui_fixture true -e class com.community.platform.feature.spaces.SpaceScreenTest com.community.platform.debug.test/androidx.test.runner.AndroidJUnitRunner); $instrumentExit=$LASTEXITCODE; $result | Tee-Object -FilePath .\\.local\\ownership-native-offline-5582.txt; $fontAfter=(& $adb -s $serial shell settings get system font_scale | Out-String).Trim(); if ($LASTEXITCODE -ne 0 -or $fontAfter -ne $fontBefore) { throw 'Original font-scale setting was not restored' }; $passes=@($result | Where-Object { $_ -match '^INSTRUMENTATION_STATUS_CODE: 0\\s*$' }).Count; if ($instrumentExit -ne 0 -or $passes -ne 15 -or -not ($result -match '^OK \\(15 tests\\)\\s*$') -or ($result -match '^INSTRUMENTATION_STATUS_CODE: -')) { throw 'Offline Space screen tests did not pass 15/15 without skips' }; Write-Output ('PASS: fifteen offline Space tests; measured 320 dp / 200% dialog; font scale restored to ' + $fontAfter) }",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

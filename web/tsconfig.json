@@ -1,0 +1,60 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts",
+    ".local/next-build/types/**/*.ts",
+    ".local/next-build/dev/types/**/*.ts",
+    ".local/build-reminders/types/**/*.ts",
+    ".local/build-reminders/dev/types/**/*.ts",
+    ".local/build-reminder-guards-9ca7/types/**/*.ts",
+    ".local/build-reminder-guards-9ca7/dev/types/**/*.ts",
+    ".local/build-live-check-20260920/types/**/*.ts",
+    ".local/build-live-check-20260920/dev/types/**/*.ts",
+    ".local/build-reminder-requests-20260920/types/**/*.ts",
+    ".local/build-reminder-requests-20260920/dev/types/**/*.ts",
+    ".local/build-membership-20260923/types/**/*.ts",
+    ".local/build-membership-20260923/dev/types/**/*.ts",
+    ".local/build-ownership-20260923/types/**/*.ts",
+    ".local/build-ownership-20260923/dev/types/**/*.ts",
+    ".local/build-rejoin-20260926/types/**/*.ts",
+    ".local/build-rejoin-20260926/dev/types/**/*.ts",
+    ".local/build-calendar-20260928/types/**/*.ts",
+    ".local/build-calendar-20260928/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "productName": "Community Platform",
+  "sourcePolicy": "Original chapters and review contracts are retained. Structure is not implementation or policy approval.",
+  "firstSlice": "identity.account-access",
+  "domains": [
+    {
+      "id": "identity",
+      "chapters": [1, 11, 18],
+      "contracts": ["CHAPTER_18_IDENTITY_CONTRACT.md"],
+      "features": ["account-access", "email-verification", "phone-verification", "sessions-devices", "profiles-handles", "account-recovery", "contact-linking", "contact-discovery", "relationships", "privacy-consent", "account-lifecycle", "data-export", "delegations"],
+      "requirements": ["C1-F01", "C1-F02", "C1-F03", "C1-F04", "C1-F05", "C1-F46", "C1-F47", "C1-F48"],
+      "outcomes": ["C1-O01", "C1-O15", "C1-O16"]
+    },
+    {
+      "id": "community",
+      "chapters": [1, 2, 15],
+      "contracts": ["CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md"],
+      "features": ["pages", "page-onboarding", "page-roles", "page-membership", "following", "posts-drafts", "publication-review", "media-posts", "comments-replies", "reactions", "shares", "saved-posts", "topics-hashtags", "page-analytics", "scheduled-publication"],
+      "requirements": ["C1-F06", "C1-F07", "C1-F08", "C1-F09", "C1-F10", "C1-F11"],
+      "outcomes": ["C1-O02", "C1-O03", "C1-O04"]
+    },
+    {
+      "id": "spaces",
+      "chapters": [1, 3, 18],
+      "contracts": ["CHAPTER_03_SPACE_CONTRACT.md"],
+      "features": ["family", "couple", "solo", "custom", "temporary-event", "invitations", "admission", "memberships-roles", "join-requests", "ownership-transfer", "history-policy", "privacy", "conversion", "archive-expiry"],
+      "requirements": ["C1-F15", "C1-F16", "C1-F17", "C1-F18", "C1-F19", "C1-F20", "C1-F21"],
+      "outcomes": ["C1-O05", "C1-O06"]
+    },
+    {
+      "id": "messaging",
+      "chapters": [1, 4, 19],
+      "contracts": ["CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md", "CHAPTER_19_CONVERSATIONS_ENCRYPTION_CONTRACT.md"],
+      "features": ["direct-conversations", "group-conversations", "messages", "offline-outbox", "history-sync", "delivery-read-receipts", "unread-counts", "typing-presence", "edits-deletion", "threads-replies", "attachments", "encryption-modes", "devices-keys", "key-recovery", "calls"],
+      "requirements": ["C1-F22", "C1-F23", "C1-F25", "C1-F26", "C1-F27", "C1-F28"],
+      "outcomes": ["C1-O07"]
+    },
+    {
+      "id": "planning",
+      "chapters": [1, 3, 13, 17],
+      "contracts": ["CHAPTER_13_SCHEDULING_CONTRACT.md", "CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md"],
+      "features": ["tasks", "assignments", "due-dates", "checklists", "dependencies", "recurring-tasks", "calendar-views", "planning-workspaces"],
+      "requirements": ["C1-F29", "C1-F30", "C1-F31"],
+      "outcomes": ["C1-O08"]
+    },
+    {
+      "id": "scheduling",
+      "chapters": [4, 13, 20],
+      "contracts": ["CHAPTER_13_SCHEDULING_CONTRACT.md"],
+      "features": ["one-time-reminders", "recurrence", "timezone-dst", "occurrences", "recipient-policy", "exceptions", "snooze", "acknowledgment", "cancellation", "quiet-hours", "escalation", "care-instruction-records"],
+      "requirements": ["C1-F32"],
+      "outcomes": []
+    },
+    {
+      "id": "events",
+      "chapters": [2, 3, 17],
+      "contracts": ["CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md"],
+      "features": ["shared-events", "public-events", "organizer-workspaces", "rsvp", "registration-capacity", "waitlists", "attendance", "polls-ballots", "budgets", "expenses", "contributions", "cancellation-postponement", "event-permissions"],
+      "requirements": ["C1-F33"],
+      "outcomes": []
+    },
+    {
+      "id": "notifications",
+      "chapters": [1, 4, 13, 20],
+      "contracts": ["CHAPTER_20_DELIVERY_CONTRACT.md", "CHAPTER_20_NOTIFICATION_DELIVERY_CONTRACT.md"],
+      "features": ["in-app-inbox", "preferences", "verified-endpoints", "delivery-consent", "templates-locales", "push", "email", "sms", "whatsapp", "voice", "provider-attempts", "webhooks", "reconciliation", "digests", "delivery-budgets"],
+      "requirements": ["C1-F34"],
+      "outcomes": ["C1-O09"]
+    },
+    {
+      "id": "agents",
+      "chapters": [1, 5, 11, 12],
+      "contracts": ["CHAPTER_12_AGENT_RUNTIME_CONTRACT.md"],
+      "features": ["scoped-chat", "configuration", "context-policy", "task-drafting", "reminder-drafting", "public-search-assistance", "exact-action-approvals", "tool-registry", "tool-audit", "run-control", "memory-controls", "memory-consent", "memory-provenance", "child-delegation", "evaluation", "provider-budgets"],
+      "requirements": ["C1-F35", "C1-F36", "C1-F37", "C1-F38", "C1-F39", "C1-F40", "C1-F41", "C1-F42"],
+      "outcomes": ["C1-O10", "C1-O11", "C1-O12"]
+    },
+    {
+      "id": "files",
+      "chapters": [6, 11, 14],
+      "contracts": ["CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md"],
+      "features": ["uploads", "immutable-versions", "quarantine-scanning", "media-processing", "documents-pages", "ocr", "extraction", "chunks-embeddings", "authorized-retrieval", "citations", "sharing", "deletion-lineage"],
+      "requirements": [],
+      "outcomes": []
+    },
+    {
+      "id": "discovery",
+      "chapters": [1, 2, 15],
+      "contracts": ["CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md"],
+      "features": ["public-search", "private-scoped-search", "home-feed", "following-feed", "topics", "local-discovery", "trending", "suggestions", "ranking", "personalization-controls", "feedback", "eligibility-projections", "translations"],
+      "requirements": ["C1-F12", "C1-F13"],
+      "outcomes": []
+    },
+    {
+      "id": "safety",
+      "chapters": [1, 11, 16, 18],
+      "contracts": ["CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md", "CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md"],
+      "features": ["reports", "blocking", "muting", "moderation-cases", "policies", "evidence", "reviewer-queues", "restrictions", "appeals", "privileged-access", "incidents", "retention-legal-holds", "data-rights", "age-guardian-policy"],
+      "requirements": ["C1-F14", "C1-F43", "C1-F44", "C1-F45"],
+      "outcomes": ["C1-O13", "C1-O14"]
+    },
+    {
+      "id": "integrations",
+      "chapters": [11, 13, 17, 20],
+      "contracts": ["CHAPTER_13_SCHEDULING_CONTRACT.md", "CHAPTER_20_DELIVERY_CONTRACT.md"],
+      "features": ["calendar-connections", "calendar-sync", "provider-capabilities", "oauth-credentials", "webhook-inbox", "external-effect-reconciliation", "payment-gates"],
+      "requirements": [],
+      "outcomes": []
+    },
+    {
+      "id": "realtime",
+      "chapters": [4, 7, 8, 9, 19],
+      "contracts": ["CHAPTER_07_API_REALTIME_CONTRACT.md"],
+      "features": ["websocket-gateway", "subscriptions", "authorized-replay", "snapshot-cursors", "client-reconciliation", "backpressure"],
+      "requirements": ["C1-F24"],
+      "outcomes": []
+    },
+    {
+      "id": "platform",
+      "chapters": [6, 7, 8, 9, 10, 11],
+      "contracts": ["CHAPTER_06_DATA_CONTRACT.md", "CHAPTER_07_API_REALTIME_CONTRACT.md", "CHAPTER_08_ANDROID_CONTRACT.md", "CHAPTER_09_WEB_CONTRACT.md", "CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md"],
+      "features": ["database-migrations", "api-contracts", "state-machines", "authorization", "audit", "transactional-outbox", "durable-jobs", "worker-recovery", "observability", "rate-limits", "feature-gates", "backup-restore", "deployment", "design-system", "accessibility", "localization", "client-offline-state"],
+      "requirements": [],
+      "outcomes": ["C1-O17"]
+    }
+  ]
+}

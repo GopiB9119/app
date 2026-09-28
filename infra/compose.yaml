@@ -1,0 +1,93 @@
+name: community-platform
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: community
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: community
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U community -d community"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  mail:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_MAX_MESSAGES: 100
+  api:
+    build: ../backend
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community:local-development-only@db:5432/community
+      COMMUNITY_SMTP_HOST: mail
+      COMMUNITY_SMTP_PORT: 1025
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../backend:/app
+      - ../packages:/contracts
+    depends_on:
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+  identity-mail-worker:
+    build: ../backend
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community:local-development-only@db:5432/community
+      COMMUNITY_SMTP_HOST: mail
+      COMMUNITY_SMTP_PORT: 1025
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+    command: ["python3", "-m", "app.worker"]
+  reminder-worker:
+    build: ../backend
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community:local-development-only@db:5432/community
+      COMMUNITY_REMINDER_DISPATCH_ENABLED: ${COMMUNITY_REMINDER_DISPATCH_ENABLED:-true}
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python3", "-m", "app.reminder_worker"]
+  test-db:
+    image: postgres:17-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: community_test
+      POSTGRES_PASSWORD: synthetic-tests-only
+      POSTGRES_DB: community_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U community_test -d community_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  tests:
+    build: ../backend
+    profiles: ["test"]
+    environment:
+      COMMUNITY_ENVIRONMENT: test
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community_test:synthetic-tests-only@test-db:5432/community_test
+    volumes:
+      - ../backend:/app
+    depends_on:
+      test-db:
+        condition: service_healthy
+    command: ["pytest", "-q"]
+volumes:
+  postgres-data:
