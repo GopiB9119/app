@@ -2,7 +2,7 @@
 
 Status: DRAFT FOR PRODUCT, NOTIFICATION DELIVERY, PRIVACY AND OPERATIONS REVIEW. This is a design and verification plan, not an implemented notification service, verified provider integration, sent message or staffed emergency-response capability.
 
-Document role: retained partial alternate proposal through six workflows. Use the [completed delivery review draft](CHAPTER_20_DELIVERY_CONTRACT.md) for the full current workflow/verification handoff and the [reconciliation index](CONTRACT_RECONCILIATION.md) for semantic ID mapping. This file's C20-B, C20-M, C20-P and C20-R families differ from that draft's; do not translate decisions or workflows by number. Its existing source catalogs, choices and prose remain retained, not independently approved or completed by this annotation.
+Document role: retained partial alternate proposal through six workflows. Use the [completed delivery review draft](CHAPTER_20_DELIVERY_CONTRACT.md) for the full current workflow/verification handoff and the [reconciliation index](CONTRACT_RECONCILIATION.md) for semantic ID mapping. This file's C20-B, C20-M, C20-P and C20-R families differ from that draft's; do not translate decisions or workflows by number. The same holds for every decision ID, C20-D01 to C20-D14 (for example, C20-D04 is "Versioned destinations and devices" here but "Push infrastructure" there); refer to one of these as "alternate C20-Dnn". Its existing source catalogs, choices and prose remain retained, not independently approved or completed by this annotation.
 
 ## 1. Scope and Authority
 

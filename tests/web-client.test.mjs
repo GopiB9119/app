@@ -313,14 +313,17 @@ test('Checklist BFF accepts only authenticated GET and POST without query inject
   assert.equal((await bff().request('POST', path, { 'X-Account-ID': spaceId })).status, 409);
 });
 
-test('Space schemas keep family and solo private and allow only groups to be public', async () => {
+test('Space schemas keep family, couple and solo private and allow only groups to be public', async () => {
   const fetch = async () => { throw new Error('No network'); };
   const client = loadSource('features/spaces/client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) });
   const value = { id: spaceId, name: 'My planning', description: '', space_type: 'solo', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: '2026-09-19T10:00:00Z' };
   assert.equal(client.spaceSchema.parse(value).space_type, 'solo');
   assert.equal(client.spaceSchema.safeParse({ ...value, visibility: 'public' }).success, false);
   assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'family', visibility: 'public' }).success, false);
-  assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'couple' }).success, false);
+  // Couple Spaces exist since DEC-017 and, like family and solo Spaces, are never public.
+  assert.equal(client.spaceSchema.parse({ ...value, space_type: 'couple' }).space_type, 'couple');
+  assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'couple', visibility: 'public' }).success, false);
+  assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'club' }).success, false);
   assert.equal(client.spaceSchema.safeParse({ ...value, visibility: 'secret' }).success, false);
   assert.equal(client.spaceSchema.parse({ ...value, space_type: 'group', visibility: 'public', description: 'Lake walks' }).visibility, 'public');
   assert.equal(client.spaceSchema.safeParse({ ...value, description: 'x'.repeat(281) }).success, false);

@@ -176,7 +176,7 @@ class SpaceDirectoryService:
             if expected != self.spaces.settings_view(space, member).etag:
                 raise DomainError(412, "SPACE_CHANGED", "This Space changed. Reload and review it again.")
             if space.space_type != "group":
-                raise DomainError(409, "PRIVATE_SPACE_TYPE", "Family and solo Spaces are always private.")
+                raise DomainError(409, "PRIVATE_SPACE_TYPE", "Family, couple and solo Spaces are always private.")
             if body.visibility == space.visibility:
                 raise DomainError(409, "NO_CHANGES", f"This group is already {body.visibility}.")
             count = database.scalar(select(func.count()).select_from(SpaceSettingsCommand).where(SpaceSettingsCommand.space_id == space.id))

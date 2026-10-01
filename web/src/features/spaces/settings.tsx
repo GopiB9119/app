@@ -107,7 +107,7 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
           </div>
         </div>}
         {dirty && !locked && <p className={styles.emptyNote}>Save or undo your edits before changing who can find the group.</p>}
-      </div> : <p className={styles.description}><LockKeyhole size={14} aria-hidden /> Family and solo Spaces are always private.</p>}
+      </div> : <p className={styles.description}><LockKeyhole size={14} aria-hidden /> Family, couple and solo Spaces are always private.</p>}
       {conflict && <button className="text-button" disabled={review.isFetching} onClick={() => setDiscard("reload")}><RefreshCw size={17} aria-hidden />Reload current settings</button>}
     </>}
     {discard && !locked && <div className={styles.invitationSection}>

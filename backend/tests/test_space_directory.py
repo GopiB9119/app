@@ -76,7 +76,9 @@ def test_group_spaces_start_private_and_only_groups_can_be_public(client, app):
     for body in (
         {"name": "Family", "space_type": "family", "visibility": "public"},
         {"name": "Me", "space_type": "solo", "visibility": "public"},
-        {"name": "Us", "space_type": "couple"},
+        # Couple Spaces exist since DEC-017, but like family and solo Spaces they can never be public.
+        {"name": "Us", "space_type": "couple", "visibility": "public"},
+        {"name": "Others", "space_type": "club"},
         {"name": "Hikers", "space_type": "group", "visibility": "secret"},
         {"name": "Hikers", "space_type": "group", "description": "x" * 281},
         {"name": "Hikers", "space_type": "group", "description": "Hidden\u202edirection"},

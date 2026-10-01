@@ -735,7 +735,7 @@ Builds [T50](TASKS.md#defects-that-break-approved-requirements) (R13): findings 
 - **Starting without a connection.**
   - **The defect:** at start the app checks the saved sign-in with the service. When that check failed, because there was no connection or the service answered with an error, the screen showed the sign-in form with "No connection. Your changes are not confirmed." and no way to retry. The saved sign-in was still on the device, so signing in again started a second server session; an account's oldest session is revoked at 20.
   - **The fix:** a saved sign-in that cannot be checked is kept. In place of the form, the screen says "Couldn't check your sign-in" and "You stay signed in on this device." and offers Try again. The message above it reads "Can't reach the service. Check your connection, then try again.", because nothing was changed. A sign-in the service rejects still leads to the form, and so does a start with no saved sign-in.
-- **Sign-up timezone.** Sign-up started every account in Asia/Kolkata. It now starts in the device's timezone when that is a named zone, and in UTC otherwise, for example for a custom offset such as GMT+05:30. The person can still choose another zone.
+- **Sign-up timezone.** Sign-up started every account in Asia/Kolkata. It now starts in the device's timezone when that is a named zone, and in UTC otherwise, for example for a custom offset such as GMT+05:30. The person can still choose another zone. Corrected by T54 ([next section](#sign-up-timezone-checkpoint)): the service refuses some named zones, such as Asia/Calcutta, so the default now comes only from the service's list.
 - **Rotation.** Email, display name, the chosen timezone and Show password now survive rotation, and the system ending the app in the background. The password and the verification code survive rotation in memory only: they never go into the saved state Android keeps for the screen, so after the system ends the app they are typed again. They are forgotten once the person is signed in, so they do not reappear after signing out.
 - **Changed behaviour** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): the start screen after a failed check, the sign-up default timezone and the wording of a failed check. One device test expected Asia/Kolkata in a recovery proof; it now expects the device's zone, citing T50, and its other assertions are unchanged.
 - **Engineering choices** ([DEC-009](DECISIONS.md#accepted-decisions)): the password and code live in a small screen `ViewModel` (`SignInSecrets`) rather than in saved state, and the new button takes its height and corners from the design tokens ([DEC-013](DECISIONS.md#accepted-decisions)). The session store is not changed here; T49 changed it in parallel.
@@ -747,7 +747,25 @@ Builds [T50](TASKS.md#defects-that-break-approved-requirements) (R13): findings 
 
 **Boundary.**
 - **No live sign-in journey:** `AccountJourneyTest` against the shared API did not run. It registers through this form, so an account it creates now gets the emulator's timezone.
-- **The web sign-up form still starts in Asia/Kolkata;** recorded as [T54](TASKS.md#defects-that-break-approved-requirements). The live `care:` journey relies on that default.
+- **The web sign-up form started in Asia/Kolkata as well;** fixed by T54 ([next section](#sign-up-timezone-checkpoint)).
+
+## Sign-Up Timezone Checkpoint
+
+Builds [T54](TASKS.md#defects-that-break-approved-requirements) (R13), found while building T50, and corrects T50's timezone rule.
+
+- **Web:** the sign-up form started every account in Asia/Kolkata. It now starts in the browser's timezone, under the name the service lists, and in UTC when the service lists no such zone. The default follows the service's list once it arrives, unless the person already chose a zone.
+- **Older zone names:** browsers and Android emulators report some zones by an older name that the service refuses; its list has only current names (486), not older ones such as Asia/Calcutta. Chromium reports Asia/Kolkata as Asia/Calcutta and Europe/Kyiv as Europe/Kiev, and the emulator reported Asia/Calcutta. The first version of this fix sent Asia/Calcutta, and the live `repeating reminders:` journey caught it because its sign-up was refused. Both apps now pick the listed name of the same zone: the web asks the browser for each listed zone's own name, and Android compares the zones' rules. T50's Android rule accepted any named zone and had the same gap; it is corrected the same way.
+- **Live journeys:** the shared `signUp` helper in [identity.test.mjs](../tests/e2e/identity.test.mjs#L39) now chooses Asia/Kolkata itself, because those journeys compute times in that zone. Nothing else in them changed.
+- **Changed behaviour** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): the web sign-up default timezone. For someone in India it stays Asia/Kolkata.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Web component tests | New cases in `tests/unit/identity-ui.test.mjs`: a browser in Europe/Berlin starts in and sends Europe/Berlin; a browser in India, reported as Asia/Calcutta, starts in and sends Asia/Kolkata; a browser in America/Chicago, with a list that lacks it, starts in UTC. The first new test failed before the fix with `Asia/Kolkata` instead of `Europe/Berlin` (`.local/t54/before.txt`). All offline component tests: **51 passed**, 0 failed; client tests **105 passed**; type check passed. |
+| Live journeys | `auth forms:`, `care:`, `desktop:` and `mobile:`: **4 passed**. `repeating reminders:`, whose sign-up uses the default: **passed** with a real worker delivery in 168 s, after failing with the first version of the fix. |
+| Android | `IdentityViewModelTest` now also checks that Asia/Calcutta becomes Asia/Kolkata and that an unlisted zone becomes UTC. The whole JVM suite: **234 passed**, 0 failed. The identity screen tests ran on the emulator before this rule change and were not run again; they take their expected zone from the same function. |
+| Matching cost | In Chromium, matching against the service's 486 zones took about 120 ms on the loaded machine. It runs only when the browser's name is not in the list (`.local/t54/probe-scan.mjs`). |
+
+**Boundary.** The `alerts:` journey (work waiting for your decision C10) also signs up with the default and was not run. The service still refuses older zone names for every client; the apps now avoid sending them, and the API was not changed.
 
 ## Space Documents And Search Checkpoint
 

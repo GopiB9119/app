@@ -81,8 +81,8 @@ Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a s
 
 - **CONFIRMED** Family. (You) Code: built.
 - **CONFIRMED** Solo. (You) Code: built; exactly one owner, enforced by the database.
-- **CONFIRMED** Couple. (You) Code: not built.
-- **CONFIRMED** Custom group. (You) Code: not built.
+- **CONFIRMED** Couple. (You) Code: being built (T12), with rules decided provisionally in [DEC-017](DECISIONS.md#accepted-decisions).
+- **CONFIRMED** Custom group. (You) Code: built as the `group` type, private by default and optionally public ([DEC-011](DECISIONS.md#accepted-decisions), provisional); T22 is finishing it.
 - **CONFLICTING** Public community as a Space type. (You) The code builds public communities as Pages. See D1.
 - **PROPOSED** Couple: at most two active people, active once the partner accepts; an agent is never a third partner. (Sources: Chapters 1, 3)
 - **PROPOSED** Custom: configurable roles, limits and history rules. (Sources: Chapter 1)
@@ -361,13 +361,13 @@ Approved by you on 2026-10-01 ([DEC-001](DECISIONS.md#accepted-decisions)). The 
 | R2 | Each Space has its own membership, roles, permissions and resources. | Partly built: owner and member roles only |
 | R3 | Public communities and private Spaces both exist. | Built; the public side is Pages (see D1) |
 | R4 | The public side has posts, comments, reactions, follows, discovery and search. | Partly built |
-| R5 | The private side has conversations, tasks, events and documents. | Partly built: no documents |
-| R6 | Family, couple, solo and custom group Spaces. | Family and solo built |
-| R7 | Agents are scoped software identities, never automatically administrators, with permissions, allowed tools, allowed resources and approval policies. | Not built |
-| R8 | Agents support conversations, task help, scheduling, notifications, memory and retrieval. | Not built; first-release scope is D4 |
+| R5 | The private side has conversations, tasks, events and documents. | Partly built: text documents (T14; [DEC-015](DECISIONS.md#accepted-decisions), provisional); PDF, images and office files wait for the scanner decision |
+| R6 | Family, couple, solo and custom group Spaces. | Family, solo and group built (T22 is finishing groups); couple being built (T12) |
+| R7 | Agents are scoped software identities, never automatically administrators, with permissions, allowed tools, allowed resources and approval policies. | Started: an agent backend without an AI model that acts only within the person's own access, with exact approvals (T33; [DEC-012](DECISIONS.md#accepted-decisions), provisional); web and Android in progress (T34, T35) |
+| R8 | Agents support conversations, task help, scheduling, notifications, memory and retrieval. | Partly built: task help, reminders and memory by fixed rules on the backend (T33); conversation with a model waits for Q17 |
 | R9 | Workflows are deterministic; AI assists and is never the source of truth. | Built for existing workflows |
-| R10 | Documents and authorized data can be ingested, parsed, chunked, indexed and retrieved. | Not built |
-| R11 | Retrieval respects Space, membership, permission and privacy boundaries. | Retrieval not built. The membership bug in chat and events (G1) was fixed on 2026-10-01 (T02) |
+| R10 | Documents and authorized data can be ingested, parsed, chunked, indexed and retrieved. | Partly built: text documents are added, split into passages and searched by their words, without a model (T14, T15); embeddings wait for Q17 |
+| R11 | Retrieval respects Space, membership, permission and privacy boundaries. | Search checks Space, membership and admission inside each query (T15). The membership bug in chat and events (G1) was fixed on 2026-10-01 (T02) |
 | R12 | Strong privacy, security, auditability and observability. | Partly built: basic request logs, tracing and metrics, but no alerts or collector |
 | R13 | Mobile and web apps with a backend, on the existing stack. | Built |
 
@@ -458,7 +458,7 @@ Conflicts are recorded and resolved as [Article 5 of the Product Constitution](P
 | G2 | R12: security | Fixed on 2026-10-01: a direct message sent after the other person left (T03), changes saved after sign-in expired during a wait (T04), and one sign-in limit shared by all web users when the web app runs behind a trusted proxy (T10). Since T11, the encryption key can be replaced in stages without signing anyone out or losing stored data. Still open: production key custody (C11-D08); the lookup key itself is not rotated. |
 | G3 | R12: observability | Since 2026-10-01: request logs without private data, trace IDs from the web proxy to the API and a key-protected metrics endpoint (T09), which also shows how much background work waits, for how long, and how much failed (T32). Missing: a collector, dashboards, alerts (targets, Q19), database server metrics, and traces into workers. |
 | G4 | R2: roles and permissions | Owner and member roles only; no per-Space permission settings. |
-| G5 | R5 and R10: documents and retrieval | No file storage, virus scanning or search index. |
-| G6 | R6: couple and custom Spaces | Not built. |
-| G7 | R7 and R8: agents | Only unconnected pieces; no agent identity in the database. |
+| G5 | R5 and R10: documents and retrieval | Since 2026-10-01: text documents in private Spaces and search by words over documents, tasks and events, without a model (T14, T15). Missing: other file types and virus scanning (the scanner decision), and embeddings (Q17). |
+| G6 | R6: couple and custom Spaces | Custom groups built (T22 finishing); couple Spaces being built (T12, [DEC-017](DECISIONS.md#accepted-decisions)). |
+| G7 | R7 and R8: agents | Since 2026-10-01: an agent backend without an AI model, limited to the person's own access, with exact approvals and memory (T33). Missing: web and Android screens (T34, T35) and conversation with a model (Q17). |
 | G8 | R12: auditability | Follows, likes, saves and blocks leave no audit or outbox record; reports, message sends, comment creation and event answers leave only an outbox record. Whether each needs an audit record is open (U-06 in the [Domain Contract](DOMAIN.md#entity-decisions)). |

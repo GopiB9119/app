@@ -8,17 +8,33 @@ import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCirc
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { spaceSchema, spacesSchema, spaceTypeLabels } from "./client";
+import { readMembers, spaceSchema, spacesSchema, spaceTypeLabels } from "./client";
 import { AccountIdentifier, InvitationInbox, ManageInvitations } from "./invitations";
 import { ManageJoinRequests } from "./join-requests";
 import { ManageMembers } from "./members";
 import { ManageSpaceSettings } from "./settings";
 import styles from "./spaces.module.css";
 
-type SpaceType = "family" | "group" | "solo";
+type SpaceType = "family" | "group" | "solo" | "couple";
 type CreationIntent = { key: string; name: string; spaceType: SpaceType; visibility: "private" | "public"; description: string };
 const DESCRIPTION_LIMIT = 280;
-const created: Record<SpaceType, string> = { family: "Family Space created.", group: "Group created.", solo: "Solo Space created." };
+const created: Record<SpaceType, string> = { family: "Family Space created.", group: "Group created.", solo: "Solo Space created.", couple: "Couple Space created. Invite your partner to join you." };
+const createTitles: Record<SpaceType, string> = { family: "New family Space", group: "New group", solo: "New Solo Space", couple: "New couple Space" };
+const nameLabels: Record<SpaceType, string> = { family: "Family name", group: "Group name", solo: "Space name", couple: "Space name" };
+const privacyNotes: Record<Exclude<SpaceType, "group">, string> = {
+  family: "Private family Space: only people you invite",
+  solo: "Only you",
+  couple: "Private couple Space: only you and one partner you invite",
+};
+
+function CoupleStatus({ accountId, spaceId, version }: { accountId: string; spaceId: string; version: string }) {
+  // The Space version changes when someone joins or leaves, so a refreshed list re-reads the pair.
+  const roster = useQuery({ queryKey: ["spaceMembers", accountId, spaceId, version],
+    queryFn: ({ signal }) => readMembers(accountId, spaceId, signal), refetchOnWindowFocus: false });
+  if (!roster.data) return null;
+  const partner = roster.data.find(member => member.account_id !== accountId);
+  return <p className={styles.description}>{partner ? `With ${partner.display_name}` : "Waiting for your partner"}</p>;
+}
 
 export function SpacesScreen() {
   const profile = useQuery({
@@ -146,6 +162,7 @@ function FamilySpaces({ user }: { user: Account }) {
           {!spaces.isError && !accountChanged && <ul className={styles.spaceList}>{spaces.data?.data.map(space => <li key={space.id}>
             <span className={styles.familyMark} aria-hidden>{space.visibility === "public" ? <Globe size={23} /> : <UsersRound size={23} />}</span>
             <div className={styles.spaceIdentity}><h3>{space.name}</h3><span>{spaceTypeLabels[space.space_type]} <span aria-hidden>/</span> {space.role === "owner" ? "Owner" : "Member"}</span>
+              {space.space_type === "couple" && <CoupleStatus accountId={user.id} spaceId={space.id} version={space.version} />}
               {space.description && <p className={styles.description}>{space.description}</p>}</div>
             <span className={styles.rowPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden className={styles.publicMark} />Public</> : <><LockKeyhole size={14} aria-hidden />Private</>}</span>
             <div className={styles.spaceActions}>
@@ -161,10 +178,10 @@ function FamilySpaces({ user }: { user: Account }) {
           </li>)}</ul>}
         </section>
         <section className={styles.createSection} aria-labelledby="create-space-title">
-          <div className={styles.sectionHeading}><Plus size={19} aria-hidden /><h2 id="create-space-title">{spaceType === "group" ? "New group" : spaceType === "solo" ? "New Solo Space" : "New family Space"}</h2></div>
+          <div className={styles.sectionHeading}><Plus size={19} aria-hidden /><h2 id="create-space-title">{createTitles[spaceType]}</h2></div>
           <form className={styles.form} onSubmit={submit}>
-            <label><span id="space-type-label">Space type</span><select aria-labelledby="space-type-label" value={spaceType} disabled={choosing} onChange={event => { setSpaceType(event.target.value as SpaceType); create.reset(); setNotice(""); }}><option value="family">Family</option><option value="group">Group</option><option value="solo">Solo</option></select></label>
-            <label>{spaceType === "solo" ? "Space name" : spaceType === "group" ? "Group name" : "Family name"}<input name="space_name" autoComplete="off" required minLength={1} maxLength={80} value={name} disabled={choosing} onChange={event => { setName(event.target.value); create.reset(); setNotice(""); }} /></label>
+            <label><span id="space-type-label">Space type</span><select aria-labelledby="space-type-label" value={spaceType} disabled={choosing} onChange={event => { setSpaceType(event.target.value as SpaceType); create.reset(); setNotice(""); }}><option value="family">Family</option><option value="couple">Couple</option><option value="group">Group</option><option value="solo">Solo</option></select></label>
+            <label>{nameLabels[spaceType]}<input name="space_name" autoComplete="off" required minLength={1} maxLength={80} value={name} disabled={choosing} onChange={event => { setName(event.target.value); create.reset(); setNotice(""); }} /></label>
             {spaceType === "group" && <>
               <label>Description (optional)<textarea className={styles.textArea} name="space_description" maxLength={DESCRIPTION_LIMIT} value={description} disabled={choosing} onChange={event => { setDescription(event.target.value); create.reset(); setNotice(""); }} placeholder="What the group is about and who it is for." /></label>
               <span className={styles.counter}>{description.length}/{DESCRIPTION_LIMIT}</span>
@@ -176,7 +193,7 @@ function FamilySpaces({ user }: { user: Account }) {
                   <strong><Globe size={15} aria-hidden className={styles.publicMark} />Public</strong><small>Anyone signed in can find its name and description and ask to join. You approve each person. Chats, events and members stay private.</small></label>
               </fieldset>
             </>}
-            {spaceType !== "group" && <div className={styles.formPrivacy}><LockKeyhole size={16} aria-hidden /><span>{spaceType === "solo" ? "Only you" : "Private family Space: only people you invite"}</span></div>}
+            {spaceType !== "group" && <div className={styles.formPrivacy}><LockKeyhole size={16} aria-hidden /><span>{privacyNotes[spaceType]}</span></div>}
             {create.isError && <div className="message error" role="alert">{create.error.message}</div>}
             <button className="primary-button" type="submit" disabled={create.isPending || !name.trim() || accountChanged}>
               {create.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Plus size={17} aria-hidden />}

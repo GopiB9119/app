@@ -5,7 +5,7 @@ const spaceShape = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(80),
   description: z.string().max(280).default(""),
-  space_type: z.enum(["family", "solo", "group"]),
+  space_type: z.enum(["family", "solo", "group", "couple"]),
   visibility: z.enum(["private", "public"]),
   status: z.literal("active"),
   role: z.enum(["owner", "member"]),
@@ -23,7 +23,7 @@ export const spaceSettingsSchema = spaceShape.extend({ role: z.literal("owner"),
 export type SpaceSettings = z.infer<typeof spaceSettingsSchema>;
 export type SpaceSettingsIntent = { accountId: string; spaceId: string; name: string; description?: string; etag: string; key: string };
 export type VisibilityIntent = { accountId: string; spaceId: string; visibility: "private" | "public"; etag: string; key: string };
-export const spaceTypeLabels: Record<FamilySpace["space_type"], string> = { family: "Family", group: "Group", solo: "Solo" };
+export const spaceTypeLabels: Record<FamilySpace["space_type"], string> = { family: "Family", group: "Group", solo: "Solo", couple: "Couple" };
 
 export async function readSpaceSettings(accountId: string, spaceId: string, signal?: AbortSignal) {
   const result = await api(`spaces/${spaceId}/settings`, spaceSettingsSchema, { accountId, signal });

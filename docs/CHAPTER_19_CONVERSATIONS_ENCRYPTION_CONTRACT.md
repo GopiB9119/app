@@ -2,7 +2,7 @@
 
 Status: DRAFT FOR PRODUCT, MESSAGING, SECURITY AND CRYPTOGRAPHY REVIEW. This is a design and verification plan, not implemented messaging, a deployed realtime gateway, a reviewed cryptographic protocol or an executed synchronization test.
 
-Document role: retained alternate proposal. Use the [detailed messaging draft](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) as the working review reference and the [reconciliation index](CONTRACT_RECONCILIATION.md) for semantic ID/API correspondence. This is document routing, not product approval. C19 identifiers are file-local; in particular, this file's C19-D07 is not the same decision as C19-D07 in the detailed draft. No proposals or original sources are deleted by this clarification.
+Document role: retained alternate proposal. Use the [detailed messaging draft](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) as the working review reference and the [reconciliation index](CONTRACT_RECONCILIATION.md) for semantic ID/API correspondence. This is document routing, not product approval. C19 identifiers are file-local: every decision ID here, C19-D01 to C19-D14, names a different decision from the same ID in the detailed draft (for example, C19-D05 is "Encryption mode selection" here but "Cryptographic protocol and implementation" there). Cite decisions from the detailed draft; refer to one of these as "alternate C19-Dnn". No proposals or original sources are deleted by this clarification.
 
 ## 1. Scope and Authority
 
