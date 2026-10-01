@@ -272,6 +272,7 @@ def test_group_space_migration_keeps_existing_spaces_private_and_refuses_a_lossy
     with pytest.raises(RuntimeError, match="group Spaces"):
         command.downgrade(config, "0021")
     with app.state.engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0022"
+        # The refused step rolls back the whole downgrade, so nothing after 0022 is lost either.
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == ScriptDirectory.from_config(config).get_current_head()
     assert client.get(f"/v1/spaces/{public['id']}", headers=auth(owner)).json()["data"]["visibility"] == "public"
     test_migrated_schema_matches_models(app)

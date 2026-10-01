@@ -188,6 +188,9 @@ class AccountRepositoryTest {
 
     class FakeApi(private val user: UserDto, private val token: String) : IdentityApi {
         var meFailure = 0
+        var meOffline = false
+        var timezonesOffline = false
+        var logins = 0
         var logoutFailure = false
         var profileFailure = false
         var cancelLogin = false
@@ -206,9 +209,13 @@ class AccountRepositoryTest {
         override suspend fun reset(body: ResetDto) = ok(DoneDto("ok"))
         override suspend fun login(body: LoginDto): Response<EnvelopeDto<AuthDto>> {
             if (cancelLogin) throw CancellationException("Synthetic cancellation")
+            logins += 1
             return ok(AuthDto(token, "session", "2026-09-19T18:00:00Z", user))
         }
-        override suspend fun me(authorization: String): Response<EnvelopeDto<UserDto>> = if (meFailure != 0) failure(meFailure) else Response.success(EnvelopeDto(user, null), headersOf("ETag", "\"profile-1\""))
+        override suspend fun me(authorization: String): Response<EnvelopeDto<UserDto>> {
+            if (meOffline) throw IOException("Synthetic connection loss")
+            return if (meFailure != 0) failure(meFailure) else Response.success(EnvelopeDto(user, null), headersOf("ETag", "\"profile-1\""))
+        }
         override suspend fun profile(authorization: String, etag: String, body: ProfileDto): Response<EnvelopeDto<UserDto>> {
             mutations += 1; lastEtag = etag
             return if (profileFailure) failure(412) else me(authorization)
@@ -218,6 +225,9 @@ class AccountRepositoryTest {
         override suspend fun revokeOthers(authorization: String): Response<EnvelopeDto<DoneDto>> { mutations += 1; return ok(DoneDto("ok")) }
         override suspend fun logout(authorization: String): Response<EnvelopeDto<DoneDto>> = if (logoutFailure) failure(503) else ok(DoneDto("ok"))
         override suspend fun events(authorization: String) = ok(emptyList<SecurityEventDto>())
-        override suspend fun timezones() = ok(listOf("UTC", "Asia/Kolkata"))
+        override suspend fun timezones(): Response<EnvelopeDto<List<String>>> {
+            if (timezonesOffline) throw IOException("Synthetic connection loss")
+            return ok(listOf("UTC", "Asia/Kolkata"))
+        }
     }
 }

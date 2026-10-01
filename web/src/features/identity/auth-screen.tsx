@@ -16,6 +16,16 @@ const inputSchema = z.object({
 type Fields = z.infer<typeof inputSchema>;
 type Mode = "login" | "register" | "recover";
 const subscribeNothing = () => () => {};
+const startingTimezones = ["UTC", "Asia/Kolkata", "Europe/London", "America/New_York"];
+
+// Browsers name some zones by an older name (Asia/Calcutta for Asia/Kolkata) that the service refuses, so pick the listed name for the same zone.
+function signUpTimezone(available: string[]) {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (available.includes(zone)) return zone;
+  return available.find(name => {
+    try { return new Intl.DateTimeFormat("en", { timeZone: name }).resolvedOptions().timeZone === zone; } catch { return false; }
+  }) ?? "UTC";
+}
 
 export function AuthScreen({ mode }: { mode: Mode }) {
   // False in the server HTML, true once React runs: input before that would be submitted natively or overwritten.
@@ -24,13 +34,17 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   const [message, setMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [visible, setVisible] = useState(false);
-  const [timezones, setTimezones] = useState<string[]>(["UTC", "Asia/Kolkata", "Europe/London", "America/New_York"]);
+  const [timezones, setTimezones] = useState<string[]>(startingTimezones);
+  const [initialZone] = useState(() => signUpTimezone(startingTimezones));
   const [requestIntent, setRequestIntent] = useState<{ email: string; key: string } | null>(null);
-  const form = useForm<Fields>({ resolver: zodResolver(inputSchema), defaultValues: { email: "", password: "", code: "", display_name: "", timezone: "Asia/Kolkata" } });
+  const form = useForm<Fields>({ resolver: zodResolver(inputSchema), defaultValues: { email: "", password: "", code: "", display_name: "", timezone: initialZone } });
 
   useEffect(() => {
     const controller = new AbortController();
-    api("timezones", z.array(z.string()), { signal: controller.signal }).then(result => setTimezones(result.data)).catch(() => {});
+    api("timezones", z.array(z.string()), { signal: controller.signal }).then(result => {
+      setTimezones(result.data);
+      if (form.getValues("timezone") === initialZone) form.setValue("timezone", signUpTimezone(result.data));
+    }).catch(() => {});
     return () => controller.abort();
   }, []);
 

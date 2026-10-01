@@ -1,22 +1,25 @@
 # openapi
 
-[openapi.json](openapi.json) is generated from the current local FastAPI application. On 2026-10-01 it lists 144 operations on 119 paths, at migration `0022`, including the 9 group directory, visibility and join request operations. It contains only built operations, not the full planned API.
+[openapi.json](openapi.json) is generated from the current local FastAPI application. As regenerated at 13:48 on 2026-10-01 it lists 159 operations on 132 paths (counted by tag below; the groups sum to 159). It contains only built operations, not the full planned API. Several groups are built under decisions that still wait for the owner's review (conflict C11) or decision (X2), as marked.
 
-| Group | Operations |
+| Group (tag) | Operations |
 | --- | --- |
 | Account: registration, sign-in, recovery, profile, sessions, security activity, time zones and personal data export (untagged) | 18 |
-| Spaces: create, list, read, settings, members, leave, ownership transfer and sent invitations | 16 |
+| Spaces: create, list, read, settings, visibility, members, leave, ownership transfer, sent invitations, and asking to join a group with the owner's approve and decline | 21 |
+| Space directory and your own join requests (group Spaces, T22, [DEC-011](../../docs/DECISIONS.md#accepted-decisions), awaiting review) | 4 |
 | Invitations: inbox, accept and decline | 3 |
 | Tasks, assignees and checklists | 8 |
 | Calendar | 1 |
 | Reminders | 4 |
-| Repeating reminders: preview, create, list, read, pause, resume, skip and cancel ([DEC-010](../../docs/DECISIONS.md#accepted-decisions)) | 8 |
+| Repeating reminders ([DEC-010](../../docs/DECISIONS.md#accepted-decisions), awaiting review), including the alerts work's move and replace ([X2](../../docs/TASKS.md#work-outside-the-approved-scope)) | 10 |
 | Reminder requests | 7 |
-| Notifications and preferences, including snooze | 6 |
+| Notifications, preferences and snooze, plus the alerts work's quiet hours, alerts and backup contacts ([X2](../../docs/TASKS.md#work-outside-the-approved-scope), awaiting the owner's decision) | 20 |
 | Messaging | 7 |
 | Public community | 29 |
 | Events | 6 |
-| Care (not an approved requirement; see [TASKS X1](../../docs/TASKS.md#work-outside-the-approved-scope)) | 6 |
+| Care ([DEC-007](../../docs/DECISIONS.md#accepted-decisions); see [TASKS X1](../../docs/TASKS.md#work-outside-the-approved-scope)) | 6 |
+| Documents and search inside your Spaces ([DEC-015](../../docs/DECISIONS.md#accepted-decisions), awaiting review) | 5 |
+| Agent ([DEC-012](../../docs/DECISIONS.md#accepted-decisions), awaiting review) | 10 |
 
 Protected operations declare account-session bearer authentication, including the 12 account and export operations ([TASKS T08](../../docs/TASKS.md#defects-that-break-approved-requirements)). Only registration, email verification, sign-in, recovery, password reset and the time-zone list declare none. The browser reaches the API through its protected same-origin proxy instead of holding tokens. Public page and post reads also work signed out. Views omit internal request keys, digests and admission IDs.
 

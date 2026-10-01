@@ -1,6 +1,6 @@
 # agents (web)
 
-The agent screen at `/app/agent` ([T34](../../../../docs/TASKS.md#approved-requirements-not-built-yet)). **Not linked from any navigation:** it waits for the owner's review of [DEC-012](../../../../docs/DECISIONS.md#accepted-decisions) (conflict C11). It has not run against a live API, because migration `0023` is not yet on the development database.
+The agent screen at `/app/agent` ([T34](../../../../docs/TASKS.md#approved-requirements-not-built-yet)). **Not linked from any navigation:** it waits for the owner's review of [DEC-012](../../../../docs/DECISIONS.md#accepted-decisions) (conflict C11). The agent API has been live on the local server since the development database reached `0024`; this screen has not been run against it.
 
 | File | Role |
 | --- | --- |

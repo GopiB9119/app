@@ -51,7 +51,7 @@ before(async () => {
 
 after(async () => { await browser?.close(); });
 
-async function fixture(context, mode = 'recover') {
+async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolkata']) {
   const outbound = [];
   const consoleErrors = [];
   await context.route('**/*', route => {
@@ -61,7 +61,7 @@ async function fixture(context, mode = 'recover') {
   const page = await context.newPage();
   page.on('pageerror', error => consoleErrors.push(error.message));
   await page.setContent('<html><head><title>Offline account component</title></head><body><div id="root"></div></body></html>');
-  await page.evaluate(() => {
+  await page.evaluate(zones => {
     let sequence = 0;
     Object.defineProperty(crypto, 'randomUUID', {
       value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`,
@@ -84,7 +84,7 @@ async function fixture(context, mode = 'recover') {
       }
       let data;
       switch (route) {
-        case '/api/timezones': data = ['UTC', 'Asia/Kolkata']; break;
+        case '/api/timezones': data = zones; break;
         case '/api/auth/bootstrap': data = { status: 'ok' }; break;
         case '/api/auth/register':
         case '/api/auth/recover':
@@ -95,7 +95,7 @@ async function fixture(context, mode = 'recover') {
       }
       return new Response(JSON.stringify({ data, request_id: 'offline-fixture' }), { status: 200 });
     };
-  });
+  }, timezones);
   await page.addScriptTag({ content: componentBundle });
   await page.evaluate(selected => window.renderAccountForm(selected), mode);
   await page.getByRole('heading', { name: mode === 'recover' ? 'Recover your account' : 'Create your account' }).waitFor();
@@ -168,6 +168,36 @@ test('offline recovery shows a failed reset without claiming success or discardi
     assert.deepEqual(outbound, []);
   } finally { await context.close(); }
 });
+
+for (const [browserZone, listed, expected] of [
+  ['Europe/Berlin', ['UTC', 'Asia/Kolkata', 'Europe/Berlin'], 'Europe/Berlin'],
+  // Chromium reports Asia/Kolkata as Asia/Calcutta, a name the service does not list.
+  ['Asia/Kolkata', ['UTC', 'Asia/Kolkata'], 'Asia/Kolkata'],
+  ['America/Chicago', ['UTC', 'Asia/Kolkata'], 'UTC'],
+]) {
+test(`offline registration in ${browserZone} starts in ${expected} and sends it`, async () => {
+  const context = await browser.newContext({ timezoneId: browserZone });
+  try {
+    const { page, outbound, consoleErrors } = await fixture(context, 'register', listed);
+    await page.evaluate(() => {
+      window.componentApi.failures['/api/auth/verify-email'] = { remaining: 1, status: 400, code: 'CHALLENGE_INVALID', message: 'Synthetic stop before the account exists.' };
+    });
+    await page.locator('input[name="email"]').fill('alex@example.test');
+    await page.getByRole('button', { name: 'Send verification code' }).click();
+    await page.getByRole('heading', { name: 'Complete your account' }).waitFor();
+    assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), expected);
+    await page.locator('input[name="code"]').fill('123456');
+    await page.getByLabel('Display name', { exact: true }).fill('Alex Morgan');
+    await page.getByLabel('New password', { exact: true }).fill('Synthetic-password-42!');
+    await page.getByRole('button', { name: 'Verify and create account' }).click();
+    await page.getByRole('alert').filter({ hasText: 'Synthetic stop before the account exists.' }).waitFor();
+    const verify = (await page.evaluate(() => window.componentApi.calls)).find(call => call.route === '/api/auth/verify-email');
+    assert.equal(verify.body.timezone, expected);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(consoleErrors, []);
+  } finally { await context.close(); }
+});
+}
 
 for (const mode of ['register', 'recover']) {
 test(`offline ${mode} retry keeps its key until the requested email changes`, async () => {

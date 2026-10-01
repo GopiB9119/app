@@ -253,7 +253,7 @@ test('offline document reader marks cited lines, keeps HTML as text and names th
     assert.equal(await page.evaluate(() => window.documentTextRan), undefined);
     await page.getByRole('button', { name: 'Delete document', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete document?', exact: true });
-    await dialog.getByText(`Delete \u201c${documentName}\u201d from ${spaceName}? Its text is removed for everyone and cannot be recovered.`, { exact: true }).waitFor();
+    await dialog.getByText(`Delete \u201c${documentName}\u201d, added by Alex Morgan, from ${spaceName}? Its text is removed for everyone and cannot be recovered.`, { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.documentsFixture.calls.filter(call => call.method === 'POST').length), 0);
     await dialog.getByRole('button', { name: 'Delete document', exact: true }).click();
     await page.getByText(`Deleted \u201c${documentName}\u201d.`, { exact: true }).waitFor();
@@ -288,7 +288,7 @@ test('offline Space search groups links and plain-text highlights and explains e
     await page.evaluate(() => { window.documentsFixture.emptySearch = true; });
     await page.getByLabel('Search your Spaces', { exact: true }).fill('nothing');
     await page.getByRole('button', { name: 'Search', exact: true }).click();
-    await page.getByText('Nothing found in your Spaces. Messages, care records and reminders are not searched.', { exact: true }).waitFor();
+    await page.getByText('Nothing found in your Spaces.', { exact: true }).waitFor();
     assert.equal(await documents.count(), 0);
     const searches = await page.evaluate(() => window.documentsFixture.calls.filter(call => call.route === '/api/search'));
     const query = new URLSearchParams(searches.at(-1).query);

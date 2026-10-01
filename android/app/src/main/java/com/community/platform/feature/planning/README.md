@@ -11,7 +11,7 @@ The backend remains the authority for current membership, admission-bound task h
 
 Drafts and uncertain commands stay only in the ViewModel. Rotation retains them; process death or explicitly leaving the workspace can lose them. No background/offline mutation queue, automatic conflict overwrite, new retry key after a timeout, or plaintext task database is introduced. Editing notes does not silently unassign an unavailable member.
 
-Verified evidence and reproducible commands are in the [native task runbook](../../../../../../../../../../docs/runbooks/ANDROID_TASKS.md). Live client-to-server qualification remains blocked by the active loopback network policy. Existing native Space creation/invitation screens, reminders, recurrence, checklists, dependencies, calendar views and other planning capabilities are not implemented by this client.
+Verified evidence and reproducible commands are in the [native task runbook](../../../../../../../../../../docs/runbooks/ANDROID_TASKS.md). The live native family journey (owner and member, shared task, reminder delivery) passed against the local API after local network access was approved ([checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#live-manual-workflow-checkpoint)). Checklists (`ChecklistRepository.kt`, `ChecklistViewModel.kt`, `ChecklistScreen.kt`, opened from a task) and the calendar (below) are built in this folder; task dependencies are not.
 
 Source chapters 1, 3, 13 and 17 remain unchanged. See the [complete feature catalog](../../../../../../../../../../packages/feature-catalog/features.json) for retained scope.
 

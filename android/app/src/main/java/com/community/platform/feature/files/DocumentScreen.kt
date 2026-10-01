@@ -201,7 +201,10 @@ fun DocumentScreen(state: DocumentsState, actions: DocumentActions) {
     }
     val selected = state.selected
     if (state.confirmingDelete && selected?.name != null) DocumentConfirmation(
-        title = stringResource(R.string.documents_delete), text = stringResource(R.string.documents_delete_confirmation, selected.name, selected.spaceName),
+        title = stringResource(R.string.documents_delete), text = stringResource(
+            R.string.documents_delete_confirmation, selected.name,
+            selected.addedByName.ifBlank { stringResource(R.string.documents_former_member) }, selected.spaceName,
+        ),
         confirm = stringResource(R.string.documents_delete), dismiss = stringResource(R.string.documents_cancel),
         onConfirm = actions.delete, onDismiss = actions.keep, tag = "document-delete-dialog", confirmTag = "document-delete-confirm", danger = true,
     )

@@ -182,7 +182,11 @@ Rules: organize confirmed instructions only. No diagnosis, prescribing, inferred
 
 ### 2.15 Files and Documents
 
-Uploads, immutable versions, quarantine/scanning, previews, OCR, extraction, sharing and deletion lineage: **Not built** on any platform. Requires object storage and a scanner first.
+| Feature | Backend / Web / Android | Status |
+| --- | --- | --- |
+| Text documents in a Space: add, list, open with line numbers, delete ([DEC-015](DECISIONS.md#accepted-decisions)) | Yes / Yes / Yes | Working (limited): `.txt`, `.md` and `.csv` up to 512 KB; members admitted before a document was added see it; the person who added it or the owner deletes it, and everything derived goes with it ([T14](TASKS.md#approved-requirements-not-built-yet)) |
+| Search inside your Spaces: documents, tasks and events | Yes / Yes / Yes | Working (limited): results cite document lines and name the Space; messages, care, reminders and memory are not searched ([T15](TASKS.md#approved-requirements-not-built-yet)) |
+| Other file types, scanning, previews, OCR, versions, sharing | No / No / No | Not built: a scanner needs internet downloads (DEC-005) |
 
 ### 2.16 Agent
 
@@ -207,6 +211,8 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | `/app/events` | Space events and RSVP | Working (limited) |
 | `/app/care` | Medication instructions and daily care reminders | Working (limited): day plan and medicines list; no notifications |
 | `/app/safety` | Blocked pages and people | Working (limited) |
+| `/app/documents` | Documents of a Space: add, list, open at cited lines, delete | Working (limited) |
+| `/app/search` | Search inside your Spaces | Working (limited) |
 | `/app/settings/privacy` | Export and deletion | Not built |
 
 ### Android screens
@@ -224,6 +230,8 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Community: Home, Discover, page, post, comments, your pages, blocked | Account screen | Working (limited); not device-qualified |
 | Events and RSVP | Space detail | Working (limited); not device-qualified |
 | Care instructions and medication reminders | Account screen | Working (limited); not device-qualified |
+| Documents: add, list, open at cited lines, delete | Space detail | Working (limited); 7 offline screen tests and a live journey on the emulator |
+| Search inside your Spaces | Account screen | Working (limited); covered by the same device tests |
 | Safety, privacy, export, deletion | Account screen | Blocked list inside Community works; privacy, export and deletion not built |
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.

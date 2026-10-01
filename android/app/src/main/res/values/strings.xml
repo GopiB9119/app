@@ -91,6 +91,9 @@
     <string name="local_environment">Local test environment</string>
     <string name="refresh">Refresh account</string>
     <string name="welcome_back">Welcome back</string>
+    <string name="sign_in_unchecked_title">Couldn\'t check your sign-in</string>
+    <string name="sign_in_unchecked_body">You stay signed in on this device.</string>
+    <string name="try_again">Try again</string>
     <string name="create_account_heading">Create your account</string>
     <string name="create_account">Create account</string>
     <string name="recover_account">Recover your account</string>
@@ -777,7 +780,8 @@
     <string name="documents_added_by">Added by %1$s</string>
     <string name="documents_cited_lines">Cited lines %1$d-%2$d</string>
     <string name="documents_delete">Delete document</string>
-    <string name="documents_delete_confirmation">Delete &#8220;%1$s&#8221; from %2$s? Its text is removed for everyone and cannot be recovered.</string>
+    <string name="documents_delete_confirmation">Delete &#8220;%1$s&#8221;, added by %2$s, from %3$s? Its text is removed for everyone and cannot be recovered.</string>
+    <string name="documents_former_member">a former member</string>
     <string name="documents_cancel">Cancel</string>
     <string name="documents_problem_name">Use a file name of 1 to 120 characters, without / or \\.</string>
     <string name="documents_problem_type">Add a .txt, .md, .markdown or .csv file.</string>
@@ -806,7 +810,8 @@
     <string name="search_reload_spaces">Reload Spaces</string>
     <string name="search_tasks">Tasks</string>
     <string name="search_events">Events</string>
-    <string name="search_empty">Nothing found in your Spaces. Messages, care records and reminders are not searched.</string>
+    <string name="search_empty">Nothing found in your Spaces.</string>
+    <string name="search_scope">Every word must match, from the start of a word. Messages, care records and reminders are not searched.</string>
     <string name="search_no_documents">No documents found.</string>
     <string name="search_no_tasks">No tasks found.</string>
     <string name="search_no_events">No events found.</string>

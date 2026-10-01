@@ -98,7 +98,8 @@ class DocumentService:
             if existing is not None:
                 if existing.added_by_admission_id != membership.admission_id:
                     raise not_found()
-                if existing.creation_digest != digest:
+                # A deleted document keeps no fingerprint of its text, so a retry learns only that it was deleted.
+                if existing.status == "active" and existing.creation_digest != digest:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original document.")
                 return self.present(database, [existing], membership)[0]
             count, total = database.execute(
@@ -200,6 +201,7 @@ class DocumentService:
             database.execute(delete(SpaceDocumentChunk).where(SpaceDocumentChunk.document_id == document.id))
             for field in CONTENT_FIELDS:
                 setattr(document, field, None)
+            document.creation_digest = self.security.digest("space.document.deleted", document.id)
             document.status = "deleted"
             document.deleted_at = self.clock()
             document.deleted_by_id = caller.id

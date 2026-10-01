@@ -144,7 +144,8 @@ private fun SearchForm(state: SearchState, actions: SearchActions) {
     val width = LocalConfiguration.current.screenWidthDp.dp - DesignTokens.SpaceUnit * 8
     Column(verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
         OutlinedTextField(value = state.query, onValueChange = actions.query, enabled = !state.searching && !state.requiresSignIn,
-            label = { Text(stringResource(R.string.search_query)) }, minLines = 1, maxLines = 3,
+            label = { Text(stringResource(R.string.search_query)) }, supportingText = { Text(stringResource(R.string.search_scope)) },
+            minLines = 1, maxLines = 3,
             shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().testTag("search-query"))
         Text(stringResource(R.string.search_space), style = MaterialTheme.typography.labelLarge)
         Box(Modifier.fillMaxWidth()) {

@@ -216,25 +216,25 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| files.uploads | U/U/U | Bounded reservation, immutable commitment and current scope |
-| files.immutable-versions | U/U/U | Exact bytes/version/digest; later upload cannot replace scanned object |
-| files.quarantine-scanning | U/U/U | Fail closed, distinguish threat/unavailable/unsupported |
+| files.uploads | P/P/P | Text documents only ([DEC-015](DECISIONS.md#accepted-decisions)): `.txt`, `.md`, `.csv` up to 512 KB, 200 per Space and 20 MB per Space, with an exact retry key; binary uploads, reservations and object storage remain |
+| files.immutable-versions | P/P/P | A document never changes after it is added and keeps its SHA-256; a corrected copy is a new document. Versions of one document remain |
+| files.quarantine-scanning | U/U/U | Fail closed, distinguish threat/unavailable/unsupported. Not built: no scanner can be installed (DEC-005), so only text types are accepted |
 | files.media-processing | U/U/U | Isolated bounded transforms; safe previews and metadata |
-| files.documents-pages | U/U/U | Real page/slide/sheet identity, partial coverage |
+| files.documents-pages | P/P/P | Lines are the anchors of a text document; pages, slides and sheets remain |
 | files.ocr | U/U/U | Unconfirmed extraction, preserve units/negation/provenance |
-| files.extraction | U/U/U | Supported formats and explicit failures/gaps |
-| files.chunks-embeddings | U/U/U | Versioned lineage; model integration deferred until separately approved |
-| files.authorized-retrieval | U/U/U | Current access before candidates/context, not only final display |
-| files.citations | U/U/U | Immutable source/anchor, no invented pages |
+| files.extraction | P/P/P | UTF-8 text checked (no control or text-direction characters) and split into passages of whole lines; other formats remain |
+| files.chunks-embeddings | P/P/P | Passages with line numbers and character offsets, indexed by PostgreSQL full-text search; embeddings wait for Q17 |
+| files.authorized-retrieval | P/P/P | Search joins current membership, the history rule and task grants inside each query ([T15](TASKS.md#approved-requirements-not-built-yet)); model context remains |
+| files.citations | P/P/P | Search results cite the document and its lines; opening one marks the cited lines. Answers that cite remain |
 | files.sharing | U/U/U | Reviewed recipient/audience/expiry; downloaded bytes not recalled |
-| files.deletion-lineage | U/U/U | Revoke eligibility first, resumable derivative purge |
+| files.deletion-lineage | P/P/P | Deleting removes the name, text, digest and every passage in one transaction and keeps only who added and deleted it; backups follow the database (C14-D13 OPEN) |
 
 ### Home and Discovery
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
 | discovery.public-search | P/P/P | Page search over name/handle/description with literal wildcards, topic filter and bound cursors; post search over title and text, literal, newest first, drafts and blocked pages excluded ([T29](TASKS.md#approved-requirements-not-built-yet)); relevance ranking and highlights remain |
-| discovery.private-scoped-search | U/U/U | Separate current-authorized private query |
+| discovery.private-scoped-search | P/P/P | Search inside your Spaces over documents, tasks and events the person can open now; every word required, word beginnings; at most 20 of each kind ([T15](TASKS.md#approved-requirements-not-built-yet)). Messages, care, reminders and memory are not searched |
 | discovery.home-feed | P/P/P | Following / Latest / Saved public feeds; no private modules or private signals |
 | discovery.following-feed | P/P/P | Current follows only, blocked pages excluded, newest first; mutes remain |
 | discovery.topics | U/U/U | Public taxonomy and topic results |

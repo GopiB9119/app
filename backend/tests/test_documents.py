@@ -133,6 +133,15 @@ def test_document_is_added_once_read_listed_and_then_deleted_with_everything_der
     # The original request retried after the deletion reports the deletion, never the old text.
     late = add(client, member, space_id, key=key)
     assert late.status_code == 201 and late.json()["data"]["status"] == "deleted" and late.json()["data"]["name"] is None
+    # No fingerprint of the deleted text remains to compare a retry against.
+    other = add(client, member, space_id, key=key, content="Something else entirely.")
+    assert other.status_code == 201 and other.json()["data"] == late.json()["data"]
+    with app.state.sessions() as database:
+        kept = database.scalar(select(SpaceDocument.creation_digest).where(SpaceDocument.id == document["id"]))
+    original = app.state.security.digest(
+        "space.document.add", space_id, "insurance.md", hashlib.sha256(NOTES.replace("\r\n", "\n").encode()).hexdigest(),
+    )
+    assert kept != original
 
 
 def test_documents_follow_the_admission_history_and_deletion_rules(client, app):
@@ -182,6 +191,8 @@ def test_document_input_types_sizes_and_limits(client, app, monkeypatch):
         response = add(client, owner, space_id, name=name, content=content)
         assert response.status_code == status and response.json()["error"]["code"] == code, (name, response.text[:200])
     assert add(client, owner, space_id, name="exact.txt", content="a" * (512 * 1024)).status_code == 201
+    # Words too long for the index (PostgreSQL ignores lexemes of 2 KB or more) are still accepted.
+    assert add(client, owner, space_id, name="wide.txt", content="漢" * 1200 + "\nshort words").status_code == 201
     oversized = client.post(
         f"/v1/spaces/{space_id}/documents", headers={**auth(owner), "Idempotency-Key": str(uuid4()), "Content-Type": "application/json"},
         content=b'{"name": "big.txt", "content": "' + b"a" * 2_300_000 + b'"}',
@@ -191,7 +202,7 @@ def test_document_input_types_sizes_and_limits(client, app, monkeypatch):
     events = create_event(client, owner, space_id, description="x" * 20000)
     assert events.status_code == 413
 
-    monkeypatch.setattr(document_service, "MAX_DOCUMENTS_PER_SPACE", 2)
+    monkeypatch.setattr(document_service, "MAX_DOCUMENTS_PER_SPACE", 3)
     assert add(client, owner, space_id, name="two.txt", content="second").status_code == 201
     full = add(client, owner, space_id, name="three.txt", content="third")
     assert full.status_code == 409 and full.json()["error"]["code"] == "DOCUMENT_LIMIT_REACHED"
@@ -254,6 +265,11 @@ def test_search_returns_only_what_the_person_can_open_now(client, app):
     for words, code in (("!!!", "SEARCH_WORDS_REQUIRED"), ("x" * 201, "VALIDATION_ERROR")):
         rejected = search(client, member, words)
         assert rejected.status_code == 422 and rejected.json()["error"]["code"] == code
+    # Characters that count as words here but not for PostgreSQL find nothing instead of failing.
+    for words in ("\u0301", "½", "\u0301½"):
+        nothing = search(client, member, words)
+        assert nothing.status_code == 200, nothing.text
+        assert nothing.json()["data"]["documents"] == [] and nothing.json()["data"]["tasks"] == []
     assert client.get("/v1/search", params={"q": "passport"}).status_code == 401
     # Someone admitted afterwards finds none of it: tasks keep their creation-time audience, the rest the admission boundary.
     advance(app, minutes=1)

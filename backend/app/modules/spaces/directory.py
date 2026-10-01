@@ -300,6 +300,8 @@ class SpaceDirectoryService:
 
     def decide(self, token, space_id, request_id, action):
         with self.sessions.begin() as database:
+            # Sign-in is checked before anything about the request is looked up.
+            self.identity.authenticate(database, token)
             snapshot = database.scalar(select(SpaceJoinRequest).where(
                 SpaceJoinRequest.id == request_id, SpaceJoinRequest.space_id == space_id,
             ))

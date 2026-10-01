@@ -9,8 +9,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
+
+private const val CHANGE_OFFLINE = "No connection. Your changes are not confirmed."
+private const val CHECK_OFFLINE = "Can't reach the service. Check your connection, then try again."
 
 data class IdentityState(
     val loading: Boolean = true,
@@ -24,7 +28,16 @@ data class IdentityState(
     val error: String? = null,
     val notice: String? = null,
     val profileSaved: Int = 0,
+    // A saved sign-in exists but could not be checked, so the screen offers a retry instead of the sign-in form.
+    val signInUnchecked: Boolean = false,
 )
+
+// Devices can name a zone by an older name (Asia/Calcutta for Asia/Kolkata) that the service refuses, so pick the listed zone with the same rules.
+internal fun signUpTimezone(available: List<String>, device: String = ZoneId.systemDefault().id): String {
+    if (device in available) return device
+    val rules = runCatching { ZoneId.of(device).rules }.getOrNull() ?: return "UTC"
+    return available.firstOrNull { zone -> runCatching { ZoneId.of(zone).rules == rules }.getOrDefault(false) } ?: "UTC"
+}
 
 @HiltViewModel
 class IdentityViewModel @Inject constructor(private val repository: AccountRepository) : ViewModel() {
@@ -35,7 +48,7 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
 
     init { refresh() }
 
-    private fun action(operation: suspend () -> Unit) {
+    private fun action(offline: String = CHANGE_OFFLINE, operation: suspend () -> Unit) {
         if (mutableState.value.busy) return
         mutableState.update { it.copy(busy = true, error = null, notice = null) }
         viewModelScope.launch {
@@ -47,7 +60,7 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
                     else it.copy(error = error.message)
                 }
             } catch (_error: IOException) {
-                mutableState.update { it.copy(error = "No connection. Your changes are not confirmed.") }
+                mutableState.update { it.copy(error = offline) }
             } catch (_error: Exception) {
                 mutableState.update { it.copy(error = "The account service returned an unexpected result.") }
             } finally {
@@ -68,8 +81,18 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
         mutableState.update { it.copy(sessions = sessions, events = events) }
     }
 
-    fun refresh() = action {
-        loadAccount()
+    // Showing the sign-in form for a session that could not be checked would make the person sign in again and start a second server session.
+    fun refresh() = action(CHECK_OFFLINE) {
+        try {
+            loadAccount()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val rejected = error is IdentityFailure && error.status == 401
+            mutableState.update { it.copy(signInUnchecked = !rejected && it.profile == null) }
+            throw error
+        }
+        mutableState.update { it.copy(signInUnchecked = false) }
         val zones = repository.timezones()
         mutableState.update { it.copy(timezones = zones) }
     }

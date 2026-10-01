@@ -44,6 +44,8 @@ async function signUp(page, email) {
   const code = await mailCode(email);
   await page.getByLabel('Verification code').fill(code);
   await page.getByLabel('Display name', { exact: true }).fill('Alex Morgan');
+  // These journeys compute times in Asia/Kolkata; sign-up now starts in the browser's zone (T54).
+  await page.getByLabel('Timezone', { exact: true }).selectOption('Asia/Kolkata');
   await page.getByLabel('New password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Verify and create account' }).click();
   await page.getByRole('heading', { name: 'Your account' }).waitFor();
@@ -2131,6 +2133,7 @@ test('documents: members find cited text and deletion removes it from search', {
     const documents = (await listed.json()).data;
     assert.equal(documents.length, 1);
     assert.equal(documents[0].name, fileName);
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/documents-live-desktop.png'), fullPage: true });
 
     await memberPage.goto(`${base}/app/search`);
     await memberPage.getByRole('heading', { name: 'Search', exact: true, level: 1 }).waitFor();
@@ -2146,6 +2149,7 @@ test('documents: members find cited text and deletion removes it from search', {
     const lastLine = Number(address.searchParams.get('end'));
     assert.ok(Number.isInteger(firstLine) && firstLine >= 1 && firstLine <= 3);
     assert.ok(Number.isInteger(lastLine) && lastLine >= 3 && lastLine <= documents[0].line_count);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/search-live-mobile.png'), fullPage: true });
     await result.click();
     await memberPage.getByRole('heading', { name: fileName, exact: true, level: 2 }).waitFor();
     await memberPage.locator('#L3[aria-current="location"]').waitFor();
@@ -2155,12 +2159,14 @@ test('documents: members find cited text and deletion removes it from search', {
     await memberPage.setViewportSize({ width: 320, height: 844 });
     await memberPage.evaluate(() => document.fonts.ready);
     assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/documents-viewer-live-320.png'), fullPage: false });
 
     await ownerPage.goto(address.href);
     await ownerPage.getByRole('heading', { name: fileName, exact: true, level: 2 }).waitFor();
     await ownerPage.getByRole('button', { name: 'Delete document', exact: true }).click();
     const confirmation = ownerPage.getByRole('dialog', { name: 'Delete document?', exact: true });
-    await confirmation.getByText(`Delete \u201c${fileName}\u201d from ${family.name}? Its text is removed for everyone and cannot be recovered.`, { exact: true }).waitFor();
+    await confirmation.getByText(`Delete \u201c${fileName}\u201d, added by Alex Morgan, from ${family.name}? Its text is removed for everyone and cannot be recovered.`, { exact: true }).waitFor();
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/documents-delete-live-desktop.png'), fullPage: false });
     await confirmation.getByRole('button', { name: 'Delete document', exact: true }).click();
     await ownerPage.getByText(`Deleted \u201c${fileName}\u201d.`, { exact: true }).waitFor();
     await ownerPage.getByText('No documents yet. Add a .txt, .md or .csv file.', { exact: true }).waitFor();
@@ -2169,8 +2175,11 @@ test('documents: members find cited text and deletion removes it from search', {
     await memberPage.getByRole('heading', { name: 'Search', exact: true, level: 1 }).waitFor();
     await memberPage.getByLabel('Search your Spaces', { exact: true }).fill(word);
     await memberPage.getByRole('button', { name: 'Search', exact: true }).click();
-    await memberPage.getByText('Nothing found in your Spaces. Messages, care records and reminders are not searched.', { exact: true }).waitFor();
+    await memberPage.getByText('Nothing found in your Spaces.', { exact: true }).waitFor();
     assert.equal(await memberPage.getByRole('link', { name: fileName, exact: true }).count(), 0);
+    await memberPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/search-live-320-200pct.png'), fullPage: true });
     await ownerPage.setViewportSize({ width: 320, height: 844 });
     await ownerPage.evaluate(() => document.fonts.ready);
     assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);

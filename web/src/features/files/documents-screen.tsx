@@ -50,6 +50,7 @@ export function DocumentsScreen({ initialSpaceId, initialDocumentId, initialLine
 
 function Documents({ user, initial }: { user: Account; initial: View }) {
   const queryClient = useQueryClient();
+  const spaceLabel = useId();
   const [view, setView] = useState<View>(initial);
   const [notice, setNotice] = useState<{ text: string; at: number } | null>(null);
   const [locked, setLocked] = useState(false);
@@ -81,7 +82,7 @@ function Documents({ user, initial }: { user: Account; initial: View }) {
     <main className={styles.main}>
       <header className={styles.header}>
         <h1>Documents</h1>
-        <p>Text files shared with the current members of a Space. People who join later do not see documents added before they joined.</p>
+        {!view.documentId && <p>Text files shared with the current members of a Space. People who join later do not see documents added before they joined.</p>}
       </header>
       {spaces.isPending && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading your Spaces</p>}
       {spaces.isError && <div className="message error" role="alert">{problemText(spaces.error, "Your Spaces could not load.")}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />Retry</button></div>}
@@ -92,8 +93,8 @@ function Documents({ user, initial }: { user: Account; initial: View }) {
           onDeleted={(message, spaceId) => { announce(message); queryClient.removeQueries({ queryKey: ["documents", user.id, spaceId] }); go({ spaceId }); }} />
         : space && <>
           <div className={styles.controls}>
-            <label className={styles.field}>Space
-              <select value={space.id} disabled={locked} onChange={event => { setNotice(null); go({ spaceId: event.target.value }); }}>
+            <label className={styles.field}><span id={spaceLabel}>Space</span>
+              <select aria-labelledby={spaceLabel} value={space.id} disabled={locked} onChange={event => { setNotice(null); go({ spaceId: event.target.value }); }}>
                 {spaceList.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </label>
@@ -285,7 +286,7 @@ function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
       })}
     </ol>
     {confirming && <ConfirmDialog title="Delete document?" locked={remove.isPending} onClose={() => setConfirming(false)}>
-      <p>Delete “{item.name}” from {item.space_name}? Its text is removed for everyone and cannot be recovered.</p>
+      <p>Delete “{item.name}”, added by {item.added_by_name || "a former member"}, from {item.space_name}? Its text is removed for everyone and cannot be recovered.</p>
       {remove.isError && <p className="message error" role="alert">{problemText(remove.error, "The document was not deleted.")}</p>}
       <div className={styles.dialogActions}>
         <button className="secondary-button" disabled={remove.isPending} onClick={() => setConfirming(false)}>Cancel</button>

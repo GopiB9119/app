@@ -54,9 +54,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,8 +73,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.community.platform.DesignTokens
 import com.community.platform.R
 import java.time.Instant
@@ -100,7 +104,8 @@ fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = nul
 }
 
 @Composable
-fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null, onOpenSearch: (() -> Unit)? = null) {
+fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null, onOpenSearch: (() -> Unit)? = null, secrets: SignInSecrets = viewModel()) {
+    SideEffect { if (state.profile != null) secrets.forget() }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -130,7 +135,11 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
                         if (state.profile != null && onOpenCommunity != null) OutlinedButton(onClick = onOpenCommunity, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-community")) { Icon(Icons.Default.AccountCircle, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.community_title)) }
                         if (state.profile != null && onOpenCare != null) OutlinedButton(onClick = onOpenCare, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-care")) { Icon(Icons.Default.Favorite, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.care_title)) }
                         if (state.profile != null && onOpenSearch != null) OutlinedButton(onClick = onOpenSearch, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-search")) { Icon(Icons.Default.Search, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.search_title)) }
-                        if (state.profile == null) AuthenticationBody(state, actions) else AccountBody(state, actions)
+                        when {
+                            state.profile != null -> AccountBody(state, actions)
+                            state.signInUnchecked -> UncheckedSignIn(state, actions)
+                            else -> AuthenticationBody(state, actions, secrets)
+                        }
                         Spacer(Modifier.height(16.dp))
                     }
                 }
@@ -140,13 +149,43 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
 }
 
 @Composable
-private fun AuthenticationBody(state: IdentityState, actions: IdentityActions) {
-    var email by remember(state.mode) { mutableStateOf("") }
-    var password by remember(state.mode, state.challengeEmail) { mutableStateOf("") }
-    var code by remember(state.mode, state.challengeEmail) { mutableStateOf("") }
-    var name by remember(state.mode) { mutableStateOf("") }
-    var timezone by remember(state.mode) { mutableStateOf("Asia/Kolkata") }
-    var showPassword by remember { mutableStateOf(false) }
+private fun UncheckedSignIn(state: IdentityState, actions: IdentityActions) {
+    Text(stringResource(R.string.sign_in_unchecked_title), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+    Text(stringResource(R.string.sign_in_unchecked_body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Button(onClick = actions.refresh, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("retry-sign-in"), shape = RoundedCornerShape(DesignTokens.ControlRadius)) {
+        if (state.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+        else Text(stringResource(R.string.try_again))
+    }
+}
+
+// Keeps the password and verification code across rotation in memory only, never in saved state.
+class SignInSecrets : ViewModel() {
+    private var current = SignInDraft(null)
+
+    internal fun draft(scope: Any): SignInDraft {
+        if (current.scope != scope) current = SignInDraft(scope)
+        return current
+    }
+
+    internal fun forget() {
+        if (current.scope != null) current = SignInDraft(null)
+    }
+}
+
+internal class SignInDraft(val scope: Any?) {
+    var password by mutableStateOf("")
+    var code by mutableStateOf("")
+}
+
+@Composable
+private fun AuthenticationBody(state: IdentityState, actions: IdentityActions, secrets: SignInSecrets) {
+    var email by rememberSaveable(state.mode) { mutableStateOf("") }
+    val draft = remember(secrets, state.mode, state.challengeEmail) { secrets.draft(state.mode to state.challengeEmail) }
+    var name by rememberSaveable(state.mode) { mutableStateOf("") }
+    var chosenTimezone by rememberSaveable(state.mode) { mutableStateOf<String?>(null) }
+    val suggestedTimezone = remember(state.timezones) { signUpTimezone(state.timezones) }
+    val timezone = chosenTimezone ?: suggestedTimezone
+    var showPassword by rememberSaveable { mutableStateOf(false) }
     val verifying = state.challengeEmail != null
     val title = when {
         verifying && state.mode == EntryMode.REGISTER -> R.string.complete_account
@@ -166,21 +205,21 @@ private fun AuthenticationBody(state: IdentityState, actions: IdentityActions) {
     if (!verifying) {
         OutlinedTextField(value = email, onValueChange = { email = it.take(254) }, label = { Text(stringResource(R.string.email_address)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), leadingIcon = { Icon(Icons.Default.Email, null) }, modifier = Modifier.fillMaxWidth().testTag("email"))
     } else {
-        OutlinedTextField(value = code, onValueChange = { code = it.filter(Char::isDigit).take(6) }, label = { Text(stringResource(R.string.verification_code)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag("code"))
+        OutlinedTextField(value = draft.code, onValueChange = { draft.code = it.filter(Char::isDigit).take(6) }, label = { Text(stringResource(R.string.verification_code)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag("code"))
         if (state.mode == EntryMode.REGISTER) {
             OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text(stringResource(R.string.display_name)) }, enabled = !state.busy, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("name"))
         }
     }
     if (state.mode == EntryMode.LOGIN || verifying) {
-        OutlinedTextField(value = password, onValueChange = { password = it.take(128) }, label = { Text(stringResource(if (state.mode == EntryMode.LOGIN) R.string.password else R.string.new_password)) }, singleLine = true, enabled = !state.busy, visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), supportingText = { if (state.mode != EntryMode.LOGIN) Text(stringResource(R.string.password_length)) }, modifier = Modifier.fillMaxWidth().testTag("password"))
+        OutlinedTextField(value = draft.password, onValueChange = { draft.password = it.take(128) }, label = { Text(stringResource(if (state.mode == EntryMode.LOGIN) R.string.password else R.string.new_password)) }, singleLine = true, enabled = !state.busy, visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), supportingText = { if (state.mode != EntryMode.LOGIN) Text(stringResource(R.string.password_length)) }, modifier = Modifier.fillMaxWidth().testTag("password"))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(showPassword, onCheckedChange = { showPassword = it }, enabled = !state.busy)
             Text(stringResource(R.string.show_password), style = MaterialTheme.typography.bodyMedium)
         }
     }
-    if (verifying && state.mode == EntryMode.REGISTER) TimezonePicker(timezone, state.timezones, !state.busy) { timezone = it }
+    if (verifying && state.mode == EntryMode.REGISTER) TimezonePicker(timezone, state.timezones, !state.busy) { chosenTimezone = it }
     Button(
-        onClick = { when { state.mode == EntryMode.LOGIN -> actions.login(email, password); verifying -> actions.verify(code, password, name, timezone); else -> actions.begin(email) } },
+        onClick = { when { state.mode == EntryMode.LOGIN -> actions.login(email, draft.password); verifying -> actions.verify(draft.code, draft.password, name, timezone); else -> actions.begin(email) } },
         enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("primary-action"), shape = RoundedCornerShape(6.dp),
     ) {
         if (state.busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)

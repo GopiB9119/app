@@ -2,6 +2,7 @@ import hmac
 import re
 import secrets
 import time
+import traceback
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -109,6 +110,40 @@ class BoundedBody:
         return await self.app(scope, replay, send)
 
 
+class ContainErrors:
+    """Answers an unexpected exception with the standard error, so it never leaves the application with its message."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        started = False
+
+        async def watched(message):
+            nonlocal started
+            started = started or message["type"] == "http.response.start"
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watched)
+        except Exception as error:
+            # The message can hold private data, so only the type and the code locations are written.
+            state = scope.setdefault("state", {})
+            state["failure"], state["error_code"] = type(error).__name__, "INTERNAL_ERROR"
+            emit(
+                "unexpected_error", request_id=state.get("request_id"), trace_id=state.get("trace_id"), failure=state["failure"],
+                at=[f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}" for frame in traceback.extract_tb(error.__traceback__)[-8:]],
+            )
+            if not started:
+                response = JSONResponse(
+                    {"error": {"code": "INTERNAL_ERROR", "message": "Something went wrong. Try again.", "details": {}}, "request_id": state.get("request_id")},
+                    status_code=500,
+                )
+                await response(scope, receive, send)
+
+
 def create_app(settings=None, clock=utcnow):
     settings = settings or Settings()
     engine, sessions = database(settings.database_url)
@@ -151,6 +186,7 @@ def create_app(settings=None, clock=utcnow):
     application.state.agents = AgentService(application.state.tasks, application.state.reminders)
     application.state.settings = settings
     application.state.metrics = Metrics()
+    application.add_middleware(ContainErrors)
     application.add_middleware(BoundedBody)
 
     @application.middleware("http")
@@ -158,10 +194,12 @@ def create_app(settings=None, clock=utcnow):
         started = time.perf_counter()
         request.state.request_id = str(uuid4())
         trace_id, parent_span_id = trace_context(request.headers.get("traceparent"))
+        request.state.trace_id = trace_id
         status, failure = 500, None
         try:
             response = await call_next(request)
             status = response.status_code
+            failure = getattr(request.state, "failure", None)
         except Exception as error:
             failure = type(error).__name__
             raise

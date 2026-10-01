@@ -10,10 +10,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
@@ -49,9 +52,10 @@ class IdentityScreenTest {
         verify: (String, String, String, String) -> Unit = { _, _, _, _ -> },
         save: (String, String, String) -> Unit = { _, _, _ -> },
         revoke: (SessionDto) -> Unit = {},
+        refresh: () -> Unit = {},
     ) = IdentityActions(
         mode = {}, begin = begin, login = { _, _ -> }, verify = verify, save = save,
-        revoke = revoke, revokeOthers = {}, logout = {}, refresh = {},
+        revoke = revoke, revokeOthers = {}, logout = {}, refresh = refresh,
     )
 
     @Test fun recoveryScreenEmitsExactProofAndClearsSecretsOnReturningToLogin() {
@@ -77,7 +81,8 @@ class IdentityScreenTest {
         compose.onNodeWithTag("password").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         compose.runOnIdle {
             assertEquals(listOf("native-ui@example.test"), requests)
-            assertEquals(listOf(listOf("123456", "Synthetic-native-45!", "", "Asia/Kolkata")), proofs)
+            // T50: the form starts in the device's timezone, no longer always Asia/Kolkata.
+            assertEquals(listOf(listOf("123456", "Synthetic-native-45!", "", signUpTimezone(state.timezones))), proofs)
         }
         capture("native-login-offline.png")
     }
@@ -129,6 +134,50 @@ class IdentityScreenTest {
         compose.onNodeWithText("No connection. Your changes are not confirmed.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("email").assertTextContains("native-ui@example.test")
         compose.onNodeWithText("Profile saved.").assertDoesNotExist()
+    }
+
+    @Test fun uncheckedSavedSignInOffersOnlyARetryAtLargeText() {
+        var refreshes = 0
+        val state = IdentityState(loading = false, signInUnchecked = true, error = "Can't reach the service. Check your connection, then try again.")
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
+                CommunityTheme { IdentityScreen(state, actions(refresh = { refreshes += 1 })) }
+            }
+        }
+        compose.onNodeWithText("Couldn't check your sign-in").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("You stay signed in on this device.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("email").assertDoesNotExist()
+        compose.onNodeWithTag("password").assertDoesNotExist()
+        compose.onNodeWithTag("primary-action").assertDoesNotExist()
+        compose.onNodeWithTag("retry-sign-in").performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        compose.runOnIdle { assertEquals(1, refreshes) }
+        capture("native-sign-in-unchecked-large-text.png")
+    }
+
+    @Test fun signUpKeepsTypedFieldsAcrossRecreationWithoutSavingSecrets() {
+        val restoration = StateRestorationTester(compose)
+        val state = IdentityState(loading = false, mode = EntryMode.REGISTER, challengeEmail = "native-ui@example.test")
+        var secrets by mutableStateOf(SignInSecrets())
+        val proofs = mutableListOf<List<String>>()
+        restoration.setContent {
+            CommunityTheme { IdentityScreen(state, actions(verify = { code, password, name, zone -> proofs.add(listOf(code, password, name, zone)) }), secrets = secrets) }
+        }
+        compose.onNodeWithTag("code").performTextInput("123456")
+        compose.onNodeWithTag("name").performTextInput("Alex Native")
+        compose.onNodeWithTag("password").performScrollTo().performTextInput("Synthetic-native-45!")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("name").assertTextContains("Alex Native")
+        compose.onNodeWithTag("code").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("123456")))
+        compose.onNodeWithTag("primary-action").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(listOf("123456", "Synthetic-native-45!", "Alex Native", signUpTimezone(state.timezones))), proofs) }
+
+        // A new process starts with empty memory: the name comes back from saved state, the code and password do not.
+        compose.runOnIdle { secrets = SignInSecrets() }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("name").assertTextContains("Alex Native")
+        compose.onNodeWithTag("code").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        compose.onNodeWithTag("password").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
     }
 
     private fun capture(name: String) {

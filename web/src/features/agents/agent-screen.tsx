@@ -110,11 +110,12 @@ function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
   const rows = [...new Map(runs.data?.pages.flatMap(page => page.data).map(run => [run.id, run] as const) ?? []).values()];
   return <>
     <form className={styles.composer} onSubmit={submit} noValidate>
-      <label className={styles.field} htmlFor={`${fieldId}-message`}>What do you want to do?
+      <div className={styles.field}>
+        <label htmlFor={`${fieldId}-message`}>What do you want to do?</label>
         <span className={styles.hint} id={`${fieldId}-hint`}>For example: add a task to buy milk tomorrow, or remind me to call the bank at 6 pm.</span>
         <textarea id={`${fieldId}-message`} rows={2} maxLength={500} value={text} aria-describedby={`${fieldId}-hint`}
           aria-invalid={!!problem} disabled={ask.isPending || (!!intent && ask.isError)} onChange={event => { setText(event.target.value); setProblem(""); }} />
-      </label>
+      </div>
       {problem && <p className="field-error" role="alert">{problem}</p>}
       {ask.isError && <p className="message error" role="alert">{problemText(ask.error, "The request could not be sent.")}</p>}
       <div className={styles.actions}>

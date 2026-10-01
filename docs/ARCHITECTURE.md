@@ -1,6 +1,6 @@
 # Architecture
 
-How the system is built today, and where the intended design is written. As built at migration 0022 on 2026-10-01. Labels follow the [Product Understanding](PRODUCT_UNDERSTANDING.md#labels).
+How the system is built today, and where the intended design is written. As built at migration 0024 on 2026-10-01. Labels follow the [Product Understanding](PRODUCT_UNDERSTANDING.md#labels).
 
 This is level 4 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). Only the CONFIRMED rules below bind. Everything else here describes the current implementation, which is evidence, not the intended architecture ([Constitution Article 6](PRODUCT_CONSTITUTION.md#article-6-code-and-tests-are-evidence)). The intended design is PROPOSED in the Chapter 10 contract and the ADRs until confirmed.
 
@@ -59,13 +59,14 @@ Each module in `backend/app/modules/` owns its tables and uses the same layout: 
 | Sessions | Opaque tokens, stored as digests. The web keeps the token in an HttpOnly, SameSite=Strict cookie; Android keeps it in Keystore-protected storage. Messaging, community and event changes check the session again just before commit, because a lock wait can outlast it. |
 | Client retries | Web and Android keep an unconfirmed change's retry key in memory only; closing or reloading the app loses it. Web chat keeps unconfirmed sends for the whole signed-in page session, across conversations. |
 | Live updates | None. Open chat screens poll every 5 seconds. |
+| Documents and search | Text documents are stored in PostgreSQL, split into passages with line numbers, and indexed by a generated full-text column (`simple` configuration, GIN index); there is no object storage or vector index yet. Search inside your Spaces runs one query per kind (documents, tasks, events) with the person's membership, history rule and task grants joined inside it ([files](../backend/app/modules/files/README.md), [discovery](../backend/app/modules/discovery/README.md); [DEC-015](DECISIONS.md#accepted-decisions)). Request bodies are limited to 16 KB, except adding a document (2.2 MB) and writing a post (64 KB), on the API and the web proxy alike. |
 | Telemetry | The API writes one JSON line per request: request and W3C trace IDs, method, route template, status, duration and error code, never paths, queries, headers, bodies or account data (`backend/app/telemetry.py`). The web proxy starts each trace and writes a matching line. `/metrics` gives request counts and durations by route template in the Prometheus text format, only with the `COMMUNITY_METRICS_KEY` bearer key. It also shows, for sign-in mail, reminders and exports, how many items the worker could take now, how long the oldest has waited and how many ended in failure, read from the database at each scrape (`backend/app/modules/platform/work.py`). Workers write one JSON line per cycle with counts only. |
 
 ## Not Built Yet
 
-- **PROPOSED** Redis for temporary data, object storage for files, a search index and live updates over WebSocket (Chapter 6, 7, 10 and 14 contracts).
+- **PROPOSED** Redis for temporary data, object storage for files, a vector index and live updates over WebSocket (Chapter 6, 7, 10 and 14 contracts). Text documents and their full-text index live in PostgreSQL today.
 - **PROPOSED** An outbox reader for notifications, live updates and moderation work.
-- **CONFIRMED** requirement, partly built: request logs, trace IDs and metrics exist (T09). Not built: a log and metrics collector, dashboards, alerts (their targets wait for Q19), worker and database metrics, and traces that continue into workers (R12).
+- **CONFIRMED** requirement, partly built: request logs, trace IDs and metrics exist (T09), and so do the background work metrics (T32). Not built: a log and metrics collector, dashboards, alerts (their targets wait for Q19), database metrics, and traces that continue into workers (R12).
 - **PROPOSED** Continuous integration, staging and production environments, a secrets manager, and backups with agreed recovery targets (Chapter 10 contract). Only a local restore drill exists.
 - **TBD** Cloud provider, regions and queue technology.
 

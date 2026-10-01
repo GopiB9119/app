@@ -2,6 +2,7 @@ package com.community.platform.feature.identity
 
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
@@ -178,6 +179,39 @@ class AccountJourneyTest {
         waitForText("Your account")
         waitForEnabled(hasTestTag("profile-name"))
         compose.onNodeWithTag("profile-name").assertTextContains("Alex Native Updated")
+    }
+
+    @Test fun nativeSearchOpensACitedDocumentAndDeletesItWithTheRealBackend() {
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "A disposable emulator is required." }
+        check(InstrumentationRegistry.getArguments().getString("community_local_integration") == "true") { "Explicit local integration authorization is required." }
+        val owner = account("Documents Owner")
+        val member = account("Documents Member")
+        val spaceId = postApi("/v1/spaces", payload("name" to "Documents family", "space_type" to "family"), owner.token, UUID.randomUUID().toString())["id"].asString
+        val invitation = postApi("/v1/spaces/$spaceId/invitations", payload("recipient_account_id" to member.id), owner.token, UUID.randomUUID().toString())
+        postApi("/v1/invitations/${invitation["id"].asString}/accept", JsonObject(), member.token)
+        val word = "lantern${System.currentTimeMillis()}"
+        val cited = "Bring $word blankets <b>&amp;</b> fruit."
+        val documentId = postApi("/v1/spaces/$spaceId/documents", payload("name" to "picnic.md", "content" to "# Picnic\nMeeting notes\n$cited\nPack water.\n"),
+            member.token, UUID.randomUUID().toString())["id"].asString
+
+        signIn(member)
+        compose.onNodeWithTag("account-search").performScrollTo().performClick()
+        waitForEnabled(hasTestTag("search-query"))
+        compose.onNodeWithTag("search-query").performTextInput(word)
+        compose.onNodeWithTag("search-submit").performScrollTo().performClick()
+        waitForText("picnic.md")
+        compose.onNodeWithTag("search-document-0").performScrollTo().performClick()
+        compose.waitUntil(20000) { compose.onAllNodes(hasTestTag("document-line-3")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("document-line-3").assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+        compose.onNodeWithText(cited).assertIsDisplayed()
+        compose.onNodeWithTag("document-viewer").performScrollToNode(hasTestTag("document-delete"))
+        compose.onNodeWithTag("document-delete").performClick()
+        compose.onNodeWithTag("document-delete-confirm").performClick()
+        waitForText("Document deleted.")
+        val gone = http.newCall(Request.Builder().url("http://10.0.2.2:8000/v1/documents/$documentId").header("Authorization", "Bearer ${owner.token}").build())
+            .execute().use { it.code }
+        assertEquals(404, gone)
+        assertEquals(0, getJson("http://10.0.2.2:8000/v1/search?q=$word", owner.token).getAsJsonObject("data").getAsJsonArray("documents").size())
     }
 
     private data class TestAccount(val email: String, val password: String, val id: String, val token: String)

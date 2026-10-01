@@ -28,8 +28,10 @@ export function sessionLost(error: unknown) {
 }
 
 export function problemText(error: unknown, fallback: string) {
-  if (isUnknown(error)) return `${error instanceof Error ? error.message : fallback} The change is not confirmed.`;
-  return error instanceof Error ? error.message : fallback;
+  const text = error instanceof Error ? error.message : fallback;
+  // The offline and service-unavailable messages already say the change is not confirmed; never say it twice.
+  if (isUnknown(error) && !/not confirmed\.$/.test(text)) return `${text} The change is not confirmed.`;
+  return text;
 }
 
 type Section = "home" | "discover" | "pages" | "safety";

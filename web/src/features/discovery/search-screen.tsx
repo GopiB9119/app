@@ -105,8 +105,8 @@ function SearchPage({ user, initial }: { user: Account; initial: Submitted }) {
         </label>
         <p className={styles.hint} id={`${fieldId}-hint`}>Every word must match, from the start of a word. Messages, care records and reminders are not searched.</p>
         {problem && <p id={`${fieldId}-problem`} className="field-error" role="alert">{problem}</p>}
-        <label className={styles.field} htmlFor={`${fieldId}-space`}>Space
-          <select id={`${fieldId}-space`} value={filter} disabled={spaces.isPending} onChange={event => setFilter(event.target.value)}>
+        <label className={styles.field} htmlFor={`${fieldId}-space`}><span id={`${fieldId}-space-label`}>Space</span>
+          <select id={`${fieldId}-space`} aria-labelledby={`${fieldId}-space-label`} value={filter} disabled={spaces.isPending} onChange={event => setFilter(event.target.value)}>
             <option value="">All my Spaces</option>
             {spaceList.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
           </select>
@@ -122,7 +122,7 @@ function SearchPage({ user, initial }: { user: Account; initial: Submitted }) {
       {found && !results.isFetching && <section aria-labelledby={`${fieldId}-results`} className={styles.results}>
         <h2 id={`${fieldId}-results`} ref={resultsRef} tabIndex={-1}>Results for “{submitted?.q}”</h2>
         {empty
-          ? <p className={styles.empty}>Nothing found in your Spaces. Messages, care records and reminders are not searched.</p>
+          ? <p className={styles.empty}>Nothing found in your Spaces.</p>
           : <>
             <Group title="Documents" count={found.documents.length} more={found.more_documents}>
               {found.documents.map((hit, index) => <li key={`${hit.document_id}-${index}`} className={styles.card}>

@@ -72,7 +72,7 @@ class DocumentScreenTest {
         compose.setContent { CommunityTheme { DocumentScreen(state, actions) } }
         compose.onNodeWithTag("document-choose").performClick()
         compose.onNodeWithTag("document-chosen-name").assertTextContains("notes.md")
-        compose.onNodeWithTag("document-chosen-size").assertTextContains("KB")
+        compose.onNodeWithTag("document-chosen-size").assertTextContains("KB", substring = true)
         compose.runOnIdle { assertTrue(attempts.isEmpty()) }
         compose.onNodeWithTag("document-add").performClick()
         compose.onNodeWithTag("document-choose").assertIsNotEnabled()
@@ -94,7 +94,7 @@ class DocumentScreenTest {
         compose.setContent { CommunityTheme { DocumentScreen(state, actions) } }
         compose.onNodeWithTag("document-viewer").performScrollToNode(hasTestTag("document-delete"))
         compose.onNodeWithTag("document-delete").performClick()
-        compose.onNodeWithText("Delete \u201cnotes.md\u201d from Morgan family? Its text is removed for everyone and cannot be recovered.").assertIsDisplayed()
+        compose.onNodeWithText("Delete \u201cnotes.md\u201d, added by Sam Example, from Morgan family? Its text is removed for everyone and cannot be recovered.").assertIsDisplayed()
         compose.onNodeWithTag("document-delete-dialog-cancel").performClick()
         compose.runOnIdle { assertTrue(deleted.isEmpty()) }
         compose.onNodeWithTag("document-delete").performClick()

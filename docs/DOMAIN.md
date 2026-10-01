@@ -816,29 +816,29 @@ Permission rules as built:
 
 | Field | Contract |
 | --- | --- |
-| Entity | A file in a private Space. Not built. |
+| Entity | A text document added to a private Space. Built in a first form by [DEC-015](DECISIONS.md#accepted-decisions) (provisional, made under the owner's delegation in DEC-016). |
 | Purpose | **CONFIRMED** Private Spaces contain documents (R5); documents and other authorized data can be ingested, parsed, chunked, indexed and retrieved (R10), within Space, membership, permission and privacy boundaries (R11). |
-| Owner | Module `files` (reserved, no code). |
-| Scope | **TBD** (Q6). |
-| Lifecycle | **PROPOSED** uploaded, virus-scanned and quarantined, processed, then ready; each version is kept unchanged; deleting a file deletes everything derived from it (C14-D01, C14-D02 and C14-D04, all PROPOSED). **TBD** (T14). |
-| States | **PROPOSED** a processing state set in the Chapter 14 contract. **TBD**. |
-| Relationships | **PROPOSED** versions, extracted text, chunks and index entries, each traceable to its source version and page (C14-D07 PROPOSED). |
-| Permissions | **PROPOSED** retrieval is authorized for the current reader before searching and again before any model sees results (C14-D09 PROPOSED). **TBD**. |
+| Owner | Module `files` (`backend/app/modules/files`); search in module `discovery`. |
+| Scope | One Space. **PROVISIONAL** (DEC-015): seen by the Space's current members who were already members when it was added, the history rule of chat and events (D3 unchanged). Q6 (other shared resources) stays open. |
+| Lifecycle | **PROVISIONAL** added (validated, split into passages and indexed in the same transaction), then deleted. Never changes after it is added; a corrected copy is a new document. **PROPOSED** for other formats: uploaded, virus-scanned and quarantined, processed, then ready (C14-D01, C14-D02 and C14-D04). |
+| States | `active`, `deleted`. |
+| Relationships | Space; the account that added it, with its admission; passages (`space_document_chunks`), each with its line numbers and character offsets; Space audit records. |
+| Permissions | Any current member adds; the person who added it under the same admission, or the Space owner, deletes; every read, list and search checks current active membership of an active Space and the history rule (C14-D09 applied without a model). |
 | Privacy classification | Private (C11-C03); Sensitive (C11-C04) for personal documents. |
-| Events | **TBD**. |
-| Commands | **TBD** (T14). |
-| Queries | **TBD** (T15). |
-| APIs | None. |
-| Persistence | None. **PROPOSED** object storage for files, and PostgreSQL full-text search plus pgvector for retrieval (P17). |
-| Retention | **TBD** (C14-D13 OPEN). |
-| Audit requirements | **TBD**. |
-| Agent access | **TBD** (D4; Q8). **PROPOSED** answers cite the exact authorized source they used (C14-D12 PROPOSED). |
-| Allowed agent actions | **TBD** (D4). |
-| External side effects | **PROPOSED** embedding and model providers (C14-D08 OPEN; Q17); not approved (S10). |
-| Validation rules | **TBD** (C14-D03 OPEN on supported formats). |
-| Invariants | **PROPOSED** document text never becomes instructions and never grants tools ([AI policy](AI_POLICY.md)). |
-| Failure modes | **TBD**. |
-| Dependencies | Space, Membership, Permission; Q6, Q8, Q17; T14 and T15. |
+| Events | Space audit and outbox: `document.added`, `document.deleted`. |
+| Commands | Add (`POST /v1/spaces/{space_id}/documents`, `Idempotency-Key` required); delete (`POST /v1/documents/{document_id}/delete`). |
+| Queries | List (`GET /v1/spaces/{space_id}/documents`, newest first, bound cursor); read with text (`GET /v1/documents/{document_id}`); search inside your Spaces (`GET /v1/search`), which also covers tasks and events. |
+| APIs | The five above, all requiring sign-in. |
+| Persistence | PostgreSQL `space_documents` and `space_document_chunks` (text plus a generated `simple` full-text vector with a GIN index), migration `0024`. No object storage or embeddings (P17 PROPOSED; Q17). |
+| Retention | Kept until deleted. Deletion removes the name, type, size, line count, digest, text and passages at once and replaces the creation fingerprint; the row keeps who added and who deleted it and when. Backups follow the database (C14-D13 OPEN). |
+| Audit requirements | A Space audit record for each add and delete, without content. |
+| Agent access | **TBD** (D4). Search returns cited passages the agent could use; not connected. **PROPOSED** answers cite the exact authorized source they used (C14-D12). |
+| Allowed agent actions | None yet. |
+| External side effects | None. Embedding and model providers not approved (C14-D08 OPEN; Q17; S10). |
+| Validation rules | `.txt`, `.md`, `.markdown`, `.csv`; valid UTF-8; no control characters except tab and line feed, no text-direction overrides or isolates; 1 byte to 512 KB after line breaks become LF; name 1–120 characters without folders; 200 documents and 20 MB per Space. Other formats wait for a scanning decision (C14-D03 answered provisionally for text only). |
+| Invariants | A deleted document never appears again in a list, read or search. Search never returns an item the reader cannot open now. **PROPOSED** document text never becomes instructions and never grants tools ([AI policy](AI_POLICY.md)). |
+| Failure modes | Unsupported type, invalid text, empty or too large: 422. Limit reached: 409. A retry with the same key returns the original, or only that it was deleted; a changed retry is 409 `IDEMPOTENCY_CONFLICT`. No access: 404, the same as missing. |
+| Dependencies | Space, Membership, Task grants, Event; DEC-015; Q6, Q17. |
 
 ### 27. Memory
 
@@ -1094,16 +1094,18 @@ Each backend module in `backend/app/modules/` owns its tables. Web features live
 | spaces | spaces, space_memberships, space_invitations, space_join_requests, space_ownership_transfers, space_membership_commands, space_settings_commands, space_audit_events | Yes | Yes |
 | planning | tasks, task_access, task_checklist_items, task_commands, task_audit_events | Yes | Yes |
 | scheduling | reminders, reminder_events, reminder_requests, reminder_request_events, reminder_series, reminder_series_events, reminder_series_commands | Yes | Yes |
-| notifications | notification_preferences, in_app_notifications | Yes | Yes |
+| notifications | notification_preferences, in_app_notifications; and from the alerts work, waiting for the owner to keep or revert it ([X2](TASKS.md#work-outside-the-approved-scope), conflict C10): alert_settings, alert_dismissals, event_alerts, care_dose_alerts, reminder_backups | Yes | Yes |
 | messaging | conversations, conversation_messages, conversation_read_states | Yes | Yes |
 | community | public_pages, public_page_follows, public_posts, public_post_comments, public_post_reactions, public_saved_posts, content_reports, account_blocks, community_audit_events | Yes | Yes |
 | events | space_events, space_event_responses | Yes | Yes |
 | care | care_instructions, care_dose_reports, care_commands, care_audit_events | Yes; kept by [DEC-007](DECISIONS.md#accepted-decisions), not an approved requirement ([TASKS X1](TASKS.md#work-outside-the-approved-scope); Q12) | Yes; kept by DEC-007 (X1) |
-| agents | None. Models for runs, approvals, tool calls and memories exist in code, with no migration. | No | No |
+| agents | agent_runs, agent_run_events, agent_approvals, agent_tool_calls, agent_memories (migration `0023`; **PROVISIONAL**, [DEC-012](DECISIONS.md#accepted-decisions), C11) | Written but not linked (T34) | No (T35) |
+| files | space_documents, space_document_chunks (migration `0024`; **PROVISIONAL**, [DEC-015](DECISIONS.md#accepted-decisions), made under DEC-016) | Yes | Yes |
 | platform | None (local restore drill helper) | — | — |
-| discovery, files, integrations, realtime, safety | None; reserved folders | No | No |
+| discovery | None of its own: search inside your Spaces (`GET /v1/search`) reads tasks, events and documents (DEC-015) | Yes | Yes |
+| integrations, realtime, safety | None; reserved folders | No | No |
 
-That is 47 tables in total at migration `0019`. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
+On 2026-10-01 the code defines 60 tables: 53 through migration `0022`, the 5 agent tables in `0023` and the 2 document tables in `0024`. `backend/tests/test_migrations.py` checks that the migrations create exactly the tables the code defines. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
 
 ## Domain Invariants
 
