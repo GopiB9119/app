@@ -1001,7 +1001,7 @@ Builds [T59](TASKS.md#defects-that-break-approved-requirements), audit finding W
 | After the fix | `identity-ui` **9 passed**, `reminder-ui` **14 passed**, the new `account-ui` **1 passed**; all of `tests/unit` **59 passed**, 0 failed. The web type check passes. |
 | Live journeys | `desktop:` (sign-up and the account's timezone), `reminders:` and `repeating reminders:` passed. `reminder requests:` failed once in that run, at 36.8 s, and passed when run again alone; the first failure's detail was not captured. |
 
-**Boundary.** The audit found this on the web (W12); the Android screens were not checked for the same gap here.
+**Boundary.** The audit found this on the web (W12). On Android the timezone list loads with the rest of the screen, so a failure fails that whole refresh with its error message; it is not silent there, and this task leaves it as it is.
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.
