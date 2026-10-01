@@ -76,6 +76,28 @@ class TaskRepositoryTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { calendar.entries(accountId, spaceId, month, "Asia/Kolkata", "same") } }
     }
 
+    @Test fun calendarAcceptsPlannedRepeatingTimesInServerOrderOnly(): Unit = runBlocking {
+        val seriesId = "5b0a7e0c-2f55-4b5e-9d0e-7b1d6f3c2a11"
+        val due = CalendarEntryDto(taskId, "task", taskId, spaceId, "Due task", "2026-09-21", null, null, "open", false)
+        val stored = CalendarEntryDto("81a09cbf-901e-470c-a905-27d565be91ae", "reminder", taskId, spaceId, "Water plants", "2026-09-21", "2026-09-21T02:30:00Z", "Asia/Kolkata", "scheduled", false, seriesId)
+        val planned = CalendarEntryDto("0e0f5a5c-7a4e-5f59-9d8c-3f1f8f0b6a21", "planned", taskId, spaceId, "Water plants", "2026-09-21", "2026-09-21T03:00:00Z", "Asia/Kolkata", "planned", false, seriesId)
+        var entries = listOf(due, stored, planned)
+        val api = object : CalendarApi {
+            override suspend fun entries(authorization: String, spaceId: String, startDate: String, endDate: String, timezone: String, limit: Int, cursor: String?) =
+                Response.success(EnvelopeDto(data = entries, error = null, pagination = PaginationDto(null, false)))
+        }
+        val calendar = CalendarRepository(api, identity)
+        val month = YearMonth.of(2026, 9)
+        assertEquals(listOf("task", "reminder", "planned"), calendar.entries(accountId, spaceId, month, "UTC").items.map { it.kind })
+        entries = listOf(due, planned.copy(scheduledAt = "2026-09-21T02:00:00Z"), stored)
+        assertEquals(listOf("task", "planned", "reminder"), calendar.entries(accountId, spaceId, month, "UTC").items.map { it.kind })
+        for (invalid in listOf(listOf(planned, due), listOf(planned.copy(seriesId = null)), listOf(planned.copy(status = "scheduled")),
+            listOf(planned.copy(seriesId = "not-a-series")), listOf(due.copy(seriesId = seriesId)), listOf(planned.copy(kind = "event")))) {
+            entries = invalid
+            assertThrows(IdentityFailure::class.java) { runBlocking { calendar.entries(accountId, spaceId, month, "UTC") } }
+        }
+    }
+
     @Test fun calendarRetrofitEncodesScopeWithoutMutationOrForeignAccountAccess() = runBlocking {
         var captured: Request? = null
         val client = IdentityModule.http().newBuilder().addInterceptor { chain ->

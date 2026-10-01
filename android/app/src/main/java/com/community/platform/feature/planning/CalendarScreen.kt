@@ -139,12 +139,12 @@ fun CalendarScreen(state: CalendarState, actions: CalendarActions, onBack: () ->
                             Text(LocalDate.parse(entry.date).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)), style = MaterialTheme.typography.labelLarge)
                             Text(entry.title, style = MaterialTheme.typography.titleMedium)
                             Text(if (entry.kind == "task") stringResource(R.string.calendar_due_date) else DateTimeFormatter.ofPattern("HH:mm O").format(Instant.parse(entry.scheduledAt).atZone(ZoneId.of(state.timezone))), style = MaterialTheme.typography.bodyMedium)
-                            Text(if (entry.status == "available") stringResource(R.string.calendar_in_inbox) else entry.status.replace('_', ' '), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (entry.timezone != null) Text(stringResource(R.string.calendar_scheduled_zone, entry.timezone), style = MaterialTheme.typography.bodySmall)
+                            Text(when (entry.status) { "available" -> stringResource(R.string.calendar_in_inbox); "planned" -> stringResource(R.string.calendar_planned); else -> entry.status.replace('_', ' ') }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (entry.timezone != null) Text(stringResource(when { entry.kind == "event" -> R.string.calendar_event_zone; entry.seriesId != null -> R.string.calendar_repeating_zone; else -> R.string.calendar_scheduled_zone }, entry.timezone), style = MaterialTheme.typography.bodySmall)
                             if (entry.sourceChanged) Text(stringResource(R.string.calendar_source_changed), color = MaterialTheme.colorScheme.error)
                             TextButton(onClick = { onOpenSource(entry) }) {
-                                Icon(if (entry.kind == "task") Icons.AutoMirrored.Filled.List else Icons.Default.Notifications, null)
-                                Text(stringResource(if (entry.kind == "task") R.string.calendar_open_tasks else R.string.calendar_open_reminders), Modifier.padding(start = 8.dp))
+                                Icon(when (entry.kind) { "task" -> Icons.AutoMirrored.Filled.List; "event" -> Icons.Default.DateRange; else -> Icons.Default.Notifications }, null)
+                                Text(stringResource(when (entry.kind) { "task" -> R.string.calendar_open_tasks; "event" -> R.string.calendar_open_events; else -> R.string.calendar_open_reminders }), Modifier.padding(start = 8.dp))
                             }
                             HorizontalDivider()
                         }

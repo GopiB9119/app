@@ -1,6 +1,24 @@
 # openapi
 
-[openapi.json](openapi.json) is generated from the current local FastAPI application. It includes identity operations, three private family Space operations, six in-app invitation operations, six family task operations, nine one-time self-reminder/inbox/preference operations and seven recipient-approved request operations, not the full planned API. These private domain operations declare account-session bearer authentication; the browser uses its protected BFF instead of exposing tokens to JavaScript. Task due dates remain calendar dates and do not themselves schedule notifications. Personal reminder activation requires the recipient's exact review; a manager's proposal alone creates no scheduled work. Inbox read and acknowledgment are separate. Public views omit internal request digests/keys and admission IDs; only the recipient receives an accepted proposal's private reminder ID. See the [reminder contract boundary](../../docs/runbooks/SELF_REMINDERS.md).
+[openapi.json](openapi.json) is generated from the current local FastAPI application. On 2026-10-01 it lists 144 operations on 119 paths, at migration `0022`, including the 9 group directory, visibility and join request operations. It contains only built operations, not the full planned API.
+
+| Group | Operations |
+| --- | --- |
+| Account: registration, sign-in, recovery, profile, sessions, security activity, time zones and personal data export (untagged) | 18 |
+| Spaces: create, list, read, settings, members, leave, ownership transfer and sent invitations | 16 |
+| Invitations: inbox, accept and decline | 3 |
+| Tasks, assignees and checklists | 8 |
+| Calendar | 1 |
+| Reminders | 4 |
+| Repeating reminders: preview, create, list, read, pause, resume, skip and cancel ([DEC-010](../../docs/DECISIONS.md#accepted-decisions)) | 8 |
+| Reminder requests | 7 |
+| Notifications and preferences, including snooze | 6 |
+| Messaging | 7 |
+| Public community | 29 |
+| Events | 6 |
+| Care (not an approved requirement; see [TASKS X1](../../docs/TASKS.md#work-outside-the-approved-scope)) | 6 |
+
+Protected operations declare account-session bearer authentication, including the 12 account and export operations ([TASKS T08](../../docs/TASKS.md#defects-that-break-approved-requirements)). Only registration, email verification, sign-in, recovery, password reset and the time-zone list declare none. The browser reaches the API through its protected same-origin proxy instead of holding tokens. Public page and post reads also work signed out. Views omit internal request keys, digests and admission IDs.
 
 Regenerate from `create_app().openapi()` after route/schema changes. Do not edit generated schema fields independently of the application. Local implementation metadata is not approval of the proposed production ADRs or future operation inventory.
 

@@ -196,6 +196,112 @@ class ReminderRepositoryTest {
         assertTrue(authorization!!.startsWith("Bearer "))
     }
 
+    @Test fun seriesPreviewMustEchoTheRuleForTheCurrentAccount(): Unit = runBlocking {
+        fixture.offerSeries()
+        assertEquals(7, fixture.repository.previewSeries(fixture.accountId, fixture.rule).occurrenceCount)
+        val preview = fixture.seriesPreview
+        for (invalid in listOf(preview.copy(localTime = "09:00"), preview.copy(clockChangePolicy = "skip"), preview.copy(recipient = ReminderRecipientDto(fixture.otherId, "Sam")),
+            preview.copy(occurrences = listOf(preview.occurrences[0].copy(utcOffsetMinutes = 0))), preview.copy(occurrences = preview.occurrences.reversed()),
+            preview.copy(occurrences = listOf(preview.occurrences[0].copy(reminderId = fixture.reminderId))), preview.copy(channel = "email"))) {
+            fixture.api.seriesPreviewValue = invalid
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.previewSeries(fixture.accountId, fixture.rule) } }
+        }
+        val calls = fixture.api.calls
+        for (rule in listOf(fixture.rule.copy(weekdays = listOf("mon")), fixture.rule.copy(frequency = "weekly", repeatEvery = 5, weekdays = listOf("mon")),
+            fixture.rule.copy(frequency = "weekly", weekdays = listOf("tue", "mon")), fixture.rule.copy(endDate = "2027-11-02"), fixture.rule.copy(localTime = "8:00"))) {
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.previewSeries(fixture.accountId, rule) } }
+        }
+        assertEquals(calls, fixture.api.calls)
+    }
+
+    @Test fun seriesSaveRetryKeepsItsKeyAndTokenAndChecksTheSavedRule(): Unit = runBlocking {
+        fixture.offerSeries()
+        val intent = SeriesCreateIntent(fixture.accountId, UUID.randomUUID().toString(), fixture.seriesPreview.previewToken, fixture.rule)
+        fixture.api.failure = 503
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.saveSeries(intent) } }
+        fixture.api.failure = 0
+        assertEquals(fixture.seriesId, fixture.repository.saveSeries(intent).id)
+        assertEquals(listOf(intent.requestKey, intent.requestKey), fixture.api.seriesKeys)
+        assertEquals(listOf(intent.previewToken, intent.previewToken), fixture.api.seriesTokens)
+        fixture.api.seriesValue = fixture.series.copy(localTime = "09:00", nextOccurrence = null, status = "ended")
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.saveSeries(intent) } }
+    }
+
+    @Test fun seriesListRejectsInconsistentStatesAndForeignTasks(): Unit = runBlocking {
+        fixture.offerSeries()
+        assertEquals(fixture.seriesId, fixture.repository.series(fixture.accountId, fixture.taskId).items.single().id)
+        val series = fixture.series
+        for (invalid in listOf(series.copy(status = "paused"), series.copy(status = "paused", reason = "by_person"), series.copy(reason = "by_person"),
+            series.copy(nextOccurrence = series.nextOccurrence!!.copy(reminderId = null)), series.copy(taskId = fixture.spaceId), series.copy(etag = ""), series.copy(repeatEvery = 31))) {
+            fixture.api.seriesItems = listOf(invalid)
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.series(fixture.accountId, fixture.taskId) } }
+        }
+        fixture.api.seriesItems = listOf(series.copy(status = "paused", reason = "task_changed", nextOccurrence = null))
+        assertEquals("paused", fixture.repository.series(fixture.accountId).items.single().status)
+    }
+
+    @Test fun seriesCommandsSendTheReviewedEtagAndRequireTheConfirmedState(): Unit = runBlocking {
+        fixture.offerSeries()
+        val intent = SeriesCommandIntent(fixture.accountId, fixture.series, SeriesOperation.PAUSE, UUID.randomUUID().toString())
+        assertEquals("paused", fixture.repository.commandSeries(intent).status)
+        assertEquals(listOf("pause|${intent.requestKey}|\"series-1\"|${fixture.seriesId}"), fixture.api.seriesCommands)
+        fixture.api.seriesResult = fixture.series
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.commandSeries(intent) } }
+        fixture.api.seriesResult = fixture.series.copy(status = "ended", nextOccurrence = null)
+        assertEquals("ended", fixture.repository.commandSeries(intent.copy(operation = SeriesOperation.SKIP)).status)
+    }
+
+    @Test fun snoozeSendsOnlyAnOfferedDurationAndMustCloseFurtherSnoozing(): Unit = runBlocking {
+        fixture.offerSnooze()
+        val item = fixture.repository.inbox(fixture.accountId).items.single()
+        assertTrue(item.canSnooze)
+        val calls = fixture.api.calls
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.snooze(SnoozeIntent(fixture.accountId, item, 15, UUID.randomUUID().toString())) } }
+        assertEquals(calls, fixture.api.calls)
+        val intent = SnoozeIntent(fixture.accountId, item, 10, UUID.randomUUID().toString())
+        assertEquals("2026-11-01T06:42:00Z", fixture.repository.snooze(intent).snoozedUntil)
+        assertEquals(listOf("${intent.requestKey}|10"), fixture.api.snoozes)
+        fixture.api.snoozeValue = item
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.snooze(intent) } }
+        fixture.api.notificationValue = item.copy(snoozedUntil = "2026-11-01T06:42:00Z")
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.inbox(fixture.accountId) } }
+    }
+
+    @Test fun remindersAcceptOccurrencesAndFollowUpsButRejectMixedKinds(): Unit = runBlocking {
+        val occurrence = fixture.reminder.copy(seriesId = fixture.seriesId, occurrenceDate = "2026-11-01")
+        val followUp = fixture.reminder.copy(id = fixture.notificationId, seriesId = fixture.seriesId, followUpOf = fixture.reminderId, snoozeCount = 1)
+        for (valid in listOf(occurrence, followUp, fixture.reminder.copy(followUpOf = fixture.reminderId, snoozeCount = 3))) {
+            fixture.api.reminderValue = valid
+            assertEquals(valid, fixture.repository.reminders(fixture.accountId).items.single())
+        }
+        assertTrue(occurrence.seriesOccurrence && !followUp.seriesOccurrence)
+        for (invalid in listOf(occurrence.copy(occurrenceDate = null), followUp.copy(snoozeCount = 0), fixture.reminder.copy(snoozeCount = 1),
+            followUp.copy(occurrenceDate = "2026-11-01"), followUp.copy(snoozeCount = 4), occurrence.copy(seriesId = "series"))) {
+            fixture.api.reminderValue = invalid
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.reminders(fixture.accountId) } }
+        }
+    }
+
+    @Test fun actualRetrofitSeriesCommandUsesTheRouteEtagAndIdempotencyKey(): Unit = runBlocking {
+        var route = ""
+        var payload = ""
+        var headers = emptyList<String?>()
+        val client = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val buffer = Buffer(); chain.request().body!!.writeTo(buffer)
+            payload = buffer.readUtf8(); route = chain.request().url.encodedPath
+            headers = listOf(chain.request().header("If-Match"), chain.request().header("Idempotency-Key"))
+            val paused = fixture.series.copy(status = "paused", reason = "by_person", nextOccurrence = null, version = "2", etag = "\"series-2\"")
+            okhttp3.Response.Builder().request(chain.request()).code(200).message("Synthetic").protocol(Protocol.HTTP_1_1)
+                .body(Gson().toJson(EnvelopeDto(paused, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val repository = ReminderRepository(IdentityModule.reminders(client, Gson()), fixture.accounts)
+        val intent = SeriesCommandIntent(fixture.accountId, fixture.series, SeriesOperation.PAUSE, UUID.randomUUID().toString())
+        assertEquals("paused", repository.commandSeries(intent).status)
+        assertEquals("/v1/reminder-series/${fixture.seriesId}/pause", route)
+        assertEquals(listOf<String?>("\"series-1\"", intent.requestKey), headers)
+        assertEquals("{}", payload)
+    }
+
     class Fixture {
         val accountId = "62f3da14-12e9-4575-9541-caf8b98e2dfd"
         val taskId = "c2302436-0dd7-4d99-a7c3-ead390fd08eb"
@@ -228,6 +334,22 @@ class ReminderRepositoryTest {
             api.requestItems = listOf(incoming)
             api.requestReviewValue = ReminderRequestReviewDto(incoming, "recipient-review-token-".repeat(4), "2026-09-19T10:05:00Z")
         }
+        val seriesId = "5b0a7e0c-2f55-4b5e-9d0e-7b1d6f3c2a11"
+        val rule = PreviewReminderSeriesDto(taskId, "08:00", "Asia/Kolkata", "2026-11-01", "2026-11-07", "daily", 1, emptyList(), "shift_forward")
+        val occurrence = SeriesOccurrenceDto(null, "2026-11-01", "08:00", "2026-11-01T02:30:00Z", 330, "none")
+        val seriesPreview = ReminderSeriesPreviewDto(taskId, "Groceries", "1", ReminderRecipientDto(accountId, "Alex"), "daily", 1, emptyList(), "08:00", "Asia/Kolkata",
+            "2026-11-01", "2026-11-07", "shift_forward", listOf(occurrence, occurrence.copy(localDate = "2026-11-02", scheduledAt = "2026-11-02T02:30:00Z")), 7, emptyList(),
+            "in_app", "series-preview-token-".repeat(4), "2026-09-19T10:05:00Z")
+        val series = ReminderSeriesDto(seriesId, taskId, spaceId, "Groceries", "1", false, "daily", 1, emptyList(), "08:00", "Asia/Kolkata", "2026-11-01", "2026-11-07",
+            "shift_forward", "active", null, occurrence.copy(reminderId = reminderId), "2026-09-19T10:00:00Z", "2026-09-19T10:00:00Z", "1", "\"series-1\"", "in_app")
+        fun offerSeries() {
+            api.seriesPreviewValue = seriesPreview
+            api.seriesValue = series
+            api.seriesItems = listOf(series)
+        }
+        fun offerSnooze(before: String = "2026-11-02T02:30:00Z") {
+            api.notificationValue = notification.copy(seriesId = seriesId, canSnooze = true, snoozeBefore = before)
+        }
     }
 
     class FakeApi(var previewValue: ReminderPreviewDto, var reminderValue: ReminderDto, var notificationValue: InboxNotificationDto) : ReminderApi {
@@ -249,6 +371,15 @@ class ReminderRepositoryTest {
         val requestKeys = mutableListOf<String>()
         val requestTokens = mutableListOf<String>()
         val requestActions = mutableListOf<String>()
+        var seriesPreviewValue: ReminderSeriesPreviewDto? = null
+        var seriesValue: ReminderSeriesDto? = null
+        var seriesItems = emptyList<ReminderSeriesDto>()
+        var seriesResult: ReminderSeriesDto? = null
+        val seriesKeys = mutableListOf<String>()
+        val seriesTokens = mutableListOf<String>()
+        val seriesCommands = mutableListOf<String>()
+        var snoozeValue: InboxNotificationDto? = null
+        val snoozes = mutableListOf<String>()
         private fun <Value> response(value: Value, page: Boolean = false, count: Int? = null, cursor: String? = null): Response<EnvelopeDto<Value>> {
             calls += 1
             if (failure != 0) return Response.error(failure, """{"error":{"code":"SYNTHETIC","message":"Synthetic failure"}}""".toResponseBody("application/json".toMediaType()))
@@ -276,6 +407,26 @@ class ReminderRepositoryTest {
         }
         override suspend fun cancelRequest(authorization: String, identifier: String, body: Map<String, String>): Response<EnvelopeDto<ReminderRequestDto>> {
             requestActions.add("cancel"); return response(requireNotNull(requestValue).copy(status = "cancelled", resolvedAt = "2026-09-19T10:01:00Z", version = "2"))
+        }
+        override suspend fun previewSeries(authorization: String, body: PreviewReminderSeriesDto) = response(requireNotNull(seriesPreviewValue))
+        override suspend fun createSeries(authorization: String, key: String, body: SaveReminderDto): Response<EnvelopeDto<ReminderSeriesDto>> {
+            seriesKeys.add(key); seriesTokens.add(body.previewToken); return response(requireNotNull(seriesValue))
+        }
+        override suspend fun series(authorization: String, taskId: String?, cursor: String?, limit: Int) = response(seriesItems, true)
+        override suspend fun commandSeries(authorization: String, key: String, etag: String, identifier: String, operation: String, body: Map<String, String>): Response<EnvelopeDto<ReminderSeriesDto>> {
+            seriesCommands.add("$operation|$key|$etag|$identifier")
+            val current = requireNotNull(seriesValue)
+            val next = seriesResult ?: when (operation) {
+                "pause" -> current.copy(status = "paused", reason = "by_person", nextOccurrence = null)
+                "cancel" -> current.copy(status = "cancelled", nextOccurrence = null)
+                "skip" -> current.copy(nextOccurrence = current.nextOccurrence?.copy(localDate = "2026-11-02", scheduledAt = "2026-11-02T02:30:00Z"))
+                else -> current.copy(status = "active", reason = null)
+            }
+            return response(next.copy(version = "2", etag = "\"series-2\""))
+        }
+        override suspend fun snooze(authorization: String, key: String, identifier: String, body: SnoozeDto): Response<EnvelopeDto<InboxNotificationDto>> {
+            snoozes.add("$key|${body.minutes}")
+            return response(snoozeValue ?: notificationValue.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T06:42:00Z"))
         }
     }
 }

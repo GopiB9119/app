@@ -33,7 +33,10 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
         validate {
             identifier(value.id)
             label(value.name, 80)
-            require(value.spaceType == "family" && value.visibility == "private" && value.status == "active")
+            require(value.spaceType in setOf("family", "solo", "group") && value.visibility in setOf("private", "public") && value.status == "active")
+            require(value.visibility == "private" || value.spaceType == "group")
+            value.description?.let { require(it.codePointCount(0, it.length) <= 280) }
+            require(value.spaceType != "solo" || value.role == "owner")
             require(value.role in setOf("owner", "member") && value.version.matches(Regex("[1-9][0-9]*")) && value.version.toLong() > 0)
             Instant.parse(value.createdAt)
         }
@@ -170,7 +173,13 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
                     || result.createdAt != transfer.createdAt || result.expiresAt != transfer.expiresAt || result.status != expectedStatus) invalid()
                 SpaceCommandResult.OwnershipSaved(result)
             }
-            is SpaceCommand.Create -> SpaceCommandResult.SpaceSaved(space(accounts.result(api.create(authorization, command.requestKey, CreateFamilySpaceDto(command.name)))))
+            is SpaceCommand.Create -> {
+                val group = command.spaceType == "group"
+                val body = CreateFamilySpaceDto(command.name, command.spaceType, if (group) command.visibility else null, if (group) command.description else null)
+                val result = space(accounts.result(api.create(authorization, command.requestKey, body)))
+                if (result.spaceType != command.spaceType || result.visibility != (if (group) command.visibility else "private")) invalid()
+                SpaceCommandResult.SpaceSaved(result)
+            }
             is SpaceCommand.Invite -> {
                 val result = invitation(accounts.result(api.invite(authorization, command.spaceId, command.requestKey, CreateSpaceInvitationDto(command.recipientAccountId))), command.recipientAccountId, command.spaceId)
                 SpaceCommandResult.InvitationSaved(result)

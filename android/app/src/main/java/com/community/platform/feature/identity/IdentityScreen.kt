@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.automirrored.filled.List
@@ -90,14 +91,14 @@ data class IdentityActions(
 )
 
 @Composable
-fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null) {
+fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
-    IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh), onOpenTasks, onOpenInbox, onOpenSpaces, onOpenCalendar)
+    IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh), onOpenTasks, onOpenInbox, onOpenSpaces, onOpenCalendar, onOpenMessages, onOpenCommunity, onOpenCare)
 }
 
 @Composable
-fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null) {
+fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null) {
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -123,6 +124,9 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
                         state.notice?.let { StatusMessage(it, false) }
                         if (state.profile != null && onOpenSpaces != null) OutlinedButton(onClick = onOpenSpaces, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-spaces")) { Icon(Icons.Default.Home, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.family_spaces)) }
                         if (state.profile != null && onOpenCalendar != null) OutlinedButton(onClick = onOpenCalendar, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-calendar")) { Icon(Icons.Default.DateRange, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.calendar_title)) }
+                        if (state.profile != null && onOpenMessages != null) OutlinedButton(onClick = onOpenMessages, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-messages")) { Icon(Icons.Default.Email, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.messages_title)) }
+                        if (state.profile != null && onOpenCommunity != null) OutlinedButton(onClick = onOpenCommunity, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-community")) { Icon(Icons.Default.AccountCircle, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.community_title)) }
+                        if (state.profile != null && onOpenCare != null) OutlinedButton(onClick = onOpenCare, enabled = !state.busy, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-care")) { Icon(Icons.Default.Favorite, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.care_title)) }
                         if (state.profile == null) AuthenticationBody(state, actions) else AccountBody(state, actions)
                         Spacer(Modifier.height(16.dp))
                     }

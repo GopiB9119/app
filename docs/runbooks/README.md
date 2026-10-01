@@ -10,16 +10,17 @@ From the repository root, with Docker and existing project dependencies availabl
 docker compose -f infra/compose.yaml build api reminder-worker
 docker compose -f infra/compose.yaml run --rm api python3 -m app.cli migrate
 docker compose -f infra/compose.yaml up -d --build api identity-mail-worker reminder-worker
-$env:COMMUNITY_WEB_ORIGINS='http://127.0.0.1:3001,http://localhost:3001'
-$env:COMMUNITY_ISOLATED_BUILD='1'
-npm --prefix web run dev -- --hostname 127.0.0.1 --port 3001
+$env:COMMUNITY_WEB_ORIGINS='http://127.0.0.1:3000'
+$env:COMMUNITY_BUILD_LABEL='local-web'
+npm --prefix web run dev
 ```
 
-Use an unused web port and update its permitted origins together; do not terminate another server to reuse its port. The current membership preview runs on port 3004 with `COMMUNITY_BUILD_LABEL=membership-20260923` and matching origins for port 3004. Its output is `web/.local/build-membership-20260923`; do not overwrite that directory while the preview is running. The older reminder-only preview task on port 3003 is a separate build. A compiled preview needs rebuild/restart after source changes; the development command above uses port 3001 and watches source instead. Clear `COMMUNITY_BUILD_LABEL` before using that development command in a shell that inherited it.
+Use **only `http://127.0.0.1:3000` for the web app**, per the user's explicit requirement. If that port is occupied, identify/reuse the project preview or coordinate stopping only its owned process; do not choose another port. The VS Code **Community Platform: preview web** task runs this development command and watches source in `web/.local/build-local-web`. Old reminder/ownership preview labels alias the same task. Ports and build labels in older evidence sections below are historical, not current startup instructions. Do not overwrite the output directory of a compiled preview while it is running.
 
-- Web: `http://127.0.0.1:3004/app/spaces`, alongside Tasks, Reminders and Inbox; unauthenticated users sign in first.
-- API: `http://127.0.0.1:8000`; current migration head `0008` adds admission-bound membership-command receipts without resetting existing data.
+- Web: `http://127.0.0.1:3000/app/spaces`, alongside Tasks, Calendar, Reminders and Inbox; unauthenticated users sign in first.
+- API: `http://127.0.0.1:8000`; current migration head `0022` (`0021` alerts, then `0022` group Spaces and join requests). Migrations are additive and do not reset existing data; `0022` refuses to downgrade while group Spaces, descriptions or join requests exist.
 - Synthetic inbox: `http://127.0.0.1:8025`; verification codes are not printed in application logs.
+- Telemetry: `docker compose -f infra/compose.yaml logs api` shows one JSON line per request (request and trace IDs, route template, status, duration, error code; no paths, queries, headers, bodies or account data). The web preview's output shows a matching `bff_request` line with the same trace ID. `/metrics` answers 404 unless the API runs with `COMMUNITY_METRICS_KEY`; then send `Authorization: Bearer <key>`. For each background queue (`identity_mail`, `reminders`, `exports`) it shows `community_work_ready` (items the worker could take now), `community_work_ready_oldest_seconds` (how long the oldest has waited) and `community_work_failed` (items that ended in failure). An oldest wait that keeps growing means that worker is stopped or behind; Compose has no export worker, so exports wait until one runs. `community_work_query_success 0` means the database could not be read. Every API process reports the same database values.
 
 Register and verify two synthetic accounts. Each account's Spaces screen exposes its own account ID with a copy control. The owner creates a family Space, opens its invitation management and enters the intended recipient's account ID. That account refreshes its invitation inbox and explicitly reviews/accepts or declines; the owner can revoke a pending invitation. Acceptance creates a member, not another owner, and grants no old chat/file history. Invitations expire after 72 hours in this local build. No mail, phone lookup or unbound-contact onboarding is performed by family invitations.
 
@@ -96,6 +97,16 @@ With the local stack running, check backup and isolated restore without modifyin
 ```
 
 The script dumps and counts one consistent snapshot of the development database, restores it into the disposable `community-restore-drill` project on an internal network, verifies migration, row counts, protected fields, ownership and isolation, seals the copy and removes only that project. It refuses to start while earlier drill containers exist. Keep `backend/.local/identity.key` with its database: the drill checks its fingerprint but does not copy it. Procedure, evidence location and limits: [platform notes](../../backend/app/modules/platform/README.md).
+
+## Encryption Key Rotation
+
+To replace the encryption key without signing anyone out, follow the staged procedure in the [platform notes](../../backend/app/modules/platform/README.md#encryption-key-rotation): `add`, restart, `promote`, restart, `reencrypt`, `verify`, and `retire` the old key after 24 hours, then restart. Start by checking the current state, which changes nothing:
+
+```powershell
+docker compose -f infra/compose.yaml run --rm --no-deps api python3 -m app.modules.platform.keys status
+```
+
+Do not rotate the development key while other sessions are using the stack: each step needs a restart of the API and workers. Retired keys go to ignored `backend/.local/retired-keys/`; keep them as long as any backup made before the rotation.
 
 ## Native Space Checks
 

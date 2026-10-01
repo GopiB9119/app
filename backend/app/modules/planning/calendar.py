@@ -9,6 +9,7 @@ from pydantic import AwareDatetime, BaseModel, BeforeValidator
 from sqlalchemy import Date, DateTime, String, cast, func, literal, null, select, tuple_, union_all
 
 from app.errors import DomainError
+from app.modules.events.models import SpaceEvent
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope, Input
 from app.modules.planning.models import Task
@@ -17,11 +18,14 @@ from app.modules.scheduling.models import Reminder
 from app.modules.scheduling.schemas import PreviewReminder
 from app.modules.spaces.schemas import Pagination
 
+EntryKind = Literal["task", "reminder", "planned", "event"]
+
 
 class CalendarEntry(BaseModel):
     id: str
-    kind: Literal["task", "reminder"]
-    task_id: str
+    kind: EntryKind
+    # Events belong to the Space, not to a task.
+    task_id: str | None
     space_id: str
     title: str
     date: date
@@ -29,6 +33,7 @@ class CalendarEntry(BaseModel):
     timezone: str | None
     status: str
     source_changed: bool
+    series_id: str | None = None
 
 
 class CalendarPage(Envelope[list[CalendarEntry]]):
@@ -44,7 +49,7 @@ class CalendarCursor(Input):
     end_date: date
     timezone: str
     after_date: date
-    after_kind: Literal["task", "reminder"]
+    after_kind: EntryKind
     after_time: AwareDatetime
     after_id: UUID
     expires_at: AwareDatetime
@@ -84,7 +89,7 @@ class CalendarService:
                 literal(epoch, DateTime(timezone=True)).label("sort_at"),
                 cast(null(), DateTime(timezone=True)).label("scheduled_at"),
                 cast(null(), String).label("timezone"), Task.status.label("status"),
-                literal(False).label("source_changed"),
+                literal(False).label("source_changed"), cast(null(), String).label("series_id"),
             ).where(Task.due_date >= start_date, Task.due_date <= end_date)
             reminder_date = cast(func.timezone(timezone, Reminder.scheduled_at), Date)
             reminder_entries = self.reminders.visible(caller.id).with_only_columns(
@@ -92,18 +97,39 @@ class CalendarService:
                 Task.space_id.label("space_id"), Task.title.label("title"), reminder_date.label("date"),
                 Reminder.scheduled_at.label("sort_at"), Reminder.scheduled_at.label("scheduled_at"),
                 Reminder.timezone.label("timezone"), Reminder.status.label("status"),
-                (Reminder.source_version != Task.version).label("source_changed"),
+                (Reminder.source_version != Task.version).label("source_changed"), Reminder.series_id.label("series_id"),
             ).where(Reminder.space_id == space_id, reminder_date >= start_date, reminder_date <= end_date)
-            entries = union_all(task_entries, reminder_entries).subquery()
-            order_kind = entries.c.kind == "reminder"
+            # Only events from the person's current admission onward, as on the events page. Cancelled ones stay marked.
+            event_date = cast(func.timezone(timezone, SpaceEvent.starts_at), Date)
+            event_entries = select(
+                SpaceEvent.id.label("id"), literal("event").label("kind"), cast(null(), String).label("task_id"),
+                SpaceEvent.space_id.label("space_id"), SpaceEvent.title.label("title"), event_date.label("date"),
+                SpaceEvent.starts_at.label("sort_at"), SpaceEvent.starts_at.label("scheduled_at"),
+                SpaceEvent.timezone.label("timezone"), SpaceEvent.status.label("status"),
+                literal(False).label("source_changed"), cast(null(), String).label("series_id"),
+            ).where(
+                SpaceEvent.space_id == space_id, SpaceEvent.admissions_before >= member.admission_sequence,
+                event_date >= start_date, event_date <= end_date,
+            )
+            entries = union_all(task_entries, reminder_entries, event_entries).subquery()
+            order_kind = entries.c.kind != "task"
             statement = select(entries)
+            after = None
             if position:
-                statement = statement.where(tuple_(entries.c.date, order_kind, entries.c.sort_at, entries.c.id) > tuple_(
-                    position.after_date, position.after_kind == "reminder", position.after_time, str(position.after_id),
-                ))
-            rows = database.execute(statement.order_by(
+                after = (position.after_date, position.after_kind != "task", position.after_time, str(position.after_id))
+                statement = statement.where(tuple_(entries.c.date, order_kind, entries.c.sort_at, entries.c.id) > tuple_(*after))
+            stored = database.execute(statement.order_by(
                 entries.c.date, order_kind, entries.c.sort_at, entries.c.id,
             ).limit(limit + 1)).mappings().all()
+
+            def order(entry):
+                return entry["date"], entry["kind"] != "task", entry["sort_at"], entry["id"]
+
+            # Repeating reminders only store their next occurrence; later ones are computed for display.
+            planned = [] if self.reminders.series is None else self.reminders.series.planned(
+                database, caller.id, space_id, start_date, end_date, timezone, self.tasks.clock(),
+            )
+            rows = sorted([dict(row) for row in stored] + [entry for entry in planned if after is None or order(entry) > after], key=order)[:limit + 1]
             page = rows[:limit]
             next_cursor = None
             if len(rows) > limit:

@@ -54,6 +54,107 @@ def change_task(client, actor, task_id, body, etag=None, key=None, operation="ed
     )
 
 
+def test_checklist_preserves_retry_identity_and_separate_task_completion(client, app):
+    owner, assignee, space_id = family(client, app)
+    task_id = create_task(client, owner, space_id, assignee["user"]["id"]).json()["data"]["id"]
+    path = f"/v1/tasks/{task_id}/checklist"
+    review = client.get(path, headers=auth(owner))
+    assert review.status_code == 200, review.text
+    assert review.json()["data"]["items"] == []
+    headers = {**auth(owner), "If-Match": review.json()["data"]["etag"], "Idempotency-Key": str(uuid4())}
+    added = client.post(path, headers=headers, json={"action": "add", "title": "Buy fruit"})
+    assert added.status_code == 200, added.text
+    assert client.post(path, headers=headers, json={"action": "add", "title": "Buy fruit"}).json()["data"] == added.json()["data"]
+    item_id = added.json()["data"]["items"][0]["id"]
+    assigned = client.get(path, headers=auth(assignee)).json()["data"]
+    assert assigned["can_check"] and not assigned["can_manage"]
+    checked = client.post(path, headers={**auth(assignee), "If-Match": assigned["etag"], "Idempotency-Key": str(uuid4())}, json={"action": "check", "item_id": item_id, "checked": True})
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["data"]["items"][0]["checked_by_account_id"] == assignee["user"]["id"]
+    assert checked.json()["data"]["task_status"] == "open"
+    assert client.get(f"/v1/tasks/{task_id}", headers=auth(owner)).json()["data"]["status"] == "open"
+    denied = client.post(path, headers={**auth(assignee), "If-Match": checked.json()["data"]["etag"], "Idempotency-Key": str(uuid4())}, json={"action": "remove", "item_id": item_id})
+    assert denied.status_code == 403
+
+
+def test_checklist_conflicts_removed_item_replay_and_revoked_grant(client, app):
+    owner, _member, space_id = family(client, app)
+    task_id = create_task(client, owner, space_id).json()["data"]["id"]
+    path = f"/v1/tasks/{task_id}/checklist"
+    review = client.get(path, headers=auth(owner)).json()["data"]
+    headers = {**auth(owner), "Idempotency-Key": str(uuid4())}
+    body = {"action": "add", "title": "Original item"}
+    assert client.post(path, headers=headers, json=body).status_code == 428
+    headers["If-Match"] = review["etag"]
+    added = client.post(path, headers=headers, json=body).json()["data"]
+    assert client.post(path, headers=headers, json={**body, "title": "Different"}).status_code == 409
+    assert client.post(path, headers={**headers, "Idempotency-Key": str(uuid4())}, json=body).status_code == 412
+    removed = client.post(path, headers={**auth(owner), "If-Match": added["etag"], "Idempotency-Key": str(uuid4())}, json={"action": "remove", "item_id": added["items"][0]["id"]})
+    assert removed.status_code == 200
+    assert removed.json()["data"]["items"] == []
+    assert client.post(path, headers=headers, json=body).json()["data"]["items"] == []
+    with app.state.sessions.begin() as database:
+        database.execute(delete(TaskAccess).where(TaskAccess.task_id == task_id, TaskAccess.account_id == owner["user"]["id"]))
+    assert client.get(path, headers=auth(owner)).status_code == 404
+    assert client.post(path, headers=headers, json=body).status_code == 404
+
+
+def test_checklist_rename_clears_completion_and_cannot_target_another_task(client, app):
+    owner, _member, space_id = family(client, app)
+    task_id = create_task(client, owner, space_id).json()["data"]["id"]
+    other_task = create_task(client, owner, space_id).json()["data"]["id"]
+    path = f"/v1/tasks/{task_id}/checklist"
+    def command(body):
+        review = client.get(path, headers=auth(owner)).json()["data"]
+        return client.post(path, headers={**auth(owner), "If-Match": review["etag"], "Idempotency-Key": str(uuid4())}, json=body)
+    item_id = command({"action": "add", "title": "Item"}).json()["data"]["items"][0]["id"]
+    checked = command({"action": "check", "item_id": item_id, "checked": True})
+    assert checked.status_code == 200
+    assert command({"action": "check", "item_id": item_id, "checked": True}).status_code == 409
+    renamed = command({"action": "rename", "item_id": item_id, "title": "Changed meaning"}).json()["data"]["items"][0]
+    assert not renamed["checked"] and renamed["checked_at"] is None and renamed["checked_by_account_id"] is None
+    path = f"/v1/tasks/{other_task}/checklist"
+    assert command({"action": "remove", "item_id": item_id}).status_code == 404
+
+
+@pytest.mark.parametrize("body", [
+    {"action": "add", "title": "Item", "checked": True}, {"action": "add", "title": " "},
+    {"action": "add", "title": "Item", "account_id": str(uuid4())},
+    {"action": "check", "item_id": str(uuid4()), "checked": "true"},
+    {"action": "remove"}, {"action": "rename", "item_id": str(uuid4()), "title": None},
+])
+def test_checklist_strict_action_fields(client, app, body):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    task_id = create_task(client, owner, space_id).json()["data"]["id"]
+    assert client.post(f"/v1/tasks/{task_id}/checklist", headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": '"review"'}, json=body).status_code == 422
+
+
+def test_checklist_audit_failure_and_concurrent_retry_are_atomic(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    task_id = create_task(client, owner, space_id).json()["data"]["id"]
+    path = f"/v1/tasks/{task_id}/checklist"
+    review = client.get(path, headers=auth(owner)).json()["data"]
+    headers = {**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": review["etag"]}
+    body = {"action": "add", "title": "Atomic item"}
+    with app.state.engine.begin() as connection:
+        connection.execute(text("CREATE FUNCTION reject_checklist() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'task.checklist_add' THEN RAISE EXCEPTION 'synthetic failure'; END IF; RETURN NEW; END $$"))
+        connection.execute(text("CREATE TRIGGER reject_checklist BEFORE INSERT ON domain_outbox FOR EACH ROW EXECUTE FUNCTION reject_checklist()"))
+    try:
+        assert client.post(path, headers=headers, json=body).status_code == 503
+        assert client.get(path, headers=auth(owner)).json()["data"] == review
+    finally:
+        with app.state.engine.begin() as connection:
+            connection.execute(text("DROP TRIGGER reject_checklist ON domain_outbox; DROP FUNCTION reject_checklist()"))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(lambda _attempt: client.post(path, headers=headers, json=body), range(3)))
+    assert [result.status_code for result in results] == [200, 200, 200]
+    assert len({result.json()["data"]["items"][0]["id"] for result in results}) == 1
+    with app.state.sessions() as database:
+        assert database.scalar(text("SELECT count(*) FROM task_checklist_items")) == 1
+
+
 def test_calendar_preserves_due_dates_and_personal_reminder_day(client, app):
     owner, member, space_id = family(client, app)
     created = create_task(client, owner, space_id)

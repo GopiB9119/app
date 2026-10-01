@@ -3,4 +3,7 @@
 -keep class com.community.platform.feature.planning.*Dto { *; }
 -keep class com.community.platform.feature.scheduling.*Dto { *; }
 -keep class com.community.platform.feature.spaces.*Dto { *; }
--keep class com.community.platform.feature.spaces.*Dto { *; }
+-keep class com.community.platform.feature.messaging.*Dto { *; }
+-keep class com.community.platform.feature.community.*Dto { *; }
+-keep class com.community.platform.feature.events.*Dto { *; }
+-keep class com.community.platform.feature.care.*Dto { *; }

@@ -50,6 +50,249 @@ async function signUp(page, email) {
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
 }
 
+test('checklist: exact add retry assignee checking conflict reload and reviewed removal', { timeout: 120000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(page, `checklist-owner-${suffix}@example.test`);
+    await signUp(memberPage, `checklist-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': owner.id };
+    async function create(route, data) {
+      const response = await ownerContext.request.post(`${base}/api/${route}`, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data });
+      assert.equal(response.status(), 201, await response.text());
+      return (await response.json()).data;
+    }
+    const space = await create('spaces', { name: 'Checklist family', space_type: 'family' });
+    const invite = await create(`spaces/${space.id}/invitations`, { recipient_account_id: member.id });
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${invite.id}/accept`, { headers: { Origin: base, 'X-Account-ID': member.id }, data: {} })).status(), 200);
+    const task = await create('tasks', { space_id: space.id, title: 'Shopping checklist', description: '', assignee_account_id: member.id, due_date: null });
+    const sourceUrl = `${base}/api/tasks/${task.id}/checklist`;
+    await page.goto(`${base}/app/tasks?space_id=${space.id}`);
+    await page.getByRole('button', { name: 'Checklist: Shopping checklist', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Task checklist', exact: true });
+    await dialog.getByLabel('New item', { exact: true }).fill('Buy fruit');
+    const attempts = [];
+    await page.route(`**/api/tasks/${task.id}/checklist`, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], etag: route.request().headers()['if-match'], body: route.request().postData() });
+      const response = await route.fetch(); assert.equal(response.status(), 200);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await dialog.getByRole('button', { name: 'Add item', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    assert.equal(await dialog.getByLabel('New item', { exact: true }).isDisabled(), true);
+    await dialog.getByRole('button', { name: 'Retry original change', exact: true }).click();
+    await dialog.getByRole('checkbox', { name: 'Buy fruit', exact: true }).waitFor();
+    assert.equal(attempts.length, 2); assert.deepEqual(attempts[0], attempts[1]);
+    await page.unroute(`**/api/tasks/${task.id}/checklist`);
+    await memberPage.goto(`${base}/app/tasks?space_id=${space.id}`);
+    await memberPage.getByRole('button', { name: 'Checklist: Shopping checklist', exact: true }).click();
+    const memberDialog = memberPage.getByRole('dialog', { name: 'Task checklist', exact: true });
+    await memberDialog.getByRole('checkbox', { name: 'Buy fruit', exact: true }).click();
+    await memberDialog.getByText('Checklist saved.', { exact: true }).waitFor();
+    assert.equal(await memberDialog.getByRole('checkbox', { name: 'Buy fruit', exact: true }).isChecked(), true);
+    assert.equal(await memberDialog.getByRole('button', { name: 'Add item', exact: true }).count(), 0);
+    assert.equal(await memberDialog.getByRole('button', { name: /^Remove checklist item:/ }).count(), 0);
+    const checked = (await (await ownerContext.request.get(sourceUrl, { headers })).json()).data;
+    assert.equal(checked.items[0].checked_by_account_id, member.id);
+    assert.equal(checked.task_status, 'open');
+    await dialog.getByLabel('New item', { exact: true }).fill('Stale draft');
+    await dialog.getByRole('button', { name: 'Add item', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'changed' }).waitFor();
+    assert.equal(await dialog.getByLabel('New item', { exact: true }).inputValue(), 'Stale draft');
+    await dialog.getByRole('button', { name: 'Reload current checklist', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Discard draft', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('dialog input[type="checkbox"]')?.checked === true);
+    await dialog.getByRole('button', { name: 'Edit checklist item: Buy fruit', exact: true }).click();
+    await dialog.getByLabel('Item title', { exact: true }).fill('Buy fresh fruit and vegetables for the family dinner');
+    await dialog.getByRole('button', { name: 'Save item', exact: true }).click();
+    const renamed = dialog.getByRole('checkbox', { name: 'Buy fresh fruit and vegetables for the family dinner', exact: true });
+    await renamed.waitFor(); assert.equal(await renamed.isChecked(), false);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/checklist-live-desktop.png'), fullPage: true });
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const bounds = await dialog.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1; });
+      assert.equal(bounds, true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(root, '.local/screenshots/checklist-live-mobile.png'), fullPage: true });
+    await dialog.getByRole('button', { name: /^Remove checklist item:/ }).click();
+    await dialog.getByRole('button', { name: 'Keep item', exact: true }).click();
+    assert.equal((await (await ownerContext.request.get(sourceUrl, { headers })).json()).data.items.length, 1);
+    await dialog.getByRole('button', { name: /^Remove checklist item:/ }).click();
+    await dialog.getByRole('button', { name: 'Remove item', exact: true }).click();
+    await dialog.getByText('No checklist items.', { exact: true }).waitFor();
+    assert.equal((await (await ownerContext.request.get(sourceUrl, { headers })).json()).data.items.length, 0);
+    assert.deepEqual(errors, []);
+  } finally { await ownerContext.close(); await memberContext.close(); }
+});
+
+test('solo: private creation retry tasks settings and calendar work without membership controls', { timeout: 120000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await signUp(page, `solo-${Date.now()}@example.test`);
+    const owner = (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': owner.id };
+    await page.goto(`${base}/app/spaces`);
+    await page.getByLabel('Space type', { exact: true }).selectOption('solo');
+    await page.getByLabel('Space name', { exact: true }).fill('My private planning');
+    const attempts = [];
+    await page.route('**/api/spaces', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await page.getByRole('button', { name: 'Create Space', exact: true }).click();
+    await page.getByRole('alert').waitFor();
+    assert.equal(await page.getByLabel('Space type', { exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Retry creation', exact: true }).click();
+    await page.getByText('Solo Space created.', { exact: true }).waitFor();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    assert.equal(JSON.parse(attempts[0].body).space_type, 'solo');
+    await page.unroute('**/api/spaces');
+    assert.equal(await page.getByRole('button', { name: /^Manage invitations for / }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: /^Members of / }).count(), 0);
+    const spaces = (await (await context.request.get(`${base}/api/spaces`, { headers })).json()).data;
+    assert.equal(spaces.length, 1);
+    const space = spaces[0];
+    assert.equal(space.space_type, 'solo');
+    await page.getByRole('button', { name: 'Settings for My private planning', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    await dialog.getByLabel('Space name', { exact: true }).fill('My personal workspace');
+    await dialog.getByRole('button', { name: 'Save name', exact: true }).click();
+    await dialog.getByText('Settings saved. Current name: My personal workspace', { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+    await page.getByRole('link', { name: 'Tasks for My personal workspace', exact: true }).click();
+    await page.getByRole('heading', { name: 'My tasks', exact: true }).waitFor();
+    await page.getByLabel('Task title', { exact: true }).fill('Personal reading');
+    await page.getByLabel('Due date', { exact: true }).fill('2026-11-02');
+    await page.getByRole('button', { name: 'Create task', exact: true }).click();
+    await page.getByText('Task created.', { exact: true }).waitFor();
+    const tasks = (await (await context.request.get(`${base}/api/tasks?space_id=${space.id}`, { headers })).json()).data;
+    assert.equal(tasks.length, 1);
+    const preview = await context.request.post(`${base}/api/reminders/preview`, { headers, data: { task_id: tasks[0].id, local_time: '2026-11-02T10:00', timezone: 'UTC' } });
+    assert.equal(preview.status(), 200);
+    const saved = await context.request.post(`${base}/api/reminders`, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { preview_token: (await preview.json()).data.options[0].preview_token } });
+    assert.equal(saved.status(), 201);
+    await page.goto(`${base}/app/calendar?space_id=${space.id}`);
+    await page.getByLabel('Month', { exact: true }).fill('2026-11');
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 2);
+    assert.equal(await page.getByLabel('Solo Space', { exact: true }).inputValue(), space.id);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/solo-calendar-live-desktop.png'), fullPage: true });
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${base}/app/spaces`);
+    await page.getByRole('heading', { name: 'My personal workspace', exact: true }).waitFor();
+    await page.screenshot({ path: path.join(root, '.local/screenshots/solo-space-live-mobile.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('space settings: owner rename retries exact intent and stale drafts require explicit reload', { timeout: 120000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(page, `settings-owner-${suffix}@example.test`);
+    await signUp(memberPage, `settings-member-${suffix}@example.test`);
+    const owner = (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await context.request.post(`${base}/api/spaces`, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { name: 'Settings family', space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const space = (await created.json()).data;
+    const settingsUrl = `${base}/api/spaces/${space.id}/settings`;
+    const invite = await context.request.post(`${base}/api/spaces/${space.id}/invitations`, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(invite.status(), 201);
+    const accepted = await memberContext.request.post(`${base}/api/invitations/${(await invite.json()).data.id}/accept`, { headers: memberHeaders, data: {} });
+    assert.equal(accepted.status(), 200);
+    assert.equal((await memberContext.request.get(settingsUrl, { headers: memberHeaders })).status(), 404);
+    await page.goto(`${base}/app/spaces`);
+    await page.getByRole('button', { name: 'Settings for Settings family', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    await dialog.getByLabel('Space name', { exact: true }).fill('Renamed family');
+    const before = (await (await context.request.get(settingsUrl, { headers })).json()).data;
+    const attempts = [];
+    await page.route(`**/api/spaces/${space.id}/settings`, async route => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], etag: route.request().headers()['if-match'], body: route.request().postData() });
+      const result = await route.fetch();
+      assert.equal(result.status(), 200);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response: result });
+    });
+    await dialog.getByRole('button', { name: 'Save name', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).isDisabled(), true);
+    await dialog.getByRole('button', { name: 'Retry original name', exact: true }).click();
+    await dialog.getByText('Settings saved. Current name: Renamed family', { exact: true }).waitFor();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    const saved = (await (await context.request.get(settingsUrl, { headers })).json()).data;
+    assert.equal(Number(saved.version), Number(before.version) + 1);
+    await page.unroute(`**/api/spaces/${space.id}/settings`);
+    await dialog.getByLabel('Space name', { exact: true }).fill('My stale draft');
+    const other = await context.request.patch(settingsUrl, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': saved.etag }, data: { name: 'Another current name' } });
+    assert.equal(other.status(), 200);
+    await dialog.getByRole('button', { name: 'Save name', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'This Space changed' }).waitFor();
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).inputValue(), 'My stale draft');
+    assert.equal(await dialog.getByRole('button', { name: 'Save name', exact: true }).isDisabled(), true);
+    await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).click();
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).inputValue(), 'My stale draft');
+    await dialog.getByRole('button', { name: 'Discard name', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('input[name="settings_name"]')?.value === 'Another current name');
+    await dialog.getByLabel('Space name', { exact: true }).fill('Family name with a long description for a narrow settings screen');
+    await page.screenshot({ path: path.join(root, '.local/screenshots/space-settings-live-desktop.png'), fullPage: true });
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 844 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const bounds = await dialog.evaluate(element => { const box = element.getBoundingClientRect(); return { left: box.left, right: box.right, bottom: box.bottom, top: box.top, width: innerWidth, height: innerHeight }; });
+      assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1 && bounds.top >= 0 && bounds.bottom <= bounds.height + 1);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(root, '.local/screenshots/space-settings-live-mobile.png'), fullPage: true });
+    await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    assert.match(await dialog.getByLabel('Space name', { exact: true }).inputValue(), /long description/);
+    await dialog.getByRole('button', { name: 'Save name', exact: true }).click();
+    await dialog.getByText('Settings saved.', { exact: false }).waitFor();
+    await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+    await page.reload();
+    await page.getByRole('heading', { name: 'Family name with a long description for a narrow settings screen', exact: true }).waitFor();
+    await memberPage.goto(`${base}/app/spaces`);
+    await memberPage.getByRole('heading', { name: 'Family name with a long description for a narrow settings screen', exact: true }).waitFor();
+    assert.equal(await memberPage.getByRole('button', { name: /^Settings for / }).count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); await memberContext.close(); }
+});
+
 test('calendar: real private agenda preserves dates, zones, source access and responsive controls', { timeout: 120000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
@@ -201,6 +444,25 @@ test('mobile: signup, visible layout, accessible form and offline failure', { ti
   await context.close();
 });
 
+test('auth forms: nothing is sent or put in the address before the page is interactive', { timeout: 60000 }, async () => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  const page = await context.newPage();
+  try {
+    for (const [route, button] of [['/login', 'Sign in'], ['/register', 'Send verification code'], ['/recover', 'Send verification code']]) {
+      await page.goto(`${base}${route}`);
+      assert.equal(await page.locator('form.auth-form').getAttribute('method'), 'post', route);
+      assert.equal(await page.getByRole('button', { name: button, exact: true }).isDisabled(), true, route);
+      assert.equal(await page.getByLabel('Email address').isDisabled(), true, route);
+      if (route === '/login') assert.equal(await page.getByLabel('Password', { exact: true }).isDisabled(), true, route);
+      await page.keyboard.press('Enter');
+      await page.waitForLoadState('load');
+      assert.equal(new URL(page.url()).search, '', route);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 test('spaces: create, persist, retry unknown outcome and isolate accounts', { timeout: 120000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
@@ -210,8 +472,8 @@ test('spaces: create, persist, retry unknown outcome and isolate accounts', { ti
   const account = (await (await context.request.get(`${base}/api/me`)).json()).data;
   const accountHeaders = { 'X-Account-ID': account.id };
   await page.getByRole('link', { name: 'Spaces', exact: true }).click();
-  await page.getByRole('heading', { name: 'Family Spaces', exact: true }).waitFor();
-  await page.getByText('No family Spaces yet', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
+  await page.getByText('No Spaces yet', { exact: true }).waitFor();
   await page.getByLabel('Family name', { exact: true }).fill('Morgan family');
   await page.getByRole('button', { name: 'Create Space', exact: true }).click();
   await page.getByText('Family Space created.', { exact: true }).waitFor();
@@ -286,7 +548,7 @@ test('spaces: create, persist, retry unknown outcome and isolate accounts', { ti
   assert.equal(hidden.status(), 404);
   await context.addCookies((await otherContext.cookies()).filter(cookie => cookie.name === 'cp_session'));
   await page.getByRole('button', { name: 'Refresh Spaces', exact: true }).click();
-  await page.getByText('No family Spaces yet', { exact: true }).waitFor();
+  await page.getByText('No Spaces yet', { exact: true }).waitFor();
   assert.equal(await page.getByRole('heading', { name: 'Morgan family', exact: true }).count(), 0);
   assert.deepEqual(errors, []);
   await otherContext.close();
@@ -298,7 +560,7 @@ test('spaces: mobile creation and long names remain readable', { timeout: 90000 
   const page = await context.newPage();
   await signUp(page, `mobile-spaces-${Date.now()}@example.test`);
   await page.goto(`${base}/app/spaces`);
-  await page.getByRole('heading', { name: 'Family Spaces', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
   const longName = `Family-${'A'.repeat(70)}`;
   await page.getByLabel('Family name', { exact: true }).fill(longName);
   await page.getByRole('button', { name: 'Create Space', exact: true }).click();
@@ -506,7 +768,7 @@ test('ownership: two-party transfer retries safely and the former owner can leav
     await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/ownership-former-owner-live.png'), fullPage: true });
     await ownerPage.getByRole('button', { name: 'Leave Space', exact: true }).click();
     await ownerPage.getByRole('dialog', { name: 'Leave this family Space?', exact: true }).getByRole('button', { name: 'Leave Space', exact: true }).click();
-    await ownerPage.getByText('No family Spaces yet', { exact: true }).waitFor();
+    await ownerPage.getByText('No Spaces yet', { exact: true }).waitFor();
     const remaining = (await (await memberContext.request.get(`${base}/api/spaces/${family.id}/members`, { headers: memberHeaders })).json()).data;
     assert.deepEqual(remaining.map(row => row.account_id), [member.id]);
     assert.equal(remaining[0].role, 'owner');
@@ -583,7 +845,7 @@ test('members: reviewed removal and self-leave survive lost responses and revoke
     assert.deepEqual(removeAttempts[0].body, {});
     await ownerPage.unroute(removePath);
     await memberPage.getByRole('button', { name: 'Refresh members', exact: true }).click();
-    await memberPage.getByText('No family Spaces yet', { exact: true }).waitFor();
+    await memberPage.getByText('No Spaces yet', { exact: true }).waitFor();
     assert.equal(await memberPage.getByRole('heading', { name: 'Members of Removal family', exact: true }).count(), 0);
     assert.equal((await memberContext.request.get(`${base}/api/tasks/${task.id}`, { headers: memberHeaders })).status(), 404);
     assert.equal((await memberContext.request.post(`${base}/api/invitations/${invitation.id}/accept`, { headers: memberHeaders, data: {} })).status(), 404);
@@ -604,7 +866,7 @@ test('members: reviewed removal and self-leave survive lost responses and revoke
       assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       for (const button of await leave.getByRole('button').all()) {
         const bounds = await button.boundingBox();
-        assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
+        assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width, `${width}px: "${await button.textContent()}" at ${JSON.stringify(bounds)}`);
       }
     }
     await memberPage.setViewportSize({ width: 390, height: 844 });
@@ -625,7 +887,7 @@ test('members: reviewed removal and self-leave survive lost responses and revoke
     await leave.getByRole('button', { name: 'Leave Space', exact: true }).click();
     await leave.getByText('The result is unconfirmed.', { exact: true }).waitFor();
     await leave.getByRole('button', { name: 'Retry original change', exact: true }).click();
-    await memberPage.getByText('No family Spaces yet', { exact: true }).waitFor();
+    await memberPage.getByText('No Spaces yet', { exact: true }).waitFor();
     assert.equal(leaveAttempts.length, 2);
     assert.deepEqual(leaveAttempts[0], leaveAttempts[1]);
     assert.equal(await memberPage.getByRole('heading', { name: `Members of ${leaving.name}`, exact: true }).count(), 0);
@@ -1110,5 +1372,703 @@ test('reminder requests: real recipient consent, exact retries, decline and with
   } finally {
     await ownerContext.close();
     await recipientContext.close();
+  }
+});
+
+test('messages: Space chat and direct messages keep one copy per retry, honor membership and delete for everyone', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `chat-owner-${suffix}@example.test`);
+    await signUp(memberPage, `chat-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Chat family ${suffix}`, space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(sent.status(), 201);
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+
+    await ownerPage.goto(`${base}/app/messages?space_id=${family.id}`);
+    const ownerPane = ownerPage.getByRole('region', { name: 'Conversation', exact: true });
+    await ownerPane.getByRole('heading', { name: family.name, exact: true }).waitFor();
+    await ownerPane.getByText('Encrypted at rest on the server. Not end-to-end encrypted.', { exact: true }).waitFor();
+    const attempts = [];
+    // Background polls are held so only the explicit retry can confirm the lost send.
+    let holdPolls = true;
+    const messageRoute = url => url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/messages');
+    await ownerPage.route(messageRoute, async route => {
+      if (route.request().method() !== 'POST') return holdPolls ? route.abort('failed') : route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await ownerPane.getByLabel('Message', { exact: true }).fill('  Dinner at seven\n');
+    await ownerPane.getByRole('button', { name: 'Send', exact: true }).click();
+    await ownerPane.getByText('Not confirmed. Retry sends this same message once.', { exact: true }).waitFor();
+    await ownerPane.getByRole('button', { name: 'Retry', exact: true }).click();
+    // The retry is confirmed only when the server copy is shown with its author controls.
+    await ownerPane.getByRole('button', { name: 'Delete message for everyone', exact: true }).waitFor();
+    await ownerPane.getByText('Sending...', { exact: true }).waitFor({ state: 'detached' });
+    await ownerPane.getByText('Not confirmed. Retry sends this same message once.', { exact: true }).waitFor({ state: 'detached' });
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    assert.deepEqual(JSON.parse(attempts[0].body), { body: 'Dinner at seven' });
+    holdPolls = false;
+    await ownerPage.unroute(messageRoute);
+    const chat = (await (await ownerContext.request.get(`${base}/api/conversations?space_id=${family.id}`, { headers: ownerHeaders })).json()).data[0];
+    assert.equal(chat.kind, 'space');
+    const stored = (await (await ownerContext.request.get(`${base}/api/conversations/${chat.id}/messages`, { headers: ownerHeaders })).json()).data;
+    assert.deepEqual(stored.map(item => [item.position, item.body, item.client_message_id]), [['1', 'Dinner at seven', attempts[0].key]]);
+
+    const memberUnread = (await (await memberContext.request.get(`${base}/api/conversations`, { headers: memberHeaders })).json());
+    assert.equal(memberUnread.unread_count, 1);
+    await memberPage.goto(`${base}/app/messages`);
+    await memberPage.getByRole('button', { name: new RegExp(`^Chat family ${suffix}`) }).click();
+    const memberPane = memberPage.getByRole('region', { name: 'Conversation', exact: true });
+    await memberPane.getByText('Dinner at seven', { exact: true }).waitFor();
+    await memberPane.getByText('You see messages sent since your current membership began.', { exact: true }).waitFor();
+    assert.equal(await memberPane.getByRole('button', { name: 'Delete message for everyone', exact: true }).count(), 0);
+    const readDeadline = Date.now() + 20000;
+    while ((await (await memberContext.request.get(`${base}/api/conversations`, { headers: memberHeaders })).json()).unread_count !== 0) {
+      assert.ok(Date.now() < readDeadline, 'The member read position was not saved.');
+      await delay(500);
+    }
+    await memberPane.getByLabel('Message', { exact: true }).fill('On my way');
+    await memberPane.getByRole('button', { name: 'Send', exact: true }).click();
+    await memberPane.getByText('On my way', { exact: true }).waitFor();
+    await ownerPane.getByText('On my way', { exact: true }).waitFor({ timeout: 20000 });
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/messages-live-mobile.png'), fullPage: true });
+
+    await ownerPage.getByRole('button', { name: 'Message Alex Morgan', exact: true }).click();
+    await ownerPane.getByText('Direct conversation / Chat family', { exact: false }).waitFor();
+    await ownerPane.getByLabel('Message', { exact: true }).fill('Private note for you');
+    await ownerPane.getByRole('button', { name: 'Send', exact: true }).click();
+    await ownerPane.getByText('Private note for you', { exact: true }).waitFor();
+    const direct = (await (await memberContext.request.get(`${base}/api/conversations`, { headers: memberHeaders })).json()).data.find(item => item.kind === 'direct');
+    assert.ok(direct);
+    assert.deepEqual(direct.participants.map(item => item.account_id).sort(), [owner.id, member.id].sort());
+    await ownerPane.getByRole('button', { name: 'Delete message for everyone', exact: true }).click();
+    const confirmation = ownerPane.getByRole('group', { name: 'Confirm deletion', exact: true });
+    await confirmation.getByRole('button', { name: 'Keep', exact: true }).click();
+    assert.equal((await (await memberContext.request.get(`${base}/api/conversations/${direct.id}/messages`, { headers: memberHeaders })).json()).data[0].status, 'sent');
+    await ownerPane.getByRole('button', { name: 'Delete message for everyone', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+    await ownerPane.getByText('Message deleted', { exact: true }).waitFor();
+    const tombstone = (await (await memberContext.request.get(`${base}/api/conversations/${direct.id}/messages`, { headers: memberHeaders })).json()).data[0];
+    assert.equal(tombstone.status, 'deleted');
+    assert.equal(tombstone.body, null);
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/messages-live-desktop.png'), fullPage: true });
+    for (const width of [320, 390, 768]) {
+      await ownerPage.setViewportSize({ width, height: 844 });
+      assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `width ${width}`);
+    }
+
+    const roster = (await (await ownerContext.request.get(`${base}/api/spaces/${family.id}/members`, { headers: ownerHeaders })).json()).data;
+    const reviewed = roster.find(item => item.account_id === member.id);
+    const removed = await ownerContext.request.post(`${base}/api/spaces/${family.id}/members/${member.id}/remove`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': reviewed.etag }, data: {} });
+    assert.equal(removed.status(), 200, await removed.text());
+    await memberPane.getByText('You no longer have access to this conversation.', { exact: true }).first().waitFor({ timeout: 20000 });
+    assert.equal(await memberPane.getByText('Dinner at seven', { exact: true }).count(), 0);
+    assert.equal((await memberContext.request.get(`${base}/api/conversations/${chat.id}`, { headers: memberHeaders })).status(), 404);
+    assert.equal((await memberContext.request.get(`${base}/api/conversations`, { headers: memberHeaders })).ok(), true);
+    assert.deepEqual((await (await memberContext.request.get(`${base}/api/conversations`, { headers: memberHeaders })).json()).data, []);
+    const readOnly = (await (await ownerContext.request.get(`${base}/api/conversations/${direct.id}`, { headers: ownerHeaders })).json()).data;
+    assert.equal(readOnly.can_send, false);
+    assert.equal(await memberPage.evaluate(() => localStorage.length), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
+  }
+});
+
+test('community: page creation retry, private drafts, publication, follow feed, comments, report and block', { timeout: 240000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const readerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const visitorContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
+  const ownerPage = await ownerContext.newPage();
+  const readerPage = await readerContext.newPage();
+  const visitorPage = await visitorContext.newPage();
+  const errors = [];
+  for (const page of [ownerPage, readerPage, visitorPage]) page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const handle = `walkers-${suffix}`;
+    const name = `River Walkers ${suffix}`;
+    await signUp(ownerPage, `page-owner-${suffix}@example.test`);
+    await signUp(readerPage, `page-reader-${suffix}@example.test`);
+    const reader = (await (await readerContext.request.get(`${base}/api/me`)).json()).data;
+    const readerHeaders = { Origin: base, 'X-Account-ID': reader.id };
+
+    await ownerPage.goto(`${base}/app/pages`);
+    const form = ownerPage.getByRole('form', { name: 'Create a public page', exact: true });
+    await form.getByLabel('Handle', { exact: true }).fill(handle);
+    await form.getByLabel('Page name', { exact: true }).fill(`  ${name}  `);
+    await form.getByLabel('Topic', { exact: true }).selectOption('hobbies');
+    await form.getByLabel('Description (optional)', { exact: true }).fill('Weekend walks by the river.');
+    const attempts = [];
+    await ownerPage.route(`${base}/api/pages`, async route => {
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await form.getByRole('button', { name: 'Create page', exact: true }).click();
+    await form.getByRole('button', { name: 'Retry creating page', exact: true }).click();
+    await form.getByRole('link', { name: `Open @${handle}`, exact: true }).waitFor();
+    await ownerPage.unroute(`${base}/api/pages`);
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    assert.deepEqual(JSON.parse(attempts[0].body), { handle, name, description: 'Weekend walks by the river.', topic: 'hobbies' });
+    await form.getByRole('link', { name: `Open @${handle}`, exact: true }).click();
+    await ownerPage.getByRole('heading', { name, exact: true, level: 1 }).waitFor();
+
+    const composer = ownerPage.getByRole('form', { name: 'New post', exact: true });
+    await composer.getByLabel('Title (optional)', { exact: true }).fill('Saturday walk');
+    await composer.getByLabel('Text', { exact: true }).fill('We meet at the bridge at 7.');
+    await composer.getByRole('button', { name: 'Save draft', exact: true }).click();
+    const drafts = ownerPage.getByRole('region', { name: 'Drafts', exact: true });
+    const draftCard = drafts.getByRole('article', { name: 'Saturday walk', exact: true });
+    await draftCard.getByText('Draft, only you can see it', { exact: true }).waitFor();
+    const draft = (await (await ownerContext.request.get(`${base}/api/pages/${handle}/posts`)).json()).data;
+    assert.deepEqual(draft, []);
+    await visitorPage.goto(`${base}/pages/${handle}`);
+    await visitorPage.getByRole('heading', { name, exact: true, level: 1 }).waitFor();
+    await visitorPage.getByText('No published posts yet.', { exact: true }).waitFor();
+    assert.equal(await visitorPage.getByText('We meet at the bridge at 7.', { exact: true }).count(), 0);
+
+    await draftCard.getByRole('button', { name: 'Publish', exact: true }).click();
+    await draftCard.getByRole('group', { name: 'Confirm publication', exact: true }).getByRole('button', { name: 'Publish now', exact: true }).click();
+    const published = ownerPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Saturday walk', exact: true });
+    await published.waitFor();
+    await drafts.getByText('No drafts. New posts start as private drafts.', { exact: true }).waitFor();
+    await visitorPage.reload();
+    await visitorPage.getByText('We meet at the bridge at 7.', { exact: true }).waitFor();
+    assert.equal(await visitorPage.getByRole('button', { name: /^Like/ }).isDisabled(), true);
+
+    await readerPage.goto(`${base}/app/discover`);
+    await readerPage.getByRole('searchbox', { name: 'Search pages', exact: true }).fill(String(suffix));
+    await readerPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await readerPage.getByRole('button', { name: `Follow ${name}`, exact: true }).click();
+    await readerPage.getByRole('button', { name: `Unfollow ${name}`, exact: true }).waitFor();
+    await readerPage.goto(`${base}/app/home`);
+    const feedCard = readerPage.getByRole('article', { name: 'Saturday walk', exact: true });
+    await feedCard.waitFor();
+    await feedCard.getByRole('button', { name: 'Like 0', exact: true }).click();
+    await feedCard.getByRole('button', { name: 'Like 1', exact: true }).waitFor();
+    await feedCard.getByRole('button', { name: 'Save', exact: true }).click();
+    await feedCard.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+    await readerPage.getByRole('button', { name: 'Saved', exact: true, pressed: false }).click();
+    await readerPage.getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+
+    await readerPage.getByRole('article', { name: 'Saturday walk', exact: true }).getByRole('link', { name: 'Comments 0', exact: true }).click();
+    await readerPage.getByRole('heading', { name: `Post from ${name}`, exact: true }).waitFor();
+    await readerPage.getByLabel('Write a comment', { exact: true }).fill('Count me in');
+    await readerPage.getByRole('button', { name: 'Post comment', exact: true }).click();
+    await readerPage.getByRole('article', { name: 'Comment by Alex Morgan' }).getByText('Count me in', { exact: true }).waitFor();
+    const postId = new URL(readerPage.url()).pathname.split('/').pop();
+    await ownerPage.goto(`${base}/posts/${postId}`);
+    await ownerPage.getByText('Count me in', { exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: 'Reply', exact: true }).click();
+    await ownerPage.getByLabel('Reply to Alex Morgan', { exact: true }).fill('See you there');
+    await ownerPage.getByRole('button', { name: 'Post reply', exact: true }).click();
+    await ownerPage.getByRole('list', { name: 'Replies to Alex Morgan' }).getByText('See you there', { exact: true }).waitFor();
+    const thread = (await (await readerContext.request.get(`${base}/api/posts/${postId}/comments`, { headers: readerHeaders })).json()).data;
+    assert.deepEqual(thread.map(item => [item.body, item.parent_id === null]), [['Count me in', true], ['See you there', false]]);
+    assert.equal(thread.some(item => 'author_account_id' in item), false);
+
+    await readerPage.reload();
+    await readerPage.getByRole('article', { name: 'Saturday walk', exact: true }).getByRole('button', { name: 'Report', exact: true }).click();
+    const report = readerPage.getByRole('dialog', { name: 'Report post', exact: true });
+    await report.getByRole('radio', { name: 'Spam or scam', exact: true }).check();
+    await report.getByRole('button', { name: 'Send report', exact: true }).click();
+    await report.getByText(/^Report received\./).waitFor();
+    for (const width of [320, 390, 768]) {
+      await readerPage.setViewportSize({ width, height: 844 });
+      assert.equal(await readerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `dialog width ${width}`);
+    }
+    await report.getByRole('button', { name: 'Close', exact: true }).click();
+    await readerPage.setViewportSize({ width: 390, height: 844 });
+    await readerPage.screenshot({ path: path.join(root, '.local/screenshots/community-live-mobile.png'), fullPage: true });
+
+    await readerPage.goto(`${base}/pages/${handle}`);
+    await readerPage.getByRole('button', { name: 'Block page', exact: true }).click();
+    await readerPage.getByRole('group', { name: 'Confirm block', exact: true }).getByRole('button', { name: 'Block', exact: true }).click();
+    await readerPage.getByText('You blocked this page. Its posts are hidden from you.', { exact: true }).waitFor();
+    const feed = (await (await readerContext.request.get(`${base}/api/feed`, { headers: readerHeaders })).json()).data;
+    assert.deepEqual(feed, []);
+    assert.equal((await readerContext.request.get(`${base}/api/posts/${postId}`, { headers: readerHeaders })).status(), 404);
+    await readerPage.goto(`${base}/app/safety`);
+    await readerPage.getByRole('button', { name: `Unblock ${name}`, exact: true }).click();
+    await readerPage.getByRole('group', { name: `Confirm unblock ${name}`, exact: true }).getByRole('button', { name: 'Unblock', exact: true }).click();
+    await readerPage.getByText('You have not blocked anyone.', { exact: true }).waitFor();
+    assert.equal((await readerContext.request.get(`${base}/api/posts/${postId}`, { headers: readerHeaders })).status(), 200);
+
+    await ownerPage.goto(`${base}/pages/${handle}`);
+    await ownerPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+    for (const width of [320, 390, 768]) {
+      await ownerPage.setViewportSize({ width, height: 900 });
+      assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `owner width ${width}`);
+    }
+    await ownerPage.setViewportSize({ width: 1440, height: 1000 });
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/community-live-desktop.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await readerContext.close();
+    await visitorContext.close();
+  }
+});
+
+test('post search: Discover finds published public posts by their words, literally, and never drafts', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const readerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const visitorContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
+  const ownerPage = await ownerContext.newPage();
+  const readerPage = await readerContext.newPage();
+  const visitorPage = await visitorContext.newPage();
+  const errors = [];
+  for (const page of [ownerPage, readerPage, visitorPage]) page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const word = `lantern${suffix}`;
+    await signUp(ownerPage, `search-owner-${suffix}@example.test`);
+    await signUp(readerPage, `search-reader-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const created = await ownerContext.request.post(`${base}/api/pages`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+      data: { handle: `lamps-${suffix}`, name: `Lamp Makers ${suffix}`, description: 'Evening lamp workshops.', topic: 'hobbies' },
+    });
+    assert.equal(created.status(), 201);
+    const page = (await created.json()).data;
+    async function write(title, body, publish) {
+      const drafted = await ownerContext.request.post(`${base}/api/pages/${page.id}/posts`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { title, body } });
+      assert.equal(drafted.status(), 201);
+      const draft = (await drafted.json()).data;
+      if (!publish) return draft;
+      const done = await ownerContext.request.post(`${base}/api/posts/${draft.id}/publish`, { headers: { ...ownerHeaders, 'If-Match': draft.etag }, data: {} });
+      assert.equal(done.status(), 200);
+      return (await done.json()).data;
+    }
+    await write('Paper lanterns', `Bring glue for the ${word} evening.`, true);
+    await write('Glass jars', 'Jars only this week.', true);
+    await write('Secret plan', `Draft ${word} notes stay private.`, false);
+    const mine = (await (await ownerContext.request.get(`${base}/api/discover/posts?q=${word}`, { headers: ownerHeaders })).json()).data;
+    assert.deepEqual(mine.map(item => item.title), ['Paper lanterns']);
+
+    await visitorPage.goto(`${base}/app/discover`);
+    await visitorPage.getByRole('group', { name: 'Search for', exact: true }).getByRole('button', { name: 'Posts', exact: true }).click();
+    await visitorPage.getByRole('button', { name: 'Posts', exact: true, pressed: true }).waitFor();
+    assert.equal(await visitorPage.getByRole('combobox', { name: 'Topic', exact: true }).count(), 0);
+    await visitorPage.getByRole('searchbox', { name: 'Search posts', exact: true }).fill(`  ${word.toUpperCase()}  `);
+    await visitorPage.getByRole('button', { name: 'Search', exact: true }).click();
+    const results = visitorPage.getByRole('region', { name: 'Posts', exact: true });
+    await results.getByRole('article', { name: 'Paper lanterns', exact: true }).waitFor();
+    assert.equal(await results.getByRole('article').count(), 1);
+    assert.equal(await visitorPage.getByText(`Draft ${word} notes stay private.`).count(), 0);
+    assert.equal(await results.getByRole('button', { name: /^Like/ }).isDisabled(), true);
+    // A percent sign is a literal character: no post contains the word followed by "%".
+    await visitorPage.getByRole('searchbox', { name: 'Search posts', exact: true }).fill(`${word}%`);
+    await visitorPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await visitorPage.getByText('No posts match. Try another word.', { exact: true }).waitFor();
+    assert.equal(await results.getByRole('article').count(), 0);
+
+    await readerPage.goto(`${base}/app/discover`);
+    await readerPage.getByRole('button', { name: 'Posts', exact: true }).click();
+    await readerPage.getByRole('searchbox', { name: 'Search posts', exact: true }).fill(word);
+    await readerPage.getByRole('button', { name: 'Search', exact: true }).click();
+    const found = readerPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Paper lanterns', exact: true });
+    await found.getByRole('button', { name: 'Like 0', exact: true }).click();
+    await found.getByRole('button', { name: 'Like 1', exact: true }).waitFor();
+    await found.getByRole('button', { name: 'Save', exact: true }).click();
+    await found.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+    for (const width of [320, 390, 768]) {
+      await readerPage.setViewportSize({ width, height: 844 });
+      assert.equal(await readerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `search width ${width}`);
+    }
+    await readerPage.setViewportSize({ width: 390, height: 844 });
+    await readerPage.screenshot({ path: path.join(root, '.local/screenshots/community-post-search-mobile.png'), fullPage: true });
+    await readerPage.getByRole('button', { name: 'Pages', exact: true }).click();
+    await readerPage.getByRole('searchbox', { name: 'Search pages', exact: true }).waitFor();
+    await readerPage.getByRole('combobox', { name: 'Topic', exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await readerContext.close();
+    await visitorContext.close();
+  }
+});
+
+test('events: exact create retry, responses, reschedule confirmation and cancellation', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `event-owner-${suffix}@example.test`);
+    await signUp(memberPage, `event-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Event family ${suffix}`, space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(sent.status(), 201);
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+
+    const day = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await ownerPage.goto(`${base}/app/spaces`);
+    await ownerPage.getByRole('link', { name: `Events for ${family.name}`, exact: true }).click();
+    await ownerPage.getByRole('heading', { name: 'Events', exact: true }).waitFor();
+    await ownerPage.getByText('No upcoming events. Events created before you joined this Space are not shown.', { exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: 'New event', exact: true }).click();
+    const form = ownerPage.getByRole('form', { name: 'New event', exact: true });
+    await form.getByLabel('Title', { exact: true }).fill('  Family   dinner ');
+    await form.getByLabel('Starts', { exact: true }).fill(`${day}T18:30`);
+    await form.getByLabel('Ends (optional)', { exact: true }).fill(`${day}T21:00`);
+    await form.getByLabel('Time zone', { exact: true }).selectOption('Europe/London');
+    await form.getByLabel('Location (optional)', { exact: true }).fill("Grandma's house");
+    const attempts = [];
+    const createRoute = url => url.pathname === `/api/spaces/${family.id}/events`;
+    await ownerPage.route(createRoute, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await form.getByRole('button', { name: 'Create event', exact: true }).click();
+    await form.getByText('Retry sends the same event; it will not be created twice.').waitFor();
+    assert.equal(await form.getByLabel('Title', { exact: true }).isDisabled(), true);
+    await form.getByRole('button', { name: 'Retry', exact: true }).click();
+    const ownerPanel = ownerPage.getByRole('region', { name: 'Family dinner', exact: true });
+    await ownerPanel.getByText(`(Europe/London)`).first().waitFor();
+    await ownerPage.unroute(createRoute);
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    assert.deepEqual(JSON.parse(attempts[0].body), {
+      title: 'Family dinner', description: '', location: "Grandma's house", timezone: 'Europe/London',
+      local_start: `${day}T18:30`, local_end: `${day}T21:00`,
+    });
+    const stored = (await (await ownerContext.request.get(`${base}/api/spaces/${family.id}/events`, { headers: ownerHeaders })).json()).data;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].local_start, `${day}T18:30`);
+
+    await ownerPanel.getByRole('button', { name: 'Going', exact: true }).click();
+    await ownerPanel.getByRole('button', { name: 'Going', exact: true, pressed: true }).waitFor();
+    await ownerPanel.getByText('Going 1 · Maybe 0 · Not going 0', { exact: true }).waitFor();
+
+    await memberPage.goto(`${base}/app/events?space_id=${family.id}`);
+    await memberPage.getByRole('button', { name: 'Family dinner', exact: true }).click();
+    const memberPanel = memberPage.getByRole('region', { name: 'Family dinner', exact: true });
+    await memberPanel.getByText('Organized by Alex Morgan', { exact: false }).waitFor();
+    assert.equal(await memberPanel.getByRole('button', { name: 'Edit event' }).count(), 0);
+    assert.equal(await memberPanel.getByRole('button', { name: 'Cancel event' }).count(), 0);
+    await memberPanel.getByRole('button', { name: 'Maybe', exact: true }).click();
+    await memberPanel.getByRole('button', { name: 'Maybe', exact: true, pressed: true }).waitFor();
+    await memberPanel.getByText('Going 1 · Maybe 1 · Not going 0', { exact: true }).waitFor();
+
+    await ownerPanel.getByRole('button', { name: 'Edit event', exact: true }).click();
+    const editForm = ownerPage.getByRole('form', { name: 'Edit event', exact: true });
+    await editForm.getByLabel('Starts', { exact: true }).fill(`${day}T19:00`);
+    await editForm.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await ownerPanel.getByText('The time was changed after creation.', { exact: false }).waitFor();
+    await ownerPanel.getByText('The time changed after you responded. Choose your response again to confirm it.', { exact: true }).waitFor();
+
+    await memberPage.reload();
+    await memberPage.getByRole('button', { name: 'Family dinner', exact: true }).click();
+    await memberPanel.getByText('The time changed after you responded. Choose your response again to confirm it.', { exact: true }).waitFor();
+    assert.equal(await memberPanel.getByRole('button', { name: 'Maybe', exact: true, pressed: true }).count(), 0);
+    await memberPanel.getByRole('button', { name: 'Maybe', exact: true }).click();
+    await memberPanel.getByRole('button', { name: 'Maybe', exact: true, pressed: true }).waitFor();
+    await memberPanel.getByText('The time changed after you responded. Choose your response again to confirm it.', { exact: true }).waitFor({ state: 'detached' });
+    for (const width of [320, 390, 768]) {
+      await memberPage.setViewportSize({ width, height: 844 });
+      assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `width ${width}`);
+    }
+    await memberPage.setViewportSize({ width: 390, height: 844 });
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/events-live-mobile.png'), fullPage: true });
+
+    await ownerPanel.getByRole('button', { name: 'Cancel event', exact: true }).click();
+    const confirm = ownerPanel.getByRole('group', { name: 'Confirm cancellation', exact: true });
+    await confirm.getByRole('button', { name: 'Yes, cancel event', exact: true }).click();
+    await ownerPanel.getByText('This event was cancelled. Responses can no longer change.', { exact: true }).waitFor();
+    assert.equal(await ownerPanel.getByRole('button', { name: 'Going', exact: true }).count(), 0);
+    await memberPage.reload();
+    await memberPage.getByText('Cancelled', { exact: true }).waitFor();
+    await memberPage.getByRole('button', { name: /^Family dinner/ }).click();
+    await memberPanel.getByText('This event was cancelled. Responses can no longer change.', { exact: true }).waitFor();
+    assert.equal(await memberPanel.getByRole('button', { name: 'Maybe', exact: true }).count(), 0);
+    const refused = await memberContext.request.post(`${base}/api/events/${stored[0].id}/attendance`, { headers: memberHeaders, data: { response: 'going' } });
+    assert.equal(refused.status(), 409);
+    for (const width of [320, 768]) {
+      await ownerPage.setViewportSize({ width, height: 900 });
+      assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `owner width ${width}`);
+    }
+    await ownerPage.setViewportSize({ width: 1440, height: 1000 });
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/events-live-desktop.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
+  }
+});
+
+test('care: confirmed instruction, exact retries, own dose notes, privacy and stop', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const otherContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ownerContext.newPage();
+  const otherPage = await otherContext.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  otherPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(page, `care-owner-${suffix}@example.test`);
+    await signUp(otherPage, `care-other-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const other = (await (await otherContext.request.get(`${base}/api/me`)).json()).data;
+    assert.equal(owner.timezone, 'Asia/Kolkata');
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const wall = milliseconds => new Date(milliseconds + 330 * 60000).toISOString();
+    const earlier = wall(Date.now() - 10 * 60000);
+    const todayIst = wall(Date.now()).slice(0, 10);
+    const targetDate = earlier.slice(0, 10);
+    const targetTime = earlier.slice(11, 16);
+    const later = wall(Date.now() + 4 * 3600000);
+    const laterSameDay = later.slice(0, 10) === targetDate;
+
+    await page.goto(`${base}/app/care`);
+    await page.getByRole('heading', { name: 'Medicines', exact: true }).waitFor();
+    await page.getByText('Only you can see this page; nobody in your Spaces can.', { exact: false }).waitFor();
+    await page.getByText('Nothing is scheduled for this day.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'My medicines', exact: true }).click();
+    await page.getByText('No current medicines.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Add medicine', exact: true }).click();
+    const form = page.getByRole('form', { name: 'Add a medicine', exact: true });
+    await form.getByLabel('Medicine name', { exact: true }).fill('  Synthetic   tablet ');
+    await form.getByLabel('Strength (optional)', { exact: true }).fill('5 mg');
+    await form.getByLabel('Form (optional)', { exact: true }).fill('tablet');
+    await form.getByLabel('Dose', { exact: true }).fill('One tablet');
+    await form.getByLabel('Source', { exact: true }).selectOption('package_label');
+    await form.getByLabel('Time 1', { exact: true }).fill(targetTime);
+    if (laterSameDay) {
+      await form.getByRole('button', { name: 'Add a time', exact: true }).click();
+      await form.getByLabel('Time 2', { exact: true }).fill(later.slice(11, 16));
+    }
+    await form.getByLabel('First day', { exact: true }).fill(targetDate);
+    await form.getByRole('button', { name: 'Save medicine', exact: true }).click();
+    await form.getByText('Confirm that these details match your instructions.', { exact: true }).waitFor();
+    await form.getByRole('checkbox').check();
+
+    const attempts = [];
+    const createRoute = url => url.pathname === '/api/care/instructions';
+    await page.route(createRoute, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await form.getByRole('button', { name: 'Save medicine', exact: true }).click();
+    await form.getByText('Retry sends the same request; it will not be saved twice.').waitFor();
+    assert.equal(await form.getByLabel('Medicine name', { exact: true }).isDisabled(), true);
+    await form.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.getByText('Synthetic tablet 5 mg (tablet)', { exact: true }).waitFor();
+    await page.unroute(createRoute);
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    const sent = JSON.parse(attempts[0].body);
+    assert.equal(sent.medicine_name, 'Synthetic tablet');
+    assert.equal(sent.confirmed, true);
+    assert.equal(sent.timezone, 'Asia/Kolkata');
+    const stored = (await (await ownerContext.request.get(`${base}/api/care/instructions?status=active`, { headers: ownerHeaders })).json()).data;
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].confirmed_by_account_id, owner.id);
+    await page.getByText('Source: The package label.', { exact: false }).waitFor();
+
+    await page.getByRole('button', { name: 'Day plan', exact: true }).click();
+    if (targetDate !== todayIst) await page.getByLabel('Go to date', { exact: true }).fill(targetDate);
+    const row = page.getByRole('listitem').filter({ hasText: 'Synthetic tablet 5 mg (tablet)' }).first();
+    await row.getByText('Not noted', { exact: true }).waitFor();
+    if (laterSameDay) {
+      const futureRow = page.getByRole('listitem').filter({ hasText: later.slice(11, 16) }).first();
+      await futureRow.getByText('You can note this dose from one hour before its time.', { exact: true }).waitFor();
+      assert.equal(await futureRow.getByRole('button', { name: 'Taken', exact: true }).count(), 0);
+    }
+    const reportAttempts = [];
+    const reportRoute = url => url.pathname === `/api/care/instructions/${stored[0].id}/reports`;
+    await page.route(reportRoute, async route => {
+      reportAttempts.push({ key: route.request().headers()['idempotency-key'], etag: route.request().headers()['if-match'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 200);
+      if (reportAttempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await row.getByRole('button', { name: 'Taken', exact: true }).click();
+    await row.getByText('Choose Taken again to retry; it will not be saved twice.', { exact: false }).waitFor();
+    await row.getByRole('button', { name: 'Taken', exact: true }).click();
+    await row.getByText('You noted: Taken', { exact: true }).waitFor();
+    await page.unroute(reportRoute);
+    assert.equal(reportAttempts.length, 2);
+    assert.deepEqual(reportAttempts[0], reportAttempts[1]);
+    await row.getByText('You noted: Taken', { exact: true }).waitFor();
+    await row.getByRole('button', { name: 'Change to Skipped', exact: true }).click();
+    await row.getByText('You noted: Skipped', { exact: true }).waitFor();
+    const planned = (await (await ownerContext.request.get(`${base}/api/care/day?date=${targetDate}`, { headers: ownerHeaders })).json()).data;
+    const noted = planned.occurrences.find(item => item.local_time === targetTime);
+    assert.equal(noted.report.outcome, 'skipped');
+    assert.equal(noted.report.revision, 2);
+    await page.getByText('not checked and this page does not measure whether you followed your instructions', { exact: false }).waitFor();
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `width ${width}`);
+    }
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.screenshot({ path: path.join(root, '.local/screenshots/care-live-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: path.join(root, '.local/screenshots/care-live-desktop.png'), fullPage: true });
+
+    const otherHeaders = { Origin: base, 'X-Account-ID': other.id };
+    assert.equal((await otherContext.request.get(`${base}/api/care/instructions/${stored[0].id}`, { headers: otherHeaders })).status(), 404);
+    assert.equal((await otherContext.request.post(`${base}/api/care/instructions/${stored[0].id}/reports`, {
+      headers: { ...otherHeaders, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': noted.etag },
+      data: { local_date: targetDate, local_time: targetTime, outcome: 'taken' },
+    })).status(), 404);
+    assert.equal((await otherContext.request.post(`${base}/api/care/instructions/${stored[0].id}/stop`, {
+      headers: { ...otherHeaders, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': stored[0].etag }, data: {},
+    })).status(), 404);
+    const otherDay = (await (await otherContext.request.get(`${base}/api/care/day?date=${targetDate}`, { headers: otherHeaders })).json()).data;
+    assert.deepEqual(otherDay.occurrences, []);
+    await otherPage.goto(`${base}/app/care`);
+    await otherPage.getByText('Nothing is scheduled for this day.', { exact: false }).waitFor();
+
+    await page.getByRole('button', { name: 'My medicines', exact: true }).click();
+    await page.getByRole('button', { name: 'Stop tracking', exact: true }).click();
+    const confirm = page.getByRole('group', { name: 'Confirm stop', exact: true });
+    await confirm.getByText('It does not tell you to stop taking it', { exact: false }).waitFor();
+    await confirm.getByRole('button', { name: 'Yes, stop tracking', exact: true }).click();
+    await page.getByText('No current medicines.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Stopped', exact: true }).click();
+    await page.getByText('Synthetic tablet 5 mg (tablet)', { exact: true }).waitFor();
+    await page.getByText('Stopped ', { exact: false }).first().waitFor();
+    await page.getByRole('button', { name: 'Day plan', exact: true }).click();
+    if (targetDate !== todayIst) await page.getByLabel('Go to date', { exact: true }).fill(targetDate);
+    await page.getByText('(this medicine was stopped)', { exact: false }).waitFor();
+    assert.equal((await ownerContext.request.post(`${base}/api/care/instructions/${stored[0].id}/stop`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': stored[0].etag }, data: {},
+    })).status(), 412);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await otherContext.close();
+  }
+});
+
+test('groups: a public group is found, joined on approval, and hidden again when made private', { timeout: 240000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const seekerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const seekerPage = await seekerContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  seekerPage.on('pageerror', error => errors.push(error.message));
+  const suffix = Date.now();
+  const groupName = `Lakeside walkers ${suffix}`;
+  const privateName = `Private book club ${suffix}`;
+  try {
+    await signUp(ownerPage, `group-owner-${suffix}@example.test`);
+    await signUp(seekerPage, `group-seeker-${suffix}@example.test`);
+
+    await ownerPage.goto(`${base}/app/spaces`);
+    await ownerPage.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
+    for (const [name, visibility] of [[privateName, 'private'], [groupName, 'public']]) {
+      await ownerPage.getByLabel('Space type').selectOption('group');
+      await ownerPage.getByLabel('Group name', { exact: true }).fill(name);
+      await ownerPage.getByLabel('Description (optional)').fill(`${name}: Saturday mornings, all paces welcome.`);
+      await ownerPage.getByRole('radio', { name: visibility === 'public' ? /Public/ : /Private/ }).check();
+      await ownerPage.getByRole('button', { name: 'Create Space', exact: true }).click();
+      await ownerPage.getByRole('heading', { name, exact: true }).waitFor();
+    }
+    await ownerPage.getByText('Public group created. People can now find it and ask to join.').waitFor();
+
+    await seekerPage.goto(`${base}/app/spaces/discover`);
+    await seekerPage.getByRole('heading', { name: 'Find groups', exact: true }).waitFor();
+    await seekerPage.getByLabel('Search by name or description').fill(String(suffix));
+    await seekerPage.getByRole('button', { name: 'Search', exact: true }).click();
+    const card = seekerPage.getByRole('listitem').filter({ hasText: groupName });
+    await card.waitFor();
+    assert.equal(await seekerPage.getByText(privateName).count(), 0, 'A private group must never be listed.');
+    await card.getByText('1 member').waitFor();
+    for (const width of [320, 390]) {
+      await seekerPage.setViewportSize({ width, height: 844 });
+      assert.equal(await seekerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    await seekerPage.setViewportSize({ width: 390, height: 844 });
+    await card.getByRole('button', { name: 'Ask to join', exact: true }).click();
+    await card.getByLabel('Note to the owner (optional)').fill('I walk by the lake every weekend.');
+    await card.getByRole('button', { name: 'Send request', exact: true }).click();
+    await seekerPage.getByText(`Request sent to ${groupName}. The owner will review it.`).waitFor();
+    await card.getByText('Request sent', { exact: true }).waitFor();
+    await seekerPage.getByText('Waiting for the owner', { exact: false }).waitFor();
+    await seekerPage.screenshot({ path: path.join(root, '.local/screenshots/groups-find-mobile.png'), fullPage: true });
+
+    await ownerPage.reload();
+    await ownerPage.getByRole('button', { name: `Join requests for ${groupName}` }).click();
+    const requests = ownerPage.getByRole('dialog', { name: `Join requests: ${groupName}` });
+    await requests.getByText('I walk by the lake every weekend.').waitFor();
+    await requests.getByRole('button', { name: 'Approve Alex Morgan' }).click();
+    await requests.getByText(`Alex Morgan joined ${groupName}.`).waitFor();
+    await requests.getByText('Nobody is waiting.').waitFor();
+    await requests.getByRole('button', { name: 'Close join requests' }).click();
+
+    await seekerPage.goto(`${base}/app/spaces`);
+    await seekerPage.getByRole('heading', { name: groupName, exact: true }).waitFor();
+    await seekerPage.goto(`${base}/app/spaces/discover`);
+    await seekerPage.getByLabel('Search by name or description').fill(String(suffix));
+    await seekerPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await seekerPage.getByRole('listitem').filter({ hasText: groupName }).getByText('You are a member').waitFor();
+    await seekerPage.getByRole('listitem').filter({ hasText: groupName }).getByText('2 members').waitFor();
+
+    await ownerPage.getByRole('button', { name: `Settings for ${groupName}` }).click();
+    const settings = ownerPage.getByRole('dialog', { name: 'Space settings' });
+    await settings.getByRole('button', { name: 'Make this group private' }).click();
+    await settings.getByText('The group will disappear from Find groups.', { exact: false }).waitFor();
+    await settings.getByRole('button', { name: 'Make private', exact: true }).click();
+    await settings.getByText('The group is private. It no longer appears in Find groups, and waiting requests were closed.').waitFor();
+    await settings.getByRole('button', { name: 'Close Space settings' }).click();
+
+    await seekerPage.reload();
+    await seekerPage.getByLabel('Search by name or description').fill(String(suffix));
+    await seekerPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await seekerPage.getByText('No public groups match that search.').waitFor();
+    await seekerPage.goto(`${base}/app/spaces`);
+    await seekerPage.getByRole('heading', { name: groupName, exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await seekerContext.close();
   }
 });

@@ -1,7 +1,8 @@
-<!-- generated: feature-catalog; reserved, not implemented -->
 # community
 
-Reserved domain boundary. Only features with executable evidence in the build status are implemented.
+Built: Home (`/app/home`, with Following, Latest and Saved), Discover (`/app/discover`, searching pages or posts), your pages and drafts (`/app/pages`), your blocked list (`/app/safety`), and public page and post views that work signed out (`/pages/<handle>`, `/posts/<id>`). The web proxy forwards public reads without a session when you are signed out. Report and block are available on pages, posts and comments.
+
+Evidence: [public community checkpoint](../../../../docs/BUILD_STATUS.md#public-community-checkpoint).
 
 Source chapters: 1, 2, 15.
 

@@ -1,7 +1,8 @@
-<!-- generated: feature-catalog; reserved, not implemented -->
 # messaging
 
-Reserved domain boundary. Only features with executable evidence in the build status are implemented.
+Built: the **Messages** screen, opened from the account screen or with **Open chat** on a Space. It lists conversations with unread counts, shows a conversation, sends messages, marks them read and lets authors delete their own messages. An unconfirmed send is retried with the same key and text. The screen says messages are not end-to-end encrypted and polls while open. Retry state is kept in memory only and does not survive the app closing.
+
+Evidence: [messaging checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#space-chat-and-direct-messages-checkpoint) (`MessagingTest`, 18 JVM tests). Not yet tested on a device.
 
 Source chapters: 1, 4, 19.
 

@@ -1,13 +1,14 @@
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.security import HTTPBearer
 
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.scheduling.schemas import CreateReminder, PreviewReminder, ReminderAction, ReminderPage, ReminderPreview, ReminderView
 from app.modules.scheduling.schemas import PreviewReminderRequest, ReminderRequestPage, ReminderRequestPreview, ReminderRequestReview, ReminderRequestView
+from app.modules.scheduling.schemas import MoveSeriesOccurrence, PreviewReminderSeries, ReminderSeriesPage, ReminderSeriesPreview, ReminderSeriesView
 
 router = APIRouter(
     prefix="/v1/reminders", tags=["Reminders"],
@@ -78,3 +79,70 @@ def decline_request(request: Request, request_id: UUID, body: ReminderAction):
 @request_router.post("/{request_id}/cancel", response_model=Envelope[ReminderRequestView])
 def cancel_request(request: Request, request_id: UUID, body: ReminderAction):
     return envelope(request, request.app.state.reminder_requests.resolve(token(request), str(request_id), "cancel"))
+
+
+series_router = APIRouter(
+    prefix="/v1/reminder-series", tags=["Repeating reminders"],
+    dependencies=[Depends(HTTPBearer(auto_error=False, scheme_name="AccountSession"))],
+    responses={status: {"model": ErrorEnvelope} for status in (400, 401, 404, 409, 410, 412, 422, 428, 503)},
+)
+
+
+def with_etag(request, response, data):
+    response.headers["ETag"] = data.etag
+    return envelope(request, data)
+
+
+@series_router.post("/preview", response_model=Envelope[ReminderSeriesPreview])
+def preview_series(request: Request, body: PreviewReminderSeries):
+    return envelope(request, request.app.state.reminder_series.preview(token(request), body))
+
+
+@series_router.post("", response_model=Envelope[ReminderSeriesView], status_code=201)
+def create_series(request: Request, response: Response, body: CreateReminder, idempotency_key: UUID = Header()):
+    return with_etag(request, response, request.app.state.reminder_series.create(token(request), body, str(idempotency_key)))
+
+
+@series_router.get("", response_model=ReminderSeriesPage)
+def list_series(request: Request, task_id: UUID | None = None, limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)):
+    data, pagination = request.app.state.reminder_series.list_series(token(request), limit, cursor, str(task_id) if task_id else None)
+    return {**envelope(request, data), "pagination": pagination}
+
+
+@series_router.get("/{series_id}", response_model=Envelope[ReminderSeriesView])
+def read_series(request: Request, response: Response, series_id: UUID):
+    return with_etag(request, response, request.app.state.reminder_series.read(token(request), str(series_id)))
+
+
+def series_command(request, response, series_id, operation, key, expected):
+    return with_etag(request, response, request.app.state.reminder_series.command(token(request), str(series_id), operation, str(key), expected))
+
+
+@series_router.post("/{series_id}/pause", response_model=Envelope[ReminderSeriesView])
+def pause_series(request: Request, response: Response, series_id: UUID, body: ReminderAction, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return series_command(request, response, series_id, "pause", idempotency_key, if_match)
+
+
+@series_router.post("/{series_id}/resume", response_model=Envelope[ReminderSeriesView])
+def resume_series(request: Request, response: Response, series_id: UUID, body: ReminderAction, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return series_command(request, response, series_id, "resume", idempotency_key, if_match)
+
+
+@series_router.post("/{series_id}/skip", response_model=Envelope[ReminderSeriesView])
+def skip_series(request: Request, response: Response, series_id: UUID, body: ReminderAction, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return series_command(request, response, series_id, "skip", idempotency_key, if_match)
+
+
+@series_router.post("/{series_id}/cancel", response_model=Envelope[ReminderSeriesView])
+def cancel_series(request: Request, response: Response, series_id: UUID, body: ReminderAction, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return series_command(request, response, series_id, "cancel", idempotency_key, if_match)
+
+
+@series_router.post("/{series_id}/move", response_model=Envelope[ReminderSeriesView])
+def move_series(request: Request, response: Response, series_id: UUID, body: MoveSeriesOccurrence, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return with_etag(request, response, request.app.state.reminder_series.command(token(request), str(series_id), "move", str(idempotency_key), if_match, body))
+
+
+@series_router.post("/{series_id}/replace", response_model=Envelope[ReminderSeriesView])
+def replace_series(request: Request, response: Response, series_id: UUID, body: CreateReminder, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=160)):
+    return with_etag(request, response, request.app.state.reminder_series.replace_series(token(request), str(series_id), body, str(idempotency_key), if_match))

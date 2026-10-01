@@ -91,9 +91,39 @@
 .reviewFacts dt { color: var(--muted); }
 .reviewFacts dd { margin: 0; overflow-wrap: anywhere; }
 
+.headingActions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: flex-end; }
+.textArea { width: 100%; min-height: 88px; resize: vertical; padding: 11px 12px; font: inherit; color: var(--ink); background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); }
+.textArea:focus-visible { outline: 3px solid var(--green-soft); border-color: var(--green); }
+.counter { justify-self: end; margin-top: -12px; color: var(--muted); font-size: 12px; }
+.visibilityChoice { display: grid; gap: 10px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.visibilityChoice legend { font-weight: 600; margin-bottom: 8px; }
+.choice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--green); background: var(--green-soft); }
+.choice:has(input:disabled) { cursor: default; opacity: .7; }
+.choice input { margin-top: 4px; accent-color: var(--green); }
+.choice strong { display: flex; align-items: center; gap: 6px; }
+.choice small { grid-column: 2; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.publicMark { color: var(--accent); }
+.description { margin: 4px 0 0; color: var(--muted); font-size: 14px; white-space: pre-line; overflow-wrap: anywhere; }
+.badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; background: var(--accent); color: var(--white); font-size: 12px; font-weight: 700; }
+.searchForm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin: 0 0 28px; }
+.searchForm button { min-height: 46px; }
+.groupGrid { list-style: none; padding: 0; margin: 0 0 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.groupCard { display: grid; gap: 12px; align-content: start; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); }
+.groupCard h3 { margin: 0; font-size: 18px; line-height: 1.35; overflow-wrap: anywhere; }
+.groupCard > p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.groupMeta { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; color: var(--muted); font-size: 13px; }
+.groupMeta span { display: inline-flex; align-items: center; gap: 5px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: var(--green-soft); color: var(--green); font-size: 13px; font-weight: 650; }
+.groupActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.groupActions > * { min-height: 44px; }
+.noteForm { display: grid; gap: 10px; }
+.requestNote { margin: 6px 0 0; padding-left: 10px; border-left: 3px solid var(--line); white-space: pre-line; overflow-wrap: anywhere; }
+.loadMore { display: flex; justify-content: center; margin-bottom: 36px; }
+
 @media (max-width: 760px) {
   .main { width: calc(100% - 40px); padding-top: 16px; }
-  .heading { align-items: flex-start; margin: 24px 0; }
+  .heading { align-items: flex-start; flex-wrap: wrap; margin: 24px 0; }
   .heading h1 { font-size: 28px; }
   .privacy { margin-top: 10px; }
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
@@ -106,4 +136,6 @@
   .invitationActions { width: 100%; justify-content: flex-start; }
   .invitationSection .sectionHeading h2 { font-size: 17px; }
   .reviewFacts { gap: 10px; font-size: 14px; }
+  .headingActions { justify-content: flex-start; }
+  .searchForm { grid-template-columns: minmax(0, 1fr); }
 }

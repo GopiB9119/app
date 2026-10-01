@@ -8,6 +8,12 @@ Requests carry the expected account ID; BFF session/account checks and Origin pr
 
 An uncertain Space/invitation creation response retains its immutable payload and request key for an explicit in-page retry. Invitation management cannot switch recipients or close while that create intent is unresolved. This is not a durable offline queue: leaving/reloading the screen can lose the pending local intent, so the current server list must be checked before a new creation. Accept/decline/revoke address one immutable invitation and reconcile its current state; no automatic background replay is implemented.
 
+## Group Spaces and Find Groups
+
+Built for [T22](../../../../docs/TASKS.md#spaces) under [DEC-011](../../../../docs/DECISIONS.md#accepted-decisions). The create form offers Family, Group and Solo; a group gets an optional description and an explicit Private or Public choice that says who can find it. Each row shows the type and a Private or Public mark. Owners edit the description in Space settings and switch a group between private and public after a confirmation that states the consequences; making it private closes waiting requests. Owners of groups have a Join requests dialog to approve or decline (with a confirmation) each person, whose note is shown.
+
+`/app/spaces/discover` (Find groups) searches public groups by name or description and shows name, description, member count and the viewer's relation. Asking to join takes an optional 280-character note and keeps its request key for an exact retry after an unconfirmed send. People can withdraw a waiting request and see all their requests with their outcome. The proxy forwards only the nine group routes, and only `q`, `limit` and `cursor` on the search. The client checks that each answer matches what was asked.
+
 ## Members
 
 Each Space has a members action. Its roster shows minimal current account/name/role information; only the current owner sees ordinary-member removal, and only an ordinary member sees self-leave. Confirmation shows the exact Space, member name and account ID. The owner cannot leave or remove themselves in this slice.

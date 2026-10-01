@@ -20,15 +20,15 @@
 			"group": "build"
 		},
 		{
-			"label": "Community Platform: preview reminder requests",
+			"label": "Community Platform: preview web",
 			"type": "process",
 			"command": "node",
-			"args": ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", "3003"],
+			"args": ["node_modules/next/dist/bin/next", "dev", "--hostname", "127.0.0.1", "--port", "3000"],
 			"options": {
 				"cwd": "${workspaceFolder}/web",
 				"env": {
-					"COMMUNITY_BUILD_LABEL": "reminder-requests-20260920",
-					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3003,http://localhost:3003",
+					"COMMUNITY_BUILD_LABEL": "local-web",
+					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3000",
 					"NEXT_TELEMETRY_DISABLED": "1"
 				}
 			},
@@ -37,20 +37,13 @@
 			"problemMatcher": []
 		},
 		{
+			"label": "Community Platform: preview reminder requests",
+			"dependsOn": "Community Platform: preview web",
+			"problemMatcher": []
+		},
+		{
 			"label": "Community Platform: preview ownership transfers",
-			"type": "process",
-			"command": "node",
-			"args": ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", "3005"],
-			"options": {
-				"cwd": "${workspaceFolder}/web",
-				"env": {
-					"COMMUNITY_BUILD_LABEL": "ownership-20260923",
-					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3005,http://localhost:3005",
-					"NEXT_TELEMETRY_DISABLED": "1"
-				}
-			},
-			"presentation": { "panel": "dedicated", "reveal": "always" },
-			"isBackground": true,
+			"dependsOn": "Community Platform: preview web",
 			"problemMatcher": []
 		},
 		{
@@ -61,7 +54,7 @@
 			"options": {
 				"cwd": "${workspaceFolder}",
 				"env": {
-					"COMMUNITY_WEB_URL": "http://127.0.0.1:3003",
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3000",
 					"COMMUNITY_CHROMIUM_PATH": "${env:LOCALAPPDATA}/ms-playwright/chromium-1228/chrome-win64/chrome.exe"
 				}
 			},

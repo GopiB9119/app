@@ -40,6 +40,27 @@ class SpaceViewModelTest {
 
     private suspend fun idle(value: SpaceViewModel) = withTimeout(5000) { value.state.first { !it.busy } }
 
+    @Test fun soloCreationLocksTypeAcrossRetryAndCannotOpenFamilyActions() = runBlocking {
+        val value = ready()
+        value.startCreate(); value.creationType("solo"); value.name("My planning")
+        fixture.api.failure = 503
+        value.create(); idle(value)
+        val original = value.state.value.pending as SpaceCommand.Create
+        assertEquals("solo", original.spaceType)
+        value.creationType("family"); value.name("Changed")
+        assertEquals("solo", value.state.value.creationType)
+        assertEquals("My planning", value.state.value.nameDraft)
+        fixture.api.failure = 0
+        fixture.api.space = fixture.space.copy(spaceType = "solo", name = "My planning")
+        value.retry(); idle(value)
+        assertEquals(listOf(original.requestKey, original.requestKey), fixture.api.keys)
+        assertEquals("Solo Space saved.", value.state.value.notice)
+        value.showMembers(); value.recipient(fixture.recipientId); value.invite()
+        assertTrue(!value.state.value.showingMembers)
+        assertEquals("", value.state.value.recipientDraft)
+        assertTrue(fixture.api.recipients.isEmpty())
+    }
+
     @Test fun ownershipOfferRequiresExactMemberReviewAndNeverGrantsOwnerImmediately() = runBlocking {
         val value = ready()
         value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)

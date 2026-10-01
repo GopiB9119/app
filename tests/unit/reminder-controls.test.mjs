@@ -122,6 +122,11 @@ async function fixture(context, options = {}) {
       }
       if (state.denied) return failed(404, 'NOT_FOUND', 'Task access is unavailable.');
       if (url.pathname === '/api/reminder-requests' && method === 'GET') return list([]);
+      if (url.pathname === '/api/reminder-series' && method === 'GET') return list([]);
+      if (url.pathname === '/api/reminder-backups' && method === 'GET') return list([]);
+      if (url.pathname === '/api/reminder-backups/contacts') return reply([]);
+      if (url.pathname === '/api/me/alerts') return reply({ items: [], quiet: { active: false, until: null }, next_check_at: '2026-09-20T10:00:00Z', generated_at: '2026-09-19T10:00:00Z' });
+      if (url.pathname === '/api/me/quiet-hours') return reply({ start: null, end: null, timezone: 'Asia/Kolkata', quiet: { active: false, until: null }, version: '0' }, {}, { ETag: `"alert-settings-${accountId}-0"` });
       if (url.pathname === `/api/tasks/${taskId}`) return reply(task, {}, { ETag: `"${'a'.repeat(64)}"` });
       if (url.pathname === '/api/reminders/preview') {
         if (state.gap) return failed(422, 'LOCAL_TIME_NONEXISTENT', 'This local time does not exist. Select another time.');

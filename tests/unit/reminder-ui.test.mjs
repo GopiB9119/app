@@ -80,6 +80,11 @@ async function fixture(context, options = {}) {
       if (state.denied) return failure(404, 'NOT_FOUND', 'Task access is unavailable.');
       if (url.pathname === `/api/tasks/${taskId}`) return response(task, {}, { ETag: `"${'a'.repeat(64)}"` });
       if (url.pathname === '/api/reminder-requests' && method === 'GET') return response(state.requests.filter(item => (url.searchParams.get('direction') === 'sent' ? item.requested_by : item.recipient).account_id === accountId), pageOf([]));
+      if (url.pathname === '/api/reminder-series' && method === 'GET') return response([], pageOf([]));
+      if (url.pathname === '/api/reminder-backups' && method === 'GET') return response([], pageOf([]));
+      if (url.pathname === '/api/reminder-backups/contacts') return response([]);
+      if (url.pathname === '/api/me/alerts') return response({ items: [], quiet: { active: false, until: null }, next_check_at: '2026-11-02T10:00:00Z', generated_at: '2026-09-19T10:00:00Z' });
+      if (url.pathname === '/api/me/quiet-hours') return response({ start: null, end: null, timezone: 'America/New_York', quiet: { active: false, until: null }, version: '0' }, {}, { ETag: `"alert-settings-${accountId}-0"` });
       if (url.pathname === '/api/reminder-requests/preview') return response({ task_id: taskId, task_title: task.title, task_version: '1', local_time: `${body.local_time}:00`, timezone: body.timezone,
         requested_by: self, recipient: other, channel: 'in_app', expires_at: '2026-09-19T10:05:00Z', request_expires_at: proposal.expires_at, options: [
           { scheduled_at: '2026-11-01T05:30:00Z', dispatch_expires_at: '2026-11-02T05:30:00Z', utc_offset_minutes: -240, preview_token: 'first-request-preview-'.repeat(4) },

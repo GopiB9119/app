@@ -2,6 +2,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -103,7 +104,7 @@ class TaskAudit(Base):
 
 class TaskCommand(Base):
     __tablename__ = "task_commands"
-    __table_args__ = (CheckConstraint("operation IN ('edit', 'status')", name="ck_task_command_operation"),)
+    __table_args__ = (CheckConstraint("operation IN ('edit', 'status', 'checklist')", name="ck_task_command_operation"),)
 
     task_id: Mapped[str] = mapped_column(ForeignKey(Task.id), primary_key=True)
     actor_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
@@ -112,3 +113,21 @@ class TaskCommand(Base):
     actor_admission_id: Mapped[str] = mapped_column(String(36))
     input_digest: Mapped[str] = mapped_column(String(64))
     audit_id: Mapped[str] = mapped_column(ForeignKey(TaskAudit.id))
+
+
+class TaskChecklistItem(Base):
+    __tablename__ = "task_checklist_items"
+    __table_args__ = (
+        CheckConstraint("length(btrim(title)) BETWEEN 1 AND 200", name="ck_checklist_title"),
+        CheckConstraint("(checked AND checked_at IS NOT NULL AND checked_by_id IS NOT NULL) OR (NOT checked AND checked_at IS NULL AND checked_by_id IS NULL)", name="ck_checklist_completion"),
+        Index("ix_checklist_task", "task_id", "removed_at", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey(Task.id))
+    title: Mapped[str] = mapped_column(String(200))
+    checked: Mapped[bool] = mapped_column(Boolean, default=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_by_id: Mapped[str | None] = mapped_column(ForeignKey(User.id))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

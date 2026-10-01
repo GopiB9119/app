@@ -1,6 +1,6 @@
 # Implementation Status
 
-Updated 2026-09-23. Executed checks are separate from existing proposed/open product contracts. This record does not change any original chapter, release decision or ADR status.
+Updated 2026-10-01. Executed checks are separate from existing proposed/open product contracts. This record does not change any original chapter, release decision or ADR status.
 
 ## Structure
 
@@ -212,7 +212,7 @@ On 2026-09-26 a guarded drill qualified the local recovery path for the developm
 
 The copy is sealed because revocations after the snapshot cannot be proven: unexpired restored sessions are revoked and pending identity challenges and mail payloads expire. This snapshot contained none of those, so the seal changed no rows; the tests cover its effect. Scheduled reminders are counted, not changed, and the drill runs no reminder worker. Evidence is under ignored `.local/restore-drill/20260926T101538Z/` (dump, manifest, verification report and summary); treat such dumps as sensitive local data. Procedure and limits are in the [platform notes](../backend/app/modules/platform/README.md).
 
-This is not production backup qualification. The key file is fingerprinted but not copied, so losing it still makes protected fields unreadable. There is no key rotation, off-host or encrypted backup storage, PITR/WAL archive, retention policy, object-file recovery, audited production seal, or reconciliation of work changed after the snapshot.
+This is not production backup qualification. The key file is fingerprinted but not copied, so losing it still makes protected fields unreadable. There is no key rotation, off-host or encrypted backup storage, PITR/WAL archive, retention policy, object-file recovery, audited production seal, or reconciliation of work changed after the snapshot. Key rotation was added on 2026-10-01 ([checkpoint](#encryption-key-rotation-checkpoint)); the drill itself did not change.
 
 ## Family Rejoin Checkpoint
 
@@ -225,8 +225,367 @@ On 2026-09-26 an owner can bring back a family member who was removed or left. T
 
 This follows the recommendation of the still-open Chapter 3 decision C3-D06 as a local implementation choice. There is no ban list, self-service rejoin or history-sharing option. Details: [rejoin checkpoint](runbooks/FAMILY_MEMBERSHIP.md#rejoin-checkpoint).
 
+## Calendar And Space Settings Checkpoint
+
+On 2026-09-28 the [feature delivery ledger](PRODUCT_FEATURES.md) records all 190 catalog groups and the implementation/evidence boundary for backend, web and Android. Agent runtime is a separate workstream; retained source headings and feature ownership are not completion evidence.
+
+The calendar batch adds a current-authorized per-Space month agenda over date-only tasks and the caller's timed reminders, with named display timezone, scoped pagination and source navigation on both clients. Earlier checks in the ledger record 65 backend task/calendar/migration tests, 36 web client tests, 26 native task/calendar JVM tests and one live calendar browser journey. Native calendar device qualification remains open; these are historical results from that batch, not a full rerun here.
+
+The next batch implements reviewed **owner-only Space name settings**. Migration `0011` adds audited admission-bound retry receipts after the separate export migration `0010`. Only `name` can change; current owner/session/Space authority and reviewed version are required. Unexpired pending invitations or ownership offers block renaming until resolved or withdrawn. Exact successful retries report the current settings without repeating a rename; stale edits preserve client drafts until explicit reload. No membership/history/privacy/schedule changes are implied.
+
+- **110 PostgreSQL Space/migration tests passed** in 127.29 seconds, including 13 settings-specific cases. Saved report: `backend/.local/space-settings-backend-20260928.xml`.
+- **38 web client/BFF checks passed**. TypeScript and isolated `space-settings-20260928` production build passed.
+- **One real settings browser journey passed** in 9.678 seconds: two synthetic accounts, lost committed response and exact retry, one version advance, conflict/discard/reload, member view, persistence and 320/390/768 dialog bounds. Report: `.local/space-settings-live-web.xml`; desktop/mobile captures retrieved. A test-only screenshot-path shadowing failure was fixed before this passing run.
+- **47 native Space/settings JVM checks passed** across three suites, with zero failures/errors/skips. Debug app/test APKs and lint passed, with zero errors and 11 existing warnings. This does not establish device/Compose/release-runtime or process-death behavior; no emulator or personal device was operated.
+- Forward migration `0011` and API export completed locally without resetting data or keys. Generated OpenAPI adds settings, earlier calendar and separate export operations; parsed comparison found no removed or semantically changed existing paths/schemas.
+
+Preview: `http://127.0.0.1:3008/app/spaces` (also serves `/app/calendar`). Exact implementation links, bounds and independent-testing handoff are in the [settings ledger](PRODUCT_FEATURES.md#space-name-settings-batch). Full-product and production qualification remain open.
+
+## Solo And Canonical Preview Checkpoint
+
+Solo creation, owner-only name settings, private task/reminder/calendar reuse and Family/Solo selection are implemented on backend, web and Android. Migration `0012` enforces one active Solo owner at commit and prevents unreviewed type conversion. Solo cannot invite, accept another person, transfer ownership or leave; those pathways do not merely rely on hidden buttons. Five focused Solo backend cases passed, followed by **167 Space/task/migration tests** in 232.50 seconds. The saved result is `backend/.local/solo-backend-20260928.xml`.
+
+Native affected suites passed **75 JVM tests** with zero failures/errors/skips; debug application/test APKs and lint passed (0 errors, 11 existing warnings). This is not native-device, release-runtime or process-death qualification. The [feature ledger](PRODUCT_FEATURES.md#solo-spaces-batch) records scope and browser evidence.
+
+The user explicitly requires **http://127.0.0.1:3000 only** for the web preview. Npm development/start commands and the canonical VS Code **Community Platform: preview web** task are pinned to that host/port; old preview labels alias the same task. No listener remained on 3008/3009 when the canonical task was started. The real Solo and settings browser journeys both passed at port 3000, saved in `.local/solo-settings-port3000.xml`. Keep this task running for continued development; previous checkpoint URLs are historical, not instructions to start more ports.
+
+## Space Chat And Direct Messages Checkpoint
+
+Implemented on backend, web and Kotlin Android (2026-09-28 to 2026-09-30). Migration `0014` adds `conversations`, `conversation_messages` and `conversation_read_states`; the local development database was upgraded from `0013` to `0014` without a reset.
+
+- One **Space chat** per Space, visible to current active members only; its history starts at each member's current admission, so a new or returning member sees nothing sent earlier. A **direct conversation** binds both people's current admissions; if either leaves or is removed it becomes read-only for the other and closed to the departed person. Outsiders receive 404 for every operation.
+- Send requires a UUID `Idempotency-Key`. The exact retry returns the original message; a changed body with the same key is `IDEMPOTENCY_CONFLICT`. Positions are allocated under a row lock; parallel sends get unique positions. Local bounds: 2,000 characters, 30 sends per minute per account, 10,000 messages per conversation, 200 direct conversations per Space.
+- Unread counts exclude your own and deleted messages; read positions only move forward and are per admission. Authors can delete their own message for everyone: the body is erased, a tombstone and audit record remain, and already-seen copies are not recalled. No edits, reactions, threads, attachments, typing/presence or calls.
+- Bodies are sealed with a key derived (HKDF) from the server key and bound to the conversation and message IDs; a swapped ciphertext shows as unavailable instead of another message's text. **The server can read these messages. This is encryption at rest, not end-to-end encryption**, and both clients state it on every chat screen.
+- Clients poll every 5 seconds while a chat is visible (web and Android), fill gaps page by page, and mark the newest confirmed message read only while visible. An unconfirmed send stays visible with its original key; Retry reuses it and a later poll can also confirm it. Leaving with an unconfirmed send asks first. Access loss clears messages, drafts and pending sends.
+
+| Check (2026-09-30) | Result and boundary |
+| --- | --- |
+| Messaging backend + schema parity | 12 passed (11 messaging cases + model/migration parity). |
+| Complete backend suite | **287 passed**, 305.09 s, zero failures/errors/skips; `backend/.local/messaging-backend-20260930.xml`. |
+| Web typed client/BFF | **49 passed** (41 existing incl. checklist + 8 messaging); simulated transport. Web TypeScript check passed. |
+| Live browser/BFF/API/PostgreSQL | **1 passed**, 18 s; `.local/messages-live-web.xml`. Two synthetic accounts: lost committed send response then exact retry (one stored copy, same key/body), unread then read, reply seen by poll, direct conversation, delete with Keep/Delete confirmation and tombstone, member removal closes the chat and clears it on screen, read-only direct conversation for the owner, 320/390/768 without horizontal overflow. Captures `.local/screenshots/messages-live-desktop.png` and `messages-live-mobile.png` reviewed. The first run passed its assertions but left a route handler racing `unroute`; the test now waits for real confirmation and the rerun is the counted pass. |
+| Native JVM | **140 passed** across 10 suites, including 18 new `MessagingTest` cases (validation, lost-send retry identity, poll confirmation, definite rejection, gap fill, read only while visible, earlier pages, access loss, delete confirmation, read-only, entry Space, direct choice, session loss, late account response, wire headers/bodies, 512 KiB message-page cap). |
+| Native build | Debug app and instrumentation APKs built; lint 0 errors. The one new lint warning (plural candidate) was then fixed in resources; that fix is compiled by the next build. No emulator or device was used; native chat UI is not device-qualified. |
+
+The earlier parallel **task checklist** work (migration `0013`, backend, web, Android) was cross-checked in the same run: its backend cases are inside the 287, its two client/BFF checks inside the 49, `ChecklistTest` (7) inside the 140, and its real browser journey passed again (`.local/checklist-live-web.xml`, 17.8 s).
+
+Not built: end-to-end encryption, device keys, WebSocket/push delivery, offline outbox, edits, reactions, attachments, group chats beyond the one Space chat, and message reporting. Details: [feature ledger](PRODUCT_FEATURES.md#space-chat-and-direct-messages-batch).
+
+## Public Community Checkpoint
+
+Implemented on 2026-09-30 on backend, web and Kotlin Android. Migration `0015` adds public pages, follows, posts, comments, likes, saves, content reports, blocks and a community audit table; the local development database was upgraded from `0014` to `0015` without a reset, and the API was restarted to load the routes.
+
+- **Pages:** create with a unique lowercase handle (reserved words refused), name, topic and description; one owner; at most 5 pages per account locally. Owner edits need the reviewed version (`If-Match`). Signed-out visitors can read active pages.
+- **Posts:** drafts are private to the owner; publishing is explicit and version-checked; a publish retry after a lost response changes nothing; edits after publishing set an edited mark; deletion leaves a tombstone and removes the post everywhere. Bounds: 50 drafts, 2,000 posts per page, 5,000 characters.
+- **Interactions:** follow, like and save are idempotent set operations with exact counts under row locks (parallel test: 4 people x 2 requests = exactly 4). Comments allow one reply level, keep one copy per retry key, can be deleted by the author or removed by the page owner (shown as such), and are limited to 20 per minute per account.
+- **Feeds and discovery:** Home Following (current follows), Latest and Saved, newest first with cursors bound to account, list and 15-minute expiry. Page search matches name, handle or description with `%` and `_` treated literally, ranks by followers, filters by topic.
+- **Safety:** reports on pages, posts and comments with fixed reasons, one open report per person and target, 30 per day, durable outbox event; own content cannot be reported. Blocking a page hides it from every feed/search for the blocker and ends following; blocking a comment author hides their comments and stops them commenting on the blocker's pages. Nobody is told. Account IDs are never exposed in public responses; blocks work through the comment.
+
+| Check (2026-09-30) | Result and boundary |
+| --- | --- |
+| Community backend | 15 passed (validation, idempotent creation, owner-only editing with preconditions, private drafts, publish/delete replay, follow/like/save counts, feed cursors, comments/replies/removal/rate limit, blocks, reports, search escaping and cursor binding, parallel counts, OpenAPI security and no equivalent path templates) plus model/migration parity. |
+| Complete backend suite | **302 passed**, 641.5 s, zero failures/errors/skips; `backend/.local/community-backend-20260930.xml`. |
+| Web typed client/BFF | **54 passed** (41 existing + 8 messaging + 5 community): reviewed routes only, signed-out public reads forwarded without a session, session bound only with the account header, strict query parameters, schema consistency, retry keys. TypeScript check passed. |
+| Live browser/BFF/API/PostgreSQL | **1 passed**, 76.3 s; `.local/community-live-web.xml`. Lost create-page response then exact retry (same key/body), private draft invisible to a signed-out visitor, confirmed publication, visitor sees the post but cannot like, discover search and follow, Home feed, like/save/Saved tab, comment and owner reply, report dialog, block and unblock, 320/390/768 without horizontal overflow. Captures `.local/screenshots/community-live-desktop.png` and `community-live-mobile.png` reviewed. The first run failed on the test's own label lookup for the topic select (option text leaked into the accessible name); the selects now carry explicit names and the rerun is the counted pass. |
+| Native JVM | **150 passed** across 11 suites, including 10 new `CommunityTest` cases. Lint 0 errors (11 existing warnings); debug app and instrumentation APKs built. No device or emulator was used. |
+| OpenAPI | 29 operations added; no existing path or schema changed; no equivalent templated paths. |
+
+Not built: page editors/roles, media, shares, hashtags, scheduled posts, ranking beyond followers, mutes, moderator review tools, decisions, notices and appeals, and server-side rendering of public pages. Details: [feature ledger](PRODUCT_FEATURES.md#public-community-batch).
+
+## Space Events And RSVP Checkpoint
+
+Implemented 2026-09-30 to 2026-10-01 on backend, web and Kotlin Android. Migration `0017` (after the parallel care migration `0016`) adds events and responses; the development database was upgraded without a reset and the API restarted.
+
+| Check | Result and boundary |
+| --- | --- |
+| Events backend | 8 passed (validation incl. nonexistent/ambiguous local times, idempotent create, organizer/owner-only edit and cancel with `If-Match`, admission-bound visibility, per-admission responses, reschedule marks earlier responses, parallel responses, OpenAPI). With migrations and identity: 40 passed. |
+| Web typed client/BFF | 4 events cases; client suite **58 passed** in total. TypeScript check passed. |
+| Live browser/BFF/API/PostgreSQL | `events:` journey: lost create response then exact retry, responses, reschedule asks for re-confirmation, cancellation, 320/390/768 without overflow; `.local/events-live-web.xml`. |
+| Native JVM | `EventsTest` 11 passed; all JVM suites **161 passed**, 0 failures. Lint 0 errors (11 existing warnings); debug and instrumentation APKs built. No device or emulator was used. |
+| OpenAPI | 12 operations added in this export (6 events, 6 care); none changed or removed. The events schema is named `SpaceEventView` to avoid colliding with the identity `EventView`. |
+
+Not built: capacity/waitlists/guests, check-in, invitations outside the Space, public events, polls, budgets, expenses, recurring events, reminders or agenda entries for events, Android editing of multi-day events, native device qualification. Details: [feature ledger](PRODUCT_FEATURES.md#space-events-and-rsvp-batch).
+
+## Care Checkpoint
+
+The care backend (migration `0016`) comes from a separate care workstream. The web and Android screens were built on 2026-10-01; the owner kept them ([DEC-007](DECISIONS.md#accepted-decisions)). Only the person can see or change their own records.
+
+| Check (2026-10-01) | Result and boundary |
+| --- | --- |
+| Care backend | `backend/tests/test_care.py` 9 passed with the events tests; the complete backend suite passed **319** (`backend/.local/care-backend-20261001.xml`). |
+| Web typed client/BFF | 6 care cases in `tests/care-client.test.mjs` (reviewed routes only, strict parameters, contradictory facts rejected, exact create/report/stop retries); client suite **64 passed**. TypeScript check passed. |
+| Live browser/BFF/API/PostgreSQL | `care:` journey passed (`.local/care-live-web.xml`): confirmation required, lost create response then exact retry, day plan, lost dose-note response then exact retry, correction to Skipped (revision 2), another account denied (404) and seeing nothing, stop with confirmation, stale stop refused (412), 320/390/768 without overflow. Captures `.local/screenshots/care-live-desktop.png` and `care-live-mobile.png` reviewed. |
+| Native JVM | `CareTest` 10 passed; all JVM suites **171 passed**. Lint 0 errors (11 existing warnings); debug and instrumentation APKs built. No device or emulator was used. |
+
+Not built: caregiver access by grant, notifications at dose times, editing an instruction, stock or refill tracking, photos, native device qualification and approval of the medical, legal and privacy rules (Q12). Details: [feature ledger](PRODUCT_FEATURES.md#care-batch).
+
+The care backend, web client and BFF, live `care:` journey and `CareTest` were rerun independently on 2026-10-01 after the screens were kept: 9 backend care tests, 6 client/BFF cases, the live journey at http://127.0.0.1:3000 and 10 JVM tests all passed, matching the rows above.
+
+## Android Community Response Limits Checkpoint
+
+Fixes [T06](TASKS.md#defects-that-break-approved-requirements): Android refused valid community lists larger than 64 KiB. The shared HTTP client in `IdentityModule` now allows larger responses only for GET lists whose size the backend bounds. Limits count code points, and each can take up to 4 UTF-8 bytes: page names 80, post titles 120, post text 5,000 and comments 2,000.
+
+| Response (GET) | Worst case | Limit |
+| --- | --- | --- |
+| Feed, latest posts, saved posts, a page's posts (20 posts) | about 430 KB | 512 KiB |
+| Comments on a post (50 comments) | about 430 KB | 512 KiB |
+| A page's drafts (up to 50) | about 1.07 MB | 1.5 MiB |
+| Blocked pages and people (up to 500) | about 250 KB | 256 KiB |
+| Single page or post, page search (20 pages of 500-character descriptions), your pages (up to 5), and every write | under 64 KiB | 64 KiB, unchanged |
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | With the new limits removed, the 2 new `CommunityTest` cases failed (a valid 20-post page of about 400 KB and the per-route boundaries); restored, they passed. |
+| Native JVM | All suites **173 passed**, 0 failed, 0 skipped (`CommunityTest` 12). Lint 0 errors (11 existing warnings); debug and instrumentation APKs built. |
+| Backend | Complete suite **319 passed** in 1001.5 s on the same source (no backend change). |
+
+Boundary: simulated transport only; no device or live-server run. Web is unaffected because the BFF has no response-size cap.
+
+## API Description Sign-In Checkpoint
+
+Fixes [T08](TASKS.md#defects-that-break-approved-requirements). The generated description did not say that the account and export operations need a signed-in session. The 12 protected routes in `backend/app/modules/identity/api.py` now declare the `AccountSession` bearer scheme without enforcing it themselves. The services still enforce sign-in exactly as before. Only the 6 public operations (registration, email verification, sign-in, recovery, password reset, time zones) declare none.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | The new `test_openapi_marks_only_protected_identity_and_export_operations_as_signed_in` failed before the change and passed after. |
+| Backend | Identity, migration and delivery suites **39 passed**. A first combined run failed while another session was writing migration `0018` into the same worktree; separate reruns and the rerun on the settled tree passed. |
+| Contract | Regenerated `packages/openapi/openapi.json`: 110 operations on 90 paths, and exactly the 6 public operations declare no security. |
+| Live | `care:` and `space settings:` journeys passed at http://127.0.0.1:3000 after the API restart. |
+
+The API restart loaded the other session's migration `0018` models while the local database was still at `0017`. The additive migration was applied without a reset, so the local database is at `0018`.
+
+## Web Chat Reliability Checkpoint
+
+Fixes [T05 and T07](TASKS.md#defects-that-break-approved-requirements) in `web/src/features/messaging/messages-screen.tsx`.
+
+- **T05:** an unconfirmed send and its Retry now stay with their conversation for the whole signed-in page session. Switching conversations or leaving the Messages page no longer drops them, and the conversation list marks the chat "Not confirmed" (or "Not sent" after a refused send). Before, the conversation pane was rebuilt on every switch and its unconfirmed sends were lost without warning.
+- **T07:** a read receipt that fails is retried on the next poll. Before, the pane recorded the new read position before sending it, so a failed receipt was never sent again.
+- **Behaviour change** ([Constitution Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): the Back button no longer asks "Leaving loses the retry for it. Leave anyway?", because leaving no longer loses anything. The browser warning when closing or reloading the tab now covers unconfirmed sends in every conversation, not only the open one. No test depended on the removed prompt.
+- **Engineering choice** ([DEC-009](DECISIONS.md#accepted-decisions)): the unconfirmed sends live in memory, keyed by account and conversation. They are not written to browser storage, because that would keep private message text (C11-C03) on the device, which needs a privacy decision. A reload therefore still loses them, as before, and the browser warns first. Every sign-out and account change reloads the page, which clears them.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | The 2 new cases in `tests/unit/messaging-ui.test.mjs` failed on the old code at the defect itself (the Retry had gone after switching back; the read receipt was sent only once), then passed after the fix. |
+| Web offline components | **29 passed** (5 files; blocked network, zero outbound requests). The new file is part of `npm --prefix web run test:unit`. |
+| Web client and BFF | **64 passed**. TypeScript check passed. |
+| Live browser/BFF/API/PostgreSQL | `messages:` journey passed at http://127.0.0.1:3000 (`.local/messages-live-web.xml`). |
+| Layout | Capture `.local/screenshots/messaging-offline-unconfirmed.png` reviewed: the marker sits beside the conversation name without overflow. |
+
+Boundary: web only. Android keeps its own retry state and already restores its read marker after a failure. No process-death, multi-tab or device run.
+
+## Web Sign-In Limits Per Network Checkpoint
+
+Fixes [T10](TASKS.md#approved-requirements-not-built-yet). Every web sign-in reached the API from the web proxy's own address, so all web users shared one 60-per-15-minutes network bucket. Now:
+
+- The web proxy (`web/src/app/api/[...path]/route.ts`) names the browser's address only on the five sign-in routes, and only when `COMMUNITY_PROXY_KEY` and `COMMUNITY_TRUSTED_PROXY_HOPS` are both set. It takes the entry the outermost trusted proxy added to `X-Forwarded-For`, because Next.js keeps any value the browser sends. It never passes on the browser's own `X-Community-*` headers.
+- The API (`backend/app/modules/identity/api.py`) accepts the named address only with the same key, compared in constant time. It counts an IPv4 address, or an IPv6 /64, as one network; an IPv4-mapped IPv6 address counts as its IPv4 address. Otherwise it counts the connecting address. The per-email limits are unchanged.
+- Nothing changes locally: both settings are unset, and every browser is `127.0.0.1` anyway.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | With the old connection-only rule, the new per-network backend test failed; with the address step disabled, the 2 new proxy tests that expect a named address failed. Both pass with the change. |
+| Backend | Identity and delivery suites **28 passed** (2 new tests: separate buckets per named network, IPv6 /64 and IPv4-mapped grouping, wrong key and invalid address fall back to the connection; addresses ignored without a configured key). |
+| Web | TypeScript check passed; all web client and proxy tests **67 passed** (3 new in `tests/identity-client.test.mjs`). The proxy at http://127.0.0.1:3000 compiled and served public and sign-in requests. |
+
+Boundary: no live run with a reverse proxy. The shared API was not restarted, because another session's recurring-reminder code and migration `0019` were mid-edit; the next API restart loads this change.
+
+## History Boundary And Late-Save Fixes Checkpoint
+
+Fixes [T02, T03 and T04](TASKS.md#defects-that-break-approved-requirements) in the backend. No API shape changed: the regenerated `packages/openapi/openapi.json` is byte-identical.
+
+- **T02:** history no longer depends on timestamps. Each Space counts its admissions (`spaces.admission_sequence`), each membership keeps its number, and each message and event records how many admissions came before it (`admissions_before`). A member sees an item only if it was made after their own admission. Before, a message or event created in the same instant as a join was visible to the new member.
+- **T03:** a direct message and the other person leaving can no longer overlap. A send holds a shared lock on the Space row; admissions, leaving and removal take it exclusively. Before, a send could commit after the other person's leave had committed.
+- **T04:** messaging (send, delete, mark read), all 14 community changes, and event create, edit, cancel and respond check the session again just before commit (`IdentityService.signed_in_write`). Before, a session that expired while a change waited for a row lock still saved it. Care writes were reviewed and need no change: after their session check they lock only the caller's own rows, so they cannot wait again.
+- **Migration `0018`** numbers existing admissions by join time, the Space creator first on a tie. Each existing message and event counts the admissions that joined strictly before it, but never fewer than its own author's number, so authors keep seeing what they wrote. The development database was upgraded to `0018` without a reset (see the checkpoint above).
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | The 3 T02/T03 tests failed on the old code: the new member saw a same-instant message, an event read returned 200 instead of 404, and the leave committed during the send. The 3 T04 tests failed with the second session check removed (201, 200 and 200 instead of 401) and pass with it. |
+| Migration | `test_admission_sequence_migration_numbers_admissions_and_keeps_same_instant_history_hidden` downgrades to `0017`, adds same-instant rows and upgrades: owner 1, member 2, the member sees neither item, the owner sees both. Migration suite 13 passed. |
+| Backend | Complete suite **326 passed, 1 failed** in 922.9 s (`backend/.local/defects-backend-20261001.xml`). The failure was the new page-edit test's wait detection, not the code under test: it polled `pg_stat_activity`, which PostgreSQL snapshots once per transaction, so a request that began waiting after the first poll was never seen. It now reads `pg_locks` for requests blocked by its own lock holder. Then: the care and community files with the other T04 tests **27 passed**; the messaging and events files **24 passed** (`backend/.local/t04-messaging-events-20261001.xml`); with the check removed again, all 3 T04 tests fail. A later complete run passed **366** with no failures ([observability checkpoint](#observability-basics-checkpoint)). |
+| Live | `invitations:`, `rejoin:`, `messages:` and `events:` passed at http://127.0.0.1:3000 (`.local/t02-live-web.xml`) against the API running the T02 and T03 code at `0018`. |
+
+Boundary: the shared API started at 02:02, before the T04 change, and was not restarted then because another session's migration `0019` was mid-edit; the scheduling session's restart at 02:43, with `0019` applied, loaded T04. No web or Android code changed.
+
+## Observability Basics Checkpoint
+
+Builds the basics of [T09](TASKS.md#approved-requirements-not-built-yet) (R12). Alerts need agreed targets first (Q19).
+
+- **Request logs:** the API writes one JSON line per request with the time, the request ID, W3C trace and span IDs, method, route template, status, duration and error code. The request ID is the same as the `X-Request-ID` header and the `request_id` in the response. The route template looks like `/v1/conversations/{conversation_id}/messages`, or `unmatched`. An unexpected failure adds only the exception type. Paths, queries, headers, bodies, account data and exception messages are never written.
+- **Tracing:** the web proxy starts a W3C trace for every request and sends `traceparent` on both of its API calls. It writes one `bff_request` line with only its trace and span IDs, method, status and duration, including for requests it refuses itself. The API continues a valid incoming trace, or starts a new one when the header is missing or malformed. A trace header sent by the browser is never passed on.
+- **Metrics:** `/metrics` gives request counts and a duration histogram by method, route template and status, in the Prometheus text format. It answers 404 unless `COMMUNITY_METRICS_KEY` is set, and then requires that key as a bearer token, compared in constant time. It is not in the API description, and the web proxy does not expose it.
+- **Engineering choice** ([DEC-009](DECISIONS.md#accepted-decisions)): only the Python standard library and Node built-ins are used. The backend installs its packages from Debian, so adding OpenTelemetry or a Prometheus client would mean rebuilding the image every session shares. W3C Trace Context and the Prometheus text format let a collector be added later without changing the endpoints.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Regression first | The 3 new tests in `backend/tests/test_telemetry.py` failed before the change: no request lines, no `metrics_key` setting, no line for an unexpected failure. The new proxy test in `tests/web-client.test.mjs` failed against an in-memory copy of the proxy with the change removed (no `traceparent` sent). All pass after the change. |
+| Backend | Telemetry and identity files **26 passed**. Complete suite **366 passed**, 0 failed, 0 skipped in 1440.7 s (`backend/.local/t09-backend-20261001.xml`, started 02:50). It includes the 3 telemetry tests, the 7 T02–T04 regressions and the scheduling session's work at `0019`. |
+| Web | TypeScript check passed; all web client and proxy tests **68 passed** (1 new). |
+| Real process | A temporary API container on 127.0.0.1:8001 with a synthetic metrics key: a request with a trace header kept its trace ID and recorded the caller's span as parent. `/metrics` answered 401 without the key and 200 with it. A query-string email, a bearer token and the metrics key appeared nowhere in its output. The container was then stopped and removed. |
+| Live | After the shared API restart at 02:54 (nothing but this change had been edited since the 02:43 restart), a request through the web proxy at http://127.0.0.1:3000 produced an API log line whose parent span came from the proxy. The proxy still answered a public route (200) and a signed-out request (401) correctly. |
+| Contract | A fresh export equals the committed `packages/openapi/openapi.json` (119 operations); `/metrics` and the health routes are not in it. |
+
+Boundary: there is no collector, dashboard, alert or log retention policy. Metrics live in each process and reset on restart. Workers keep their count-only lines and do not continue traces. Android sends no trace header, so the API starts one for it. Uvicorn's own traceback for an unexpected failure is unchanged, and it can include the exception message on the error stream.
+
+## Personal Data Export Verification Checkpoint
+
+The backend export code (`backend/app/modules/identity/exports.py`, five operations under `/v1/me/exports`) handles personal data but had no behaviour tests. This checkpoint verifies it under R12; export itself is still only proposed (P11), so no feature was added and the ledger row stays `U`. No product code changed.
+
+`backend/tests/test_exports.py` adds 6 tests against the real API and PostgreSQL:
+
+- **Recent sign-in and one request at a time:** a session older than 15 minutes gets 403. The same key returns the same export, a changed request with that key gets 409, and a second export while one is queued gets 409.
+- **Only the person's own data:** a member's archive has their own profile and only the tasks they can see. It excludes a task created before they joined and every other person's email.
+- **Download:** only in the session that asked for it. Another session of the same account gets 403, and another account gets 404. Each download is counted and recorded as a security event, and the stored archive is encrypted.
+- **Access changes:** leaving the Space withdraws a ready archive (409) and deletes it.
+- **Cleanup:** sign-out cancels queued and ready exports and deletes their archives. The worker cancels an export whose session ended before it was built, and archives are deleted after 24 hours.
+- **Cancellation:** a cancelled export is never built or downloadable.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| New tests | **6 passed** on the unchanged code. |
+| Defects injected | Removing the session binding, the access recheck or the visibility filter in `exports.py`, one at a time, each failed exactly the test written for it; the file was restored unchanged after each run. |
+| Complete backend | **372 passed**, 0 failed, in the run started 03:01 at migration `0019`, including these 6 tests. |
+
+Boundary: no export worker is configured in Compose and there is no web or Android client, so nobody can use exports yet. Deletion is not built.
+
+## Repeating Reminders, Snooze And Planned Times Checkpoint
+
+Builds [T19, T20 and T21](TASKS.md#scheduling) under [DEC-010](DECISIONS.md#accepted-decisions) on backend, web and Android. Everything stays in-app; nothing leaves the local stack.
+
+- **Repeating reminders:** `reminder_series` stores the rule: every 1–30 days, or chosen weekdays every 1–4 weeks, one clock time, a named timezone, a first and a last day. Only the next time is a real reminder. When the worker delivers it, the same transaction schedules the following one, under a key derived from the series and the date, so a retried step cannot create a second copy. The preview returns the first 10 times, the total and any clock changes, sealed in a 5-minute preview token; saving needs `Idempotency-Key`. Pause, resume, skip and cancel need `Idempotency-Key` and `If-Match` (the series ETag also covers the task's version and title) and keep receipts, so a retry after a lost response returns the first result.
+- **Clock changes:** when the clock skips the time, the reminder comes just after the jump, or that day is skipped if the person chose that; a time that happens twice reminds once, the first time. The preview names the affected days.
+- **Downtime:** after an outage at most one late reminder is delivered, within 24 hours of its time or before the next time, whichever is sooner. Older missed times are marked expired and the next future time is scheduled, so there is no burst.
+- **Task changes:** the existing rule (Q18) is kept. Changing or closing the task pauses the series at its next time (`task_changed`, `task_closed`), and resuming confirms the task as it is now. Losing access, an inactive account or turning reminders off stops the series.
+- **Snooze:** `POST /v1/notifications/{notification_id}/snooze` with 10, 60, 180 or 1440 minutes creates one follow-up reminder and marks the notification read; a chain holds at most three snoozes and never reaches past the series' next time. Acknowledging any reminder in a chain acknowledges the delivered ones and cancels a waiting follow-up. Cancelling a series time as a plain reminder is refused (409 `USE_SERIES_ACTIONS`).
+- **Calendar:** active series add `planned` entries, computed for the requested range and never stored, merged into the calendar's existing order and paging.
+- **Export:** the personal archive includes series and the new reminder fields.
+- **Migration `0019`:** three tables and four reminder columns with constraints. Downgrading refuses while any series or follow-up exists, so nothing is dropped silently.
+- **Engineering choice** ([DEC-009](DECISIONS.md#accepted-decisions)): the rule engine uses Python's `datetime` and `zoneinfo` with tzdata and supports only the rule shapes above, not RRULE text. No package was added, because the shared backend image installs from Debian; choosing a maintained recurrence library stays open (C13-D02).
+- **Web:** a Repeat choice on the reminder form; a review of the first times with the clock-change choice; a repeating reminders list with skip, pause, resume and cancel dialogs; a snooze dialog in the inbox; planned rows in the calendar. Every save and change keeps its original request for Retry.
+- **Android:** the same flows in the reminder screen and inbox, and planned rows in the calendar. Found while building: the Android calendar refused any entry kind except `task` and `reminder`, so a single active series would have broken it ("The calendar could not be confirmed"). It now accepts `planned` and checks the server's order.
+- **Found during verification:** the web reminder screen never showed the new form and list; only their imports had landed, and the type check does not flag unused imports. The first live run failed because the Repeat control was missing; the screen was wired up and the run passed.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | New `backend/tests/test_reminder_series.py` **34 passed**: rules, clock gaps and repeats, catch-up after downtime, previews, 14 invalid inputs, idempotent save, overlap with one-time reminders, delivery continuation, commands and receipts, task change and resume, permissions, access loss, limits, calendar paging, snooze chains and limits, and the migration's refusal. Related scheduling, task, migration and delivery files **147 passed**. Complete suite in the run started 04:03 (1286.2 s, `backend/.local/scheduling-backend-20261001.xml`): **373 passed, 12 failed** of 385. All 12 failures are in `backend/tests/test_space_directory.py`, the Spaces session's new, untracked tests for [T22](TASKS.md#spaces); their routes (`/v1/discover/spaces`) and migration `0020` did not exist yet. Every scheduling-related file passed: series 34, delivery guards 67, tasks 62, migrations 13. |
+| Contract | Regenerated `packages/openapi/openapi.json`: 119 operations (9 new), all changes additive. |
+| Web | TypeScript check passed. Web client and proxy tests **75 passed** in 7 files (`tests/scheduling-client.test.mjs` is new, with 6). Offline browser tests **29 passed**; their fixtures now answer the new list request, and no assertion changed. |
+| Live | `tests/e2e/scheduling.test.mjs` **passed** in 145 s at http://127.0.0.1:3000 against the API, database and reminder worker at `0019` (`.local/scheduling-live-web.xml`). A daily series was saved through a lost response and exactly one exists. The calendar API and screen show its reminder and 6 planned times; another account gets 404. The worker delivered it within 120 s of its time. A 10-minute snooze through a lost response created one follow-up, and "1 day" was disabled because the next time comes first. Skip, pause, resume and cancel worked through their dialogs, and a stale ETag got 412. No page errors, nothing in local storage, and no horizontal overflow at 320, 390 and 768 px. The screenshots `series-review-live-desktop.png`, `series-calendar-live-desktop.png`, `series-snooze-live-mobile.png` and `series-list-live-mobile.png` in `.local/screenshots/` were reviewed. |
+| Android | Complete JVM suite **186 passed** in 13 classes, including 13 new tests: series preview, save, list and command checks, snooze, follow-up kinds, the real Retrofit route and headers, the retry identity and confirmations in the ViewModel, and planned calendar entries. Lint 0 errors; debug, test and release builds passed (`.local/android-scheduling-gates.txt`). |
+
+Boundary: Android was not run on an emulator or against the live API in this checkpoint, so its screens are verified by compilation, lint and JVM tests only. There is no push or other channel. Editing a saved series, other exceptions and repeating requests for another person are not built (T28).
+
+## Public Post Search Checkpoint
+
+Builds [T29](TASKS.md#approved-requirements-not-built-yet) under R4 ("The public side has posts, comments, reactions, follows, discovery and search") on backend, web and Android. Before this, only public pages could be searched.
+
+- **Backend:** `GET /v1/discover/posts` takes an optional `q` of up to 80 characters. Spaces are collapsed, and matching is case-insensitive over the post's title and text. `%`, `_` and `\` match only themselves, through the helper page search now shares. Only published posts on active pages match, and blocked pages stay hidden. The order stays newest first with the post ID as tiebreaker. A search cursor has its own kind and is bound to the lower-cased words, so a cursor cannot be reused for other words or for Latest, and a Latest cursor cannot be used for a search (400). Without `q`, the list is unchanged.
+- **Engineering choice** ([DEC-009](DECISIONS.md#accepted-decisions)): page names are not matched, so a page's name does not pull in all its posts; page search already covers names. There is no index for these queries; a full-text index waits for the search engine choice (PROPOSED in Chapter 15).
+- **Web:** Discover has a Pages / Posts choice. Posts results use the standard post card with like, save, comments and report. The topic filter shows only for pages. The web proxy now forwards `q` on `discover/posts` only. The client sends the trimmed, collapsed words, cut to 80 characters.
+- **Android:** Discover has the same Pages / Posts choice, kept when you go back to Discover. The repository sends the same normalized `q`, and the standard post items with like, save and report show the results.
+- **Changed test** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): `tests/community-client.test.mjs` expected the proxy to refuse `discover/posts?q=x`. R4 (search) changes that behaviour. The check now expects `q` forwarded there. It still refuses `topic` on that route and `q` on the feed, page posts and, newly checked, saved posts.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | New test `test_post_search_matches_published_public_text_literally_with_bound_cursors` failed first (the words were ignored), then passed. `backend/tests/test_community.py` **17 passed**. With the wildcard escaping removed, the test failed at the `%` search; with the cursor unbound from the words, it failed at the cursor check. Both were restored. Community, identity, care, events and messaging, which include the API description checks, **73 passed**. Complete backend run started 04:42 at `0019` (716 s, `backend/.local/post-search-backend-20261001.xml`): 386 tests, **372 passed**, 14 failed. All 14 are group Spaces tests written before their code (T22 in progress): 12 in `test_space_directory.py`, 1 in `test_migrations.py` and 1 in `test_spaces.py`. They expect a Space description, the `group` type and directory routes, which are not in the code yet. Every other file passed, including the 17 community tests. |
+| Contract | Regenerated `packages/openapi/openapi.json`: `/v1/discover/posts` lists `q` (max 80), `limit` and `cursor`; still 119 operations on 98 paths. |
+| Web | The two new checks failed first (proxy 400; `searchPosts` missing). TypeScript check passed. Web client and proxy tests **75 passed**, 0 failed. |
+| Live | After the API restart at `0019`, `post search:` and `community:` **both passed twice** at http://127.0.0.1:3000 (`.local/post-search-live.txt`). A signed-out visitor searching the word in capitals with spaces found only the published post, not the draft; `word%` found nothing. The owner's own search did not return the draft. A signed-in reader liked and saved from the results. There was no horizontal overflow at 320, 390 and 768 px, Pages brought back the topic filter, and there were no page errors. The first `community:` attempt timed out on its first page load while the changed files compiled, and it passed on both reruns. Screenshot `.local/screenshots/community-post-search-mobile.png` was reviewed. |
+| Android | JVM **188 passed**, 0 failed, 0 skipped. That includes 2 new `CommunityTest` cases: the Discover mode in the ViewModel, and the normalized `q` on the real Retrofit route. With the query dropped in the repository, both failed (14 run, 2 failed); after restoring, 188 passed. Lint 0 errors, 11 warnings; debug and test builds passed (`.local/android-post-search.txt`). |
+| Android device | New `CommunityScreenTest` **3 passed** on the read-only emulator `community_membership_20260923` (port 5582, Android 16, airplane mode on, Wi-Fi off), with fixed synthetic state and no network. Post search shows its results without the topic filter; switching back to Pages brings back the filter and page results; empty results say whether the words matched nothing; at 320 dp with 200% text, the choice, field, button and result stay inside the screen (`.local/screenshots/community-post-search-android-large-text.png`, reviewed). With the topic filter wrongly shown during post search, 1 of 3 failed; after restoring, 3 passed (`.local/community-screen-device.txt`). The emulator was stopped afterwards. |
+
+Boundary: the Android screens were run on an emulator with fixed state, but not against the live API. Relevance ranking, typo tolerance, highlights and comment search are not built.
+
+## Live Cross-Check And Account Form Fix Checkpoint
+
+All live web journeys ran in one sequential sweep at http://127.0.0.1:3000 against the shared API, database and workers at `0019`. The API had run unchanged since 03:38, and no backend or web code changed between 03:39 and the sweep.
+
+- **Sweep 07:59–08:15** (977 s, `.local/live-sweep-20261001.txt` and `.xml`): 21 journeys, **20 passed**, 1 failed. The passing ones cover checklists, solo Spaces, Space settings, the calendar, mobile sign-up, Spaces, invitations, ownership transfer, member removal and leaving, rejoining, tasks, reminders with a real worker delivery, reminder requests, chat and direct messages, the public community, post search, events, care and repeating reminders. The failure was `desktop:` at account recovery: after "Send verification code", "Choose a new password" never appeared. It failed again when run alone.
+- **Cause**, found by replaying the journey in a browser and recording every `/api` request: the account forms are rendered on the server, and the journey reached the form before React was running.
+  1. A click on Send at that point submitted the form natively. The form had no method, so the browser sent a GET and reloaded the page with the fields in the address, for example `/recover?email=...`. With JavaScript off, Enter on the sign-in form produced `/login?email=...&password=...`, so a password could reach the address bar, browser history and server logs.
+  2. Text typed at that point was replaced by the form library's empty starting value when React started, so the later Send failed validation silently ("Enter a valid email address." under an empty field). The API log shows no recovery request at all.
+- **Fix** ([T30](TASKS.md#defects-that-break-approved-requirements), R12): in `web/src/features/identity/auth-screen.tsx` the form posts, and the email and password fields, the show-password button and the submit button stay disabled until the page is interactive. A native POST to `/login` with synthetic credentials returned the page without echoing them.
+- **Not caused by this work:** a second sweep stopped early because the group Spaces session (T22, in progress) changed `web/src/features/spaces/settings.tsx` at 09:03, during the run. The Space settings button is now "Save changes" instead of "Save name", so `solo:` and `space settings:` fail until that session updates them. T22 says it keeps every current test. The `checklist:` failure in that sweep came while those files recompiled and three backend test runs held the CPU near 90%; it passed when run alone.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| New live test | `auth forms:` loads `/login`, `/register` and `/recover` with JavaScript off. It checks the POST method, that the fields and button are disabled, and that Enter leaves nothing in the address. It **failed before the fix** (method missing). With only the method restored, it failed again (button enabled) and `desktop:` failed at recovery again. With the full fix, `auth forms:`, `desktop:` and `mobile:` **passed**. |
+| Web | TypeScript check passed. Offline component tests **29 passed**; the account form fixture renders in the browser, so its controls are enabled at once. Web client tests **75 passed**. |
+
+## Android Post Editing Checkpoint
+
+Builds [T31](TASKS.md#approved-requirements-not-built-yet) under R4. Android could publish and delete a page's posts but not edit them, although the web could.
+
+- **Edit in place:** owned drafts and published posts on a page get an Edit action that opens the title and text where the post is. A published post says that saving changes the public post and marks it as edited.
+- **Safe saves:** Save sends the reviewed version (`If-Match`), so a post that changed elsewhere is refused (412) rather than overwritten. The editor keeps the person's text until the server confirms the change, an unchanged post sends nothing, and a cleared title is sent as `null` so it is really removed. The result must be the same post, with the same status, still owned by the person.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Android JVM | **190 passed**, 0 failed, 0 skipped, including 2 new `CommunityTest` cases: the ViewModel keeps the text through a refused save and sends the same request again, and the real Retrofit route carries `If-Match` and `{"title":null,...}` and rejects a mismatched result. With the editor closed before confirmation and the result check removed, both failed (16 run, 2 failed); after restoring, 190 passed. Lint 0 errors, 11 warnings; debug and test builds passed (`.local/android-post-edit.txt`). |
+| Android device | `CommunityScreenTest` **4 passed** on the read-only emulator, offline, including the new edit test: Edit opens the prefilled editor, Save hands over the reviewed text, Cancel closes it (`.local/android-device-community-20261001.txt`). In the same session the other five offline screen classes passed **38 of 38** in 307 s: identity screens, keystore session, tasks, reminders and Spaces, with the font scale restored to 1.0 (`.local/android-device-others-20261001.txt`). That makes **42 of 42** offline Android screen tests on a device on 2026-10-01. A first attempt at all 42 together stopped after 2 passed when the emulator crashed while other sessions' test runs held the CPU near 90%; the classes were then run in two batches. |
+
+Boundary: not run against the live API on a device. Post revision history is not built.
+
+## Encryption Key Rotation Checkpoint
+
+Builds [T11](TASKS.md#approved-requirements-not-built-yet) (R12) on the backend. Before this, every encrypted value depended on the one key in `backend/.local/identity.key`, and there was no way to replace it.
+
+- **Key file:** it can now hold several encryption keys, the primary one first, and a separate lookup key. New values are written with the primary key, and older values still open with the others. The existing single-key file keeps working unchanged. Converting it keeps the lookup key that file always produced, so email lookups, sessions and repeated-request checks are not affected. The API and both workers load the file when they start.
+- **Procedure:** `python3 -m app.modules.platform.keys` with `status`, `add`, `promote`, `reencrypt`, `verify`, `retire` and `restore` ([procedure](../backend/app/modules/platform/README.md#encryption-key-rotation)). `reencrypt` covers all six encrypted columns in batches. It changes a row only if the row still holds the value it read, and keeps the content and original timestamp. `retire` is refused for the primary key, for 24 hours after a key stops being primary, and while any stored value still needs the key. The key is written to an archive and read back before it leaves the file. Every write is refused if the key file changed while the command ran.
+- **Safety:** reports show key IDs and counts, never key material. Files are owner-only and replaced in one step. A write that would drop a key without archiving it, or change the lookup key, is refused. A damaged key file stops the command and the services; it is never replaced with a new key.
+- **Engineering choices** ([DEC-009](DECISIONS.md#accepted-decisions)): `MultiFernet` from the `cryptography` package the backend already uses; no new dependency. The lookup key is not rotated, because sessions are stored only as digests, so changing it would sign everyone out. The 24-hour wait is a wide margin over the longest-lived token held by clients, a 15-minute list cursor. Production key custody stays open ([C11-D08](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md)).
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | New `backend/tests/test_key_rotation.py`, **6 passed** on the final code. A single-key file converts without changing lookups or the original key derivations, and every `*_cipher` column in the schema is covered. A full add, restart, promote, restart, re-encrypt, verify, retire and restore cycle keeps a session signed in and sign-in working, and keeps a care instruction, a message, an export archive and a pending registration readable; a token sealed with the retired key stops opening, and opens again after restore. A value changed during re-encryption is not overwritten, and a key added while `retire` runs is not lost. The command prints no key material, and refuses damaged or wrong input without changing files. An earlier version of the rotation tests with the identity, messaging and restore drill files: **47 passed**. |
+| Defects injected | Eight defects, loaded one per run by a local test-only plugin, with no source file changed (`backend/.local/t11-defects-20261001.txt`): an unconditional rewrite, no 24-hour wait, no check before retiring, a conversion that changes the lookup key, a changed lookup derivation, a message cipher that knows only the primary key, a skipped archive, and a write that ignores a changed key file. Each made 1 or 2 of the 6 tests fail, including the test written for it. A changed lookup derivation passed the full cycle, because it was consistent within one run; only the compatibility test caught it. |
+| Complete backend | Run started 09:07 at migration `0022`: 403 tests, **402 passed, 1 failed** in 3,335 s, with other sessions' emulator and builds holding the machine at 100% CPU (`backend/.local/t11-backend-20261001.txt`). The failure was `test_separate_worker_process_recovers_persisted_due_work_without_duplicate`: its separate worker process did not finish within the test's 20 s limit. Run alone at 37% CPU, it passed in 12.9 s. That run collected an earlier version of the rotation command and its tests. They changed afterwards, and are covered by the 6 passes above. |
+| Development data | Read-only `status` and `verify` against the shared development key file and database, with no key material printed. The single-key file opened all 443 stored values: 202 account emails, 218 challenge emails, 9 care instructions and 14 messages. None were unreadable. Nothing was rotated. After another session restarted the shared API and reminder worker at 09:47, the API started on this code with the same key file and answered `/health/ready` with 200. |
+
+Boundary: no rotation was performed on the development key, because each step needs a restart of the API and workers that other sessions share. There is no live reload. The restore drill still checks only identity data; restoring a backup made before a rotation needs its retired key brought back with `restore`. There is no KMS, and the lookup key is never rotated.
+
+## Background Work Metrics Checkpoint
+
+Builds [T32](TASKS.md#approved-requirements-not-built-yet) (R12, gap G3). Before this, `/metrics` counted only HTTP requests, so a stopped or slow worker was invisible: due reminders, sign-in codes and exports simply waited.
+
+- **Gauges:** for each queue (`identity_mail`, `reminders`, `exports`), `community_work_ready` counts the items its worker would take now, `community_work_ready_oldest_seconds` gives how long the oldest has waited, and `community_work_failed` counts items that ended in failure: undeliverable or unconfirmed sign-in mail, reminders whose dispatch failed 5 times, exports that failed to build. `community_work_query_success` is 0 when the database cannot be read; the request metrics are still returned.
+- **Same rules as the workers:** "ready" uses each worker's own selection, so a reminder waiting out a retry is not counted until its retry time, and its wait counts from that time; an export whose build lease ran out counts from the end of the lease. For reminders this is the wait before the worker takes the item, not delivery time ([C10](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) keeps those separate).
+- **Read at scrape time:** the values come from the database, so they survive worker restarts and need no change to the workers. The query has a 2-second limit. Labels are fixed queue names; no identifiers, addresses or content appear.
+- **Engineering choice** ([DEC-009](DECISIONS.md#accepted-decisions)): reading the database instead of collecting counters inside each worker, because a stopped worker cannot report that it stopped. Every API process reports the same values.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | New `backend/tests/test_work_metrics.py` with the existing telemetry tests: **7 passed**. The tests drive the real workers: sign-in mail sent, retried and failed; reminders made due, failed five times through the real dispatch-failure path, held for a retry and dispatched; exports queued, rebuilt after an expired lease and failed after three attempts. Each time, the gauges equal what the worker then processed, with the exact wait in seconds. A scrape with the database unreachable still answers 200 with the request metrics and `community_work_query_success 0`. |
+| Defects injected | Six defects, loaded one per run by a local test-only plugin with no source file changed (`backend/.local/t32-defects-20261001.txt`). Without the gauges (the old behaviour) all 4 new tests fail. Counting reminders still waiting for a retry, measuring their wait from the scheduled time, missing abandoned export builds, counting mail not yet due, and letting a database error escape each failed exactly the test written for it. |
+| Real process | A temporary API container on 127.0.0.1:8001 with a synthetic metrics key, reading the development database: all ten work lines present, nothing waiting or failed, `community_work_query_success 1`, and no `@` anywhere in the output. The container was then stopped and removed; the shared API was not restarted. |
+| Complete backend | Run started 11:07 at migration `0022`: **408 passed**, 0 failed, 0 skipped in 779 s (`backend/.local/t32-backend-20261001.txt`), including the 4 new tests and the final 6 key rotation tests. |
+
+Boundary: no alert uses these gauges yet (targets, Q19), and there is no collector or dashboard. The event and dose alerts from migration `0021` are settings worked out when read, not queued work, so they have no backlog to report. A new worker queue needs one more definition in `work.py`. Traces still stop at the API.
+
+## Design Tokens Single Source Checkpoint
+
+Builds [T36](TASKS.md#design-and-experience) under [DEC-013](DECISIONS.md#accepted-decisions) (provisional). Before this, `packages/design-tokens/tokens.json` existed but nothing read it: the web stylesheet and the Android theme each copied its colours by hand, under different names, and both used three colours the file did not have.
+
+- **One source:** `tokens.json` now also holds the white surface, the input border colour and the placeholder colour that both apps already used. `npm run tokens` writes `web/src/app/design-tokens.css` (CSS variables such as `--color-primary`, `--space-unit`, `--radius-control` and `--target-minimum`) and `android/app/src/main/java/com/community/platform/DesignTokens.kt` (Kotlin constants such as `DesignTokens.Primary`). Both files say they are generated.
+- **Web:** `globals.css` imports the generated file first. Its older names (`--ink`, `--green`, `--line` and the rest) now point at the generated variables, so the feature styles keep working unchanged. The body font, focus outline, input border, placeholder, brand mark text, dialog corners and the 44 px icon, text-button and link targets use the generated values.
+- **Android:** `CommunityTheme.kt` builds the Material colour scheme and letter spacing from `DesignTokens`; the hand-typed colours are gone.
+- **Check:** `npm run check:tokens` and `npm run test:tokens` fail when a generated file is out of date, when `globals.css` or `CommunityTheme.kt` types a token colour by hand (including `#fff`, `white` and `Color.White` for the white surface), when the font name appears outside the `@font-face` rule, or when a text colour pair falls below 4.5:1 or the focus colour below 3:1. They also refuse token files the generators cannot use safely, such as a font name containing quotes.
+- **Engineering choices** ([DEC-009](DECISIONS.md#accepted-decisions)): a Node script with no new dependency, in the style of the feature catalog script; the generated files stay in the source tree next to the code that uses them, so neither app's build needs Node; the older web variable names stay as aliases instead of renaming every feature style in one change.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Token tests | `node --test scripts/design-tokens.test.mjs`: **7 passed**. Negative controls in the tests: a colour typed by hand in either file, the font name copied into the body rule, a changed token value (both generated files reported out of date), a colour that breaks contrast, and an unusable token file are each reported. `npm run check:tokens` passes. |
+| No visible change | Every computed style from the old and the new stylesheet, compared in headless Chromium with all network requests blocked: one element per class (60 classes) with typical children, plus focus outlines and placeholders, at 1280 px and 375 px and with reduced motion. **1,922,926 values on 3,705 elements, 0 differences** (`.local/t36/style-compare.json`). Only the running spinner's angle was left out, because it depends on the moment it is read. A one-step change to the input border colour in a test copy produced 4,416 differences, so the comparison catches a real change. On the live preview at http://127.0.0.1:3000/login the generated variables load, and the brand, input border, placeholder, button and font values equal the originals. |
+| Web component tests | The five offline browser test files, which bundle `globals.css` with its new import: **29 passed**, 0 failed (`.local/t36/web-unit.txt`). |
+| Android | The shared Android tree did not compile at 12:20 for a reason outside this task: `feature/planning/CalendarScreen.kt`, changed at 10:08 by other calendar work, uses `calendar_event_zone` and `calendar_open_events`, which are not in `strings.xml`. The compiler reported only those two errors. A source-only copy of the Android project, identical in the theme and token files, with those two strings added in the copy only, compiled: `:app:compileDebugKotlin` **BUILD SUCCESSFUL** (`.local/t36/android-copy-compile.txt`). Not run on a device; the colours keep their values. |
+
+Contrast of the shipped colours: text pairs from 5.10:1 (muted text on the page background) to 13.06:1 (ink on white), and the focus colour 4.57:1 on the page background. Two shipped colours are below their targets and are left for T37, because changing them changes the screens: the input border on white is 1.98:1, where the outline that marks an input needs 3:1, and the placeholder on white is 3.68:1, where text needs 4.5:1. The test lists both and fails once they pass, so the list stays current.
+
+Boundary: the feature stylesheets still hold their own colours, corner sizes and spacing (for example `#c9d3cc`, `#52615a`, an 8 px input corner in events, and 7 px and 9 px gaps), and the Android screens still type their own `6.dp` corners and spacing; T37 moves them to tokens one named change at a time. There is no shared text-size scale yet: web headings use 36 px and 19 px, while Android uses Material's default sizes.
+
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.
 2. Resolve dependency/advisory, recovery/abuse, legal/privacy and deployment gates before real-user use. Local integration passes are not full M1/MVP or production approval.
-3. Retain the unimplemented product scope: arbitrary/standing third-party grants, public community, messaging, other Space types, broader membership management, events, files, Agent and safety/data rights.
+3. Retain the unimplemented product scope: arbitrary/standing third-party grants, moderator tools and appeals, end-to-end encrypted and realtime messaging, other Space types, broader membership management, event capacity/invitations/public events, files, Agent and safety/data rights.

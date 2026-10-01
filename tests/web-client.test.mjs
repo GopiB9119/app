@@ -268,7 +268,7 @@ const accountId = '4d7dff75-e4b8-4686-b779-744cdb8d09fb';
 const spaceId = '359bd05a-c95c-4975-b061-d647e82a6958';
 const invitationId = '463aa3d5-a47c-4560-8fe9-70da2f866a2e';
 
-function loadSource(relative, fetch, dependencies = {}) {
+function loadSource(relative, fetch, dependencies = {}, globals = {}) {
   const source = readFileSync(new URL(`../web/src/${relative}`, import.meta.url), 'utf8');
   const compiled = typescript.transpileModule(source, {
     compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.CommonJS },
@@ -276,7 +276,7 @@ function loadSource(relative, fetch, dependencies = {}) {
   const exports = {};
   runInNewContext(compiled.outputText, {
     exports, require: name => dependencies[name] ?? require(name), fetch, URL, URLSearchParams, Buffer, AbortSignal, DOMException,
-    process: { env: { COMMUNITY_API_URL: 'https://backend.example.test', COMMUNITY_WEB_ORIGINS: origin } },
+    process: { env: { COMMUNITY_API_URL: 'https://backend.example.test', COMMUNITY_WEB_ORIGINS: origin } }, ...globals,
   }, { filename: relative });
   return exports;
 }
@@ -284,6 +284,83 @@ function loadSource(relative, fetch, dependencies = {}) {
 function clientWithResponse(payload) {
   return loadSource('features/identity/client.ts', async () => Response.json(payload));
 }
+
+test('Checklist client binds task scope, completion facts and immutable retry command', async () => {
+  const calls = [];
+  const item = { id: invitationId, title: 'Read chapter', checked: false, checked_at: null, checked_by_account_id: null };
+  const original = { task_id: invitationId, space_id: spaceId, task_title: 'Reading', task_status: 'open', task_version: '1', can_manage: true, can_check: true, items: [item], etag: `"${'a'.repeat(64)}"` };
+  let data = original;
+  const fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ data }); };
+  const client = loadSource('features/planning/checklist-client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) });
+  const intent = { accountId, taskId: invitationId, spaceId, etag: original.etag, key: spaceId, body: { action: 'check', item_id: invitationId, checked: false } };
+  await client.changeChecklist(intent); await client.changeChecklist(intent);
+  assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[0].options.headers['If-Match'], intent.etag);
+  assert.deepEqual(JSON.parse(calls[0].options.body), intent.body);
+  for (const changes of [{ space_id: accountId }, { task_id: spaceId }, { items: [item, item] }, { items: [{ ...item, checked: true }] }, { task_status: 'completed' }]) {
+    data = { ...original, ...changes };
+    await assert.rejects(client.readChecklist(accountId, invitationId, spaceId), { status: 502 });
+  }
+});
+
+test('Checklist BFF accepts only authenticated GET and POST without query injection', async () => {
+  const path = `tasks/${invitationId}/checklist`;
+  for (const method of ['GET', 'POST']) assert.equal((await bff().request(method, path)).status, 200);
+  for (const method of ['PATCH', 'DELETE']) assert.equal((await bff().request(method, path)).status, 404);
+  assert.equal((await bff().request('GET', `${path}?account_id=other`)).status, 400);
+  assert.equal((await bff().request('GET', path, { Cookie: '' })).status, 401);
+  assert.equal((await bff().request('POST', path, { Origin: 'https://foreign.example' })).status, 403);
+  assert.equal((await bff().request('POST', path, { 'X-Account-ID': spaceId })).status, 409);
+});
+
+test('Space schemas keep family and solo private and allow only groups to be public', async () => {
+  const fetch = async () => { throw new Error('No network'); };
+  const client = loadSource('features/spaces/client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) });
+  const value = { id: spaceId, name: 'My planning', description: '', space_type: 'solo', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: '2026-09-19T10:00:00Z' };
+  assert.equal(client.spaceSchema.parse(value).space_type, 'solo');
+  assert.equal(client.spaceSchema.safeParse({ ...value, visibility: 'public' }).success, false);
+  assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'family', visibility: 'public' }).success, false);
+  assert.equal(client.spaceSchema.safeParse({ ...value, space_type: 'couple' }).success, false);
+  assert.equal(client.spaceSchema.safeParse({ ...value, visibility: 'secret' }).success, false);
+  assert.equal(client.spaceSchema.parse({ ...value, space_type: 'group', visibility: 'public', description: 'Lake walks' }).visibility, 'public');
+  assert.equal(client.spaceSchema.safeParse({ ...value, description: 'x'.repeat(281) }).success, false);
+  const { description: _omitted, ...older } = value;
+  assert.equal(client.spaceSchema.parse(older).description, '');
+  assert.equal(client.spaceSettingsSchema.safeParse({ ...value, etag: `"${'a'.repeat(64)}"` }).success, true);
+  assert.equal(client.spaceSettingsSchema.safeParse({ ...value, visibility: 'public', etag: `"${'a'.repeat(64)}"` }).success, false);
+});
+
+test('Space settings client retains exact name review and rejects foreign or nonowner responses', async () => {
+  const calls = [];
+  let value = { id: spaceId, name: 'Current name', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '3', created_at: '2026-09-19T10:00:00Z', etag: `"${'a'.repeat(64)}"` };
+  const fetch = async (url, options) => { calls.push({ url, options }); return Response.json({ data: value }); };
+  const client = loadSource('features/spaces/client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) });
+  const intent = { accountId, spaceId, name: 'Reviewed name', etag: value.etag, key: invitationId };
+  assert.equal((await client.readSpaceSettings(accountId, spaceId)).name, 'Current name');
+  await client.saveSpaceSettings(intent);
+  assert.equal((await client.saveSpaceSettings(intent)).name, 'Current name');
+  assert.equal(calls[1].options.body, '{"name":"Reviewed name"}');
+  assert.deepEqual(calls[1].options.headers, calls[2].options.headers);
+  assert.equal(calls[1].options.headers['If-Match'], intent.etag);
+  for (const change of [{ id: accountId }, { role: 'member' }, { etag: 'bad' }, { visibility: 'public' }]) {
+    const before = value; value = { ...value, ...change };
+    await assert.rejects(client.saveSpaceSettings(intent), { status: 502 }); value = before;
+  }
+});
+
+test('Space settings BFF accepts only owner-bound GET and PATCH without query injection', async () => {
+  const path = `spaces/${spaceId}/settings`;
+  for (const method of ['GET', 'PATCH']) {
+    const proxy = bff(); assert.equal((await proxy.request(method, path, { 'If-Match': '"reviewed"' })).status, 200);
+    assert.equal(proxy.calls[1].options.headers['If-Match'], '"reviewed"');
+    assert.equal(proxy.calls[1].options.cache, 'no-store');
+    assert.equal((await bff().request(method, `${path}?role=owner`)).status, 400);
+  }
+  for (const method of ['POST', 'DELETE']) assert.equal((await bff().request(method, path)).status, 404);
+  assert.equal((await bff().request('PATCH', path, { Origin: 'https://foreign.example' })).status, 403);
+  assert.equal((await bff().request('PATCH', path, { 'X-Account-ID': invitationId })).status, 409);
+  assert.equal((await bff().request('GET', path, { Cookie: '' })).status, 401);
+});
 
 test('Calendar client preserves date-only entries and rejects mismatched or repeated pages', async () => {
   const entry = { id: invitationId, task_id: invitationId, space_id: spaceId, kind: 'task', title: 'Calendar task', date: '2026-09-21', scheduled_at: null, timezone: null, status: 'open', source_changed: false };
@@ -435,6 +512,111 @@ function bff() {
   }
   return { calls, request };
 }
+
+test('Proxy starts a trace per request, sends it on both API calls and logs only random IDs and the outcome', async () => {
+  const calls = [];
+  const lines = [];
+  const handlers = loadSource('app/api/[...path]/route.ts', async (url, options) => {
+    calls.push({ url: String(url), options });
+    return Response.json({ data: String(url).endsWith('/v1/me') ? { id: accountId } : [] });
+  }, {}, { console: { log: line => lines.push(line) } });
+  const route = `spaces/${spaceId}/members`;
+  async function send(headers) {
+    const request = new NextRequest(`${origin}/api/${route}?secret=visitor@example.test`, { method: 'GET', headers });
+    return handlers.GET(request, { params: Promise.resolve({ path: route.split('/') }) });
+  }
+  const browserTrace = `00-${'1'.repeat(32)}-${'2'.repeat(16)}-01`;
+  const signedIn = { Cookie: 'cp_session=synthetic-session', Origin: origin, 'X-Account-ID': accountId, traceparent: browserTrace };
+  assert.equal((await send(signedIn)).status, 400);
+  assert.equal((await send({ Origin: origin })).status, 400);
+  assert.equal(calls.length, 0);
+  const request = new NextRequest(`${origin}/api/${route}`, { method: 'GET', headers: signedIn });
+  assert.equal((await handlers.GET(request, { params: Promise.resolve({ path: route.split('/') }) })).status, 200);
+  const [check, upstream] = calls.map(call => call.options.headers.traceparent);
+  assert.match(upstream, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  assert.equal(check, upstream);
+  assert.notEqual(upstream, browserTrace);
+  const entries = lines.map(line => JSON.parse(line));
+  assert.deepEqual(entries.map(entry => entry.status), [400, 400, 200]);
+  for (const entry of entries) {
+    assert.deepEqual(Object.keys(entry).sort(), ['duration_ms', 'event', 'method', 'span_id', 'status', 'time', 'trace_id']);
+    assert.equal(entry.event, 'bff_request');
+  }
+  assert.equal(new Set(entries.map(entry => entry.trace_id)).size, 3);
+  assert.equal(`00-${entries[2].trace_id}-${entries[2].span_id}-01`, upstream);
+  for (const secret of [spaceId, accountId, 'synthetic-session', 'visitor@example.test', 'members']) {
+    assert.ok(!lines.join('\n').includes(secret), secret);
+  }
+});
+
+test('Group BFF forwards only the reviewed directory, visibility and join request routes', async () => {
+  const requestId = invitationId;
+  const allowedRoutes = [
+    ['GET', 'discover/spaces?q=hikers&limit=20'], ['GET', `discover/spaces/${spaceId}`], ['POST', `spaces/${spaceId}/visibility`],
+    ['GET', `spaces/${spaceId}/join-requests`], ['POST', `spaces/${spaceId}/join-requests`],
+    ['POST', `spaces/${spaceId}/join-requests/${requestId}/approve`], ['POST', `spaces/${spaceId}/join-requests/${requestId}/decline`],
+    ['POST', `space-join-requests/${requestId}/cancel`], ['GET', 'me/space-join-requests'],
+  ];
+  for (const [method, route] of allowedRoutes) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route)).status, 200, route);
+    assert.equal(proxy.calls[1].url, `https://backend.example.test/v1/${route}`, route);
+    assert.equal(proxy.calls[1].options.headers.Authorization, 'Bearer synthetic-session');
+  }
+  for (const [method, route] of [
+    ['GET', `spaces/${spaceId}/join-requests/${requestId}/approve`], ['DELETE', `space-join-requests/${requestId}/cancel`],
+    ['PATCH', `spaces/${spaceId}/visibility`], ['POST', 'discover/spaces'], ['GET', `space-join-requests/${requestId}`],
+  ]) assert.equal((await bff().request(method, route)).status, 404, `${method} ${route}`);
+  for (const route of [`spaces/${spaceId}/visibility?visibility=public`, `spaces/${spaceId}/join-requests?note=hi`, 'discover/spaces?owner=me', 'discover/spaces?q=a&q=b']) {
+    const method = route.startsWith('discover') ? 'GET' : 'POST';
+    assert.equal((await bff().request(method, route)).status, 400, route);
+  }
+  assert.equal((await bff().request('GET', 'discover/spaces', { Cookie: '' })).status, 401);
+  assert.equal((await bff().request('POST', `spaces/${spaceId}/join-requests`, { Origin: 'https://foreign.example' })).status, 403);
+});
+
+test('Group clients send exact intents and reject inconsistent directory and request facts', async () => {
+  const calls = [];
+  const entry = { id: spaceId, name: 'Weekend hikers', description: 'Lake walks', member_count: 3, viewer_role: null, pending_request_id: null, can_request: true };
+  const request = { id: invitationId, space_id: spaceId, space_name: 'Weekend hikers', note: 'Hello', status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-10-03T10:00:00Z', resolved_at: null };
+  let payload = { data: [entry], pagination: { next_cursor: null, has_more: false } };
+  const fetch = async (url, options) => { calls.push({ url, options }); return Response.json(payload); };
+  const client = loadSource('features/spaces/client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) });
+  assert.equal((await client.findGroups(accountId, '  hikers ', null)).data[0].name, 'Weekend hikers');
+  assert.equal(calls[0].url, '/api/discover/spaces?limit=20&q=hikers');
+  for (const changes of [{ viewer_role: 'member' }, { pending_request_id: invitationId }, { member_count: 0 }, { description: 'x'.repeat(281) }]) {
+    payload = { data: [{ ...entry, ...changes }], pagination: { next_cursor: null, has_more: false } };
+    await assert.rejects(client.findGroups(accountId, '', null), { status: 502 }, JSON.stringify(changes));
+  }
+  payload = { data: [entry, entry], pagination: { next_cursor: null, has_more: false } };
+  await assert.rejects(client.findGroups(accountId, '', null), { status: 502 });
+  payload = { data: request };
+  const intent = { accountId, spaceId, note: 'Hello', key: invitationId };
+  await client.askToJoin(intent); await client.askToJoin(intent);
+  assert.deepEqual(calls.at(-1).options, calls.at(-2).options);
+  assert.equal(calls.at(-1).options.headers['Idempotency-Key'], invitationId);
+  assert.equal(calls.at(-1).options.body, '{"note":"Hello"}');
+  await assert.rejects(client.askToJoin({ ...intent, spaceId: accountId }), { status: 502 });
+  payload = { data: { ...request, status: 'declined' } };
+  await assert.rejects(client.askToJoin(intent), { status: 502 });
+  payload = { data: { ...request, status: 'cancelled', resolved_at: '2026-09-19T11:00:00Z' } };
+  assert.equal((await client.cancelJoinRequest(accountId, invitationId)).status, 'cancelled');
+  payload = { data: { ...request, status: 'approved', resolved_at: '2026-09-19T11:00:00Z' } };
+  await assert.rejects(client.cancelJoinRequest(accountId, invitationId), { status: 502 });
+  const review = { id: invitationId, account_id: spaceId, display_name: 'Sam', note: '', created_at: request.created_at, expires_at: request.expires_at };
+  assert.equal((await client.decideJoinRequest(accountId, spaceId, review, 'approve')).status, 'approved');
+  await assert.rejects(client.decideJoinRequest(accountId, spaceId, review, 'decline'), { status: 502 });
+  payload = { data: [{ ...review, account_id: accountId }] };
+  await assert.rejects(client.pendingJoinRequests(accountId, spaceId), { status: 502 });
+  const settings = { id: spaceId, name: 'Hikers', description: '', space_type: 'group', visibility: 'private', status: 'active', role: 'owner', version: '2', created_at: request.created_at, etag: `"${'b'.repeat(64)}"` };
+  payload = { data: settings };
+  await assert.rejects(client.changeVisibility({ accountId, spaceId, visibility: 'public', etag: settings.etag, key: invitationId }), { status: 502 });
+  payload = { data: { ...settings, visibility: 'public' } };
+  assert.equal((await client.changeVisibility({ accountId, spaceId, visibility: 'public', etag: settings.etag, key: invitationId })).visibility, 'public');
+  assert.equal(calls.at(-1).options.headers['If-Match'], settings.etag);
+  await client.saveSpaceSettings({ accountId, spaceId, name: 'Hikers', etag: settings.etag, key: invitationId });
+  assert.equal(calls.at(-1).options.body, '{"name":"Hikers"}');
+});
 
 test('Invitation BFF exposes only the six authenticated method/path combinations', async () => {
   const routes = [

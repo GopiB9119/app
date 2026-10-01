@@ -11,6 +11,7 @@ data class SpaceDto(
     val role: String,
     val version: String,
     @SerializedName("created_at") val createdAt: String,
+    val description: String? = null,
 )
 
 data class SpaceInvitationDto(
@@ -26,7 +27,10 @@ data class SpaceInvitationDto(
 )
 
 data class InvitationOutcomeDto(val id: String, val status: String)
-data class CreateFamilySpaceDto(val name: String, @SerializedName("space_type") val spaceType: String = "family")
+data class CreateFamilySpaceDto(
+    val name: String, @SerializedName("space_type") val spaceType: String = "family",
+    val visibility: String? = null, val description: String? = null,
+)
 data class CreateSpaceInvitationDto(@SerializedName("recipient_account_id") val recipientAccountId: String)
 data class SpacePage<Value>(val items: List<Value>, val nextCursor: String?)
 
@@ -68,7 +72,7 @@ enum class OwnershipResponse { ACCEPT, DECLINE, CANCEL }
 sealed interface SpaceCommand {
     val accountId: String
 
-    data class Create(override val accountId: String, val name: String, val requestKey: String) : SpaceCommand
+    data class Create(override val accountId: String, val name: String, val requestKey: String, val spaceType: String = "family", val visibility: String = "private", val description: String = "") : SpaceCommand
     data class Invite(override val accountId: String, val spaceId: String, val recipientAccountId: String, val requestKey: String) : SpaceCommand
     data class Accept(override val accountId: String, val invitation: SpaceInvitationDto) : SpaceCommand
     data class Decline(override val accountId: String, val invitation: SpaceInvitationDto) : SpaceCommand

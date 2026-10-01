@@ -1,6 +1,7 @@
 import hmac
 import json
 import secrets
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -272,6 +273,14 @@ class IdentityService:
         ):
             raise authentication_required()
         return user, session
+
+    @contextmanager
+    def signed_in_write(self, token):
+        with self.sessions.begin() as database:
+            user, _session = self.authenticate(database, token, lock=True)
+            yield database, user
+            # Waiting for row locks can outlast the session, so it is checked again before anything commits.
+            self.authenticate(database, token, lock=True)
 
     def user_view(self, user):
         return UserView(

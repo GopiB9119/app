@@ -276,6 +276,46 @@ class ArchiveReminder(BaseModel):
     reason: str | None
     created_at: datetime
     acknowledged_at: datetime | None
+    series_id: str | None = None
+    follow_up_of: str | None = None
+    snooze_count: int = 0
+
+
+class ArchiveReminderSeries(BaseModel):
+    id: str
+    task_id: str
+    space_id: str
+    frequency: str
+    repeat_every: int
+    weekdays: list[str]
+    local_time: str
+    timezone: str
+    start_date: date
+    end_date: date
+    clock_change_policy: str
+    status: str
+    reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    replaced_by_id: str | None = None
+
+
+class ArchiveQuietHours(BaseModel):
+    start: str
+    end: str
+
+
+class ArchiveReminderBackup(BaseModel):
+    id: str
+    task_id: str
+    space_id: str
+    owner_account_id: str
+    contact_account_id: str
+    wait_minutes: int
+    status: str
+    created_at: datetime
+    responded_at: datetime | None
+    ended_at: datetime | None
 
 
 class ArchiveReminderRequest(BaseModel):
@@ -306,6 +346,9 @@ class ArchiveReminders(BaseModel):
     requests_sent: list[ArchiveReminderRequest]
     requests_received: list[ArchiveReminderRequest]
     notifications: list[ArchiveNotification]
+    series: list[ArchiveReminderSeries] = Field(default_factory=list)
+    quiet_hours: ArchiveQuietHours | None = None
+    backups: list[ArchiveReminderBackup] = Field(default_factory=list)
 
 
 class ExportArchive(BaseModel):

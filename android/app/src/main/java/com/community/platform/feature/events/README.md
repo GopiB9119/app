@@ -1,7 +1,8 @@
-<!-- generated: feature-catalog; reserved, not implemented -->
 # events
 
-Reserved domain boundary. Only features with executable evidence in the build status are implemented.
+Built: **Events** on the Space screen. It shows upcoming and past lists, details with responses, create and edit forms, cancel confirmation and an exact retry of an unconfirmed create. Only same-day or open-ended events can be edited here; longer events are edited on the web.
+
+Evidence: [events checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#space-events-and-rsvp-checkpoint) (`EventsTest`, 11 JVM tests). Not yet tested on a device.
 
 Source chapters: 2, 3, 17.
 

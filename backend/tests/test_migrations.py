@@ -29,6 +29,23 @@ def test_migrated_schema_matches_models(app):
         assert compare_metadata(context, Base.metadata) == []
 
 
+def test_space_settings_migration_preserves_existing_space_and_task(client, app):
+    owner = account(client, app)
+    space = create_space(client, owner).json()["data"]
+    task = create_task(client, owner, space["id"]).json()["data"]
+    settings = Config("alembic.ini")
+    try:
+        command.downgrade(settings, "0010")
+        with app.state.engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM spaces")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM task_access")) == 1
+    finally:
+        command.upgrade(settings, "head")
+    assert client.get(f"/v1/spaces/{space['id']}", headers=auth(owner)).json()["data"] == space
+    assert client.get(f"/v1/tasks/{task['id']}", headers=auth(owner)).json()["data"] == task
+    test_migrated_schema_matches_models(app)
+
+
 def test_new_application_instance_accepts_persisted_session(client, app):
     result = account(client, app)
     restarted = create_app(app.state.settings, app.state.clock)
@@ -196,4 +213,65 @@ def test_ownership_migration_preserves_existing_members_and_departure_receipts(c
         command.upgrade(config, "head")
     assert client.post(f"/v1/spaces/{space_id}/leave", headers={**auth(member), "Idempotency-Key": invitation_id, "If-Match": reviewed["etag"]}, json={}).status_code == 200
     assert client.get(f"/v1/spaces/{space_id}", headers=auth(owner)).json()["data"]["role"] == "owner"
+    test_migrated_schema_matches_models(app)
+
+
+def test_admission_sequence_migration_numbers_admissions_and_keeps_same_instant_history_hidden(client, app):
+    from tests.test_events import create as create_event, listed as listed_events
+    from tests.test_messaging import admit, messages, open_chat, send
+
+    owner = account(client, app)
+    member = account(client, app, "chat-member@example.test")
+    space_id = create_space(client, owner).json()["data"]["id"]
+    chat = open_chat(client, owner, space_id).json()["data"]
+    # The clock does not move, so creation, message, event and admission all share one instant.
+    assert send(client, owner, chat["id"], "Same instant").status_code == 201
+    event = create_event(client, owner, space_id).json()["data"]
+    admit(client, owner, space_id, member)
+    config = Config("alembic.ini")
+    try:
+        command.downgrade(config, "0017")
+        with app.state.engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM conversation_messages")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM space_events")) == 1
+    finally:
+        command.upgrade(config, "head")
+    with app.state.engine.connect() as connection:
+        numbers = dict(connection.execute(
+            text("SELECT account_id, admission_sequence FROM space_memberships WHERE space_id = :space"), {"space": space_id},
+        ).all())
+        assert numbers == {owner["user"]["id"]: 1, member["user"]["id"]: 2}
+        assert connection.scalar(text("SELECT admission_sequence FROM spaces WHERE id = :space"), {"space": space_id}) == 2
+        assert connection.scalar(text("SELECT admissions_before FROM conversation_messages")) == 1
+        assert connection.scalar(text("SELECT admissions_before FROM space_events")) == 1
+    assert messages(client, member, chat["id"]).json()["data"] == []
+    assert listed_events(client, member, space_id).json()["data"] == []
+    assert [item["body"] for item in messages(client, owner, chat["id"]).json()["data"]] == ["Same instant"]
+    assert [item["id"] for item in listed_events(client, owner, space_id).json()["data"]] == [event["id"]]
+    assert send(client, owner, chat["id"], "After the migration").status_code == 201
+    assert [item["body"] for item in messages(client, member, chat["id"]).json()["data"]] == ["After the migration"]
+    test_migrated_schema_matches_models(app)
+
+
+def test_group_space_migration_keeps_existing_spaces_private_and_refuses_a_lossy_downgrade(client, app):
+    import pytest
+
+    from tests.test_space_directory import group
+
+    owner = account(client, app)
+    family = create_space(client, owner).json()["data"]
+    config = Config("alembic.ini")
+    try:
+        command.downgrade(config, "0021")
+        with app.state.engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM spaces WHERE visibility = 'private'")) == 1
+    finally:
+        command.upgrade(config, "head")
+    assert client.get(f"/v1/spaces/{family['id']}", headers=auth(owner)).json()["data"] == {**family, "description": ""}
+    public = group(client, owner).json()["data"]
+    with pytest.raises(RuntimeError, match="group Spaces"):
+        command.downgrade(config, "0021")
+    with app.state.engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0022"
+    assert client.get(f"/v1/spaces/{public['id']}", headers=auth(owner)).json()["data"]["visibility"] == "public"
     test_migrated_schema_matches_models(app)

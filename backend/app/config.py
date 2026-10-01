@@ -5,6 +5,8 @@ from typing import Literal
 from cryptography.fernet import Fernet
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.keys import Keyring
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="COMMUNITY_", extra="ignore")
@@ -21,6 +23,10 @@ class Settings(BaseSettings):
     registration_limit: int = 5
     login_limit: int = 10
     network_limit: int = 60
+    # Shared with the web proxy; only a request carrying it may name the browser's address for rate limits.
+    proxy_key: str | None = None
+    # Bearer key for /metrics; while unset, the endpoint answers 404.
+    metrics_key: str | None = None
     reminder_dispatch_enabled: bool = True
 
     def load_key(self) -> bytes:
@@ -35,3 +41,8 @@ class Settings(BaseSettings):
             key = Fernet.generate_key()
             target.write(key)
         return key
+
+    def load_keyring(self) -> Keyring:
+        if self.secret_key:
+            return Keyring.parse(self.secret_key.encode("ascii"))
+        return Keyring.parse(self.load_key())

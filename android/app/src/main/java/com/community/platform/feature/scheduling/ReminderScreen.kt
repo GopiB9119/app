@@ -95,6 +95,10 @@ data class ReminderActions(
     val requestMode: (Boolean) -> Unit = {}, val requestDirection: (ReminderRequestDirection) -> Unit = {},
     val reviewRequest: (ReminderRequestDto) -> Unit = {}, val closeRequestReview: () -> Unit = {},
     val acceptRequest: () -> Unit = {}, val moreRequests: () -> Unit = {},
+    val repeat: (RepeatMode) -> Unit = {}, val seriesFields: (String, String, Set<String>, String, String, String) -> Unit = { _, _, _, _, _, _ -> },
+    val previewSeries: () -> Unit = {}, val seriesPolicy: (String) -> Unit = {}, val changeSeries: () -> Unit = {},
+    val saveSeries: () -> Unit = {}, val moreSeries: () -> Unit = {}, val proposeSeries: (ReminderSeriesDto, SeriesOperation) -> Unit = { _, _ -> },
+    val openSnooze: (InboxNotificationDto) -> Unit = {}, val snoozeChoice: (Int) -> Unit = {}, val closeSnooze: () -> Unit = {}, val snooze: () -> Unit = {},
 )
 
 @Composable
@@ -109,6 +113,9 @@ fun ReminderRoute(viewModel: ReminderViewModel, accountId: String, onBack: () ->
         viewModel::read, viewModel::preference, viewModel::retry, viewModel::moreReminders, viewModel::moreInbox,
         viewModel::requestMode, viewModel::requestDirection, viewModel::reviewRequest,
         viewModel::closeRequestReview, viewModel::acceptRequest, viewModel::moreRequests,
+        viewModel::repeat, viewModel::seriesFields, viewModel::previewSeries, viewModel::seriesPolicy, viewModel::changeSeries,
+        viewModel::saveSeries, viewModel::moreSeries, viewModel::proposeSeries,
+        viewModel::openSnooze, viewModel::snoozeChoice, viewModel::closeSnooze, viewModel::snooze,
     ), onBack)
 }
 
@@ -152,14 +159,20 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
                             val eligible = state.taskOpen && if (state.requestForAssignee) state.canRequest && state.assignee != null else state.preferences?.value?.enabled == true
                             if (!state.taskOpen || (!state.requestForAssignee && state.preferences?.value?.enabled == false)) item("disabled") { Text(stringResource(if (!state.taskOpen) R.string.reminders_task_closed else R.string.reminders_disabled), color = MaterialTheme.colorScheme.error) }
                             val preview = state.preview
-                            if (state.canRequest && state.assignee != null && preview == null) item("recipient") {
+                            val seriesPreview = state.seriesPreview
+                            if (state.canRequest && state.assignee != null && preview == null && seriesPreview == null) item("recipient") {
                                 Column {
                                     Text(stringResource(R.string.reminders_recipient), style = MaterialTheme.typography.labelLarge)
                                     Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = !state.requestForAssignee, onClick = { actions.requestMode(false) }, enabled = !state.locked, modifier = Modifier.testTag("reminder-recipient-self")); Text(stringResource(R.string.reminders_me), Modifier.weight(1f)) }
                                     Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = state.requestForAssignee, onClick = { actions.requestMode(true) }, enabled = !state.locked, modifier = Modifier.testTag("reminder-recipient-assignee")); Text(stringResource(R.string.reminder_request_for, state.assignee.displayName), Modifier.weight(1f)) }
                                 }
                             }
-                            if (preview != null) {
+                            if (!state.requestForAssignee && preview == null && seriesPreview == null) item("repeat") { RepeatChoice(state, !state.locked && eligible, actions.repeat) }
+                            if (seriesPreview != null) item("series-review") { SeriesReview(state, seriesPreview, actions.seriesPolicy, actions.changeSeries, actions.saveSeries) }
+                            else if (state.repeat != RepeatMode.ONCE && !state.requestForAssignee) {
+                                item("series-fields") { SeriesFields(state, !state.locked && eligible, actions.seriesFields) }
+                                item("series-preview-action") { Button(onClick = actions.previewSeries, enabled = !state.locked && eligible && state.seriesTime.isNotEmpty(), shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth().testTag("series-preview")) { Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.series_review_action)) } }
+                            } else if (preview != null) {
                                 item("preview") {
                                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text(stringResource(if (preview.requestedBy == null) R.string.reminders_review else R.string.reminder_request_review), style = MaterialTheme.typography.titleLarge)
@@ -194,6 +207,10 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
                             }
                             item("schedule-divider") { HorizontalDivider() }
                         }
+                        item("series-heading") { Text(stringResource(R.string.series_heading), style = MaterialTheme.typography.titleLarge) }
+                        if (state.series.isEmpty() && !state.busy) item("series-none") { Text(stringResource(R.string.series_none)) }
+                        items(state.series, key = { "series-${it.id}" }) { series -> SeriesRow(state, series) { operation -> actions.proposeSeries(series, operation) } }
+                        if (state.seriesCursor != null) item("more-series") { TextButton(onClick = actions.moreSeries, enabled = !state.locked && !state.reviewing) { Text(stringResource(R.string.series_more)) } }
                         item("reminders-heading") { Text(stringResource(R.string.reminders_mine), style = MaterialTheme.typography.titleLarge) }
                         if (state.reminders.isEmpty() && !state.busy) item("none") { Text(stringResource(R.string.reminders_none)) }
                         items(state.reminders, key = ReminderDto::id) { reminder ->
@@ -202,10 +219,12 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
                                 Text(stringResource(reminderStatusLabel(reminder.status)), color = MaterialTheme.colorScheme.primary)
                                 Text(displayInstant(reminder.scheduledAt, reminder.timezone))
                                 Text(reminder.timezone, style = MaterialTheme.typography.bodySmall)
+                                if (reminder.followUpOf != null) Text(stringResource(R.string.reminders_snoozed_count, reminder.snoozeCount), style = MaterialTheme.typography.bodySmall)
+                                else if (reminder.seriesId != null) Text(stringResource(R.string.reminders_part_of_series), style = MaterialTheme.typography.bodySmall)
                                 reminder.reason?.let { Text(stringResource(reminderReasonLabel(it)), style = MaterialTheme.typography.bodySmall) }
                                 if (reminder.status == "scheduled" && reminder.sourceChanged) Text(stringResource(R.string.reminders_source_changed), style = MaterialTheme.typography.bodySmall)
                                 if (reminder.acknowledgedAt != null) Text(stringResource(R.string.reminders_acknowledged), color = MaterialTheme.colorScheme.primary)
-                                if (reminder.status == "scheduled") OutlinedButton(onClick = { actions.propose(ReminderCommand.Cancel(reminder)) }, enabled = !state.locked, shape = RoundedCornerShape(6.dp), modifier = Modifier.testTag("reminder-cancel-${reminder.id}")) { Icon(Icons.Default.Close, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.reminders_cancel)) }
+                                if (reminder.status == "scheduled" && !reminder.seriesOccurrence) OutlinedButton(onClick = { actions.propose(ReminderCommand.Cancel(reminder)) }, enabled = !state.locked, shape = RoundedCornerShape(6.dp), modifier = Modifier.testTag("reminder-cancel-${reminder.id}")) { Icon(Icons.Default.Close, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.reminders_cancel)) }
                                 HorizontalDivider()
                             }
                         }
@@ -249,8 +268,11 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
                                 Text(displayInstant(notification.scheduledAt, state.timezone))
                                 Text(stringResource(if (notification.readAt == null) R.string.reminders_unread_label else R.string.reminders_read_label), style = MaterialTheme.typography.labelLarge)
                                 if (notification.acknowledgedAt != null) Text(stringResource(R.string.reminders_acknowledged), color = MaterialTheme.colorScheme.primary)
+                                notification.snoozedUntil?.let { Text(stringResource(R.string.notifications_snoozed_until, displayInstant(it, state.timezone)), style = MaterialTheme.typography.bodyMedium) }
+                                if (notification.snoozeCount > 0) Text(stringResource(R.string.reminders_snoozed_count, notification.snoozeCount), style = MaterialTheme.typography.bodySmall)
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (notification.readAt == null) TextButton(onClick = { actions.read(notification) }, enabled = !state.locked, modifier = Modifier.testTag("notification-read-${notification.id}")) { Text(stringResource(R.string.reminders_mark_read)) }
+                                    if (notification.canSnooze) OutlinedButton(onClick = { actions.openSnooze(notification) }, enabled = !state.locked && !state.reviewing, shape = RoundedCornerShape(6.dp), modifier = Modifier.testTag("notification-snooze-${notification.id}")) { Text(stringResource(R.string.notifications_snooze)) }
                                     if (notification.acknowledgedAt == null) OutlinedButton(onClick = { actions.propose(ReminderCommand.Acknowledge(notification)) }, enabled = !state.locked, shape = RoundedCornerShape(6.dp), modifier = Modifier.testTag("notification-ack-${notification.id}")) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.reminders_acknowledge)) }
                                 }
                                 HorizontalDivider()
@@ -271,10 +293,20 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
         }
     }
     state.confirmation?.takeUnless { it is ReminderCommand.RespondRequest }?.let { command ->
-        val title = if (command is ReminderCommand.Cancel) R.string.reminders_confirm_cancel else R.string.reminders_confirm_ack
-        val taskTitle = when (command) { is ReminderCommand.Cancel -> command.reminder.taskTitle; is ReminderCommand.Acknowledge -> command.notification.taskTitle; else -> "" }
-        AlertDialog(onDismissRequest = actions.cancel, title = { Text(stringResource(title)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(taskTitle); if (command is ReminderCommand.Acknowledge) Text(stringResource(R.string.reminders_ack_not_complete)) } }, confirmButton = { TextButton(onClick = actions.confirm, enabled = !state.busy, modifier = Modifier.testTag("reminder-confirm")) { Text(stringResource(R.string.confirm)) } }, dismissButton = { TextButton(onClick = actions.cancel, enabled = !state.busy, modifier = Modifier.testTag("reminder-dismiss")) { Text(stringResource(R.string.cancel)) } }, shape = RoundedCornerShape(8.dp))
+        val title = when (command) { is ReminderCommand.Cancel -> R.string.reminders_confirm_cancel; is ReminderCommand.Series -> seriesConfirmTitle(command.intent.operation); else -> R.string.reminders_confirm_ack }
+        val taskTitle = when (command) { is ReminderCommand.Cancel -> command.reminder.taskTitle; is ReminderCommand.Acknowledge -> command.notification.taskTitle; is ReminderCommand.Series -> command.intent.series.taskTitle; else -> "" }
+        AlertDialog(onDismissRequest = actions.cancel, title = { Text(stringResource(title)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(taskTitle)
+            if (command is ReminderCommand.Acknowledge) Text(stringResource(R.string.reminders_ack_not_complete))
+            if (command is ReminderCommand.Series) {
+                val series = command.intent.series
+                Text(describeRule(series.frequency, series.repeatEvery, series.weekdays, series.localTime))
+                series.nextOccurrence?.let { Text(stringResource(R.string.series_next, displayInstant(it.scheduledAt, series.timezone))) }
+                Text(stringResource(seriesConfirmEffect(command.intent.operation)))
+            }
+        } }, confirmButton = { TextButton(onClick = actions.confirm, enabled = !state.busy, modifier = Modifier.testTag("reminder-confirm")) { Text(stringResource(if (command is ReminderCommand.Series) seriesConfirmAction(command.intent.operation) else R.string.confirm)) } }, dismissButton = { TextButton(onClick = actions.cancel, enabled = !state.busy, modifier = Modifier.testTag("reminder-dismiss")) { Text(stringResource(if (command is ReminderCommand.Series) R.string.series_keep else R.string.cancel)) } }, shape = RoundedCornerShape(8.dp))
     }
+    state.snoozing?.let { item -> SnoozeDialog(state, item, actions.snoozeChoice, actions.closeSnooze, actions.snooze, actions.retry) }
     val response = (state.pending as? ReminderCommand.RespondRequest) ?: (state.confirmation as? ReminderCommand.RespondRequest)
     val proposal = state.requestReview?.request ?: response?.intent?.request
     if (proposal != null) {
@@ -343,11 +375,14 @@ private fun ReminderTimeFields(state: ReminderWorkspaceState, enabled: Boolean, 
 }
 
 @Composable
-private fun ReminderFact(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, style = MaterialTheme.typography.bodyLarge) } }
+internal fun ReminderFact(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, style = MaterialTheme.typography.bodyLarge) } }
 @Composable
-private fun ReminderMessage(message: String, error: Boolean) { Surface(color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) { Text(message, Modifier.padding(12.dp)) } }
-private fun displayInstant(value: String, zone: String) = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.of(zone)).format(Instant.parse(value))
-private fun offsetLabel(value: Int): String { val magnitude = kotlin.math.abs(value); return String.format(Locale.ROOT, "UTC%s%02d:%02d", if (value >= 0) "+" else "-", magnitude / 60, magnitude % 60) }
+internal fun ReminderMessage(message: String, error: Boolean) { Surface(color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) { Text(message, Modifier.padding(12.dp)) } }
+internal fun displayInstant(value: String, zone: String) = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.of(zone)).format(Instant.parse(value))
+internal fun offsetLabel(value: Int): String { val magnitude = kotlin.math.abs(value); return String.format(Locale.ROOT, "UTC%s%02d:%02d", if (value >= 0) "+" else "-", magnitude / 60, magnitude % 60) }
 private fun reminderStatusLabel(value: String) = when (value) { "scheduled" -> R.string.reminders_scheduled; "available" -> R.string.reminders_available; "cancelled" -> R.string.task_status_cancelled; "expired" -> R.string.reminders_expired; "failed" -> R.string.reminders_failed; else -> R.string.reminders_stopped }
 private fun requestStatusLabel(value: String) = when (value) { "pending" -> R.string.reminder_request_pending; "accepted" -> R.string.reminder_request_accepted; "declined" -> R.string.reminder_request_declined; "cancelled" -> R.string.reminder_request_withdrawn; "expired" -> R.string.reminders_expired; else -> R.string.reminders_source_changed }
-private fun reminderReasonLabel(value: String) = when (value) { "task_changed" -> R.string.reminders_source_changed; "task_closed" -> R.string.reminders_task_closed; "preference_revoked" -> R.string.reminders_permission_withdrawn; "dispatch_expired" -> R.string.reminders_deadline_passed; "dispatch_retry" -> R.string.reminders_retry_pending; "dispatch_failed" -> R.string.reminders_retry_exhausted; else -> R.string.reminders_access_changed }
+private fun reminderReasonLabel(value: String) = when (value) { "task_changed" -> R.string.reminders_source_changed; "task_closed" -> R.string.reminders_task_closed; "preference_revoked" -> R.string.reminders_permission_withdrawn; "dispatch_expired" -> R.string.reminders_deadline_passed; "dispatch_retry" -> R.string.reminders_retry_pending; "dispatch_failed" -> R.string.reminders_retry_exhausted
+    "skipped" -> R.string.reminders_reason_skipped; "series_paused" -> R.string.reminders_reason_series_paused; "series_cancelled" -> R.string.reminders_reason_series_cancelled
+    "series_ended" -> R.string.reminders_reason_series_ended; "series_suppressed" -> R.string.reminders_reason_series_suppressed; "acknowledged" -> R.string.reminders_reason_acknowledged
+    else -> R.string.reminders_access_changed }

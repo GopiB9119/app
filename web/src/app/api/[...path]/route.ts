@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,9 @@ const cookieOptions = {
   path: "/",
 };
 const publicPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password", "timezones"]);
+const signInPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password"]);
+const proxyKey = process.env.COMMUNITY_PROXY_KEY;
+const trustedHops = Number(process.env.COMMUNITY_TRUSTED_PROXY_HOPS ?? "0");
 const allowed = new Set([
   "POST auth/register", "POST auth/verify-email", "POST auth/login", "POST auth/recover",
   "POST auth/reset-password", "POST auth/logout", "GET me", "PATCH me/profile",
@@ -21,14 +25,34 @@ const allowed = new Set([
   "POST tasks", "GET tasks", "GET tasks/assignees", "GET calendar",
   "POST reminders/preview", "POST reminders", "GET reminders", "GET notifications",
   "POST reminder-requests/preview", "POST reminder-requests", "GET reminder-requests",
+  "POST reminder-series/preview", "POST reminder-series", "GET reminder-series",
   "GET me/notification-preferences", "PATCH me/notification-preferences",
 ]);
+const uuidPart = "[a-f0-9-]{36}";
+const communityWrite = new RegExp(`^(POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove)$`);
+const communityRead = new RegExp(`^GET (me/pages|me/following|me/saved-posts|me/blocks|feed|pages/${uuidPart}/drafts)$`);
+// Public pages and posts can be read signed out; a bound session adds the viewer's own follow/like/save/block state.
+const publicRead = new RegExp(`^GET (pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/posts|posts/${uuidPart}|posts/${uuidPart}/comments|discover/pages|discover/posts)$`);
+
+function communityParameters(route: string) {
+  if (route === "discover/pages") return ["q", "topic", "limit", "cursor"];
+  if (route === "discover/posts") return ["q", "limit", "cursor"];
+  return /^(me\/following|me\/saved-posts|feed|pages\/[^/]+\/posts|posts\/[^/]+\/comments)$/.test(route) ? ["limit", "cursor"] : [];
+}
 
 function failure(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message, details: {} }, request_id: randomUUID() }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-async function handle(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+// Next.js keeps an X-Forwarded-For sent by the browser, so only the entry added by the outermost trusted proxy counts.
+function browserAddress(request: NextRequest) {
+  if (!proxyKey || !Number.isInteger(trustedHops) || trustedHops < 1) return null;
+  const chain = (request.headers.get("x-forwarded-for") ?? "").split(",").map(part => part.trim()).filter(Boolean);
+  const address = chain[chain.length - trustedHops];
+  return address && isIP(address) ? address : null;
+}
+
+async function forward(request: NextRequest, context: { params: Promise<{ path: string[] }> }, traceparent: string) {
   const route = (await context.params).path.join("/");
   const mutating = !["GET", "HEAD"].includes(request.method);
   const site = request.headers.get("sec-fetch-site");
@@ -42,6 +66,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
   }
   const sessionDelete = request.method === "DELETE" && /^me\/sessions\/[a-f0-9-]{36}$/.test(route);
   const spaceRead = request.method === "GET" && /^spaces\/[a-f0-9-]{36}$/.test(route);
+  const spaceSettings = ["GET", "PATCH"].includes(request.method) && /^spaces\/[a-f0-9-]{36}\/settings$/.test(route);
   const spaceMembers = request.method === "GET" && /^spaces\/[a-f0-9-]{36}\/members$/.test(route);
   const removeMember = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/members\/[a-f0-9-]{36}\/remove$/.test(route);
   const leaveSpace = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/leave$/.test(route);
@@ -53,21 +78,41 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
   const respondInvitation = request.method === "POST" && /^invitations\/[a-f0-9-]{36}\/(accept|decline)$/.test(route);
   const taskResource = ["GET", "PATCH"].includes(request.method) && /^tasks\/[a-f0-9-]{36}$/.test(route);
   const taskStatus = request.method === "POST" && /^tasks\/[a-f0-9-]{36}\/status$/.test(route);
+  const taskChecklist = ["GET", "POST"].includes(request.method) && /^tasks\/[a-f0-9-]{36}\/checklist$/.test(route);
   const reminderCancel = request.method === "POST" && /^reminders\/[a-f0-9-]{36}\/cancel$/.test(route);
   const requestReview = request.method === "GET" && /^reminder-requests\/[a-f0-9-]{36}\/review$/.test(route);
   const requestResponse = request.method === "POST" && /^reminder-requests\/[a-f0-9-]{36}\/(accept|decline|cancel)$/.test(route);
-  const notificationAction = request.method === "POST" && /^notifications\/[a-f0-9-]{36}\/(read|acknowledge)$/.test(route);
-  if (!allowed.has(`${request.method} ${route}`) && !sessionDelete && !spaceRead && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !reminderCancel && !requestReview && !requestResponse && !notificationAction) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  const notificationAction = request.method === "POST" && /^notifications\/[a-f0-9-]{36}\/(read|acknowledge|snooze)$/.test(route);
+  const reminderSeries = new RegExp(`^GET reminder-series/${uuidPart}$|^POST reminder-series/${uuidPart}/(pause|resume|skip|cancel|move|replace)$`).test(`${request.method} ${route}`);
+  const alerts = new RegExp(`^GET me/alerts$|^POST me/alerts/dismiss$|^(GET|PATCH) me/quiet-hours$|^GET me/care-alerts$|^(GET|POST) events/${uuidPart}/alert$|^POST care/instructions/${uuidPart}/alerts$|^(GET|POST) reminder-backups$|^GET reminder-backups/contacts$|^POST reminder-backups/${uuidPart}/(accept|decline|cancel)$`).test(`${request.method} ${route}`);
+  const messaging = /^(POST spaces\/[a-f0-9-]{36}\/conversations|GET conversations|GET conversations\/[a-f0-9-]{36}(\/messages)?|POST conversations\/[a-f0-9-]{36}\/(messages|read)|POST conversations\/[a-f0-9-]{36}\/messages\/[a-f0-9-]{36}\/delete)$/.test(`${request.method} ${route}`);
+  const community = communityWrite.test(`${request.method} ${route}`) || communityRead.test(`${request.method} ${route}`);
+  const events = /^((GET|POST) spaces\/[a-f0-9-]{36}\/events|(GET|PATCH) events\/[a-f0-9-]{36}|POST events\/[a-f0-9-]{36}\/(cancel|attendance))$/.test(`${request.method} ${route}`);
+  const care = new RegExp(`^(GET|POST) care/instructions$|^GET care/instructions/${uuidPart}$|^POST care/instructions/${uuidPart}/(stop|reports)$|^GET care/day$`).test(`${request.method} ${route}`);
+  const publicCommunity = publicRead.test(`${request.method} ${route}`);
+  const groupSearch = request.method === "GET" && route === "discover/spaces";
+  const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/visibility$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
+  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !sessionDelete && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (alerts && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Alert commands do not accept query parameters.");
+  if (groups && !groupSearch && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Group commands do not accept query parameters.");
+  if ((reminderSeries || (notificationAction && route.endsWith("/snooze"))) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Reminder commands do not accept query parameters.");
+  if (community && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Community commands do not accept query parameters.");
+  if (events && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Event commands do not accept query parameters.");
+  if (care && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Care commands do not accept query parameters.");
+  if (taskChecklist && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Checklist commands do not accept query parameters.");
+  if (messaging && request.method === "POST" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Message commands do not accept query parameters.");
+  if (spaceSettings && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Space settings do not accept query parameters.");
   if ((spaceMembers || removeMember || leaveSpace) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Membership commands do not accept query parameters.");
   if ((ownershipOffer || ownershipResponse) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Ownership commands do not accept query parameters.");
   if (Number(request.headers.get("content-length") ?? 0) > 16384) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
   const sessionToken = request.cookies.get(sessionName)?.value;
-  if (!publicPaths.has(route) && !sessionToken) return failure(401, "AUTHENTICATION_REQUIRED", "Sign in to continue.");
+  const anonymous = publicCommunity && (!sessionToken || !request.headers.get("x-account-id"));
+  if (!publicPaths.has(route) && !anonymous && !sessionToken) return failure(401, "AUTHENTICATION_REQUIRED", "Sign in to continue.");
   try {
-    if (!publicPaths.has(route) && route !== "me") {
+    if (!publicPaths.has(route) && route !== "me" && !anonymous) {
       const expected = request.headers.get("x-account-id");
       if (!expected) return failure(409, "ACCOUNT_CHANGED", "Reload this page before continuing.");
-      const current = await fetch(`${backend}/v1/me`, { headers: { Authorization: `Bearer ${sessionToken}` }, cache: "no-store", signal: AbortSignal.timeout(10000) });
+      const current = await fetch(`${backend}/v1/me`, { headers: { Authorization: `Bearer ${sessionToken}`, traceparent }, cache: "no-store", signal: AbortSignal.timeout(10000) });
       const currentBody = await current.json();
       if (!current.ok) {
         const rejected = NextResponse.json(currentBody, { status: current.status });
@@ -93,18 +138,57 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
         body.device_name = "Web browser";
       }
     }
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (sessionToken && !publicPaths.has(route)) headers.Authorization = `Bearer ${sessionToken}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json", traceparent };
+    if (sessionToken && !publicPaths.has(route) && !anonymous) headers.Authorization = `Bearer ${sessionToken}`;
     for (const name of ["Idempotency-Key", "If-Match"]) {
       const value = request.headers.get(name);
       if (value) headers[name] = value;
     }
+    const address = signInPaths.has(route) ? browserAddress(request) : null;
+    if (address && proxyKey) {
+      headers["X-Community-Client-Address"] = address;
+      headers["X-Community-Proxy-Key"] = proxyKey;
+    }
     const upstreamUrl = new URL(`/v1/${route}`, backend);
-    if ((route === "spaces" || route === "invitations" || spaceInvitations || ownershipList || route === "calendar" || route === "tasks" || route === "tasks/assignees" || taskResource || route === "reminders" || route === "reminder-requests" || requestReview || route === "notifications" || route === "me/notification-preferences") && request.method === "GET") {
+    if ((community || publicCommunity) && request.method === "GET") {
+      const parameters = communityParameters(route);
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid list parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if (care && request.method === "GET") {
+      const parameters = route === "care/day" ? ["date"] : route === "care/instructions" ? ["status"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid care parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if (groupSearch) {
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!["q", "limit", "cursor"].includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid search parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if (alerts && request.method === "GET") {
+      const parameters = route === "reminder-backups" ? ["role", "task_id", "limit", "cursor"] : route === "reminder-backups/contacts" ? ["task_id"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid alert parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if ((messaging || events) && request.method === "GET") {
+      const parameters = route === "conversations" ? ["space_id", "limit", "cursor"] : route.endsWith("/messages") ? ["limit", "before", "after"] : route.endsWith("/events") ? ["when", "limit", "cursor"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid list parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if ((route === "spaces" || route === "invitations" || spaceInvitations || ownershipList || route === "calendar" || route === "tasks" || route === "tasks/assignees" || taskResource || route === "reminders" || route === "reminder-series" || route === "reminder-requests" || requestReview || route === "notifications" || route === "me/notification-preferences") && request.method === "GET") {
       const parameters = route === "tasks" ? ["space_id", "status", "limit", "cursor"]
         : route === "calendar" ? ["space_id", "start_date", "end_date", "timezone", "limit", "cursor"]
         : route === "tasks/assignees" ? ["space_id", "task_id"]
-        : route === "reminders" ? ["task_id", "limit", "cursor"]
+        : route === "reminders" || route === "reminder-series" ? ["task_id", "limit", "cursor"]
         : route === "reminder-requests" ? ["direction", "limit", "cursor"]
         : taskResource || requestReview || route === "me/notification-preferences" ? [] : ["limit", "cursor"];
       for (const [name, value] of request.nextUrl.searchParams) {
@@ -144,6 +228,16 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
   } catch {
     return failure(503, "SERVICE_UNAVAILABLE", "The service is unavailable. Your changes are not confirmed.");
   }
+}
+
+async function handle(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  const started = Date.now();
+  const traceId = randomBytes(16).toString("hex");
+  const spanId = randomBytes(8).toString("hex");
+  const response = await forward(request, context, `00-${traceId}-${spanId}-01`);
+  // Random IDs and the outcome only: paths, queries, headers and bodies can carry private data.
+  console.log(JSON.stringify({ time: new Date().toISOString(), event: "bff_request", trace_id: traceId, span_id: spanId, method: request.method, status: response.status, duration_ms: Date.now() - started }));
+  return response;
 }
 
 export { handle as GET, handle as POST, handle as PATCH, handle as DELETE };

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Bell, CalendarDays, Check, ClipboardList, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
+import { Ban, Bell, CalendarDays, Check, ClipboardList, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
@@ -12,6 +12,7 @@ import { spacesSchema } from "@/features/spaces/client";
 import { actionLabels, assigneesSchema, readTask, sendTask, statusLabels, taskBody, taskDraft, taskPage } from "./client";
 import type { FamilyTask, TaskDraft, TaskIntent, TaskItem, TaskStatus } from "./client";
 import styles from "./tasks.module.css";
+import { TaskChecklist } from "./checklist";
 
 function isAccessError(error: Error | null) {
   return error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === "ACCOUNT_CHANGED");
@@ -50,12 +51,12 @@ function TaskWorkspace({ user, initialSpaceId }: { user: Account; initialSpaceId
       <Link href="/app/spaces"><UsersRound size={18} aria-hidden />Spaces</Link>
       <span aria-current="page"><ClipboardList size={18} aria-hidden />Tasks</span>
     </nav>
-    <div className={styles.heading}><div><span className="section-kicker">SHARED PLANNING</span><h1>Family tasks</h1></div><span className={styles.private}><LockKeyhole size={16} aria-hidden />Private</span></div>
+    <div className={styles.heading}><div><span className="section-kicker">{selected?.space_type === "solo" ? "PERSONAL PLANNING" : "SHARED PLANNING"}</span><h1>{selected?.space_type === "solo" ? "My tasks" : "Family tasks"}</h1></div><span className={styles.private}><LockKeyhole size={16} aria-hidden />Private</span></div>
     {spaces.isPending && <p role="status">Loading family Spaces...</p>}
     {spaces.isError && <div className="message error" role="alert">{spaces.error.message}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />Retry</button></div>}
     {!spaces.isPending && !spaces.isError && <>
       {spaces.data?.data.length === 0 ? <div className={styles.empty}><UsersRound size={32} aria-hidden /><h2>No family Spaces yet</h2><Link href="/app/spaces">Open Spaces</Link></div> : <>
-        <label className={styles.spaceSelector}><span id="task-space-label">Family Space</span><select aria-labelledby="task-space-label" value={spaceId} disabled={busy} onChange={event => setSpaceId(event.target.value)}>{!selected && <option value={spaceId}>Select an available Space</option>}{spaces.data?.data.map(space => <option value={space.id} key={space.id}>{space.name}</option>)}</select></label>
+        <label className={styles.spaceSelector}><span id="task-space-label">{selected?.space_type === "solo" ? "Solo Space" : "Family Space"}</span><select aria-labelledby="task-space-label" value={spaceId} disabled={busy} onChange={event => setSpaceId(event.target.value)}>{!selected && <option value={spaceId}>Select an available Space</option>}{spaces.data?.data.map(space => <option value={space.id} key={space.id}>{space.name}</option>)}</select></label>
         {selected ? <TaskBoard key={selected.id} user={user} spaceId={selected.id} onBusy={setBusy} /> : <p className="message error" role="alert">This Space is unavailable.</p>}
       </>}
     </>}
@@ -66,6 +67,7 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<TaskStatus | "">("");
   const [editing, setEditing] = useState<TaskItem | null>(null);
+  const [checklistTaskId, setChecklistTaskId] = useState<string | null>(null);
   const [review, setReview] = useState<{ task: TaskItem; target: TaskStatus; intent: TaskIntent } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
@@ -94,7 +96,7 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
   });
   const blocked = !!accessError || isAccessError(tasks.error);
   useAccountGuard(accessError ?? tasks.error);
-  const locked = createBusy || editBusy || editing !== null || review !== null;
+  const locked = createBusy || editBusy || editing !== null || review !== null || checklistTaskId !== null;
   useEffect(() => { onBusy(locked); return () => onBusy(false); }, [locked, onBusy]);
   useEffect(() => {
     if (!uncertain) return;
@@ -126,6 +128,7 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
           {task.description && <details className={styles.notes}><summary>Notes</summary><p>{task.description}</p></details>}
           {task.completed_at && <p className={styles.completedAt}>Completed {new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone }).format(new Date(task.completed_at))}</p>}
           <div className={styles.taskActions}>
+            <button className="icon-button" title={`Checklist: ${task.title}`} aria-label={`Checklist: ${task.title}`} disabled={locked} onClick={() => setChecklistTaskId(task.id)}><ListChecks size={18} aria-hidden /></button>
             {["open", "in_progress"].includes(task.status) && !locked && <Link className="icon-button" href={`/app/reminders?task_id=${task.id}`} title="Remind me" aria-label={`Remind me: ${task.title}`}><Bell size={18} aria-hidden /></Link>}
             {task.permissions.can_edit && <button className="icon-button" title="Edit task" aria-label={`Edit ${task.title}`} disabled={locked} onClick={() => { setEditing(task); setNotice(""); }}><Pencil size={18} aria-hidden /></button>}
             {task.permissions.allowed_statuses.map(target => {
@@ -142,6 +145,7 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
       <section className={styles.createSection} aria-labelledby="new-task-title"><div className={styles.sectionHeading}><Plus size={20} aria-hidden /><h2 id="new-task-title">New task</h2></div><TaskForm user={user} spaceId={spaceId} disabled={editing !== null || review !== null} onBusy={setCreateBusy} onFailure={setAccessError} onSaved={task => saved(task, false)} /></section>
     </div>
     {editing && <TaskDialog title="Edit task" locked={editBusy} onClose={() => setEditing(null)}><TaskForm user={user} spaceId={spaceId} initial={editing} onBusy={setEditBusy} onFailure={setAccessError} onSaved={task => saved(task, true)} /></TaskDialog>}
+    {checklistTaskId && <TaskChecklist accountId={user.id} taskId={checklistTaskId} spaceId={spaceId} onClose={() => setChecklistTaskId(null)} />}
     {review && <TaskDialog title={`${actionLabels[review.target]}?`} locked={changeStatus.isPending || uncertain} onClose={() => setReview(null)}>
       <p className={styles.reviewTitle}>{review.task.title}</p>
       {changeStatus.isError && <p className="message error" role="alert">{changeStatus.error.message}</p>}

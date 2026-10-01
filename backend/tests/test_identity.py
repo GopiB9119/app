@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
+from app.main import create_app
 from app.modules.identity.models import AccountSession, Challenge, IdentityMail, OutboxEvent, SecurityEvent, User
 
 PASSWORD = "Meadow-signal-47!"
@@ -214,6 +215,32 @@ def test_login_rate_limit_survives_new_http_clients(client, app):
     assert response.headers["retry-after"] == "900"
 
 
+def login_from(http, number, address=None, key="synthetic-proxy-key"):
+    headers = {} if address is None else {"X-Community-Client-Address": address, "X-Community-Proxy-Key": key}
+    body = {"email": f"visitor-{number}@example.test", "password": PASSWORD}
+    return http.post("/v1/auth/login", json=body, headers=headers).status_code
+
+
+def test_sign_in_limits_count_each_browser_network_named_by_the_web_proxy(app):
+    settings = app.state.settings.model_copy(update={"network_limit": 3, "proxy_key": "synthetic-proxy-key"})
+    with TestClient(create_app(settings, app.state.clock)) as http:
+        assert [login_from(http, number, "198.51.100.7") for number in range(4)] == [401, 401, 401, 429]
+        assert login_from(http, 10, "198.51.100.8") == 401
+        assert login_from(http, 11, "::ffff:198.51.100.7") == 429
+        assert [login_from(http, 20 + number, f"2001:db8:1:2::{number + 1}") for number in range(4)] == [401, 401, 401, 429]
+        assert login_from(http, 30, "2001:db8:1:3::1") == 401
+        assert [login_from(http, 40 + number, "203.0.113.9", key="wrong-key") for number in range(3)] == [401, 401, 401]
+        assert login_from(http, 50, "not-an-address") == 429
+        assert login_from(http, 51) == 429
+        assert login_from(http, 52, "203.0.113.9") == 401
+
+
+def test_named_browser_address_is_ignored_without_a_configured_proxy_key(app):
+    settings = app.state.settings.model_copy(update={"network_limit": 2})
+    with TestClient(create_app(settings, app.state.clock)) as http:
+        assert [login_from(http, number, f"192.0.2.{number + 1}") for number in range(3)] == [401, 401, 429]
+
+
 def test_parallel_verification_has_one_account_and_session(client, app):
     proof = begin(client, app)
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -247,3 +274,24 @@ def test_timezone_reference_and_openapi_are_available(client):
     schema = client.get("/openapi.json").json()
     assert "/v1/auth/verify-email" in schema["paths"]
     assert "session_token" in schema["components"]["schemas"]["AuthView"]["properties"]
+
+
+def test_openapi_marks_only_protected_identity_and_export_operations_as_signed_in(client):
+    schema = client.get("/openapi.json").json()
+    protected = [
+        ("get", "/v1/me"), ("patch", "/v1/me/profile"), ("get", "/v1/me/sessions"),
+        ("delete", "/v1/me/sessions/{session_id}"), ("post", "/v1/me/sessions/revoke-others"),
+        ("post", "/v1/auth/logout"), ("get", "/v1/me/security-events"), ("post", "/v1/me/exports"),
+        ("get", "/v1/me/exports"), ("get", "/v1/me/exports/{export_id}"), ("delete", "/v1/me/exports/{export_id}"),
+        ("get", "/v1/me/exports/{export_id}/archive"),
+    ]
+    for method, path in protected:
+        assert schema["paths"][path][method]["security"] == [{"AccountSession": []}], (method, path)
+    public = [
+        ("post", "/v1/auth/register"), ("post", "/v1/auth/verify-email"), ("post", "/v1/auth/login"),
+        ("post", "/v1/auth/recover"), ("post", "/v1/auth/reset-password"), ("get", "/v1/timezones"),
+    ]
+    for method, path in public:
+        assert "security" not in schema["paths"][path][method], (method, path)
+    assert client.get("/v1/me").status_code == 401
+    assert client.get("/v1/me/exports").status_code == 401

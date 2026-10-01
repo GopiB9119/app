@@ -2,6 +2,8 @@
 
 Status: DRAFT FOR PRODUCT, DATA AND SECURITY REVIEW. This document proposes a persistence design; it is not an applied schema, executable migration, verified database or production-readiness claim.
 
+Source-of-truth role: the [documentation map](README.md) names this contract as the authority for the intended data model, at level 3 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). The tables actually built are listed in [DOMAIN.md](DOMAIN.md#modules-and-tables); they are evidence of the implementation, not decisions.
+
 ## 1. Scope and Source Authority
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md) and [private Space contract](CHAPTER_03_SPACE_CONTRACT.md). It develops the C18-T02 and C3-T02 data handoffs and the C1-T05 foundation for the family-task/reminder milestone.

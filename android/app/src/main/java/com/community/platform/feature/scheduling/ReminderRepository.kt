@@ -5,7 +5,9 @@ import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
 import retrofit2.Response
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.UUID
@@ -15,6 +17,8 @@ import javax.inject.Singleton
 @Singleton
 class ReminderRepository @Inject constructor(private val api: ReminderApi, private val accounts: AccountRepository) {
     private fun invalid(): Nothing = throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected reminder response.")
+    private val clockTime = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]")
+    private val positive = Regex("[1-9][0-9]*")
     private fun validate(test: () -> Unit) {
         try { test() } catch (_error: IllegalArgumentException) { invalid() } catch (_error: NullPointerException) { invalid() }
         catch (_error: java.time.DateTimeException) { invalid() }
@@ -28,6 +32,10 @@ class ReminderRepository @Inject constructor(private val api: ReminderApi, priva
             require(value.status in setOf("scheduled", "available", "cancelled", "suppressed", "expired", "failed"))
             require(value.acknowledgedAt == null || value.status == "available")
             value.acknowledgedAt?.let(Instant::parse)
+            value.seriesId?.let(::requestUuid); value.followUpOf?.let(::requestUuid)
+            require(value.snoozeCount in 0..3 && (value.followUpOf == null) == (value.snoozeCount == 0))
+            value.occurrenceDate?.let { day -> require(LocalDate.parse(day).toString() == day) }
+            require((value.seriesId != null && value.followUpOf == null) == (value.occurrenceDate != null))
         }
         return value
     }
@@ -37,6 +45,9 @@ class ReminderRepository @Inject constructor(private val api: ReminderApi, priva
             Instant.parse(value.scheduledAt); Instant.parse(value.createdAt)
             value.readAt?.let(Instant::parse); value.acknowledgedAt?.let(Instant::parse)
             require(value.taskTitle.isNotEmpty())
+            value.seriesId?.let(::requestUuid); value.snoozedUntil?.let(Instant::parse); value.snoozeBefore?.let(Instant::parse)
+            require(value.snoozeCount in 0..3)
+            require(!value.canSnooze || (value.acknowledgedAt == null && value.snoozedUntil == null && value.snoozeCount < 3))
         }
         return value
     }
@@ -94,6 +105,84 @@ class ReminderRepository @Inject constructor(private val api: ReminderApi, priva
     suspend fun acknowledge(accountId: String, identifier: String): InboxNotificationDto = accounts.authorized(accountId) {
         val result = notification(accounts.result(api.acknowledge(it, identifier, emptyMap())))
         if (result.id != identifier) invalid()
+        result
+    }
+
+    private fun occurrence(value: SeriesOccurrenceDto) {
+        val day = LocalDate.parse(value.localDate)
+        require(day.toString() == value.localDate && clockTime.matches(value.displayTime))
+        require(value.utcOffsetMinutes in -840..840 && value.adjustment in setOf("none", "shifted_forward", "repeated_time_first"))
+        val offset = ZoneOffset.ofTotalSeconds(value.utcOffsetMinutes * 60)
+        require(LocalDateTime.of(day, LocalTime.parse(value.displayTime)).toInstant(offset) == Instant.parse(value.scheduledAt))
+        value.reminderId?.let(::requestUuid)
+    }
+    private fun rule(value: PreviewReminderSeriesDto) {
+        requestUuid(value.taskId)
+        require(value.frequency in setOf("daily", "weekly") && clockTime.matches(value.localTime))
+        require(value.repeatEvery in 1..(if (value.frequency == "weekly") 4 else 30))
+        require(value.weekdays == seriesWeekdays.filter(value.weekdays::contains))
+        require(if (value.frequency == "weekly") value.weekdays.isNotEmpty() else value.weekdays.isEmpty())
+        require(value.timezone == "UTC" || value.timezone.contains('/'))
+        ZoneId.of(value.timezone)
+        val start = LocalDate.parse(value.startDate)
+        val end = LocalDate.parse(value.endDate)
+        require(start.toString() == value.startDate && end.toString() == value.endDate && !end.isBefore(start) && !end.isAfter(start.plusDays(365)))
+        require(value.clockChangePolicy in setOf("shift_forward", "skip"))
+    }
+    private fun ReminderSeriesPreviewDto.rule() = PreviewReminderSeriesDto(taskId, localTime, timezone, startDate, endDate, frequency, repeatEvery, weekdays, clockChangePolicy)
+    private fun ReminderSeriesDto.rule() = PreviewReminderSeriesDto(taskId, localTime, timezone, startDate, endDate, frequency, repeatEvery, weekdays, clockChangePolicy)
+    private fun checkedSeries(value: ReminderSeriesDto): ReminderSeriesDto {
+        validate {
+            requestUuid(value.id); requestUuid(value.spaceId); rule(value.rule())
+            require(value.taskTitle.isNotBlank() && value.taskTitle.codePointCount(0, value.taskTitle.length) <= 200)
+            require(positive.matches(value.taskVersion) && positive.matches(value.version) && value.channel == "in_app" && value.etag.length in 3..160)
+            require(value.status in setOf("active", "paused", "cancelled", "ended", "suppressed"))
+            require((value.status in setOf("paused", "suppressed")) == (value.reason != null) && (value.reason?.length ?: 0) <= 40)
+            require(value.status == "active" || value.nextOccurrence == null)
+            value.nextOccurrence?.let { next -> occurrence(next); require(next.reminderId != null) }
+            Instant.parse(value.createdAt); Instant.parse(value.updatedAt)
+        }
+        return value
+    }
+    suspend fun previewSeries(accountId: String, body: PreviewReminderSeriesDto): ReminderSeriesPreviewDto = accounts.authorized(accountId) {
+        validate { rule(body) }
+        val result = accounts.result(api.previewSeries(it, body))
+        validate {
+            require(result.rule() == body && result.recipient.accountId == accountId && result.channel == "in_app")
+            requestPerson(result.recipient)
+            require(result.taskTitle.isNotBlank() && positive.matches(result.taskVersion))
+            require(result.occurrences.size in 1..10 && result.occurrenceCount in result.occurrences.size..366)
+            result.occurrences.forEach { item -> occurrence(item); require(item.reminderId == null) }
+            require(result.occurrences.map { item -> Instant.parse(item.scheduledAt) }.zipWithNext().all { (first, second) -> first < second })
+            require(result.clockChanges.size <= 20)
+            result.clockChanges.forEach { change -> LocalDate.parse(change.localDate); require(change.change in setOf("shifted_forward", "repeated_time_first", "skipped")) }
+            require(result.previewToken.length in 32..4096)
+            Instant.parse(result.expiresAt)
+        }
+        result
+    }
+    suspend fun saveSeries(intent: SeriesCreateIntent): ReminderSeriesDto = accounts.authorized(intent.accountId) {
+        val result = checkedSeries(accounts.result(api.createSeries(it, intent.requestKey, SaveReminderDto(intent.previewToken))))
+        if (result.rule() != intent.rule) invalid()
+        result
+    }
+    suspend fun series(accountId: String, taskId: String? = null, cursor: String? = null): ReminderPage<ReminderSeriesDto> = accounts.authorized(accountId) {
+        val result = page(api.series(it, taskId, cursor))
+        if (cursor != null && cursor == result.nextCursor) invalid()
+        result.items.forEach { item -> checkedSeries(item); if (taskId != null && item.taskId != taskId) invalid() }
+        if (result.items.map(ReminderSeriesDto::id).distinct().size != result.items.size) invalid()
+        result
+    }
+    suspend fun commandSeries(intent: SeriesCommandIntent): ReminderSeriesDto = accounts.authorized(intent.accountId) {
+        val series = intent.series
+        val result = checkedSeries(accounts.result(api.commandSeries(it, intent.requestKey, series.etag, series.id, intent.operation.wireValue, emptyMap())))
+        if (result.id != series.id || result.taskId != series.taskId || result.status !in intent.operation.confirmed) invalid()
+        result
+    }
+    suspend fun snooze(intent: SnoozeIntent): InboxNotificationDto = accounts.authorized(intent.accountId) {
+        if (intent.minutes !in snoozeChoices) throw IdentityFailure("VALIDATION_ERROR", "Choose how long to snooze.", 422)
+        val result = notification(accounts.result(api.snooze(it, intent.requestKey, intent.notification.id, SnoozeDto(intent.minutes))))
+        if (result.id != intent.notification.id || result.reminderId != intent.notification.reminderId || result.canSnooze) invalid()
         result
     }
     private fun preference(response: Response<EnvelopeDto<ReminderPreferenceDto>>): ReminderPreferences {

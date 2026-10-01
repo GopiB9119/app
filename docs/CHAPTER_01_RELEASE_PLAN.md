@@ -317,6 +317,8 @@ Every implementation ticket must state source requirement IDs, one accountable o
 
 ## 12. Proposed Delivery Sequence
 
+Roadmap authority note (2026-10-01): the [documentation map](README.md) names this section as the project roadmap, level 6 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). It is still PROPOSED. The requirements approved on 2026-10-01 ([Product Constitution, Article 2](PRODUCT_CONSTITUTION.md#article-2-approved-requirements)) include the agent system and document retrieval; where they fit in this sequence is open. Other documents give conflicting build orders. See decisions D4 and D6 in [DECISIONS.md](DECISIONS.md).
+
 This sequencing recommendation requires C1-D04 approval because it differs from [section 39's broad order](../Chapter1.md#L4804). Cross-cutting security, privacy, accessibility and observability begin in every milestone; they are not postponed until hardening.
 
 | Milestone | User-visible result | Exit boundary |

@@ -11,22 +11,14 @@ import { Shell } from "@/features/identity/shell";
 import { readTask } from "@/features/planning/client";
 import { notificationPreferencesSchema, offsetLabel, previewReminder, reminderLabels, reminderPage, reminderSchema, saveReminder } from "./client";
 import { previewReminderRequest, reminderRequestPage, requestLabels, respondReminderRequest, reviewReminderRequest, saveReminderRequest } from "./client";
+import type { ReminderSeries } from "./client";
 import type { Reminder, ReminderIntent, ReminderPreview, ReminderRequest, ReminderRequestAction, ReminderRequestIntent, ReminderRequestPreview, ReminderRequestReview } from "./client";
+import { displayInstant, protectedReminderError, ReminderDialog, useReminderAccountGuard } from "./reminder-common";
+import { SeriesForm, SeriesList } from "./series";
+import { BackupPeople } from "./backups";
 import styles from "./reminders.module.css";
 
-export function useReminderAccountGuard(error: Error | null) {
-  const client = useQueryClient();
-  useEffect(() => {
-    if (error instanceof ApiError && (error.status === 401 || error.code === "ACCOUNT_CHANGED")) {
-      client.clear();
-      window.location.replace(error.status === 401 ? "/login" : "/app/reminders");
-    }
-  }, [error, client]);
-}
-
-export function protectedReminderError(error: Error | null) {
-  return error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === "ACCOUNT_CHANGED");
-}
+export { displayInstant, protectedReminderError, ReminderDialog, useReminderAccountGuard } from "./reminder-common";
 
 export function ReminderScreen({ taskId = "" }: { taskId?: string }) {
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
@@ -40,7 +32,9 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
   const client = useQueryClient();
   const [formLocked, setFormLocked] = useState(false);
   const [requestLocked, setRequestLocked] = useState(false);
-  const locked = formLocked || requestLocked;
+  const [seriesLocked, setSeriesLocked] = useState(false);
+  const [backupLocked, setBackupLocked] = useState(false);
+  const locked = formLocked || requestLocked || seriesLocked || backupLocked;
   const [notice, setNotice] = useState("");
   const [cancel, setCancel] = useState<Reminder | null>(null);
   const [uncertain, setUncertain] = useState(false);
@@ -80,20 +74,24 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
         {!records.isError && <ul className={styles.list}>{rows.map(item => <li key={item.id}>
           <div className={styles.rowHeading}><h3>{item.task_title}</h3><span className={styles.status}>{reminderLabels[item.status]}</span></div>
           <time dateTime={item.scheduled_at}>{displayInstant(item.scheduled_at, item.timezone)}</time><span className={styles.zone}>{item.timezone}</span>
+          {item.follow_up_of ? <span className={styles.zone}>Snoozed reminder {item.snooze_count} of 3</span> : item.series_id && <span className={styles.zone}>Part of a repeating reminder</span>}
           {item.reason && <p className={styles.reason}>{reasonLabel(item.reason)}</p>}
           {item.status === "scheduled" && item.source_changed && <p className={styles.reason}>Task changed since review.</p>}
           {item.acknowledged_at && <span className={styles.ack}>Acknowledged</span>}
-          <div className={styles.actions}><Link href={`/app/tasks?space_id=${item.space_id}`}>Open task Space</Link>{item.status === "scheduled" && <button className="icon-button" aria-label={`Cancel reminder: ${item.task_title}`} title="Cancel reminder" disabled={locked || !!cancel} onClick={() => { cancellation.reset(); setCancel(item); }}><X size={18} /></button>}</div>
+          <div className={styles.actions}><Link href={`/app/tasks?space_id=${item.space_id}`}>Open task Space</Link>{item.status === "scheduled" && !(item.series_id && !item.follow_up_of) && <button className="icon-button" aria-label={`Cancel reminder: ${item.task_title}`} title="Cancel reminder" disabled={locked || !!cancel} onClick={() => { cancellation.reset(); setCancel(item); }}><X size={18} /></button>}</div>
         </li>)}</ul>}
         {records.hasNextPage && <button className="text-button" disabled={records.isFetching || locked || !!cancel} onClick={() => records.fetchNextPage()}>Load more reminders</button>}
       </section>
-      <section className={styles.editor} aria-labelledby="reminder-editor-title"><h2 id="reminder-editor-title">New reminder</h2>{taskId ? <ReminderForm key={taskId} user={user} taskId={taskId} disabled={requestLocked || !!cancel} onLocked={setFormLocked} onDenied={setAccessError} onSaved={async result => {
-        setNotice("requested_by" in result ? `Request ${requestLabels[result.status].toLowerCase()}.` : "Reminder saved.");
+      <section className={styles.editor} aria-labelledby="reminder-editor-title"><h2 id="reminder-editor-title">New reminder</h2>{taskId ? <ReminderForm key={taskId} user={user} taskId={taskId} disabled={requestLocked || seriesLocked || !!cancel} onLocked={setFormLocked} onDenied={setAccessError} onSaved={async result => {
+        setNotice("requested_by" in result ? `Request ${requestLabels[result.status].toLowerCase()}.` : "frequency" in result ? "Repeating reminder saved." : "Reminder saved.");
         await client.invalidateQueries({ queryKey: ["reminders", user.id] });
         await client.invalidateQueries({ queryKey: ["reminderRequests", user.id] });
+        await client.invalidateQueries({ queryKey: ["reminderSeries", user.id] });
       }} /> : <Link className={styles.empty} href="/app/tasks">Choose a task</Link>}</section>
     </div>}
-    {!denied && <ReminderRequests user={user} disabled={formLocked || !!cancel} onLocked={setRequestLocked} onDenied={setAccessError} onNotice={setNotice} />}
+    {!denied && <SeriesList user={user} taskId={taskId} disabled={formLocked || requestLocked || !!cancel} onLocked={setSeriesLocked} onDenied={setAccessError} onNotice={setNotice} />}
+    {!denied && <ReminderRequests user={user} disabled={formLocked || seriesLocked || !!cancel} onLocked={setRequestLocked} onDenied={setAccessError} onNotice={setNotice} />}
+    {!denied && <BackupPeople user={user} taskId={taskId} disabled={formLocked || seriesLocked || requestLocked || !!cancel} onLocked={setBackupLocked} onDenied={setAccessError} onNotice={setNotice} />}
     {cancel && !denied && <ReminderDialog title="Cancel this reminder?" locked={cancellation.isPending || uncertain} onClose={() => setCancel(null)}>
       <p className={styles.reviewTitle}>{cancel.task_title}</p><p>{displayInstant(cancel.scheduled_at, cancel.timezone)}</p>
       {cancellation.isError && <p className="message error" role="alert">{cancellation.error.message}</p>}
@@ -103,12 +101,14 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
 }
 
 function ReminderForm({ user, taskId, disabled, onLocked, onDenied, onSaved }: {
-  user: Account; taskId: string; disabled: boolean; onLocked: (locked: boolean) => void; onDenied: (error: Error) => void; onSaved: (result: Reminder | ReminderRequest) => Promise<void>;
+  user: Account; taskId: string; disabled: boolean; onLocked: (locked: boolean) => void; onDenied: (error: Error) => void; onSaved: (result: Reminder | ReminderRequest | ReminderSeries) => Promise<void>;
 }) {
   const fieldId = useId();
   const [local, setLocal] = useState("");
   const [timezone, setTimezone] = useState(user.timezone);
   const [mode, setMode] = useState<"self" | "assignee">("self");
+  const [repeat, setRepeat] = useState<"once" | "daily" | "weekly">("once");
+  const [seriesBusy, setSeriesBusy] = useState(false);
   const [review, setReview] = useState<ReminderPreview | ReminderRequestPreview | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [intent, setIntent] = useState<ReminderIntent | ReminderRequestIntent | null>(null);
@@ -136,7 +136,7 @@ function ReminderForm({ user, taskId, disabled, onLocked, onDenied, onSaved }: {
   });
   const ownLocked = preview.isPending || save.isPending || intent !== null;
   const locked = ownLocked || disabled;
-  useEffect(() => { onLocked(ownLocked || review !== null); return () => onLocked(false); }, [ownLocked, review, onLocked]);
+  useEffect(() => { onLocked(ownLocked || review !== null || seriesBusy); return () => onLocked(false); }, [ownLocked, review, seriesBusy, onLocked]);
   useEffect(() => {
     if (!intent) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -151,12 +151,16 @@ function ReminderForm({ user, taskId, disabled, onLocked, onDenied, onSaved }: {
   const eligible = ["open", "in_progress"].includes(task.data.status) && (mode === "assignee" ? canRequest : preferences.data.data.in_app_reminders_enabled);
   return <div className={styles.form}>
     <h3 className={styles.reviewTitle}>{task.data.title}</h3>
-    {canRequest && !review && <fieldset className={styles.options} disabled={locked}><legend>Recipient</legend>
+    {canRequest && !review && <fieldset className={styles.options} disabled={locked || seriesBusy}><legend>Recipient</legend>
       <label className={styles.option}><input type="radio" name={`${fieldId}-recipient`} checked={mode === "self"} onChange={() => setMode("self")} /><span>Remind me</span></label>
       <label className={styles.option}><input type="radio" name={`${fieldId}-recipient`} checked={mode === "assignee"} onChange={() => setMode("assignee")} /><span>Request for {task.data.assignee?.display_name}</span></label>
     </fieldset>}
     {!eligible && <p className="message error" role="alert">{mode === "assignee" ? "The current assignee is not eligible for a request." : preferences.data.data.in_app_reminders_enabled ? "This task is closed." : "In-app reminders are disabled."} <Link href="/app/notifications">Notification settings</Link></p>}
-    {review ? <section className={styles.review} aria-labelledby={`${fieldId}-review`}>
+    {mode === "self" && !review && <label><span id={`${fieldId}-repeat`}>Repeat</span><select aria-labelledby={`${fieldId}-repeat`} name="reminder_repeat" value={repeat} disabled={locked || seriesBusy || !eligible} onChange={event => { setRepeat(event.target.value as "once" | "daily" | "weekly"); setError(""); }}>
+      <option value="once">Does not repeat</option><option value="daily">Every day</option><option value="weekly">Every week</option>
+    </select></label>}
+    {mode === "self" && repeat !== "once" && !review ? <SeriesForm user={user} taskId={taskId} frequency={repeat} zones={zones.data?.data ?? [user.timezone]} disabled={disabled || !eligible} onLocked={setSeriesBusy} onDenied={onDenied} onSaved={async result => { setRepeat("once"); await onSaved(result); }} />
+    : review ? <section className={styles.review} aria-labelledby={`${fieldId}-review`}>
       <h3 id={`${fieldId}-review`}>{"requested_by" in review ? "Review reminder request" : "Review reminder"}</h3><dl className={styles.facts}>
         <dt>Task</dt><dd>{review.task_title}</dd><dt>Recipient</dt><dd>{review.recipient.display_name}{review.recipient.account_id === user.id ? " (you)" : ""}</dd>
         <dt>Local time</dt><dd>{review.local_time.replace("T", " ")}</dd><dt>Timezone</dt><dd>{review.timezone}</dd><dt>Channel</dt><dd>In-app only</dd>
@@ -271,17 +275,6 @@ function ReminderRequests({ user, disabled, onLocked, onDenied, onNotice }: {
   </section>;
 }
 
-export function ReminderDialog({ title, locked, onClose, children }: { title: string; locked: boolean; onClose: () => void; children: React.ReactNode }) {
-  const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
-  const titleId = useId();
-  useEffect(() => { dialog?.showModal(); return () => dialog?.close(); }, [dialog]);
-  return <dialog ref={setDialog} className={styles.dialog} aria-labelledby={titleId} onCancel={event => { if (locked) event.preventDefault(); else onClose(); }}><div className="dialog-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label="Close reminder dialog" title="Close reminder dialog" disabled={locked} onClick={onClose}><X size={18} /></button></div>{children}</dialog>;
-}
-
-export function displayInstant(value: string, zone: string) {
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(new Date(value));
-}
-
 function reasonLabel(reason: string) {
-  return ({ task_changed: "Task changed after this reminder was reviewed.", task_closed: "Task is no longer open.", preference_revoked: "The earlier reminder permission was withdrawn.", access_lost: "Task access changed.", account_inactive: "Account is inactive.", dispatch_expired: "The dispatch deadline passed.", dispatch_retry: "Delivery retry pending.", dispatch_failed: "Delivery stopped after repeated failures." } as Record<string, string>)[reason] ?? "Reminder was stopped.";
+  return ({ task_changed: "Task changed after this reminder was reviewed.", task_closed: "Task is no longer open.", preference_revoked: "The earlier reminder permission was withdrawn.", access_lost: "Task access changed.", account_inactive: "Account is inactive.", dispatch_expired: "The dispatch deadline passed.", dispatch_retry: "Delivery retry pending.", dispatch_failed: "Delivery stopped after repeated failures.", skipped: "Skipped.", series_paused: "On hold while the repeating reminder is paused.", series_cancelled: "The repeating reminder was cancelled.", series_ended: "The repeating reminder ended.", series_suppressed: "The repeating reminder stopped.", acknowledged: "Not needed: you acknowledged this reminder." } as Record<string, string>)[reason] ?? "Reminder was stopped.";
 }

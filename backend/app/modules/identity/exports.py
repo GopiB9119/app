@@ -13,9 +13,12 @@ from app.modules.identity.schemas import (
     ArchiveNotification,
     ArchiveOwnershipTransfer,
     ArchiveProfile,
+    ArchiveQuietHours,
     ArchiveReminder,
+    ArchiveReminderBackup,
     ArchiveReminderRequest,
     ArchiveReminders,
+    ArchiveReminderSeries,
     ArchiveSecurity,
     ArchiveSession,
     ArchiveSpaces,
@@ -23,10 +26,11 @@ from app.modules.identity.schemas import (
     ExportArchive,
     ExportView,
 )
-from app.modules.notifications.models import InAppNotification, NotificationPreference
+from app.modules.notifications.models import AlertSetting, InAppNotification, NotificationPreference, ReminderBackup
 from app.modules.planning.models import Task
 from app.modules.planning.service import TaskService
-from app.modules.scheduling.models import Reminder, ReminderRequest
+from app.modules.scheduling.models import Reminder, ReminderRequest, ReminderSeries
+from app.modules.scheduling.recurrence import WEEKDAYS
 from app.modules.spaces.models import OwnershipTransfer, Space, SpaceInvitation, SpaceMembership
 
 RECENT_SIGN_IN = timedelta(minutes=15)
@@ -388,8 +392,24 @@ class ExportService:
 
     def reminder_history(self, database, account_id, task_ids, now):
         preference = database.get(NotificationPreference, account_id)
-        reminders, requests, notifications = [], [], []
+        setting = database.get(AlertSetting, account_id)
+        reminders, requests, notifications, series, backups = [], [], [], [], []
         if task_ids:
+            backups = database.scalars(
+                select(ReminderBackup)
+                .where(
+                    ReminderBackup.task_id.in_(task_ids),
+                    or_(ReminderBackup.owner_account_id == account_id, ReminderBackup.contact_account_id == account_id),
+                )
+                .order_by(ReminderBackup.created_at, ReminderBackup.id)
+                .limit(HISTORY_LIMIT)
+            ).all()
+            series = database.scalars(
+                select(ReminderSeries)
+                .where(ReminderSeries.account_id == account_id, ReminderSeries.task_id.in_(task_ids))
+                .order_by(ReminderSeries.created_at, ReminderSeries.id)
+                .limit(HISTORY_LIMIT)
+            ).all()
             reminders = database.scalars(
                 select(Reminder)
                 .where(Reminder.account_id == account_id, Reminder.task_id.in_(task_ids))
@@ -419,6 +439,7 @@ class ExportService:
                     id=row.id, task_id=row.task_id, space_id=row.space_id, local_time=row.local_time,
                     timezone=row.timezone, scheduled_at=row.scheduled_at, expires_at=row.expires_at, status=row.status,
                     reason=row.reason, created_at=row.created_at, acknowledged_at=row.acknowledged_at,
+                    series_id=row.series_id, follow_up_of=row.follow_up_of, snooze_count=row.snooze_count,
                 )
                 for row in reminders
             ],
@@ -427,6 +448,26 @@ class ExportService:
             notifications=[
                 ArchiveNotification(id=row.id, reminder_id=row.reminder_id, created_at=row.created_at, read_at=row.read_at)
                 for row in notifications
+            ],
+            series=[
+                ArchiveReminderSeries(
+                    id=row.id, task_id=row.task_id, space_id=row.space_id, frequency=row.frequency,
+                    repeat_every=row.repeat_every,
+                    weekdays=[name for index, name in enumerate(WEEKDAYS) if row.weekday_mask & (1 << index)],
+                    local_time=row.local_time, timezone=row.timezone, start_date=row.start_date, end_date=row.end_date,
+                    clock_change_policy=row.clock_change_policy, status=row.status, reason=row.reason,
+                    created_at=row.created_at, updated_at=row.updated_at, replaced_by_id=row.replaced_by_id,
+                )
+                for row in series
+            ],
+            quiet_hours=ArchiveQuietHours(start=setting.quiet_start, end=setting.quiet_end) if setting and setting.quiet_start else None,
+            backups=[
+                ArchiveReminderBackup(
+                    id=row.id, task_id=row.task_id, space_id=row.space_id, owner_account_id=row.owner_account_id,
+                    contact_account_id=row.contact_account_id, wait_minutes=row.wait_minutes, status=row.status,
+                    created_at=row.created_at, responded_at=row.responded_at, ended_at=row.ended_at,
+                )
+                for row in backups
             ],
         )
 

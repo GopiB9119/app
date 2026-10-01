@@ -14,7 +14,9 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). This is the single supported local web preview URL. Both `npm run dev` and `npm start` explicitly bind that hostname and port. Do not choose a different port if it is occupied; identify and reuse the existing project preview or coordinate its restart.
+
+From VS Code use **Community Platform: preview web**, which uses the isolated `local-web` build directory and matching origin. The older reminder/ownership preview labels now depend on this same task. See the [local runbook](../docs/runbooks/README.md) and [feature ledger](../docs/PRODUCT_FEATURES.md) for implemented scope and verification limits.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

@@ -1,16 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, CalendarClock, Check, CheckCheck, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlarmClock, Bell, CalendarClock, Check, CheckCheck, LoaderCircle, RefreshCw } from "lucide-react";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { notificationPage, notificationPreferencesSchema, notificationSchema } from "@/features/scheduling/client";
-import type { Notification } from "@/features/scheduling/client";
+import { notificationPage, notificationPreferencesSchema, notificationSchema, snoozeChoices, snoozeNotification } from "@/features/scheduling/client";
+import type { Notification, SnoozeIntent, SnoozeMinutes } from "@/features/scheduling/client";
 import { displayInstant, protectedReminderError, ReminderDialog, useReminderAccountGuard } from "@/features/scheduling/reminder-screen";
 import styles from "@/features/scheduling/reminders.module.css";
+import { DueNowPanel, QuietHoursSettings } from "./alerts";
 
 export function NotificationScreen() {
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
@@ -23,6 +24,8 @@ export function NotificationScreen() {
 function Inbox({ user }: { user: Account }) {
   const client = useQueryClient();
   const [review, setReview] = useState<Notification | null>(null);
+  const [snoozing, setSnoozing] = useState<Notification | null>(null);
+  const [snoozeIntent, setSnoozeIntent] = useState<SnoozeIntent | null>(null);
   const [uncertain, setUncertain] = useState(false);
   const [notice, setNotice] = useState("");
   const [accessError, setAccessError] = useState<Error | null>(null);
@@ -49,6 +52,26 @@ function Inbox({ user }: { user: Account }) {
     },
   });
   useReminderAccountGuard(accessError ?? inbox.error ?? preferences.error);
+  const snooze = useMutation({
+    mutationFn: snoozeNotification,
+    onSuccess: async result => {
+      setSnoozing(null); setSnoozeIntent(null);
+      setNotice(result.snoozed_until ? `Snoozed until ${displayInstant(result.snoozed_until, user.timezone)}.` : "Reminder snoozed.");
+      await client.invalidateQueries({ queryKey: ["notifications", user.id] });
+      await client.invalidateQueries({ queryKey: ["reminders", user.id] });
+    },
+    onError: error => {
+      if (protectedReminderError(error)) setAccessError(error);
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) { setSnoozeIntent(null); void inbox.refetch(); }
+    },
+  });
+  useEffect(() => {
+    if (!snoozeIntent) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [snoozeIntent]);
+  const busy = !!review || !!snoozing;
   const blocked = !!accessError || protectedReminderError(inbox.error) || protectedReminderError(preferences.error);
   const rows = [...new Map(inbox.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
   return <Shell account><main className={styles.main}>
@@ -56,6 +79,7 @@ function Inbox({ user }: { user: Account }) {
     <div className={styles.heading}><div><span className="section-kicker">PERSONAL NOTIFICATIONS</span><h1>Inbox</h1></div><span className={styles.channel}>In-app only</span></div>
     {blocked ? <p className="message error" role="alert">{accessError?.message ?? inbox.error?.message ?? preferences.error?.message}<Link href="/app/tasks">Return to tasks</Link></p> : <>
       {notice && <p className="message success" role="status"><Check size={18} />{notice}</p>}
+      <DueNowPanel user={user} onDenied={setAccessError} />
       <div className={styles.workspace}>
         <section aria-labelledby="inbox-list-title"><div className={styles.sectionHeading}><h2 id="inbox-list-title">Task reminders {inbox.data && <span className={styles.count}>{inbox.data.pages[0]?.unreadCount ?? 0} unread</span>}</h2><button className="icon-button" aria-label="Refresh inbox" title="Refresh inbox" disabled={inbox.isFetching || !!review} onClick={() => inbox.refetch()}><RefreshCw size={18} className={inbox.isFetching ? "spin" : ""} /></button></div>
           {inbox.isPending && <p role="status">Loading notifications...</p>}
@@ -67,9 +91,11 @@ function Inbox({ user }: { user: Account }) {
             <time dateTime={item.scheduled_at}>{displayInstant(item.scheduled_at, user.timezone)}</time>
             <p className={styles.reason}>Available in inbox {displayInstant(item.created_at, user.timezone)}</p>
             {item.acknowledged_at && <span className={styles.ack}><CheckCheck size={16} />Acknowledged</span>}
-            <div className={styles.actions}><Link href={`/app/tasks?space_id=${item.space_id}`}>Open task Space</Link>{!item.read_at && <button className="text-button" disabled={read.isPending || !!review} onClick={() => read.mutate(item)}><Check size={16} />Mark read</button>}{!item.acknowledged_at && <button className="secondary-button" disabled={!!review} onClick={() => { acknowledge.reset(); setReview(item); }}><CheckCheck size={17} />Acknowledge</button>}</div>
+            {item.snoozed_until && <p className={styles.reason}><AlarmClock size={15} aria-hidden /> Snoozed until {displayInstant(item.snoozed_until, user.timezone)}</p>}
+            {!!item.snooze_count && <p className={styles.reason}>Snoozed reminder {item.snooze_count} of 3</p>}
+            <div className={styles.actions}><Link href={`/app/tasks?space_id=${item.space_id}`}>Open task Space</Link>{!item.read_at && <button className="text-button" disabled={read.isPending || busy} onClick={() => read.mutate(item)}><Check size={16} />Mark read</button>}{item.can_snooze && <button className="secondary-button" aria-label={`Snooze reminder: ${item.task_title}`} disabled={busy} onClick={() => { snooze.reset(); setSnoozeIntent(null); setSnoozing(item); }}><AlarmClock size={17} />Snooze</button>}{!item.acknowledged_at && <button className="secondary-button" disabled={busy} onClick={() => { acknowledge.reset(); setReview(item); }}><CheckCheck size={17} />Acknowledge</button>}</div>
           </li>)}</ul>}
-          {inbox.hasNextPage && <button className="text-button" disabled={inbox.isFetching || !!review} onClick={() => inbox.fetchNextPage()}>Load more notifications</button>}
+          {inbox.hasNextPage && <button className="text-button" disabled={inbox.isFetching || busy} onClick={() => inbox.fetchNextPage()}>Load more notifications</button>}
         </section>
         <section className={styles.editor} aria-labelledby="preference-title"><h2 id="preference-title">Preferences</h2>
           {preferences.isPending && <p role="status">Loading preferences...</p>}
@@ -78,6 +104,7 @@ function Inbox({ user }: { user: Account }) {
           <p className={styles.disclosure}>Turning reminders off withdraws pending schedules. Turning them back on does not restore those schedules.</p>
           {updatePreferences.isPending && <p role="status">Saving preference...</p>}
           {updatePreferences.isError && <p className="message error" role="alert">{updatePreferences.error.message}</p>}
+          <QuietHoursSettings user={user} onDenied={setAccessError} />
         </section>
       </div>
     </>}
@@ -86,5 +113,30 @@ function Inbox({ user }: { user: Account }) {
       {acknowledge.isError && <p className="message error" role="alert">{acknowledge.error.message}</p>}
       <div className="dialog-actions"><button className="secondary-button" disabled={acknowledge.isPending || uncertain} onClick={() => setReview(null)}>Not now</button><button className="primary-button" disabled={acknowledge.isPending} onClick={() => acknowledge.mutate(review)}><CheckCheck size={17} />{uncertain && acknowledge.isError ? "Retry acknowledgment" : "Acknowledge reminder"}</button></div>
     </ReminderDialog>}
+    {snoozing && !blocked && <SnoozeDialog item={snoozing} timezone={user.timezone} intent={snoozeIntent} pending={snooze.isPending} error={snooze.isError ? snooze.error.message : ""} onClose={() => setSnoozing(null)} onSnooze={minutes => {
+      const command = snoozeIntent ?? { accountId: user.id, notification: snoozing, minutes, key: crypto.randomUUID() };
+      setSnoozeIntent(command); snooze.mutate(command);
+    }} />}
   </main></Shell>;
+}
+
+function SnoozeDialog({ item, timezone, intent, pending, error, onClose, onSnooze }: {
+  item: Notification; timezone: string; intent: SnoozeIntent | null; pending: boolean; error: string; onClose: () => void; onSnooze: (minutes: SnoozeMinutes) => void;
+}) {
+  const fieldId = useId();
+  const [minutes, setMinutes] = useState<SnoozeMinutes | null>(intent?.minutes ?? null);
+  const [now] = useState(() => Date.now());
+  const until = (value: SnoozeMinutes) => Math.ceil((now + value * 60000) / 60000) * 60000;
+  const allowed = (value: SnoozeMinutes) => !item.snooze_before || until(value) < Date.parse(item.snooze_before);
+  const locked = pending || intent !== null;
+  return <ReminderDialog title="Snooze this reminder?" locked={locked} onClose={onClose}>
+    <p className={styles.reviewTitle}>{item.task_title}</p>
+    <fieldset className={styles.options} disabled={locked}><legend>Remind me again in</legend>{snoozeChoices.map(choice => <label className={styles.option} key={choice.minutes}>
+      <input type="radio" name={`${fieldId}-snooze`} checked={minutes === choice.minutes} disabled={!allowed(choice.minutes)} onChange={() => setMinutes(choice.minutes)} />
+      <span><strong>{choice.label}</strong><small>{allowed(choice.minutes) ? `About ${displayInstant(new Date(until(choice.minutes)).toISOString(), timezone)}` : "After this reminder repeats"}</small></span>
+    </label>)}</fieldset>
+    <p className={styles.disclosure}>Snoozing marks this read. It comes back as a new inbox item at that time, in the app only. A reminder can be snoozed at most three times; the task stays unchanged.</p>
+    {error && <p className="message error" role="alert">{error}</p>}
+    <div className="dialog-actions"><button className="secondary-button" disabled={locked} onClick={onClose}>Not now</button><button className="primary-button" disabled={pending || (!intent && minutes === null)} onClick={() => { const value = intent?.minutes ?? minutes; if (value) onSnooze(value); }}>{pending ? <LoaderCircle size={17} className="spin" /> : <AlarmClock size={17} />}{intent && !pending ? "Retry original snooze" : "Snooze"}</button></div>
+  </ReminderDialog>;
 }

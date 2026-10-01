@@ -13,7 +13,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import javax.inject.Inject
 
@@ -26,7 +32,18 @@ sealed interface ReminderCommand {
     data class Read(val notification: InboxNotificationDto) : ReminderCommand
     data class Acknowledge(val notification: InboxNotificationDto) : ReminderCommand
     data class Preference(val enabled: Boolean, val etag: String) : ReminderCommand
+    data class SaveSeries(val intent: SeriesCreateIntent) : ReminderCommand
+    data class Series(val intent: SeriesCommandIntent) : ReminderCommand
+    data class Snooze(val intent: SnoozeIntent) : ReminderCommand
 }
+
+fun snoozeUntil(minutes: Int, now: Instant = Instant.now()): Instant {
+    val raw = now.plusSeconds(minutes * 60L)
+    val minute = raw.truncatedTo(ChronoUnit.MINUTES)
+    return if (minute == raw) raw else minute.plusSeconds(60)
+}
+fun snoozeAvailable(item: InboxNotificationDto, minutes: Int, now: Instant = Instant.now()): Boolean =
+    minutes in snoozeChoices && (item.snoozeBefore?.let { snoozeUntil(minutes, now) < Instant.parse(it) } ?: true)
 
 data class ReminderWorkspaceState(
     val accountId: String? = null, val taskId: String? = null, val spaceId: String? = null,
@@ -44,9 +61,14 @@ data class ReminderWorkspaceState(
     val requestReview: ReminderRequestReviewDto? = null,
     val confirmation: ReminderCommand? = null, val pending: ReminderCommand? = null,
     val error: String? = null, val notice: String? = null, val requiresSignIn: Boolean = false,
+    val repeat: RepeatMode = RepeatMode.ONCE, val seriesTime: String = "", val seriesEvery: String = "1",
+    val seriesDays: Set<String> = emptySet(), val seriesStart: String = "", val seriesEnd: String = "",
+    val seriesPreview: ReminderSeriesPreviewDto? = null, val seriesRule: PreviewReminderSeriesDto? = null,
+    val series: List<ReminderSeriesDto> = emptyList(), val seriesCursor: String? = null,
+    val snoozing: InboxNotificationDto? = null, val snoozeMinutes: Int? = null,
 ) {
     val locked: Boolean get() = busy || pending != null
-    val reviewing: Boolean get() = preview != null || requestReview != null || confirmation != null
+    val reviewing: Boolean get() = preview != null || requestReview != null || confirmation != null || seriesPreview != null || snoozing != null
 }
 
 @HiltViewModel
@@ -86,8 +108,8 @@ class ReminderViewModel @Inject constructor(
                 update(expected) {
                     when {
                         error.status == 401 || error.code == "ACCOUNT_CHANGED" -> ReminderWorkspaceState(accountId = it.accountId, error = error.message, requiresSignIn = true)
-                        error.status in setOf(403, 404) -> it.copy(taskTitle = "", taskOpen = false, assignee = null, canRequest = false, requestForAssignee = false, requests = emptyList(), requestCursor = null, requestReview = null, reminders = emptyList(), reminderCursor = null, inbox = emptyList(), inboxCursor = null, unreadCount = 0, preferences = null, preview = null, confirmation = null, pending = null, error = error.message)
-                        error.status in 400..499 && error.status != 408 -> it.copy(preview = null, requestReview = null, selectedOption = null, confirmation = null, pending = null, error = error.message)
+                        error.status in setOf(403, 404) -> it.copy(taskTitle = "", taskOpen = false, assignee = null, canRequest = false, requestForAssignee = false, requests = emptyList(), requestCursor = null, requestReview = null, reminders = emptyList(), reminderCursor = null, inbox = emptyList(), inboxCursor = null, unreadCount = 0, preferences = null, preview = null, confirmation = null, pending = null, series = emptyList(), seriesCursor = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message)
+                        error.status in 400..499 && error.status != 408 -> it.copy(preview = null, requestReview = null, selectedOption = null, confirmation = null, pending = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message)
                         else -> it.copy(error = error.message)
                     }
                 }
@@ -112,8 +134,9 @@ class ReminderViewModel @Inject constructor(
             val reminders = repository.reminders(accountId, current.taskId)
             val inbox = repository.inbox(accountId)
             val requests = repository.requests(accountId, current.requestDirection)
+            val series = repository.series(accountId, current.taskId)
             val zones = accounts.timezones()
-            update(expected) { it.copy(preferences = preferences, reminders = reminders.items, reminderCursor = reminders.nextCursor, inbox = inbox.items, inboxCursor = inbox.nextCursor, unreadCount = inbox.unreadCount ?: 0, requests = requests.items, requestCursor = requests.nextCursor, timezones = (zones + it.timezone).distinct().sorted()) }
+            update(expected) { it.copy(preferences = preferences, reminders = reminders.items, reminderCursor = reminders.nextCursor, inbox = inbox.items, inboxCursor = inbox.nextCursor, unreadCount = inbox.unreadCount ?: 0, requests = requests.items, requestCursor = requests.nextCursor, series = series.items, seriesCursor = series.nextCursor, timezones = (zones + it.timezone).distinct().sorted()) }
         }
     }
 
@@ -131,7 +154,102 @@ class ReminderViewModel @Inject constructor(
     fun requestMode(forAssignee: Boolean) {
         val current = mutableState.value
         if (current.locked || current.reviewing || (forAssignee && !current.canRequest)) return
-        mutableState.update { it.copy(requestForAssignee = forAssignee, error = null, notice = null) }
+        mutableState.update { it.copy(requestForAssignee = forAssignee, repeat = if (forAssignee) RepeatMode.ONCE else it.repeat, error = null, notice = null) }
+    }
+
+    fun repeat(mode: RepeatMode) {
+        val current = mutableState.value
+        if (current.locked || current.reviewing || current.requestForAssignee || current.repeat == mode) return
+        val today = LocalDate.now(ZoneId.of(current.timezone))
+        mutableState.update { it.copy(repeat = mode, seriesStart = it.seriesStart.ifEmpty { today.toString() }, seriesEnd = it.seriesEnd.ifEmpty { today.plusDays(29).toString() }, error = null, notice = null) }
+    }
+
+    fun seriesFields(time: String, every: String, days: Set<String>, start: String, end: String, timezone: String) {
+        val current = mutableState.value
+        if (current.locked || current.reviewing) return
+        mutableState.update { it.copy(seriesTime = time, seriesEvery = every.filter(Char::isDigit).take(2), seriesDays = days.filter(seriesWeekdays::contains).toSet(),
+            seriesStart = start, seriesEnd = end, timezone = timezone, error = null, notice = null) }
+    }
+
+    private fun seriesRule(state: ReminderWorkspaceState, taskId: String, frequency: String): PreviewReminderSeriesDto? {
+        val every = state.seriesEvery.toIntOrNull() ?: return null
+        val (start, end) = try { LocalDate.parse(state.seriesStart) to LocalDate.parse(state.seriesEnd) } catch (_error: java.time.DateTimeException) { return null }
+        val days = if (frequency == "weekly") seriesWeekdays.filter(state.seriesDays::contains) else emptyList()
+        if (!Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]").matches(state.seriesTime) || every !in 1..(if (frequency == "weekly") 4 else 30)) return null
+        if (end.isBefore(start) || end.isAfter(start.plusDays(365)) || (frequency == "weekly" && days.isEmpty())) return null
+        return PreviewReminderSeriesDto(taskId, state.seriesTime, state.timezone, start.toString(), end.toString(), frequency, every, days, "shift_forward")
+    }
+
+    fun previewSeries() {
+        val current = mutableState.value
+        val taskId = current.taskId ?: return
+        val frequency = current.repeat.wireValue ?: return
+        if (current.locked || current.reviewing || !current.taskOpen || current.requestForAssignee || current.preferences?.value?.enabled != true) return
+        val rule = seriesRule(current, taskId, frequency) ?: run {
+            mutableState.update { it.copy(error = "Check the time, how often it repeats, the weekdays and the dates.") }; return
+        }
+        action { accountId, expected ->
+            val result = repository.previewSeries(accountId, rule)
+            update(expected) { it.copy(seriesPreview = result, seriesRule = rule) }
+        }
+    }
+
+    fun seriesPolicy(policy: String) {
+        val current = mutableState.value
+        val rule = current.seriesRule ?: return
+        if (current.locked || current.seriesPreview == null || rule.clockChangePolicy == policy || policy !in setOf("shift_forward", "skip")) return
+        val changed = rule.copy(clockChangePolicy = policy)
+        action { accountId, expected ->
+            val result = repository.previewSeries(accountId, changed)
+            update(expected) { it.copy(seriesPreview = result, seriesRule = changed) }
+        }
+    }
+
+    fun changeSeries() {
+        if (!mutableState.value.locked) mutableState.update { it.copy(seriesPreview = null, seriesRule = null, error = null) }
+    }
+
+    fun saveSeries() {
+        val current = mutableState.value
+        val accountId = current.accountId ?: return
+        val preview = current.seriesPreview ?: return
+        val rule = current.seriesRule ?: return
+        if (current.locked) return
+        mutableState.update { it.copy(pending = ReminderCommand.SaveSeries(SeriesCreateIntent(accountId, UUID.randomUUID().toString(), preview.previewToken, rule))) }
+        executePending()
+    }
+
+    fun openSnooze(item: InboxNotificationDto) {
+        val current = mutableState.value
+        if (current.locked || current.reviewing || !item.canSnooze || current.inbox.none { it == item }) return
+        mutableState.update { it.copy(snoozing = item, snoozeMinutes = null, error = null, notice = null) }
+    }
+
+    fun snoozeChoice(minutes: Int) {
+        val current = mutableState.value
+        val item = current.snoozing ?: return
+        if (!current.locked && snoozeAvailable(item, minutes)) mutableState.update { it.copy(snoozeMinutes = minutes) }
+    }
+
+    fun closeSnooze() {
+        if (!mutableState.value.locked) mutableState.update { it.copy(snoozing = null, snoozeMinutes = null, error = null) }
+    }
+
+    fun snooze() {
+        val current = mutableState.value
+        val accountId = current.accountId ?: return
+        val item = current.snoozing ?: return
+        val minutes = current.snoozeMinutes ?: return
+        if (current.locked) return
+        mutableState.update { it.copy(pending = ReminderCommand.Snooze(SnoozeIntent(accountId, item, minutes, UUID.randomUUID().toString()))) }
+        executePending()
+    }
+
+    private suspend fun reloadReminders(accountId: String, expected: Long) {
+        val page = try { repository.reminders(accountId, mutableState.value.taskId) }
+            catch (error: CancellationException) { throw error }
+            catch (_error: Exception) { return }
+        update(expected) { it.copy(reminders = page.items, reminderCursor = page.nextCursor) }
     }
 
     fun preview() {
@@ -177,17 +295,32 @@ class ReminderViewModel @Inject constructor(
     fun propose(command: ReminderCommand) {
         val current = mutableState.value
         if (current.locked || current.reviewing) return
-        if (command is ReminderCommand.Cancel && command.reminder.status != "scheduled") return
+        if (command is ReminderCommand.Cancel && (command.reminder.status != "scheduled" || command.reminder.seriesOccurrence)) return
         if (command is ReminderCommand.Acknowledge && command.notification.acknowledgedAt != null) return
+        if (command is ReminderCommand.Series) {
+            val intent = command.intent
+            val status = intent.series.status
+            val allowed = when (intent.operation) {
+                SeriesOperation.SKIP -> status == "active" && intent.series.nextOccurrence != null
+                SeriesOperation.PAUSE -> status == "active"
+                SeriesOperation.RESUME -> status == "paused"
+                SeriesOperation.CANCEL -> status == "active" || status == "paused"
+            }
+            if (!allowed || intent.accountId != current.accountId || current.series.none { it == intent.series }) return
+        }
         if (command is ReminderCommand.RespondRequest) {
             val intent = command.intent
             val actor = if (intent.response == ReminderRequestResponse.CANCEL) intent.request.requestedBy.accountId else intent.request.recipient.accountId
             if (intent.response == ReminderRequestResponse.ACCEPT || intent.accountId != current.accountId || actor != current.accountId
                 || intent.request.status != "pending" || current.requests.none { it == intent.request }) return
         }
-        if (command is ReminderCommand.Cancel || command is ReminderCommand.Acknowledge || command is ReminderCommand.RespondRequest) mutableState.update { it.copy(confirmation = command, error = null) }
+        if (command is ReminderCommand.Cancel || command is ReminderCommand.Acknowledge || command is ReminderCommand.RespondRequest || command is ReminderCommand.Series) mutableState.update { it.copy(confirmation = command, error = null) }
     }
     fun cancelConfirmation() { if (!mutableState.value.locked) mutableState.update { it.copy(confirmation = null) } }
+    fun proposeSeries(series: ReminderSeriesDto, operation: SeriesOperation) {
+        val accountId = mutableState.value.accountId ?: return
+        propose(ReminderCommand.Series(SeriesCommandIntent(accountId, series, operation, UUID.randomUUID().toString())))
+    }
     fun confirm() {
         val current = mutableState.value
         if (current.locked || current.confirmation == null) return
@@ -251,6 +384,36 @@ class ReminderViewModel @Inject constructor(
                     val result = repository.setPreferences(accountId, command.enabled, command.etag)
                     update(expected) { it.copy(preferences = result, pending = null, preview = null, selectedOption = null, notice = "Notification preference saved.") }
                 }
+                is ReminderCommand.SaveSeries -> {
+                    if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
+                    val saved = repository.saveSeries(command.intent)
+                    update(expected) { it.copy(series = listOf(saved) + it.series.filterNot { item -> item.id == saved.id }, seriesPreview = null, seriesRule = null, pending = null,
+                        repeat = RepeatMode.ONCE, seriesTime = "", notice = "Repeating reminder saved.") }
+                    reloadReminders(accountId, expected)
+                }
+                is ReminderCommand.Series -> {
+                    if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
+                    val result = repository.commandSeries(command.intent)
+                    val notice = if (result.status == "ended") "No reminder times remain, so the repeating reminder ended." else when (command.intent.operation) {
+                        SeriesOperation.SKIP -> "Next reminder skipped."
+                        SeriesOperation.PAUSE -> "Repeating reminder paused."
+                        SeriesOperation.RESUME -> "Repeating reminder resumed."
+                        SeriesOperation.CANCEL -> "Repeating reminder cancelled."
+                    }
+                    update(expected) { it.copy(series = it.series.map { item -> if (item.id == result.id) result else item }, pending = null, notice = notice) }
+                    reloadReminders(accountId, expected)
+                }
+                is ReminderCommand.Snooze -> {
+                    if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
+                    val result = repository.snooze(command.intent)
+                    val notice = result.snoozedUntil?.let { until ->
+                        "Snoozed until ${DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.of(mutableState.value.timezone)).format(Instant.parse(until))}."
+                    } ?: "Reminder snoozed."
+                    val wasUnread = command.intent.notification.readAt == null && result.readAt != null
+                    update(expected) { it.copy(inbox = it.inbox.map { item -> if (item.id == result.id) result else item }, unreadCount = (it.unreadCount - if (wasUnread) 1 else 0).coerceAtLeast(0),
+                        snoozing = null, snoozeMinutes = null, pending = null, notice = notice) }
+                    reloadReminders(accountId, expected)
+                }
             }
         }
     }
@@ -269,6 +432,14 @@ class ReminderViewModel @Inject constructor(
         action { accountId, expected ->
             val page = repository.inbox(accountId, current.inboxCursor)
             update(expected) { it.copy(inbox = (it.inbox + page.items).distinctBy(InboxNotificationDto::id), inboxCursor = page.nextCursor, unreadCount = page.unreadCount ?: 0) }
+        }
+    }
+    fun moreSeries() {
+        val current = mutableState.value
+        if (current.locked || current.reviewing || current.seriesCursor == null) return
+        action { accountId, expected ->
+            val page = repository.series(accountId, current.taskId, current.seriesCursor)
+            update(expected) { it.copy(series = (it.series + page.items).distinctBy(ReminderSeriesDto::id), seriesCursor = page.nextCursor) }
         }
     }
 

@@ -1,10 +1,36 @@
 # spaces
 
-Local synthetic implementation: `POST /v1/spaces`, `GET /v1/spaces` and `GET /v1/spaces/{space_id}`. Only private family Spaces can be created. Authentication reuses the identity service's current active session; creation holds its account lock through the mutation transaction.
+Local synthetic implementation: `POST /v1/spaces`, `GET /v1/spaces` and `GET /v1/spaces/{space_id}`. Private family and Solo Spaces can be created with an explicit `space_type`. Authentication reuses the identity service's current active session; creation holds its account lock through the mutation transaction.
 
 Creation persists the Space, one owner membership, matching audit/outbox records and immutable actor/request/payload binding together. A same-key retry returns the current-authorized result; changed payload conflicts and lost access blocks receipt disclosure. The database also rejects duplicate active owners. Ordinary member removal, self-leave and a separate two-party ownership transfer are implemented below.
 
 Lists use bounded ID keyset pagination, an encrypted account-bound 15-minute cursor and current active membership checks. Pagination is not a frozen snapshot of concurrent additions. The synthetic build permits at most 50 created Spaces and 50 active Space memberships per account. Invitation admission checks that same membership bound, so the current web Space list cannot silently exceed its 50-item limit. These are local safety bounds, not approved production quotas.
+
+## Solo Spaces
+
+Solo uses the same private grants and services, but only the creator-owner may be an active human member. Invitation creation/acceptance and ownership transfer are explicitly refused; the owner cannot leave. Migration `0012` adds deferred constraint triggers on Spaces and memberships for exactly one active creator-owner, plus an immutable-type trigger. A new type requires a future reviewed conversion, not a generic PATCH. Direct second-member, owner-removal and conversion attempts are tested against PostgreSQL. Owner name editing does not change Solo privacy, task audience or reminder authority.
+
+Create retries bind both name and type; the existing account/Space quotas apply. No conversion, sharing, archive or deletion UI is inferred from these database types. Downgrade to the family-only constraint will fail safely while Solo data exists rather than delete it. Client and runtime evidence is in the [Solo ledger](../../../../docs/PRODUCT_FEATURES.md#solo-spaces-batch).
+
+## Owner Name Settings
+
+`GET /v1/spaces/{space_id}/settings` returns current settings and an opaque admission/representation-bound ETag only to the current owner. `PATCH` on the same route accepts only a trimmed 1-80-character `name` without control characters, with UUID `Idempotency-Key` and exact reviewed `If-Match`. It never changes type, privacy, members, history grants or schedules. Missing review returns 428, stale review 412, changed intent 409, and a nonowner/missing Space 404.
+
+Migration `0011` adds `space_settings_commands` after the separate export migration. Account -> Space -> membership locks, post-wait current authentication, name/version update, minimal actual-actor audit/outbox and receipt are atomic. Replays reauthorize the current owner and original admission, then return current settings without repeating the edit or reverting a newer name. Audit/receipt failure rolls back the name and version. The local retained-receipt cap is 500 per Space.
+
+## Group Spaces, Find Groups and Join Requests
+
+Built for [T22](../../../../docs/TASKS.md#spaces) under [DEC-011](../../../../docs/DECISIONS.md#accepted-decisions). Migration `0022` adds the `group` type, a `description` on every Space and `space_join_requests`. A database check keeps family and solo Spaces private; only a group can be public.
+
+- `directory.py` holds discovery, visibility and join requests. A private, missing or blocked group gets the same 404, so discovery never reveals that a private Space exists. Listings show only name, description and member count; members, chats, tasks and events stay members-only.
+- Search is literal (`%` and `_` are escaped), newest first, with cursors bound to the viewer and the words and valid for 15 minutes. Blocks between the viewer and the group's owner hide the group in both directions.
+- A request takes the asker's account lock and a shared lock on the group, so making the group private (an exclusive lock) closes it or refuses it. Approval locks both accounts, then the group, and creates a new admission like an accepted invitation, so history from before stays hidden.
+- Requests expire after 14 days; after a decline the person waits 7 days; a group admits at most 50 members, a person waits on at most 20 requests and a group holds at most 100. The name and description cannot change while requests are waiting, so a person is answered about what they asked to join.
+- Evidence: `tests/test_space_directory.py` (12 tests) and the migration test in `tests/test_migrations.py`.
+
+A new rename is blocked while an unexpired pending invitation or ownership offer exists. Resolve or withdraw that review first; the settings command never changes its reviewed Space name silently. Expired pending rows do not block. This conservative local restriction is not an approved general Space lifecycle policy.
+
+The [delivery ledger](../../../../docs/PRODUCT_FEATURES.md#space-name-settings-batch) records the real backend/web and native build/JVM checks, current preview, and outstanding native-device qualification.
 
 ## Account-Bound Invitations
 

@@ -7,7 +7,7 @@ from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import AccountSession, OutboxEvent, User
-from app.modules.spaces.models import OwnershipTransfer, Space, SpaceAuditEvent, SpaceInvitation, SpaceMembership, SpaceMembershipCommand
+from app.modules.spaces.models import OwnershipTransfer, Space, SpaceAuditEvent, SpaceInvitation, SpaceJoinRequest, SpaceMembership, SpaceMembershipCommand, SpaceSettingsCommand
 from app.modules.spaces.schemas import (
     InvitationCursor,
     InvitationOutcome,
@@ -18,6 +18,7 @@ from app.modules.spaces.schemas import (
     Pagination,
     SpaceCursor,
     SpaceMemberView,
+    SpaceSettingsView,
     SpaceView,
 )
 
@@ -53,6 +54,7 @@ class SpaceService:
         return SpaceView(
             id=space.id,
             name=space.name,
+            description=space.description,
             space_type=space.space_type,
             visibility=space.visibility,
             status=space.status,
@@ -70,6 +72,82 @@ class SpaceService:
             if row is None:
                 raise DomainError(404, "NOT_FOUND", "Space not found.")
             return self.view(*row)
+
+    def settings_view(self, space, membership):
+        view = self.view(space, membership)
+        etag = '"' + self.security.digest("space.settings", membership.admission_id, view.model_dump_json()) + '"'
+        return SpaceSettingsView(**view.model_dump(), etag=etag)
+
+    def read_settings(self, token, identifier):
+        with self.sessions() as database:
+            caller, _session = self.identity.authenticate(database, token)
+            row = database.execute(self.visible_spaces(caller.id).where(
+                Space.id == identifier, SpaceMembership.role == "owner",
+            )).first()
+            if row is None:
+                raise DomainError(404, "NOT_FOUND", "Space settings not found.")
+            return self.settings_view(*row)
+
+    def edit_settings(self, token, identifier, body, key, expected):
+        with self.sessions.begin() as database:
+            caller, _accounts = self.lock_accounts(database, token, [])
+            space = self.lock_space(database, identifier)
+            self.require_owner(database, identifier, caller.id, lock=True)
+            member = database.get(SpaceMembership, (identifier, caller.id))
+            self.identity.authenticate(database, token, lock=True)
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current Space name first.")
+            digest = self.security.digest("space.settings.command", body.model_dump_json(), expected)
+            receipt = database.scalar(select(SpaceSettingsCommand).where(
+                SpaceSettingsCommand.space_id == identifier, SpaceSettingsCommand.actor_id == caller.id,
+                SpaceSettingsCommand.request_key == key,
+            ))
+            if receipt is not None:
+                if receipt.actor_admission_id != member.admission_id:
+                    raise DomainError(404, "NOT_FOUND", "Space settings not found.")
+                if receipt.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Review the changed settings request.")
+                return self.settings_view(space, member)
+            if expected != self.settings_view(space, member).etag:
+                raise DomainError(412, "SPACE_CHANGED", "This Space changed. Reload and review the name.")
+            now = self.clock()
+            pending_invitation = database.scalar(select(SpaceInvitation.id).where(
+                SpaceInvitation.space_id == identifier, SpaceInvitation.status == "pending",
+                SpaceInvitation.expires_at > now,
+            ).limit(1))
+            pending_transfer = database.scalar(select(OwnershipTransfer.id).where(
+                OwnershipTransfer.space_id == identifier, OwnershipTransfer.status == "pending",
+                OwnershipTransfer.expires_at > now,
+            ).limit(1))
+            # People asked to join what they saw; the name and description wait until those requests are answered.
+            pending_request = database.scalar(select(SpaceJoinRequest.id).where(
+                SpaceJoinRequest.space_id == identifier, SpaceJoinRequest.status == "pending",
+                SpaceJoinRequest.expires_at > now,
+            ).limit(1))
+            if pending_invitation or pending_transfer or pending_request:
+                raise DomainError(409, "SPACE_REVIEW_PENDING", "Answer pending invitations, join requests and ownership offers before changing the name or description.")
+            description = space.description if body.description is None else body.description
+            if body.name == space.name and description == space.description:
+                raise DomainError(409, "NO_CHANGES", "The Space already has this name and description.")
+            count = database.scalar(select(func.count()).select_from(SpaceSettingsCommand).where(SpaceSettingsCommand.space_id == identifier))
+            if count >= 500:
+                raise DomainError(409, "SETTINGS_LIMIT_REACHED", "The local Space settings limit was reached.")
+            self.identity.authenticate(database, token, lock=True)
+            action = "space.renamed" if body.name != space.name else "space.description_changed"
+            space.name = body.name
+            space.description = description
+            space.version += 1
+            event_id = str(uuid4())
+            database.add_all([
+                SpaceAuditEvent(id=event_id, space_id=identifier, actor_id=caller.id, target_id=identifier,
+                                action=action, created_at=self.clock()),
+                OutboxEvent(id=event_id, event_type=action, actor_id=caller.id,
+                            aggregate_id=identifier, schema_version=1, created_at=self.clock()),
+            ])
+            database.flush()
+            database.add(SpaceSettingsCommand(id=event_id, space_id=identifier, actor_id=caller.id,
+                actor_admission_id=member.admission_id, request_key=key, request_digest=digest))
+            return self.settings_view(space, member)
 
     def membership_etag(self, membership):
         value = ":".join((membership.space_id, membership.account_id, membership.admission_id, membership.role, membership.status))
@@ -207,10 +285,12 @@ class SpaceService:
             space = Space(
                 id=str(uuid4()),
                 name=body.name,
-                space_type="family",
-                visibility="private",
+                description=body.description,
+                space_type=body.space_type,
+                visibility=body.visibility,
                 status="active",
                 version=1,
+                admission_sequence=1,
                 created_by_id=user.id,
                 creation_key=key,
                 creation_digest=digest,
@@ -224,6 +304,7 @@ class SpaceService:
                 role="owner",
                 status="active",
                 joined_at=now,
+                admission_sequence=1,
             )
             event_id = str(uuid4())
             database.add_all(
@@ -269,9 +350,9 @@ class SpaceService:
         return caller, {user.id: user for user in locked}
 
     @staticmethod
-    def lock_space(database, identifier, active=True):
+    def lock_space(database, identifier, active=True, shared=False):
         space = database.scalar(
-            select(Space).where(Space.id == identifier).with_for_update()
+            select(Space).where(Space.id == identifier).with_for_update(read=shared)
             .execution_options(populate_existing=True)
         )
         if space is None or (active and space.status != "active"):
@@ -327,6 +408,8 @@ class SpaceService:
             space = self.lock_space(database, space_id)
             self.require_owner(database, space.id, caller.id, lock=True)
             self.identity.authenticate(database, token, lock=True)
+            if space.space_type == "solo":
+                raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Spaces cannot invite another person.")
             existing = database.scalar(select(SpaceInvitation).where(
                 SpaceInvitation.space_id == space.id,
                 SpaceInvitation.inviter_id == caller.id,
@@ -436,6 +519,8 @@ class SpaceService:
                 database, token, [snapshot.inviter_id, snapshot.recipient_id]
             )
             space = self.lock_space(database, snapshot.space_id, active=action != "decline")
+            if action == "accept" and space.space_type == "solo":
+                raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Spaces cannot admit another person.")
             invitation = database.scalar(
                 statement.with_for_update().execution_options(populate_existing=True)
             )
@@ -482,6 +567,8 @@ class SpaceService:
                 membership.role = "member"
                 membership.status = "active"
                 membership.joined_at = now
+                space.admission_sequence += 1
+                membership.admission_sequence = space.admission_sequence
                 invitation.status = "accepted"
                 invitation.accepted_admission_id = membership.admission_id
                 space.version += 1
@@ -561,6 +648,9 @@ class OwnershipTransferService:
         with self.sessions.begin() as database:
             caller, _accounts = self.spaces.lock_accounts(database, token, [recipient_id])
             space = self.spaces.lock_space(database, space_id)
+            if space.space_type == "solo":
+                self.spaces.require_owner(database, space_id, caller.id)
+                raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Space ownership cannot be transferred.")
             sender, recipient = self.participants(database, space_id, caller.id, recipient_id, lock=True)
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the intended next owner first.")

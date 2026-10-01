@@ -2,6 +2,8 @@
 
 Status: DRAFT FOR PRODUCT, AGENT, BACKEND AND SECURITY REVIEW. This is a runtime design and evaluation plan, not implemented LangGraph code, a model integration, executed Agent run or a production-ready autonomous system.
 
+Source-of-truth role: the [documentation map](README.md) names this contract as the authority for the agent system, at level 5 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). Approved requirements R7, R8, R9 and R11 in the [Product Constitution](PRODUCT_CONSTITUTION.md#article-2-approved-requirements) apply; the first-release scope is open (D4). Product-wide AI rules are in [AI_POLICY.md](AI_POLICY.md), which ranks above this contract.
+
 ## 1. Scope and Authority
 
 This continues the [release](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) and [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) contracts. It develops C11-T12 under the architecture in [Chapter 5](../Chapter5.md) and the detailed source in [Chapter 12](../Chapter12.md).

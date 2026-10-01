@@ -33,7 +33,10 @@ data class SpaceWorkspaceState(
     val sent: List<SpaceInvitationDto> = emptyList(),
     val sentCursor: String? = null,
     val creating: Boolean = false,
+    val creationType: String = "family",
     val nameDraft: String = "",
+    val visibilityDraft: String = "private",
+    val descriptionDraft: String = "",
     val recipientDraft: String = "",
     val confirmation: SpaceCommand? = null,
     val pending: SpaceCommand? = null,
@@ -42,7 +45,7 @@ data class SpaceWorkspaceState(
     val notice: String? = null,
 ) {
     val locked: Boolean get() = busy || pending != null
-    val dirty: Boolean get() = nameDraft.isNotEmpty() || recipientDraft.isNotEmpty()
+    val dirty: Boolean get() = nameDraft.isNotEmpty() || descriptionDraft.isNotEmpty() || recipientDraft.isNotEmpty()
     val navigationLocked: Boolean get() = locked || dirty || confirmation != null
 }
 
@@ -109,7 +112,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val selected = repository.read(accountId, spaceId)
         update(expected) { it.copy(selectedSpace = selected, sent = emptyList(), sentCursor = null, members = emptyList(), ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false) }
         if (mutableState.value.showingMembers) loadMembers(accountId, spaceId, expected)
-        if (mutableState.value.selectedSpace?.role == "owner") {
+        if (mutableState.value.selectedSpace?.role == "owner" && selected.spaceType != "solo") {
             val sent = repository.sent(accountId, spaceId)
             update(expected) { it.copy(sent = sent.items, sentCursor = sent.nextCursor) }
         }
@@ -125,7 +128,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     fun showMembers() {
         val current = mutableState.value
         val selected = current.selectedSpace ?: return
-        if (current.navigationLocked) return
+        if (current.navigationLocked || selected.spaceType == "solo") return
         action { accountId, expected ->
             update(expected) { it.copy(members = emptyList(), showingMembers = true, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false) }
             loadMembers(accountId, selected.id, expected)
@@ -181,7 +184,22 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     }
 
     fun startCreate() {
-        if (!mutableState.value.navigationLocked) mutableState.update { it.copy(creating = true, nameDraft = "", error = null, notice = null) }
+        if (!mutableState.value.navigationLocked) mutableState.update { it.copy(creating = true, creationType = "family", nameDraft = "", visibilityDraft = "private", descriptionDraft = "", error = null, notice = null) }
+    }
+
+    fun creationType(value: String) {
+        val current = mutableState.value
+        if (current.creating && !current.locked && value in setOf("family", "group", "solo")) mutableState.update { it.copy(creationType = value, error = null, notice = null) }
+    }
+
+    fun visibility(value: String) {
+        val current = mutableState.value
+        if (current.creating && !current.locked && current.creationType == "group" && value in setOf("private", "public")) mutableState.update { it.copy(visibilityDraft = value, error = null, notice = null) }
+    }
+
+    fun description(value: String) {
+        val current = mutableState.value
+        if (current.creating && !current.locked && current.creationType == "group") mutableState.update { it.copy(descriptionDraft = value, error = null, notice = null) }
     }
 
     fun name(value: String) {
@@ -191,15 +209,15 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
 
     fun recipient(value: String) {
         val current = mutableState.value
-        if (!current.locked && current.confirmation == null && current.selectedSpace?.role == "owner") mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
+        if (!current.locked && current.confirmation == null && current.selectedSpace?.role == "owner" && current.selectedSpace.spaceType != "solo") mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
     }
 
     fun discardDraft() {
-        if (!mutableState.value.locked) mutableState.update { it.copy(nameDraft = "", recipientDraft = "", error = null) }
+        if (!mutableState.value.locked) mutableState.update { it.copy(nameDraft = "", descriptionDraft = "", visibilityDraft = "private", recipientDraft = "", error = null) }
     }
 
     fun closePanel() {
-        if (!mutableState.value.locked && mutableState.value.confirmation == null) mutableState.update { it.copy(creating = false, nameDraft = "", recipientDraft = "", selectedSpace = null, members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, sent = emptyList(), sentCursor = null, error = null, notice = null) }
+        if (!mutableState.value.locked && mutableState.value.confirmation == null) mutableState.update { it.copy(creating = false, nameDraft = "", descriptionDraft = "", visibilityDraft = "private", recipientDraft = "", selectedSpace = null, members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, sent = emptyList(), sentCursor = null, error = null, notice = null) }
     }
 
     fun create() {
@@ -209,10 +227,16 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val name = current.nameDraft.trim()
         val invalidType = setOf(Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.SURROGATE.toInt(), Character.PRIVATE_USE.toInt(), Character.UNASSIGNED.toInt())
         if (name.codePointCount(0, name.length) !in 1..80 || name.codePoints().anyMatch { Character.getType(it) in invalidType }) {
-            mutableState.update { it.copy(error = "Enter a family name of 1 to 80 characters without control characters.") }
+            mutableState.update { it.copy(error = "Enter a name of 1 to 80 characters without control characters.") }
             return
         }
-        mutableState.update { it.copy(pending = SpaceCommand.Create(accountId, name, UUID.randomUUID().toString())) }
+        val group = current.creationType == "group"
+        val description = if (group) current.descriptionDraft.trim() else ""
+        if (description.codePointCount(0, description.length) > 280 || description.codePoints().anyMatch { it != '\n'.code && Character.getType(it) in invalidType }) {
+            mutableState.update { it.copy(error = "Keep the description to 280 characters without control characters.") }
+            return
+        }
+        mutableState.update { it.copy(pending = SpaceCommand.Create(accountId, name, UUID.randomUUID().toString(), current.creationType, if (group) current.visibilityDraft else "private", description)) }
         executePending()
     }
 
@@ -220,7 +244,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val current = mutableState.value
         val accountId = current.accountId ?: return
         val selected = current.selectedSpace ?: return
-        if (current.locked || current.confirmation != null || selected.role != "owner") return
+        if (current.locked || current.confirmation != null || selected.role != "owner" || selected.spaceType == "solo") return
         val input = current.recipientDraft.trim()
         val recipient = try { UUID.fromString(input).toString().also { require(it.equals(input, ignoreCase = true)) } }
         catch (_error: IllegalArgumentException) {
@@ -280,8 +304,8 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                     is SpaceCommandResult.SpaceSaved -> current.copy(
                         spaces = listOf(result.space) + current.spaces.filterNot { it.id == result.space.id },
                         invitations = if (command is SpaceCommand.Accept) current.invitations.filterNot { it.id == command.invitation.id } else current.invitations,
-                        selectedSpace = result.space, members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, sent = emptyList(), sentCursor = null, creating = false, nameDraft = "", recipientDraft = "", tab = SpaceTab.SPACES,
-                        pending = null, notice = if (command is SpaceCommand.Accept) "Joined ${result.space.name}." else "Family Space saved.",
+                        selectedSpace = result.space, members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, sent = emptyList(), sentCursor = null, creating = false, nameDraft = "", descriptionDraft = "", visibilityDraft = "private", recipientDraft = "", tab = SpaceTab.SPACES,
+                        pending = null, notice = if (command is SpaceCommand.Accept) "Joined ${result.space.name}." else when (result.space.spaceType) { "solo" -> "Solo Space saved."; "group" -> if (result.space.visibility == "public") "Public group saved. People can find it and ask to join." else "Group saved."; else -> "Family Space saved." },
                     )
                     is SpaceCommandResult.InvitationSaved -> current.copy(
                         sent = listOf(result.invitation) + current.sent.filterNot { it.id == result.invitation.id },

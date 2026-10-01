@@ -14,4 +14,6 @@ TypeScript, isolated production build and in-process client/BFF checks also pass
 
 Source chapters: 1, 3, 13, 17.
 
+Calendar (`calendar-client.ts`, `calendar-screen.tsx`, `/app/calendar`): a month agenda of task due dates and the person's reminders. Since 2026-10-01 it also shows `planned` entries, the future times of active repeating reminders, marked "Planned, repeating" ([DEC-010](../../../../docs/DECISIONS.md#accepted-decisions)).
+
 The [complete feature catalog](../../../../packages/feature-catalog/features.json) retains checklists, dependencies, recurring tasks, calendar views and broader planning workspaces.

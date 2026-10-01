@@ -43,4 +43,17 @@ interface ReminderApi {
     suspend fun declineRequest(@Header("Authorization") authorization: String, @Path("id") identifier: String, @Body body: Map<String, String>): Response<EnvelopeDto<ReminderRequestDto>>
     @POST("v1/reminder-requests/{id}/cancel")
     suspend fun cancelRequest(@Header("Authorization") authorization: String, @Path("id") identifier: String, @Body body: Map<String, String>): Response<EnvelopeDto<ReminderRequestDto>>
+    @POST("v1/reminder-series/preview")
+    suspend fun previewSeries(@Header("Authorization") authorization: String, @Body body: PreviewReminderSeriesDto): Response<EnvelopeDto<ReminderSeriesPreviewDto>>
+    @POST("v1/reminder-series")
+    suspend fun createSeries(@Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Body body: SaveReminderDto): Response<EnvelopeDto<ReminderSeriesDto>>
+    @GET("v1/reminder-series")
+    suspend fun series(@Header("Authorization") authorization: String, @Query("task_id") taskId: String?, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<ReminderSeriesDto>>>
+    @POST("v1/reminder-series/{id}/{operation}")
+    suspend fun commandSeries(
+        @Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Header("If-Match") etag: String,
+        @Path("id") identifier: String, @Path("operation") operation: String, @Body body: Map<String, String>,
+    ): Response<EnvelopeDto<ReminderSeriesDto>>
+    @POST("v1/notifications/{id}/snooze")
+    suspend fun snooze(@Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Path("id") identifier: String, @Body body: SnoozeDto): Response<EnvelopeDto<InboxNotificationDto>>
 }

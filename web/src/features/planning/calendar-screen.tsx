@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Bell, CalendarDays, ClipboardList, LoaderCircle, RefreshCw, UsersRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, CalendarClock, CalendarDays, ClipboardList, Download, LoaderCircle, RefreshCw, Repeat, UsersRound } from "lucide-react";
 
 import { api, ApiError, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
 import { spacesSchema } from "@/features/spaces/client";
-import { adjacentMonth, calendarPage, calendarRange, compareCalendarEntries, dateInZone } from "./calendar-client";
+import { adjacentMonth, calendarFile, calendarPage, calendarRange, compareCalendarEntries, dateInZone } from "./calendar-client";
 import type { CalendarEntry } from "./calendar-client";
 import styles from "./calendar.module.css";
 
@@ -50,7 +50,7 @@ function CalendarWorkspace({ user, initialSpaceId }: { user: Account; initialSpa
     {!spaces.isPending && !spaces.isError && <>
       {spaces.data?.data.length === 0 ? <div className={styles.empty}><CalendarDays size={34} aria-hidden /><h2>No family Spaces yet</h2><Link href="/app/spaces">Open Spaces</Link></div> : <>
         <div className={styles.filters}>
-          <label><span id="calendar-space-label">Family Space</span><select aria-labelledby="calendar-space-label" value={selectedSpace?.id ?? spaceId} onChange={event => { setSpaceId(event.target.value); setSelectedDate(""); }}>{!selectedSpace && <option value={spaceId}>Space unavailable</option>}{spaces.data?.data.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
+          <label><span id="calendar-space-label">{selectedSpace?.space_type === "solo" ? "Solo Space" : "Family Space"}</span><select aria-labelledby="calendar-space-label" value={selectedSpace?.id ?? spaceId} onChange={event => { setSpaceId(event.target.value); setSelectedDate(""); }}>{!selectedSpace && <option value={spaceId}>Space unavailable</option>}{spaces.data?.data.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
           <label><span id="calendar-zone-label">Display timezone</span><select aria-labelledby="calendar-zone-label" value={timezone} onChange={event => setTimezone(event.target.value)}>{[...new Set([user.timezone, "UTC"])].map(zone => <option key={zone}>{zone}</option>)}</select></label>
         </div>
         <div className={styles.toolbar}>
@@ -82,6 +82,15 @@ function CalendarAgenda({ accountId, spaceId, month, timezone, selectedDate, onD
   const visible = entries.filter(entry => !selectedDate || entry.date === selectedDate);
   const loading = calendar.isFetching && !calendar.isFetchingNextPage;
   const unavailable = calendar.error instanceof ApiError && [401, 403, 404].includes(calendar.error.status);
+  function download() {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([calendarFile(entries)], { type: "text/calendar;charset=utf-8" }));
+    link.download = `calendar-${month}.ics`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  }
   return <div className={styles.workspace}>
     <section className={styles.monthGrid} aria-label="Calendar dates">
       <div className={styles.weekdays} aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => <span key={day}>{day}</span>)}</div>
@@ -99,9 +108,13 @@ function CalendarAgenda({ accountId, spaceId, month, timezone, selectedDate, onD
       {loading && <p role="status" aria-busy="true">Loading calendar...</p>}
       {calendar.isError && <div className="message error" role="alert">{calendar.error.message}{unavailable ? <Link href="/app/spaces">Return to Spaces</Link> : <button className="text-button" onClick={() => calendar.refetch()}>Retry</button>}</div>}
       {!loading && !calendar.isError && <>
-        {visible.length === 0 && <p className={styles.empty}>{calendar.hasNextPage ? "No entries in the loaded dates." : "No tasks or reminders for these dates."}</p>}
+        {visible.length === 0 && <p className={styles.empty}>{calendar.hasNextPage ? "No entries in the loaded dates." : "No tasks, reminders or events for these dates."}</p>}
         <ul className={styles.entries}>{visible.map(entry => <CalendarRow key={`${entry.kind}:${entry.id}`} entry={entry} timezone={timezone} />)}</ul>
         {calendar.hasNextPage && <button className="secondary-button" disabled={calendar.isFetching} onClick={() => calendar.fetchNextPage()}>{calendar.isFetchingNextPage ? <LoaderCircle size={17} className="spin" aria-hidden /> : <CalendarDays size={17} aria-hidden />}Load more entries</button>}
+        {entries.length > 0 && <div className={styles.fileCopy}>
+          <button className="secondary-button" onClick={download}><Download size={17} aria-hidden />Download calendar file</button>
+          <p>{calendar.hasNextPage ? "A copy of the entries loaded so far" : "A copy of this month's entries"}, for another calendar app. It does not update when things change here.</p>
+        </div>}
       </>}
     </section>
   </div>;
@@ -113,11 +126,16 @@ function formatDay(date: string) {
 
 function CalendarRow({ entry, timezone }: { entry: CalendarEntry; timezone: string }) {
   const isTask = entry.kind === "task";
-  const Icon = isTask ? ClipboardList : Bell;
+  const Icon = isTask ? ClipboardList : entry.kind === "planned" ? Repeat : entry.kind === "event" ? CalendarClock : Bell;
+  const status = entry.status === "available" ? "In inbox" : entry.status === "planned" ? "Planned, repeating" : entry.status.replaceAll("_", " ");
+  const source = entry.kind === "event" ? `Event in ${entry.timezone}` : entry.kind !== "task" && entry.series_id ? `Repeating reminder in ${entry.timezone}` : `Scheduled in ${entry.timezone}`;
+  const link = isTask ? { href: `/app/tasks?space_id=${entry.space_id}`, label: "Space tasks" }
+    : entry.kind === "event" ? { href: `/app/events?space_id=${entry.space_id}`, label: "Space events" }
+    : { href: `/app/reminders?task_id=${entry.task_id}`, label: "My reminders" };
   return <li className={styles.entry} data-kind={entry.kind}>
-    <div className={styles.entryTitle}><Icon size={19} aria-hidden /><h3>{entry.title}</h3><span className={styles.status}>{entry.status === "available" ? "In inbox" : entry.status.replaceAll("_", " ")}</span></div>
+    <div className={styles.entryTitle}><Icon size={19} aria-hidden /><h3>{entry.title}</h3><span className={styles.status}>{status}</span></div>
     <p className={styles.date}>{formatDay(entry.date)} <span>{isTask ? "Due date" : new Intl.DateTimeFormat("en", { timeZone: timezone, hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset" }).format(new Date(entry.scheduled_at))}</span></p>
-    {!isTask && <p className={styles.sourceZone}>Scheduled in {entry.timezone}{entry.source_changed ? " / Task changed" : ""}</p>}
-    <Link className={styles.sourceLink} href={isTask ? `/app/tasks?space_id=${entry.space_id}` : `/app/reminders?task_id=${entry.task_id}`}><Icon size={16} aria-hidden />{isTask ? "Space tasks" : "My reminders"}</Link>
+    {!isTask && <p className={styles.sourceZone}>{source}{entry.source_changed ? " / Task changed" : ""}</p>}
+    <Link className={styles.sourceLink} href={link.href}><Icon size={16} aria-hidden />{link.label}</Link>
   </li>;
 }

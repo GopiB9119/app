@@ -2,7 +2,7 @@ package com.community.platform.feature.planning
 
 import com.google.gson.annotations.SerializedName
 
-data class FamilySpaceDto(val id: String, val name: String, val role: String)
+data class FamilySpaceDto(val id: String, val name: String, val role: String, @SerializedName("space_type") val spaceType: String? = null)
 data class TaskAssigneeDto(@SerializedName("account_id") val accountId: String, @SerializedName("display_name") val displayName: String)
 data class TaskPermissionsDto(@SerializedName("can_edit") val canEdit: Boolean, @SerializedName("allowed_statuses") val allowedStatuses: List<String>)
 data class FamilyTaskDto(
@@ -28,7 +28,8 @@ data class TaskPage<Value>(val items: List<Value>, val nextCursor: String?)
 data class CalendarEntryDto(
     val id: String,
     val kind: String,
-    @SerializedName("task_id") val taskId: String,
+    // Null for Space events, which belong to the Space rather than a task.
+    @SerializedName("task_id") val taskId: String?,
     @SerializedName("space_id") val spaceId: String,
     val title: String,
     val date: String,
@@ -36,6 +37,7 @@ data class CalendarEntryDto(
     val timezone: String?,
     val status: String,
     @SerializedName("source_changed") val sourceChanged: Boolean,
+    @SerializedName("series_id") val seriesId: String? = null,
 )
 data class TaskFields(val title: String, val description: String, val dueDate: String?, val assigneeId: String?)
 data class CreateTaskDto(

@@ -194,6 +194,8 @@ All fifteen Android screen names from section 13.19 are retained. Equivalent web
 
 These seven proposals and seven open decisions remain unapproved. M1 implements only the approved one-time ordinary in-app subset when implementation is authorized; later scheduling features are retained without making every provider or care workflow a first-demo prerequisite.
 
+As built on 2026-10-01 under [DEC-010](DECISIONS.md#accepted-decisions), provisional and awaiting the owner's review: a narrow subset of C13-D04, C13-D05 and C13-D09. That is daily and weekly repeating in-app reminders for oneself, skip the next time, pause and resume, at most one late time after downtime, and snooze (10 minutes to 1 day, at most three times). The rule engine is a small standard-library computation over `zoneinfo` for those two rule shapes only; it parses no rule text. Choosing a maintained recurrence library (C13-D02) and every other row above stay as marked. Evidence: [checkpoint](BUILD_STATUS.md#repeating-reminders-snooze-and-planned-times-checkpoint).
+
 ## 6. Ownership, Records and Execution Rules
 
 ### One Scheduler, Several Distinct Records

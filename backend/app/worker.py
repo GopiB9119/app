@@ -14,7 +14,7 @@ from app.modules.identity.service import IdentityService
 def main():
     settings = Settings()
     engine, sessions = database(settings.database_url)
-    service = IdentityService(sessions, Security(settings.load_key()), settings)
+    service = IdentityService(sessions, Security(settings.load_keyring()), settings)
     sender = LocalSmtp(settings)
     stopped = Event()
     signal.signal(signal.SIGTERM, lambda _signal, _frame: stopped.set())

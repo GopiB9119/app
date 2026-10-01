@@ -1,6 +1,8 @@
 # Product Features and Delivery Ledger
 
-Updated: 2026-09-28. Product: Community Platform. Build the human-operated product first; Agent runtime work belongs to a separate workstream.
+Updated: 2026-10-01. Product: Community Platform. Build the human-operated product first; Agent runtime work belongs to a separate workstream.
+
+**Current web URL: http://127.0.0.1:3000 only.** Use the VS Code **Community Platform: preview web** task. Previous port references in evidence are historical; do not start alternate web previews.
 
 ## Scope and Evidence
 
@@ -8,7 +10,7 @@ This is the implementation-facing checklist, not a replacement specification or 
 
 Status columns are backend / web / Kotlin Android. `P` means a limited implementation exists, not the entire feature. `U` means undelivered: no working end-to-end implementation is established, including absent or unqualified in-progress code. `N` means no implementation found in the owning module. `D` means explicitly deferred to the separate Agent workstream. No row is marked complete based on a directory, README, mocked response, successful compile or historical test name. Historical results remain in [build status](BUILD_STATUS.md); fresh checks must name their scope and limitations.
 
-Current source inspection found no runtime implementation in the owning community, messaging, events, files, discovery, safety, integrations or realtime modules on any of the three platforms. Those eight domains contain **95 undelivered feature groups**; reserved READMEs are not implementations. Identity export code and Agent parser/tool files have appeared in separate work and are preserved, but their existence alone is not client integration or verification. The 21 original source fingerprints match the previously completed full chapter review; this batch reused that review and rechecked the current catalog, implementation paths and owning scheduling/client contracts, not a new line-by-line reread of every Markdown file.
+Messaging now has a limited Space chat and direct-message implementation on all three platforms (see the [messaging batch](#space-chat-and-direct-messages-batch)); its end-to-end encryption, device-key, realtime and attachment rows stay undelivered. The public community, Home/Discover and report/block rows now have a limited implementation (see the [public community batch](#public-community-batch)), as do Space events and RSVP (see the [events batch](#space-events-and-rsvp-batch)). No runtime implementation was found in the owning files, integrations or realtime modules on any of the three platforms; their rows stay `U` until a batch below records evidence. Reserved READMEs are not implementations. Identity export code and Agent parser/tool files have appeared in separate work and are preserved, but their existence alone is not client integration or verification. The 21 original source fingerprints match the previously completed full chapter review; this batch reused that review and rechecked the current catalog, implementation paths and owning scheduling/client contracts, not a new line-by-line reread of every Markdown file.
 
 ## Source Map
 
@@ -64,19 +66,19 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| community.pages | U/U/U | Public page list/detail and lifecycle |
-| community.page-onboarding | U/U/U | Explicit page creation and publication review |
-| community.page-roles | U/U/U | Actual human plus acting page, target-aware role changes |
+| community.pages | P/P/P | Public page detail by handle, signed-out reads, owner edits with reviewed version; archive/delete/lifecycle remain |
+| community.page-onboarding | P/P/P | Explicit page creation (handle/name/topic/description) with exact retry; publication review remains |
+| community.page-roles | U/U/U | Owner only today; editors/admins, acting-page attribution and target-aware role changes remain |
 | community.page-membership | U/U/U | Admission separate from following |
-| community.following | U/U/U | Follow/unfollow and current audience checks |
-| community.posts-drafts | U/U/U | Private drafts, explicit publish, author edits and history |
+| community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following |
+| community.posts-drafts | P/P/P | Private drafts, explicit publish, owner edits (edited mark) on web and Android ([T31](TASKS.md#approved-requirements-not-built-yet)), tombstone delete; revision history remains |
 | community.publication-review | U/U/U | Exact revision/media clearance, withdraw and remoderation |
 | community.media-posts | U/U/U | Safe ready media with compatible audience |
-| community.comments-replies | U/U/U | Bounded threads, author edits, attributed moderation, locks |
-| community.reactions | U/U/U | Idempotent reactions and repairable counts |
+| community.comments-replies | P/P/P | Comments with one reply level, exact retry, author delete, page-owner removal; edits/locks remain |
+| community.reactions | P/P/P | One idempotent like per person with exact counts; other reaction types remain |
 | community.shares | U/U/U | References respect current source audience; no private-to-public leak |
-| community.saved-posts | U/U/U | Personal saves, not public interest/visibility consent |
-| community.topics-hashtags | U/U/U | Controlled taxonomy and public topic views |
+| community.saved-posts | P/P/P | Private saves list, never a public signal |
+| community.topics-hashtags | P/P/P | Ten fixed page topics with topic filter; hashtags and topic pages remain |
 | community.page-analytics | U/U/U | Authorized aggregate analytics and small-cohort privacy |
 | community.scheduled-publication | U/U/U | Reviewed source version and current authority at execution |
 
@@ -84,18 +86,18 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Implemented boundary or remaining work |
 | --- | --- | --- |
-| spaces.family | P/P/P | Create/list/detail; full settings/lifecycle remain |
+| spaces.family | P/P/P | Create/list/detail and reviewed owner-only name settings; broader settings/lifecycle remain |
 | spaces.couple | U/U/U | Exactly two active human partners, explicit acceptance and separation rules |
-| spaces.solo | U/U/U | Exactly one human owner; no invitation backdoor |
-| spaces.custom | U/U/U | Reviewed membership/features/policy configuration |
+| spaces.solo | P/P/P | Explicit creation, private tasks/reminders/calendar/name settings, database-enforced single owner, no invitations/transfers/conversion; native device qualification open |
+| spaces.custom | P/P/P | Group Spaces, private by default and optionally public ([DEC-011](DECISIONS.md#accepted-decisions)); owner and member roles only; reviewed per-group features and policy remain |
 | spaces.temporary-event | U/U/U | Explicit expiry, read-only/archive and retained-data policy |
 | spaces.invitations | P/P/P | Existing verified account, inbox/review/accept/decline/revoke; no external contact send |
 | spaces.admission | P/P/P | Exact admission epochs, new invitation for return, no old task grants |
 | spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; delegated roles and restrictions remain |
-| spaces.join-requests | U/U/U | Explicit requests, approved admission and expiry |
+| spaces.join-requests | P/P/P | Requests to public groups with an optional note, owner approval as a new admission, withdrawal, 14-day expiry and a 7-day wait after a decline ([T22](TASKS.md#spaces)) |
 | spaces.ownership-transfer | P/P/P | Two-party exact review and one-owner continuity; native device evidence pending |
 | spaces.history-policy | P/P/P | Creation-time task grants; configurable history sharing not implemented |
-| spaces.privacy | P/P/P | Private family scope; per-object/field consent controls remain |
+| spaces.privacy | P/P/P | Family and solo always private; a public group shows only name, description and member count, never content or members; per-object/field consent controls remain |
 | spaces.conversion | U/U/U | Reviewed type/capacity/audience migration, never automatic history sharing |
 | spaces.archive-expiry | U/U/U | Current gates for archive/restore/expiry, no revived jobs or invites |
 
@@ -103,15 +105,15 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| messaging.direct-conversations | U/U/U | Explicit participants, blocks and account/admission isolation |
-| messaging.group-conversations | U/U/U | Conversation access distinct from Space membership |
-| messaging.messages | U/U/U | Durable message/outbox commit, immutable send identity, attributed sender |
-| messaging.offline-outbox | U/U/U | Crash-safe pending command, explicit reconciliation after unknown acceptance |
-| messaging.history-sync | U/U/U | Current-authorized history and coherent snapshot/event cursor |
-| messaging.delivery-read-receipts | U/U/U | Accepted, received, decrypted, read and business acknowledgment distinct |
-| messaging.unread-counts | U/U/U | Eligible unread coverage, not sequence subtraction |
+| messaging.direct-conversations | P/P/P | Two current members of one Space, bound to both admissions; read-only after either leaves. Blocks, cross-Space contacts remain |
+| messaging.group-conversations | P/P/P | One Space chat per Space for current members; custom groups and conversation-specific membership remain |
+| messaging.messages | P/P/P | Durable message + outbox commit, immutable send key, attributed sender, server-side encryption at rest (not E2E) |
+| messaging.offline-outbox | U/U/U | Crash-safe pending command, explicit reconciliation after unknown acceptance (current retry identity is in memory only) |
+| messaging.history-sync | P/P/P | Admission-bounded history, position paging and bounded polling; event cursor/WebSocket sync remains |
+| messaging.delivery-read-receipts | U/U/U | Accepted, received, decrypted, read and business acknowledgment distinct (only own read position exists) |
+| messaging.unread-counts | P/P/P | Per-admission forward-only read position; excludes own and deleted messages |
 | messaging.typing-presence | U/U/U | Ephemeral privacy-aware leases; no availability guarantees |
-| messaging.edits-deletion | U/U/U | Author edit, moderator removal and local hide distinct; no remote recall promise |
+| messaging.edits-deletion | P/P/P | Author delete-for-everyone tombstone with audit, no recall; edits, moderator removal and local hide remain |
 | messaging.threads-replies | U/U/U | Same-conversation references and current history authorization |
 | messaging.attachments | U/U/U | Immutable file version, mode-aware safety and key handling |
 | messaging.encryption-modes | U/U/U | Maintained reviewed protocol; no homemade crypto or plaintext fallback |
@@ -126,10 +128,10 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | planning.tasks | P/P/P | Create/list/detail/edit/progress/complete/reopen/cancel; wider lifecycle remains |
 | planning.assignments | P/P/P | Eligible original audience only; owner cannot bypass task history |
 | planning.due-dates | P/P/P | Calendar date, not a timed reminder or timezone-shifted instant |
-| planning.checklists | U/U/U | Stable items, concurrent edits and actual completion attribution |
+| planning.checklists | P/P/P | Task checklist items (add/rename/remove by task managers, check by assignee) with exact review and retry; verified 2026-09-30 |
 | planning.dependencies | U/U/U | Same-scope acyclic graph and explicit blocked/override behavior |
 | planning.recurring-tasks | U/U/U | Stable occurrences, exceptions and bounded generation |
-| planning.calendar-views | P/P/P | Month agenda over current authorized tasks and personal reminders; web live verified, native built/JVM checked; events/recurrence/external calendars remain |
+| planning.calendar-views | P/P/P | Month agenda over current authorized tasks, personal reminders and the planned times of repeating reminders (computed, not stored; [DEC-010](DECISIONS.md#accepted-decisions)); web live verified, native built/JVM checked; events and external calendars remain |
 | planning.planning-workspaces | U/U/U | Shared operational overview without broadening source permissions |
 
 ### Scheduling and Care
@@ -137,26 +139,26 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | Feature | B/W/A | Implemented boundary or remaining work |
 | --- | --- | --- |
 | scheduling.one-time-reminders | P/P/P | Explicit task-linked personal schedule and independent worker |
-| scheduling.recurrence | U/U/U | Maintained recurrence engine, bounded expansion and reviewed DST policy |
-| scheduling.timezone-dst | P/P/P | One-time gaps rejected, folds explicitly selected; recurrence/travel remain |
-| scheduling.occurrences | P/P/P | One logical one-time delivery; recurring slot/revision/exception model remains |
+| scheduling.recurrence | P/P/P | Provisional ([DEC-010](DECISIONS.md#accepted-decisions)): every 1–30 days or chosen weekdays every 1–4 weeks, one clock time, named timezone, up to a year; reviewed first times; only the next time stored; pause/resume/skip/cancel; web live verified, native built/JVM checked. Wider rules, editing a saved series and a maintained library (C13-D02) remain |
+| scheduling.timezone-dst | P/P/P | One-time gaps rejected, folds explicitly selected. Repeating: a skipped time reminds after the jump or that day is skipped (the person's choice); a repeated time reminds once, the first time. Travel remains |
+| scheduling.occurrences | P/P/P | One logical delivery per one-time reminder and per series date (derived key); at most one late catch-up after downtime; revision model beyond skip-next remains |
 | scheduling.recipient-policy | P/P/P | Self opt-in or explicit assignee acceptance; no owner opt-in for another person |
-| scheduling.exceptions | U/U/U | This occurrence/future series edits and source revision consistency |
-| scheduling.snooze | U/U/U | Separate follow-up, never an inferred extra medication dose |
-| scheduling.acknowledgment | P/P/P | Explicit recipient response, distinct from read/task completion/adherence |
-| scheduling.cancellation | P/P/P | Prevent pending delivery; already committed history cannot be recalled |
+| scheduling.exceptions | P/P/P | Skip the next time, and pause and resume a series (DEC-010). Moving or editing one time or the rest of a series remains |
+| scheduling.snooze | P/P/P | Separate follow-up reminder for 10 minutes, 1 hour, 3 hours or 1 day, at most three, never past the series' next time (DEC-010); web live verified, native built/JVM checked. Not used for care doses |
+| scheduling.acknowledgment | P/P/P | Explicit recipient response, distinct from read/task completion/adherence; acknowledging one reminder settles its snooze chain |
+| scheduling.cancellation | P/P/P | Prevent pending delivery; already committed history cannot be recalled. Cancelling a series stops its future times and a waiting snooze |
 | scheduling.quiet-hours | U/U/U | Recipient-local windows, DST and expiry; no clinical rescheduling |
 | scheduling.escalation | U/U/U | Bounded consented steps, stop races and no emergency guarantee |
-| scheduling.care-instruction-records | U/U/U | Confirmed human/professional instructions, subject authority and sensitive-data gates |
+| scheduling.care-instruction-records | P/P/P | Instructions only the person can see, confirmed by them with a named source; day plan; self-reported taken/skipped notes. Caregiver grants, notifications at dose times and approval of medical, legal and privacy rules (Q12) remain |
 
 ### Events
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| events.shared-events | U/U/U | Versioned event time/location/audience and explicit review |
+| events.shared-events | P/P/P | Space events with title, details, location, IANA zone and exact UTC start/end; reviewed edit and cancel. Public events and organizer workspaces remain |
 | events.public-events | U/U/U | Public projection excludes private workspace/roster/finance |
 | events.organizer-workspaces | U/U/U | Role-scoped event modules |
-| events.rsvp | U/U/U | Response separate from admission, reservation and attendance |
+| events.rsvp | P/P/P | Going/Maybe/Not going per admission; a response is intent, not attendance. Invitations to people outside the Space remain |
 | events.registration-capacity | U/U/U | Serialized capacity including guests and idempotent reservations |
 | events.waitlists | U/U/U | Explicit promotion/expiry/release |
 | events.attendance | U/U/U | Attributed check-in, not inferred from Going |
@@ -164,7 +166,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | events.budgets | U/U/U | Estimated/proposed/approved/actual amounts distinct |
 | events.expenses | U/U/U | Exact money/currency, correction history and protected evidence |
 | events.contributions | U/U/U | Pledges/reported/verified receipt/refund distinct; no implied payment |
-| events.cancellation-postponement | U/U/U | Coordinated stop/version changes without invented refunds or completion |
+| events.cancellation-postponement | P/P/P | Cancel stops responses; a changed time marks earlier responses as needing confirmation. Dependent reminders/tasks/calendar entries are not coordinated yet |
 | events.event-permissions | U/U/U | Location, participants, polls, files and finance audiences independent |
 
 ### Notifications
@@ -229,10 +231,10 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| discovery.public-search | U/U/U | Public eligible content only, bounded search and safe highlights |
+| discovery.public-search | P/P/P | Page search over name/handle/description with literal wildcards, topic filter and bound cursors; post search over title and text, literal, newest first, drafts and blocked pages excluded ([T29](TASKS.md#approved-requirements-not-built-yet)); relevance ranking and highlights remain |
 | discovery.private-scoped-search | U/U/U | Separate current-authorized private query |
-| discovery.home-feed | U/U/U | Public feed and separately authorized private modules |
-| discovery.following-feed | U/U/U | Current follow/audience/blocks/mutes |
+| discovery.home-feed | P/P/P | Following / Latest / Saved public feeds; no private modules or private signals |
+| discovery.following-feed | P/P/P | Current follows only, blocked pages excluded, newest first; mutes remain |
 | discovery.topics | U/U/U | Public taxonomy and topic results |
 | discovery.local-discovery | U/U/U | Coarse explicit region, no precise/private location inference |
 | discovery.trending | U/U/U | Eligible public aggregates with cohort/abuse limits |
@@ -247,8 +249,8 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| safety.reports | U/U/U | Durable private report receipt, not a finding |
-| safety.blocking | U/U/U | Explicit identity/resource effects across communication and discovery |
+| safety.reports | P/P/P | Page/post/comment reports with fixed reasons, one open report per target, daily bound and outbox event; no reviewer tools, decisions or notices yet |
+| safety.blocking | P/P/P | Block pages (hidden everywhere, follow ended) and comment authors (comments hidden, cannot comment on your pages); messaging blocks remain |
 | safety.muting | U/U/U | Personal notification/feed preference, not send restriction |
 | safety.moderation-cases | U/U/U | Scoped evidence, actual human decisions and notices |
 | safety.policies | U/U/U | Versioned applicable rules and governed publication |
@@ -297,10 +299,10 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | platform.transactional-outbox | P/U/U | Database effects/audit/outbox; general fanout remains |
 | platform.durable-jobs | P/U/U | Identity mail and task reminders; other workers remain |
 | platform.worker-recovery | P/U/U | Bounded retries, suppression and local restart checks |
-| platform.observability | P/U/U | Limited diagnostics; private-safe metrics/SLOs/on-call remain |
-| platform.rate-limits | P/P/P | Local bounded inputs/quotas; full abuse controls remain |
+| platform.observability | P/P/U | Request logs without private data, W3C trace IDs from the web proxy to the API and a key-protected `/metrics` (T09), with waiting and failed background work per queue (T32); collector, dashboards, alerts, SLOs, on-call, traces into workers and native trace context remain |
+| platform.rate-limits | P/P/P | Local bounded inputs/quotas; sign-in limits per email and per network, with each web browser's network named by the web proxy behind a trusted reverse proxy (T10); full abuse controls remain |
 | platform.feature-gates | P/P/P | Development-only configuration; governed release gates remain |
-| platform.backup-restore | P/U/U | Recorded isolated local restore; production/PITR/key custody not qualified |
+| platform.backup-restore | P/U/U | Recorded isolated local restore and staged local key rotation (T11); production/PITR/key custody not qualified |
 | platform.deployment | P/P/P | Local builds/Compose; no production deployment |
 | platform.design-system | P/P/P | Existing operational styles and Compose theme; wider components remain |
 | platform.accessibility | U/P/P | Some measured narrow/large-text checks; full assistive technology review remains |
@@ -309,9 +311,9 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 ## Screens and Navigation
 
-Current manual surfaces: sign-in, registration, proof verification/recovery, account/profile/timezone, sessions/security activity, family Space list/create/detail, invitation inbox/review/sent history, member roster/remove/leave/ownership review, tasks/list/detail/editor/status, reminder preview/request/acceptance/list/cancel, private notification inbox/read/ack and preferences. Web routes include `/login`, `/register`, `/recover`, `/app/settings/account`, `/app/spaces`, `/app/tasks`, `/app/reminders`, `/app/notifications`.
+Current manual surfaces: sign-in, registration, proof verification/recovery, account/profile/timezone, sessions/security activity, family/Solo Space list/create/detail/name settings, invitation inbox/review/sent history, member roster/remove/leave/ownership review, tasks/list/detail/editor/status/checklist, calendar agenda, reminder preview/request/acceptance/list/cancel, private notification inbox/read/ack and preferences, conversation list, Space chat and direct messages. Web routes include `/login`, `/register`, `/recover`, `/app/settings/account`, `/app/spaces`, `/app/tasks`, `/app/calendar`, `/app/reminders`, `/app/notifications`, `/app/messages`.
 
-Still required: usable Home and Discover; public page/post/comment/topic/search/detail/editor flows; complete Space type/settings/history/lifecycle screens; direct/group conversation list/chat/info/key/device/recovery views; calendar/occurrence/event/RSVP/poll/budget views; file picker/progress/quarantine/viewer/shares; safety/report/block/appeal; privacy/export/delete; native deep links and durable offline recovery. Do not add navigation to empty mock pages or label unavailable encryption as secure.
+Still required: usable Home and Discover; public page/post/comment/topic/search/detail/editor flows; complete Space type/settings/history/lifecycle screens; conversation info/key/device/recovery views; calendar/occurrence/event/RSVP/poll/budget views; file picker/progress/quarantine/viewer/shares; safety/report/block/appeal; privacy/export/delete; native deep links and durable offline recovery. Do not add navigation to empty mock pages or label unavailable encryption as secure.
 
 Every implemented screen must handle loading, empty, failed, denied, offline, stale/conflicting, uncertain command outcome, unsaved edits and account change where applicable. Keep exact selected person/Space/source/time in confirmation. Use visible canonical outcomes, accessible controls, large text, keyboard/IME handling and stable responsive layouts.
 
@@ -327,6 +329,8 @@ Use the existing stack, not a rewrite: Python/FastAPI/Pydantic/SQLAlchemy/Alembi
 | Local services | [Compose](../infra/compose.yaml): PostgreSQL 17 and local Mailpit; separate API/mail/reminder workers. No cloud/provider migration or paid service was added. |
 
 No new dependency was needed for the calendar. Browser Intl, Java time, Python zoneinfo and PostgreSQL timezone handling are used for their existing supported date/time roles; this is not a handwritten recurrence or encryption engine.
+
+Repeating reminders ([DEC-010](DECISIONS.md#accepted-decisions)) compute their times with a small standard-library rule over Python zoneinfo, for daily and weekly rules only; no rule text is parsed. Choosing a maintained recurrence library is still open (C13-D02).
 
 Room, WorkManager, a maintained recurrence library, reviewed E2E protocol implementation, object storage/scanning, realtime infrastructure and external providers are added only for their real feature requirements. Do not introduce placeholder dependencies or claim a protocol works from an interface. Agent/LangGraph/model integration is deferred. Manual tasks, calendar and reminders must keep working without any model.
 
@@ -370,6 +374,76 @@ Implemented this batch: an authorized calendar agenda over existing date-only ta
 
 The first live browser run exposed a real paused-offline-query defect: explicit refresh did not produce an error because TanStack Query paused it. Calendar reads now use `networkMode: always`; the live rerun passed offline failure/hiding. A later test-only navigation ambiguity was corrected by waiting for the Tasks page before resolving a title shared with the calendar. Neither failed run is counted as a pass.
 
-Preview: `http://127.0.0.1:3007/app/calendar`. Local synthetic accounts only. The independent testing handoff should first qualify the native calendar on an owned disposable device, verify large text/TalkBack/date picker/back navigation, then process-death/account switching and current-grant revocation. The remaining 190-group ledger is not closed by this calendar batch.
+Historical calendar preview: port 3007. The current settings build also serves `/app/calendar` on port 3008. Local synthetic accounts only. The independent testing handoff should first qualify the native calendar on an owned disposable device, verify large text/TalkBack/date picker/back navigation, then process-death/account switching and current-grant revocation. The remaining 190-group ledger is not closed by this calendar batch.
 
-No full-product or production completion is claimed. Each batch below must record changed paths, exact checks actually run, results, screenshots when applicable, and remaining gaps; the independent testing agent receives these boundaries rather than a blanket 'done'.
+## Space Name Settings Batch
+
+Implemented on 2026-09-28: owner-only name editing through a fresh settings review on backend, web and Kotlin Android. The name is the only accepted input. Space type, privacy, membership, task grants, reminders and history do not change. This is a local implementation choice under the existing Space contract, not approval of broader lifecycle policy.
+
+- [Service](../backend/app/modules/spaces/service.py) and [migration 0011](../backend/migrations/versions/0011_space_settings.py): `GET/PATCH /v1/spaces/{space_id}/settings`. PATCH requires a UUID `Idempotency-Key` and exact `If-Match` from the owner review. Account/Space/member locks, post-wait session revalidation, name/version, actual-actor audit/outbox and admission-bound receipt form one transaction. An identical committed retry returns current settings without restoring an older name. Changed intent conflicts; missing/stale review returns 428/412; nonowners and old admissions cannot retrieve settings receipts. At most 500 retained rename receipts per Space is a local bound.
+- Pending, unexpired invitations or ownership offers block new renames with `SPACE_REVIEW_PENDING`. Resolve or withdraw those reviews first. A rename never silently changes the Space name under a pending admission/ownership review. Expired pending rows do not block; successful old-command reconciliation does not perform another rename.
+- [Web editor](../web/src/features/spaces/settings.tsx): owner settings icon in `/app/spaces`, exact Space/current-name review, draft protection, immutable uncertain retry, explicit discard/reload after conflict and server-canonical result. BFF permits only authenticated GET/PATCH at this route and rejects query injection. Private cache keys include account and Space; denied settings are hidden.
+- [Native editor](../android/app/src/main/java/com/community/platform/feature/spaces/SpaceSettingsScreen.kt): entry from owner Space details; isolated Hilt repository/ViewModel, retained draft, explicit retry/conflict reload, account-generation cancellation and denied-state clearing. Leaving an uncertain command warns that the in-memory retry identity will be lost. No process-death persistence or offline mutation queue is claimed.
+
+| Fresh check | Observed result |
+| --- | --- |
+| PostgreSQL settings-specific | 13 passed, including strict names/extra-field rejection, owner/member scope, pending review expiry, replay/current-state, replaced admission, ownership loss, concurrent retry, audit rollback and preserving migration. |
+| Combined Space/migration suite | **110 passed**, 127.29 s; `backend/.local/space-settings-backend-20260928.xml`. This is the affected suite, not a full backend run. |
+| Web client/BFF suite | **38 passed**, including two new settings checks. Simulated transport, not 38 live journeys. |
+| Live browser/BFF/API/database | **1 passed**, 9.678 s; `.local/space-settings-live-web.xml`. Two real synthetic accounts, dropped committed PATCH response/exact retry/version increment once, stale draft kept until explicit discard/reload, persistence, member-visible name/no owner controls, 320/390/768 dialog bounds. Captures: `.local/screenshots/space-settings-live-desktop.png` and `space-settings-live-mobile.png`. |
+| Native affected JVM suites | **47 passed**: Space repository 20, Space ViewModel 21, new settings 6; no failures/errors/skips. Includes actual Retrofit encoding with intercepted responses, uncertainty, conflicts, lost access and late account response checks. |
+| Native/web builds | Isolated web production build and TypeScript passed. Android app/test APKs and lint passed: zero errors, 11 existing warnings. DTOs use the existing Space shrinker keep rule; no new dependencies. |
+
+Native settings and calendar device journeys, large text/TalkBack/IME/back-navigation, release runtime and process-death recovery remain for the independent qualification workstream. No device was installed or operated in this batch. The failed native duplicate-declaration edit was removed and recompiled; the first live test failed on a screenshot-path variable shadow, fixed before the complete passing rerun. Neither failure is counted as success.
+
+Current preview: `http://127.0.0.1:3000/app/spaces`. Open an owner's Space settings icon. Migration 0011 was applied without a database/key reset. The regenerated [OpenAPI](../packages/openapi/openapi.json) also incorporates the earlier implemented calendar and separate export routes; no existing operation/schema semantics were changed in that settings export. Agent files, original chapters and proposed decisions were not edited; no commit, push, provider sends or production deployment was performed.
+
+## Solo Spaces Batch
+
+Solo now has explicit creation on web and Android using the same private Space, task, calendar and reminder authorities. A Solo Space admits only its human owner. Invitation creation, persisted-invitation acceptance and ownership transfer are refused. There is no conversion, self-leave, second-person grant or implicit sharing. Migration `0012` adds commit-time database triggers that enforce exactly one active creator-owner and reject type changes, including direct database bypass attempts. Downgrading to a family-only schema refuses to discard retained Solo data.
+
+Creation keys bind name and type; both clients retain them unchanged across uncertain responses. Solo screens identify the type and hide family admission/member-management controls. Owner-only name settings work unchanged; tasks use the original admission grants and date-only semantics, and reminders remain personal. Internal `FamilySpace` type names retained for compatibility do not limit the new supported wire type.
+
+Evidence on 2026-09-28: **167 backend Space/task/migration tests passed** in 232.50 s (`backend/.local/solo-backend-20260928.xml`), including five Solo cases for owner capacity, direct-write rejection, privacy, task/calendar/reminder reuse and invalid invitation acceptance. **75 native JVM checks passed**, zero failures/errors/skips (Space repository 21, Space ViewModel 22, settings 6, task repository 14, task ViewModel 12). App/test APK builds and lint passed with zero errors and 11 existing warnings. Native device behavior remains unverified.
+
+The real Solo journey passed once on the earlier preview (8.658 s), then Solo and settings both passed again at the required **http://127.0.0.1:3000**, with two tests/zero failures/skips in `.local/solo-settings-port3000.xml`. The canonical-port checks cover dropped committed creation response with exact type/key/body retry, owner rename, task creation, calendar date/zone/source integration, persistence and absent family controls. Reminder setup in this journey uses the real API, not the reminder creation screen; existing reminder UI evidence is separate. Browser captures are `.local/screenshots/solo-calendar-live-desktop.png` and `solo-space-live-mobile.png`. The missing first Solo test selection was detected, its absent test body restored, and only the actual passing runs are counted.
+
+No Agent runtime, new third-party provider or production data was introduced. Couple/custom/temporary lifecycle, conversion, wider history policy and the remaining ledger are still open. Implementation continues from the next manual planning gap; this batch does not close the whole product.
+
+No full-product or production completion is claimed. Each batch must record changed paths, exact checks actually run, results, screenshots when applicable, and remaining gaps; the independent testing agent receives these boundaries rather than a blanket 'done'.
+
+## Space Chat And Direct Messages Batch
+
+Implemented 2026-09-28 to 2026-09-30 on backend, web and Kotlin Android. Evidence and bounds: [build status checkpoint](BUILD_STATUS.md#space-chat-and-direct-messages-checkpoint).
+
+- Backend [messaging module](../backend/app/modules/messaging/service.py) and [migration 0014](../backend/migrations/versions/0014_conversations.py): `POST /v1/spaces/{space_id}/conversations` (open the Space chat or a direct conversation), `GET /v1/conversations` (paged, total `unread_count`), `GET /v1/conversations/{id}`, `GET/POST /v1/conversations/{id}/messages` (position paging `before`/`after`; send with `Idempotency-Key`), `POST .../messages/{message_id}/delete`, `POST .../read`. All require a session; the actor is derived server-side.
+- Web [messages screen](../web/src/features/messaging/messages-screen.tsx) at `/app/messages` (header icon and per-Space chat link): Space choice, Space chat and direct-message buttons, conversation list with unread badges, chat pane with protection notice, history note, earlier pages, pending/unknown/failed sends, delete confirmation, read-only notice. The BFF allows exactly the seven operations and only the reviewed query parameters.
+- Android [messaging feature](../android/app/src/main/java/com/community/platform/feature/messaging/MessagingScreen.kt): **Messages** on the account screen and **Space chat** in Space details; same rules as web, account-generation isolation, polling only while visible, and a 512 KiB response cap for message pages.
+- Rules kept: history from the current admission only; no old messages after rejoin; outsiders see 404; read state per admission; deletion does not recall seen copies; server-readable storage is labeled as such. Open: E2E protocol and device keys, WebSocket/push, offline outbox, edits, reactions, attachments, reporting of messages, native device qualification.
+
+## Public Community Batch
+
+Implemented 2026-09-30 on backend, web and Kotlin Android. Evidence: [build status checkpoint](BUILD_STATUS.md#public-community-checkpoint).
+
+- Backend [community module](../backend/app/modules/community/service.py) and [migration 0015](../backend/migrations/versions/0015_public_community.py): 29 operations. Signed-out reads: `GET /v1/pages/{page_ref}`, `.../posts`, `GET /v1/posts/{post_id}`, `.../comments`, `GET /v1/discover/pages`, `GET /v1/discover/posts`; a valid session adds the viewer's follow/like/save/block state. Everything else needs a session: page create/edit/follow, post draft/edit/publish/delete, like/save, comments, feed, saved list, reports and blocks.
+- Web: `/app/home` (Following, Latest, Saved), `/app/discover`, `/app/pages` (your pages, create page, pages you follow), `/app/safety` (blocked list), and public `/pages/[handle]` and `/posts/[id]`, which work signed out. Android: **Community** on the account screen with Home, Discover, Your pages, Blocked, page and post screens.
+- Rules kept: drafts are visible only to the page owner; publishing needs an explicit confirmation of the reviewed version; creates keep one key across retries; counts change only when the state changes; page owners never see who reported them; blocked pages disappear from every feed and search for the blocker; private Spaces, chats, tasks and reminders never enter these queries. No account IDs appear in public responses.
+- Open: page roles/editors, media, shares, hashtags/topic pages, scheduled publication, trending/local/personalized ranking, mutes, moderator case tools and appeals, server-rendered public pages for search engines, native device qualification.
+
+## Space Events And RSVP Batch
+
+Implemented 2026-09-30 to 2026-10-01 on backend, web and Kotlin Android. Evidence: [build status checkpoint](BUILD_STATUS.md#space-events-and-rsvp-checkpoint).
+
+- Backend [events module](../backend/app/modules/events/service.py) and [migration 0017](../backend/migrations/versions/0017_space_events.py): `POST/GET /v1/spaces/{space_id}/events` (create with `Idempotency-Key`; list `upcoming`/`past`, paged), `GET/PATCH /v1/events/{event_id}` (edit with reviewed `If-Match`), `POST .../cancel` (`If-Match`), `POST .../attendance`. All require a session; the actor is derived server-side.
+- Web `/app/events?space_id=` (icon on each Space row) and Android **Events** on the Space detail screen: upcoming/past lists, detail with responses, create/edit form, cancel confirmation, exact-retry handling for an unconfirmed create.
+- Rules kept: a member sees only events created since their current admission; the wall-clock time and zone the organizer typed are kept and the exact UTC instant is stored; a time that does not exist (clocks forward) or happens twice (clocks back) is refused so nobody is guessed for; a past, more than two-year-out or longer than 14-day event is refused; a response is per admission and stops counting when the person leaves; a reschedule marks earlier responses as needing confirmation; cancelled or ended events refuse responses and edits; only the organizer (same admission) or the Space owner can edit or cancel. Bounds: 500 events and 100 upcoming per Space.
+- Open: invitations beyond Space members, public events, capacity/waitlists, guests, check-in, polls, budgets, expenses, recurring events, reminders tied to an event, calendar agenda entries for events, editing multi-day events on Android, native device qualification.
+
+## Care Batch
+
+Backend by a separate care workstream; web and Android screens built 2026-10-01 and kept by [DEC-007](DECISIONS.md#accepted-decisions). Evidence: [build status checkpoint](BUILD_STATUS.md#care-checkpoint).
+
+- Backend [care module](../backend/app/modules/care/service.py) and [migration 0016](../backend/migrations/versions/0016_care_instructions.py): create an instruction (`Idempotency-Key`, `confirmed: true` required), list current or stopped, read one, stop with `If-Match`, report a dose as taken or skipped with `If-Match`, and a day view.
+- Web `/app/care` (Medicines in the header) and Android **Medicines** on the account screen: day plan with previous/next day, medicines list with current and stopped, an add form that copies details exactly and requires a confirmation tick, taken/skipped notes with exact retry, and a stop confirmation that says it does not tell you to stop taking the medicine.
+- Rules kept: only the person can read or change their records, with no caregiver, owner or administrator path; the source is recorded (prescriber, pharmacist, package label or self); the app gives no advice and does not check the instructions; up to six daily times in a named zone; a time skipped by a clock change is shown at its shifted time, and a repeated time uses the first occurrence; notes are self-reports, not adherence. Bounds: 30 current and 500 total instructions, 20 new per day.
+- Open: who approves the medical, legal and privacy rules (Q12); caregiver access by grant; notifications at dose times; editing an instruction (stop and re-add today); native device qualification.

@@ -3,14 +3,25 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 from app.modules.identity.schemas import Envelope, Input
 
 
+def clean_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.replace("\r\n", "\n").strip()
+    if any(character != "\n" and unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError("Remove control and text-direction characters.")
+    return value
+
+
 class CreateSpace(Input):
     name: str = Field(min_length=1, max_length=80)
-    space_type: Literal["family"]
+    space_type: Literal["family", "solo", "group"]
+    visibility: Literal["private", "public"] = "private"
+    description: str = Field(default="", max_length=280)
 
     @field_validator("name")
     @classmethod
@@ -20,16 +31,51 @@ class CreateSpace(Input):
             raise ValueError("Enter a Space name without control characters.")
         return value
 
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, value: str) -> str:
+        return clean_text(value)
+
+    @model_validator(mode="after")
+    def only_groups_are_public(self):
+        if self.visibility == "public" and self.space_type != "group":
+            raise ValueError("Only group Spaces can be public.")
+        return self
+
+
+class EditSpaceSettings(Input):
+    name: str = Field(min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=280)
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        return CreateSpace.valid_name(value)
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, value: str | None) -> str | None:
+        return clean_text(value)
+
+
+class ChangeSpaceVisibility(Input):
+    visibility: Literal["private", "public"]
+
 
 class SpaceView(BaseModel):
     id: str
     name: str
-    space_type: Literal["family"]
-    visibility: Literal["private"]
+    description: str
+    space_type: Literal["family", "solo", "group"]
+    visibility: Literal["private", "public"]
     status: Literal["active"]
     role: Literal["owner", "member"]
     version: str
     created_at: datetime
+
+
+class SpaceSettingsView(SpaceView):
+    etag: str
 
 
 class SpaceMemberView(BaseModel):
@@ -64,6 +110,62 @@ class SpaceCursor(Input):
     account_id: UUID
     after_id: UUID
     expires_at: AwareDatetime
+
+
+class SpaceDirectoryEntry(BaseModel):
+    id: str
+    name: str
+    description: str
+    member_count: int
+    viewer_role: Literal["owner", "member"] | None
+    pending_request_id: str | None
+    can_request: bool
+
+
+class SpaceDirectoryPage(Envelope[list[SpaceDirectoryEntry]]):
+    pagination: Pagination
+
+
+class SpaceDirectoryCursor(Input):
+    kind: Literal["space_directory"]
+    account_id: UUID
+    query: str
+    after_created_at: AwareDatetime
+    after_id: UUID
+    expires_at: AwareDatetime
+
+
+class CreateJoinRequest(Input):
+    note: str = Field(default="", max_length=280)
+
+    @field_validator("note")
+    @classmethod
+    def valid_note(cls, value: str) -> str:
+        return clean_text(value)
+
+
+class JoinRequestAction(Input):
+    pass
+
+
+class JoinRequestView(BaseModel):
+    id: str
+    space_id: str
+    space_name: str
+    note: str
+    status: Literal["pending", "approved", "declined", "cancelled", "closed", "expired"]
+    created_at: datetime
+    expires_at: datetime
+    resolved_at: datetime | None
+
+
+class JoinRequestReview(BaseModel):
+    id: str
+    account_id: str
+    display_name: str
+    note: str
+    created_at: datetime
+    expires_at: datetime
 
 
 class CreateInvitation(Input):

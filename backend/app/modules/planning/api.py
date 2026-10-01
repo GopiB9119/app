@@ -7,6 +7,8 @@ from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.planning.schemas import (
     AssigneeView,
+    ChecklistCommand,
+    ChecklistView,
     ChangeTaskStatus,
     CreateTask,
     EditTask,
@@ -54,6 +56,17 @@ def task_assignees(request: Request, space_id: UUID, task_id: UUID | None = None
 @router.get("/{task_id}", response_model=Envelope[TaskView])
 def read_task(request: Request, response: Response, task_id: UUID):
     return task_response(request, response, request.app.state.tasks.read(token(request), str(task_id)))
+
+
+@router.get("/{task_id}/checklist", response_model=Envelope[ChecklistView])
+def read_checklist(request: Request, task_id: UUID):
+    return envelope(request, request.app.state.checklists.read(token(request), str(task_id)))
+
+
+@router.post("/{task_id}/checklist", response_model=Envelope[ChecklistView])
+def change_checklist(request: Request, task_id: UUID, body: ChecklistCommand,
+                     idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.checklists.mutate(token(request), str(task_id), body, str(idempotency_key), if_match))
 
 
 @router.patch("/{task_id}", response_model=Envelope[TaskView])

@@ -35,6 +35,8 @@
 .sourceZone { color: #637067; font-size: 14px; margin: 6px 0; overflow-wrap: anywhere; }
 .sourceLink { min-height: 44px; color: #176047; font-weight: 600; }
 .empty { padding: 24px 0; color: #52615a; }
+.fileCopy { margin-top: 20px; padding-top: 16px; border-top: 1px solid #d9e1dc; }
+.fileCopy p { margin: 8px 0 0; color: #52615a; font-size: 14px; }
 .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 @media (max-width: 760px) { .workspace { grid-template-columns: minmax(0, 1fr); gap: 24px; } .monthGrid { width: 100%; max-width: 420px; } }
 @media (max-width: 440px) { .main { padding: 20px 16px 48px; } .filters { grid-template-columns: minmax(0, 1fr); gap: 14px; } .toolbar { gap: 6px; } .month { flex: 1 1 150px; } .toolbar > button:last-child { margin-top: 6px; } .navigation { gap: 14px; } }

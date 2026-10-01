@@ -30,4 +30,6 @@ Migration `0004` adds task, audience, audit and command-receipt tables with same
 
 Source chapters: 1, 3, 13, 17.
 
+Calendar (`calendar.py`, `GET /v1/calendar`): a month agenda of the caller's authorized task due dates and their own reminders in one Space, with a 15-minute cursor. Since 2026-10-01 it also lists `planned` entries: future times of the caller's active repeating reminders, computed for the requested range and never stored ([DEC-010](../../../../docs/DECISIONS.md#accepted-decisions)).
+
 The [complete feature catalog](../../../../packages/feature-catalog/features.json) retains checklists, dependencies, recurrence, calendar views and broader planning. One-time in-app reminders are the next slice. No clinical, payment, provider, public-history or production policy approval follows from this local implementation.

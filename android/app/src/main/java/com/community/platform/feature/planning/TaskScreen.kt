@@ -102,7 +102,7 @@ data class TaskActions(
 )
 
 @Composable
-fun TaskRoute(viewModel: TaskViewModel, accountId: String, onBack: () -> Unit, onSessionLost: () -> Unit, onRemind: ((TaskRecord) -> Unit)? = null) {
+fun TaskRoute(viewModel: TaskViewModel, accountId: String, onBack: () -> Unit, onSessionLost: () -> Unit, onRemind: ((TaskRecord) -> Unit)? = null, onChecklist: ((TaskRecord) -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
@@ -116,14 +116,14 @@ fun TaskRoute(viewModel: TaskViewModel, accountId: String, onBack: () -> Unit, o
         viewModel::updateFields, viewModel::save, viewModel::closeEditor, viewModel::closeDetail,
         viewModel::proposeStatus, viewModel::confirmStatus, viewModel::cancelStatus,
         viewModel::retry, viewModel::reloadLatest,
-    ), onBack, onRemind)
+    ), onBack, onRemind, onChecklist)
 }
 
 private enum class LocalConfirmation { DISCARD, LEAVE_UNCONFIRMED, RELOAD }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Unit, onRemind: ((TaskRecord) -> Unit)? = null) {
+fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Unit, onRemind: ((TaskRecord) -> Unit)? = null, onChecklist: ((TaskRecord) -> Unit)? = null) {
     var localConfirmation by remember { mutableStateOf<LocalConfirmation?>(null) }
     var choosingSpace by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -147,7 +147,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(if (state.editor != null || state.detail != null) R.string.tasks_back else R.string.tasks_account))
                 }
                 Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
-                    Text(stringResource(R.string.family_tasks), style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(if (state.selectedSpace?.spaceType == "solo") R.string.solo_tasks else R.string.family_tasks), style = MaterialTheme.typography.titleLarge)
                     Text(state.selectedSpace?.name ?: stringResource(R.string.local_environment), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = actions.refresh, enabled = !state.navigationLocked) { Icon(Icons.Default.Refresh, stringResource(R.string.tasks_refresh)) }
@@ -198,7 +198,10 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                                 }
                             }
                         }
-                        detail != null -> item("detail") { TaskDetail(detail, state, actions, onRemind) }
+                        detail != null -> {
+                            item("detail") { TaskDetail(detail, state, actions, onRemind) }
+                            if (onChecklist != null) item("checklist") { OutlinedButton(onClick = { onChecklist(detail) }, enabled = !state.navigationLocked, modifier = Modifier.fillMaxWidth().testTag("task-open-checklist")) { Icon(Icons.Default.Check, null); Text(stringResource(R.string.checklist_title), Modifier.padding(start = 8.dp)) } }
+                        }
                         else -> {
                             item("controls") {
                                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {

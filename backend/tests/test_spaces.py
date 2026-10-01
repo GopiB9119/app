@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.main import create_app
 from app.modules.identity.models import AccountSession, OutboxEvent, User
@@ -17,11 +18,11 @@ from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceInvitation, S
 from .test_identity import account, auth
 
 
-def create_space(client, actor, name="Morgan family", key=None):
+def create_space(client, actor, name="Morgan family", key=None, space_type="family"):
     return client.post(
         "/v1/spaces",
         headers={**auth(actor), "Idempotency-Key": key or str(uuid4())},
-        json={"name": name, "space_type": "family"},
+        json={"name": name, "space_type": space_type},
     )
 
 
@@ -46,6 +47,183 @@ def membership_fixture(client, app):
     assert roster.status_code == 200, roster.text
     reviewed = next(item for item in roster.json()["data"] if item["account_id"] == member["user"]["id"])
     return owner, member, space_id, invitation_id, reviewed
+
+
+def test_solo_space_is_owner_only_and_supports_private_tasks(client, app):
+    from tests.test_tasks import create_task
+
+    owner = account(client, app)
+    other = account(client, app, "solo-other@example.test")
+    key = str(uuid4())
+    created = create_space(client, owner, "My planning", key, "solo")
+    assert created.status_code == 201, created.text
+    space = created.json()["data"]
+    assert space["space_type"] == "solo" and space["role"] == "owner"
+    assert create_space(client, owner, "My planning", key, "solo").json()["data"] == space
+    assert create_space(client, owner, "My planning", key, "family").status_code == 409
+    assert client.get(f"/v1/spaces/{space['id']}", headers=auth(other)).status_code == 404
+    rejected = invite_account(client, owner, space["id"], other["user"]["id"])
+    assert rejected.status_code == 409 and rejected.json()["error"]["code"] == "SOLO_OWNER_ONLY"
+    assert client.post(f"/v1/spaces/{space['id']}/ownership-transfers", headers={**auth(owner), "If-Match": '"review"', "Idempotency-Key": str(uuid4())}, json={"recipient_account_id": other["user"]["id"]}).status_code == 409
+    task = create_task(client, owner, space["id"], owner["user"]["id"])
+    assert task.status_code == 201, task.text
+    assert client.get(f"/v1/tasks/{task.json()['data']['id']}", headers=auth(other)).status_code == 404
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceMembership).where(SpaceMembership.space_id == space["id"])) == 1
+        assert database.scalar(select(func.count()).select_from(SpaceInvitation).where(SpaceInvitation.space_id == space["id"])) == 0
+
+
+@pytest.mark.parametrize("operation", ["extra_member", "remove_owner", "convert"])
+def test_solo_database_constraint_prevents_capacity_and_conversion_bypasses(client, app, operation):
+    owner = account(client, app)
+    other = account(client, app, "solo-constraint@example.test")
+    space_id = create_space(client, owner, "Only me", space_type="solo").json()["data"]["id"]
+    with pytest.raises(IntegrityError):
+        with app.state.sessions.begin() as database:
+            if operation == "extra_member":
+                database.add(SpaceMembership(space_id=space_id, account_id=other["user"]["id"], role="member", status="active", joined_at=app.state.clock(), admission_sequence=2))
+            elif operation == "remove_owner":
+                database.get(SpaceMembership, (space_id, owner["user"]["id"])).status = "removed"
+            else:
+                database.get(Space, space_id).space_type = "family"
+    assert client.get(f"/v1/spaces/{space_id}", headers=auth(owner)).json()["data"]["space_type"] == "solo"
+    assert client.get(f"/v1/spaces/{space_id}", headers=auth(other)).status_code == 404
+
+
+def test_solo_rejects_persisted_invitation_and_keeps_reminders_personal(client, app):
+    from tests.test_tasks import create_task
+
+    owner = account(client, app)
+    other = account(client, app, "solo-invitation@example.test")
+    space_id = create_space(client, owner, "My calendar", space_type="solo").json()["data"]["id"]
+    invitation_id = str(uuid4())
+    with app.state.sessions.begin() as database:
+        database.add(SpaceInvitation(id=invitation_id, space_id=space_id, inviter_id=owner["user"]["id"], recipient_id=other["user"]["id"], request_key=str(uuid4()), status="pending", created_at=app.state.clock(), expires_at=app.state.clock() + timedelta(hours=1)))
+    assert client.post(f"/v1/invitations/{invitation_id}/accept", headers=auth(other), json={}).status_code == 409
+    task = create_task(client, owner, space_id).json()["data"]
+    preview = client.post("/v1/reminders/preview", headers=auth(owner), json={"task_id": task["id"], "local_time": "2026-09-21T10:00", "timezone": "UTC"})
+    assert preview.status_code == 200, preview.text
+    saved = client.post("/v1/reminders", headers={**auth(owner), "Idempotency-Key": str(uuid4())}, json={"preview_token": preview.json()["data"]["options"][0]["preview_token"]})
+    assert saved.status_code == 201, saved.text
+    query = {"space_id": space_id, "start_date": "2026-09-21", "end_date": "2026-09-21", "timezone": "UTC"}
+    rows = client.get("/v1/calendar", headers=auth(owner), params=query)
+    assert rows.status_code == 200, rows.text
+    assert [row["kind"] for row in rows.json()["data"]] == ["task", "reminder"]
+    assert client.get("/v1/calendar", headers=auth(other), params=query).status_code == 404
+    assert client.get("/v1/reminders", headers=auth(other)).json()["data"] == []
+
+
+def test_space_settings_owner_rename_and_exact_retry_preserve_membership(client, app):
+    owner, member, space_id, _invitation, _reviewed = membership_fixture(client, app)
+    path = f"/v1/spaces/{space_id}/settings"
+    review = client.get(path, headers=auth(owner))
+    assert review.status_code == 200, review.text
+    headers = {**auth(owner), "If-Match": review.json()["data"]["etag"], "Idempotency-Key": str(uuid4())}
+    with app.state.sessions() as database:
+        admissions = {item.account_id: item.admission_id for item in database.scalars(select(SpaceMembership))}
+    renamed = client.patch(path, headers=headers, json={"name": "  New family name  "})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["name"] == "New family name"
+    assert int(renamed.json()["data"]["version"]) == int(review.json()["data"]["version"]) + 1
+    repeated = client.patch(path, headers=headers, json={"name": "New family name"})
+    assert repeated.json()["data"] == renamed.json()["data"]
+    assert client.get(path, headers=auth(member)).status_code == 404
+    assert client.patch(path, headers={**headers, **auth(member)}, json={"name": "Forbidden"}).status_code == 404
+    assert client.get(f"/v1/spaces/{space_id}", headers=auth(member)).json()["data"]["name"] == "New family name"
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceAuditEvent).where(SpaceAuditEvent.action == "space.renamed")) == 1
+        assert database.scalar(select(func.count()).select_from(OutboxEvent).where(OutboxEvent.event_type == "space.renamed")) == 1
+        assert admissions == {item.account_id: item.admission_id for item in database.scalars(select(SpaceMembership))}
+
+
+def test_space_settings_preconditions_receipts_and_current_state(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    path = f"/v1/spaces/{space_id}/settings"
+    original = client.get(path, headers=auth(owner)).json()["data"]
+    key = str(uuid4())
+    headers = {**auth(owner), "Idempotency-Key": key}
+    assert client.patch(path, headers=headers, json={"name": "First"}).status_code == 428
+    headers["If-Match"] = original["etag"]
+    first = client.patch(path, headers=headers, json={"name": "First"})
+    assert first.status_code == 200
+    assert client.patch(path, headers=headers, json={"name": "Different"}).status_code == 409
+    assert client.patch(path, headers={**headers, "Idempotency-Key": str(uuid4())}, json={"name": "Stale"}).status_code == 412
+    newer = client.patch(path, headers={**headers, "Idempotency-Key": str(uuid4()), "If-Match": first.json()["data"]["etag"]}, json={"name": "Latest"})
+    assert newer.status_code == 200
+    assert client.patch(path, headers=headers, json={"name": "First"}).json()["data"] == newer.json()["data"]
+    with app.state.sessions.begin() as database:
+        database.get(SpaceMembership, (space_id, owner["user"]["id"])).admission_id = str(uuid4())
+    assert client.patch(path, headers=headers, json={"name": "First"}).status_code == 404
+
+
+@pytest.mark.parametrize("body", [{"name": " "}, {"name": "Bad\nname"}, {"name": "x" * 81}, {"name": None}, {"name": "New", "visibility": "public"}, {"name": "New", "space_type": "solo"}])
+def test_space_settings_rejects_invalid_names_and_authority_fields(client, app, body):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    path = f"/v1/spaces/{space_id}/settings"
+    reviewed = client.get(path, headers=auth(owner)).json()["data"]
+    response = client.patch(path, headers={**auth(owner), "If-Match": reviewed["etag"], "Idempotency-Key": str(uuid4())}, json=body)
+    assert response.status_code == 422, response.text
+    assert client.get(path, headers=auth(owner)).json()["data"] == reviewed
+
+
+@pytest.mark.parametrize("kind", ["invitation", "ownership"])
+def test_space_settings_pending_reviews_block_rename_until_expiry(client, app, kind):
+    owner, member, space_id, _invitation, reviewed = membership_fixture(client, app)
+    if kind == "ownership":
+        pending = client.post(f"/v1/spaces/{space_id}/ownership-transfers", headers={**auth(owner), "If-Match": reviewed["etag"], "Idempotency-Key": str(uuid4())}, json={"recipient_account_id": member["user"]["id"]})
+    else:
+        invitee = account(client, app, "rename-pending@example.test")
+        pending = invite_account(client, owner, space_id, invitee["user"]["id"])
+    assert pending.status_code == 201, pending.text
+    path = f"/v1/spaces/{space_id}/settings"
+    reviewed_name = client.get(path, headers=auth(owner)).json()["data"]
+    headers = {**auth(owner), "If-Match": reviewed_name["etag"], "Idempotency-Key": str(uuid4())}
+    blocked = client.patch(path, headers=headers, json={"name": "New"})
+    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "SPACE_REVIEW_PENDING"
+    with app.state.sessions.begin() as database:
+        pending_row = database.get(OwnershipTransfer if kind == "ownership" else SpaceInvitation, pending.json()["data"]["id"])
+        pending_row.created_at = app.state.clock() - timedelta(days=5)
+        pending_row.expires_at = app.state.clock() - timedelta(seconds=1)
+    assert client.patch(path, headers=headers, json={"name": "New"}).status_code == 200
+
+
+def test_space_settings_concurrent_retry_and_audit_failure(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    path = f"/v1/spaces/{space_id}/settings"
+    original = client.get(path, headers=auth(owner)).json()["data"]
+    headers = {**auth(owner), "If-Match": original["etag"], "Idempotency-Key": str(uuid4())}
+    with app.state.engine.begin() as connection:
+        connection.execute(text("CREATE FUNCTION reject_rename() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'space.renamed' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF; RETURN NEW; END $$"))
+        connection.execute(text("CREATE TRIGGER reject_rename BEFORE INSERT ON domain_outbox FOR EACH ROW EXECUTE FUNCTION reject_rename()"))
+    try:
+        assert client.patch(path, headers=headers, json={"name": "New"}).status_code == 503
+        assert client.get(path, headers=auth(owner)).json()["data"] == original
+        with app.state.sessions() as database:
+            assert database.scalar(text("SELECT count(*) FROM space_settings_commands")) == 0
+    finally:
+        with app.state.engine.begin() as connection:
+            connection.execute(text("DROP TRIGGER reject_rename ON domain_outbox"))
+            connection.execute(text("DROP FUNCTION reject_rename()"))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(lambda _attempt: client.patch(path, headers=headers, json={"name": "New"}), range(3)))
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    assert {response.json()["data"]["version"] for response in responses} == {str(int(original["version"]) + 1)}
+    with app.state.sessions() as database:
+        assert database.scalar(text("SELECT count(*) FROM space_settings_commands")) == 1
+
+
+def test_space_settings_replay_denied_after_ownership_change(client, app):
+    owner, member, space_id, _invitation, reviewed = membership_fixture(client, app)
+    path = f"/v1/spaces/{space_id}/settings"
+    headers = {**auth(owner), "If-Match": client.get(path, headers=auth(owner)).json()["data"]["etag"], "Idempotency-Key": str(uuid4())}
+    assert client.patch(path, headers=headers, json={"name": "Before transfer"}).status_code == 200
+    offer = client.post(f"/v1/spaces/{space_id}/ownership-transfers", headers={**auth(owner), "If-Match": reviewed["etag"], "Idempotency-Key": str(uuid4())}, json={"recipient_account_id": member["user"]["id"]}).json()["data"]
+    assert client.post(f"/v1/spaces/{space_id}/ownership-transfers/{offer['id']}/accept", headers={**auth(member), "If-Match": offer["etag"]}, json={}).status_code == 200
+    assert client.patch(path, headers=headers, json={"name": "Before transfer"}).status_code == 404
+    assert client.get(path, headers=auth(member)).status_code == 200
 
 
 def test_ownership_transfer_needs_recipient_acceptance_and_preserves_one_owner(client, app):
@@ -700,7 +878,8 @@ def test_space_openapi_documents_authentication_and_private_projections(app):
         assert schema["paths"][path][method]["security"] == [{"AccountSession": []}]
     request = schema["components"]["schemas"]["CreateSpace"]
     assert request["additionalProperties"] is False
-    assert request["properties"]["space_type"]["const"] == "family"
+    # DEC-011 added the group type; family and solo keep their existing rules.
+    assert request["properties"]["space_type"]["enum"] == ["family", "solo", "group"]
     assert request["properties"]["name"]["maxLength"] == 80
     response = schema["components"]["schemas"]["SpaceView"]["properties"]
     assert "creation_key" not in response

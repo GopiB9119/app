@@ -6,7 +6,12 @@ from fastapi.security import HTTPBearer
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.spaces.schemas import (
+    ChangeSpaceVisibility,
+    CreateJoinRequest,
     CreateOwnershipTransfer,
+    JoinRequestAction,
+    JoinRequestReview,
+    JoinRequestView,
     OwnershipTransferAction,
     OwnershipTransferPage,
     OwnershipTransferView,
@@ -18,7 +23,11 @@ from app.modules.spaces.schemas import (
     InvitationView,
     MembershipAction,
     MembershipOutcome,
+    SpaceDirectoryEntry,
+    SpaceDirectoryPage,
     SpaceMemberView,
+    EditSpaceSettings,
+    SpaceSettingsView,
     SpacePage,
     SpaceView,
 )
@@ -56,6 +65,20 @@ def list_spaces(
 @router.get("/{space_id}", response_model=Envelope[SpaceView])
 def read_space(request: Request, space_id: UUID):
     return envelope(request, request.app.state.spaces.read(token(request), str(space_id)))
+
+
+@router.get("/{space_id}/settings", response_model=Envelope[SpaceSettingsView])
+def read_space_settings(request: Request, space_id: UUID):
+    return envelope(request, request.app.state.spaces.read_settings(token(request), str(space_id)))
+
+
+@router.patch("/{space_id}/settings", response_model=Envelope[SpaceSettingsView],
+              responses={412: {"model": ErrorEnvelope}, 428: {"model": ErrorEnvelope}})
+def edit_space_settings(request: Request, space_id: UUID, body: EditSpaceSettings,
+                        idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.spaces.edit_settings(
+        token(request), str(space_id), body, str(idempotency_key), if_match,
+    ))
 
 
 @router.post("/{space_id}/ownership-transfers", response_model=Envelope[OwnershipTransferView], status_code=201,
@@ -136,6 +159,78 @@ def revoke_invitation(request: Request, space_id: UUID, invitation_id: UUID, bod
     return envelope(request, request.app.state.spaces.respond_to_invitation(
         token(request), str(invitation_id), "revoke", str(space_id)
     ))
+
+
+@router.post("/{space_id}/visibility", response_model=Envelope[SpaceSettingsView],
+             responses={412: {"model": ErrorEnvelope}, 428: {"model": ErrorEnvelope}})
+def change_visibility(request: Request, space_id: UUID, body: ChangeSpaceVisibility,
+                      idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.space_directory.change_visibility(
+        token(request), str(space_id), body, str(idempotency_key), if_match,
+    ))
+
+
+@router.get("/{space_id}/join-requests", response_model=Envelope[list[JoinRequestReview]])
+def pending_join_requests(request: Request, space_id: UUID):
+    return envelope(request, request.app.state.space_directory.pending(token(request), str(space_id)))
+
+
+@router.post("/{space_id}/join-requests", response_model=Envelope[JoinRequestView], status_code=201)
+def request_to_join(request: Request, space_id: UUID, body: CreateJoinRequest, idempotency_key: UUID = Header()):
+    return envelope(request, request.app.state.space_directory.request_to_join(
+        token(request), str(space_id), body, str(idempotency_key),
+    ))
+
+
+@router.post("/{space_id}/join-requests/{request_id}/approve", response_model=Envelope[JoinRequestView])
+def approve_join_request(request: Request, space_id: UUID, request_id: UUID, body: JoinRequestAction):
+    return envelope(request, request.app.state.space_directory.decide(token(request), str(space_id), str(request_id), "approve"))
+
+
+@router.post("/{space_id}/join-requests/{request_id}/decline", response_model=Envelope[JoinRequestView])
+def decline_join_request(request: Request, space_id: UUID, request_id: UUID, body: JoinRequestAction):
+    return envelope(request, request.app.state.space_directory.decide(token(request), str(space_id), str(request_id), "decline"))
+
+
+def signed_in_router(prefix, tag):
+    return APIRouter(
+        prefix=prefix, tags=[tag],
+        dependencies=[Depends(HTTPBearer(auto_error=False, scheme_name="AccountSession"))],
+        responses={status: {"model": ErrorEnvelope} for status in (400, 401, 404, 409, 410, 422, 503)},
+    )
+
+
+directory_router = signed_in_router("/v1/discover/spaces", "Space directory")
+
+
+@directory_router.get("", response_model=SpaceDirectoryPage)
+def find_groups(
+    request: Request, q: str = Query(default="", max_length=80), limit: int = Query(default=20, ge=1, le=50),
+    cursor: str | None = Query(default=None, max_length=2048),
+):
+    data, pagination = request.app.state.space_directory.directory(token(request), q, limit, cursor)
+    return {**envelope(request, data), "pagination": pagination}
+
+
+@directory_router.get("/{space_id}", response_model=Envelope[SpaceDirectoryEntry])
+def preview_group(request: Request, space_id: UUID):
+    return envelope(request, request.app.state.space_directory.preview(token(request), str(space_id)))
+
+
+join_request_router = signed_in_router("/v1/space-join-requests", "Space join requests")
+
+
+@join_request_router.post("/{request_id}/cancel", response_model=Envelope[JoinRequestView])
+def cancel_join_request(request: Request, request_id: UUID, body: JoinRequestAction):
+    return envelope(request, request.app.state.space_directory.cancel(token(request), str(request_id)))
+
+
+my_join_request_router = signed_in_router("/v1/me/space-join-requests", "Space join requests")
+
+
+@my_join_request_router.get("", response_model=Envelope[list[JoinRequestView]])
+def my_join_requests(request: Request):
+    return envelope(request, request.app.state.space_directory.my_requests(token(request)))
 
 
 invitation_router = APIRouter(

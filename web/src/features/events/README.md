@@ -1,7 +1,8 @@
-<!-- generated: feature-catalog; reserved, not implemented -->
 # events
 
-Reserved domain boundary. Only features with executable evidence in the build status are implemented.
+Built: `/app/events?space_id=`, opened with **Events for** a Space on the Spaces page. It shows upcoming and past lists, event details with responses, a create and edit form with a time-zone choice, cancel confirmation, and an exact retry of an unconfirmed create. Times show in the event's zone, and also in yours when it differs.
+
+Evidence: [events checkpoint](../../../../docs/BUILD_STATUS.md#space-events-and-rsvp-checkpoint).
 
 Source chapters: 2, 3, 17.
 

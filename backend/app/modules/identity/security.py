@@ -5,13 +5,15 @@ import secrets
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from cryptography.fernet import Fernet
+
+from app.keys import Keyring
 
 
 class Security:
-    def __init__(self, key: bytes):
-        self.cipher = Fernet(key)
-        self.lookup_key = hmac.digest(key, b"community:identity:lookup:v1", "sha256")
+    def __init__(self, key: bytes | Keyring):
+        self.keyring = key if isinstance(key, Keyring) else Keyring.parse(key)
+        self.cipher = self.keyring.fernet()
+        self.lookup_key = self.keyring.lookup
         self.passwords = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
         self.dummy_hash = self.passwords.hash(secrets.token_urlsafe(32))
 

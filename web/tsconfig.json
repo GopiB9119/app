@@ -52,7 +52,15 @@
     ".local/build-rejoin-20260926/types/**/*.ts",
     ".local/build-rejoin-20260926/dev/types/**/*.ts",
     ".local/build-calendar-20260928/types/**/*.ts",
-    ".local/build-calendar-20260928/dev/types/**/*.ts"
+    ".local/build-calendar-20260928/dev/types/**/*.ts",
+    ".local/build-space-settings-20260928/types/**/*.ts",
+    ".local/build-space-settings-20260928/dev/types/**/*.ts",
+    ".local/build-solo-20260928/types/**/*.ts",
+    ".local/build-solo-20260928/dev/types/**/*.ts",
+    ".local/build-local-web/types/**/*.ts",
+    ".local/build-local-web/dev/types/**/*.ts",
+    ".local/build-checklists-20260928/types/**/*.ts",
+    ".local/build-checklists-20260928/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

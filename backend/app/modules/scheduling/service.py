@@ -10,7 +10,7 @@ from app.errors import DomainError
 from app.modules.identity.models import OutboxEvent, User
 from app.modules.notifications.models import InAppNotification, NotificationPreference
 from app.modules.planning.models import Task, TaskAccess
-from app.modules.scheduling.models import Reminder, ReminderEvent
+from app.modules.scheduling.models import Reminder, ReminderEvent, ReminderSeries
 from app.modules.scheduling.schemas import PreviewClaims, PreviewOption, ReminderCursor, ReminderPreview, ReminderRecipient, ReminderView
 from app.modules.spaces.models import Space, SpaceMembership
 from app.modules.spaces.schemas import Pagination
@@ -42,6 +42,8 @@ class ReminderService:
         self.sessions = tasks.sessions
         self.security = tasks.security
         self.clock = tasks.clock
+        # Set by ReminderSeriesService so the dispatcher can continue a series in the same transaction.
+        self.series = None
 
     @staticmethod
     def preference(database, account_id, create=False):
@@ -120,7 +122,8 @@ class ReminderService:
             local_time=reminder.local_time, timezone=reminder.timezone,
             scheduled_at=reminder.scheduled_at, expires_at=reminder.expires_at,
             status=reminder.status, reason=reminder.reason, source_changed=reminder.source_version != task.version,
-            acknowledged_at=reminder.acknowledged_at, version=str(reminder.version),
+            acknowledged_at=reminder.acknowledged_at, version=str(reminder.version), series_id=reminder.series_id,
+            occurrence_date=reminder.occurrence_date, follow_up_of=reminder.follow_up_of, snooze_count=reminder.snooze_count,
         )
 
     def record(self, database, reminder, action, user_id=None):
@@ -165,10 +168,17 @@ class ReminderService:
             raise DomainError(409, "DELIVERY_POLICY_CHANGED", "The delivery window changed. Review a new preview.")
         if claims.scheduled_at not in dict(local_candidates(claims.local_time, claims.timezone)):
             raise DomainError(409, "TIMEZONE_CHANGED", "Timezone rules changed. Review a new preview.")
-        pending = database.scalar(select(Reminder.id).where(Reminder.account_id == caller.id, Reminder.task_id == task.id, Reminder.status == "scheduled"))
+        plain = (Reminder.series_id.is_(None), Reminder.follow_up_of.is_(None))
+        pending = database.scalar(select(Reminder.id).where(Reminder.account_id == caller.id, Reminder.task_id == task.id, Reminder.status == "scheduled", *plain))
         if pending:
             raise DomainError(409, "REMINDER_ALREADY_SCHEDULED", "Cancel the pending reminder before scheduling another.")
-        count = database.scalar(select(func.count()).select_from(Reminder).where(Reminder.account_id == caller.id))
+        repeating = database.scalar(select(ReminderSeries.id).where(
+            ReminderSeries.account_id == caller.id, ReminderSeries.task_id == task.id, ReminderSeries.status.in_(("active", "paused")),
+        ))
+        if repeating:
+            raise DomainError(409, "REMINDER_ALREADY_SCHEDULED", "Cancel this task's repeating reminder before scheduling another.")
+        # Series occurrences and snoozes have their own bounds; this limit counts plain reminders as before.
+        count = database.scalar(select(func.count()).select_from(Reminder).where(Reminder.account_id == caller.id, *plain))
         if count >= MAX_REMINDERS_PER_ACCOUNT:
             raise DomainError(409, "REMINDER_LIMIT_REACHED", "The local reminder limit was reached.")
         self.identity.authenticate(database, token, lock=True)
@@ -235,6 +245,8 @@ class ReminderService:
     def cancel(self, token, identifier):
         with self.sessions.begin() as database:
             caller, reminder, task = self.lock_visible(database, token, identifier)
+            if reminder.series_id and reminder.follow_up_of is None:
+                raise DomainError(409, "USE_SERIES_ACTIONS", "Skip or cancel this through its repeating reminder.")
             if reminder.status == "available":
                 raise DomainError(409, "REMINDER_ALREADY_AVAILABLE", "This reminder is already in your inbox.")
             if reminder.status == "scheduled":
@@ -259,12 +271,21 @@ class ReminderService:
                 return "busy"
             database.scalar(select(Space).where(Space.id == candidate.space_id).with_for_update())
             task = database.scalar(select(Task).where(Task.id == candidate.task_id).with_for_update().execution_options(populate_existing=True))
+            series = None
+            if candidate.series_id and candidate.follow_up_of is None:
+                series = database.scalar(select(ReminderSeries).where(ReminderSeries.id == candidate.series_id).with_for_update().execution_options(populate_existing=True))
             reminder = database.scalar(select(Reminder).where(Reminder.id == identifier).with_for_update().execution_options(populate_existing=True))
             now = self.clock()
             if reminder.status != "scheduled" or reminder.scheduled_at > now:
                 return "unchanged"
             if reminder.next_attempt_at is not None and reminder.next_attempt_at > now:
                 return "deferred"
+            if series is not None and series.status != "active":
+                # Pausing or cancelling a series settles its occurrence in the same transaction; this only guards a stale row.
+                reminder.status, reminder.reason, reminder.next_attempt_at = "cancelled", f"series_{series.status}", None
+                reminder.version += 1
+                self.record(database, reminder, "reminder.cancelled")
+                return "cancelled"
             row = database.execute(self.visible(owner.id).where(Reminder.id == identifier).with_for_update(of=(TaskAccess, SpaceMembership))).first()
             preference = self.preference(database, owner.id)
             reason = None
@@ -296,12 +317,21 @@ class ReminderService:
             reminder.next_attempt_at = None
             reminder.version += 1
             self.record(database, reminder, f"reminder.{reminder.status}")
+            if series is not None:
+                self.series.after_occurrence(database, series, reminder, now)
             return reminder.status
 
     def record_dispatch_failure(self, identifier):
         with self.sessions.begin() as database:
             database.execute(text("SET LOCAL lock_timeout = '2s'"))
             database.execute(text("SET LOCAL statement_timeout = '5s'"))
+            candidate = database.get(Reminder, identifier)
+            series = None
+            if candidate is not None and candidate.series_id and candidate.follow_up_of is None:
+                series = database.scalar(
+                    select(ReminderSeries).where(ReminderSeries.id == candidate.series_id).with_for_update()
+                    .execution_options(populate_existing=True)
+                )
             reminder = database.scalar(
                 select(Reminder).where(Reminder.id == identifier).with_for_update()
                 .execution_options(populate_existing=True)
@@ -325,6 +355,8 @@ class ReminderService:
             else:
                 reminder.reason = "dispatch_retry"
                 reminder.next_attempt_at = now + timedelta(seconds=min(300, 5 * 2 ** (reminder.dispatch_attempts - 1)))
+            if series is not None and series.status == "active" and reminder.status in ("expired", "failed"):
+                self.series.after_occurrence(database, series, reminder, now)
             return "retry_scheduled" if reminder.status == "scheduled" else reminder.status
 
     def dispatch_due(self, limit=20):

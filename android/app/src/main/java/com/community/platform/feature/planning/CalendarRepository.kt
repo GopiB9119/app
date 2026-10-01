@@ -45,14 +45,20 @@ class CalendarRepository @Inject constructor(private val api: CalendarApi, priva
             require(entries.map { "${it.kind}:${it.id}" }.distinct().size == entries.size)
             entries.forEach { entry ->
                 require(UUID.fromString(entry.id).toString() == entry.id)
-                require(UUID.fromString(entry.taskId).toString() == entry.taskId)
+                if (entry.kind == "event") require(entry.taskId == null)
+                else require(entry.taskId != null && UUID.fromString(entry.taskId).toString() == entry.taskId)
                 require(entry.spaceId == spaceId && entry.title.length in 1..400)
                 val date = LocalDate.parse(entry.date)
                 require(date.toString() == entry.date && YearMonth.from(date) == month)
                 when (entry.kind) {
-                    "task" -> require(entry.id == entry.taskId && entry.scheduledAt == null && entry.timezone == null && !entry.sourceChanged && entry.status in setOf("open", "in_progress", "completed", "cancelled"))
-                    "reminder" -> {
-                        require(entry.status in setOf("scheduled", "available", "cancelled", "suppressed", "expired", "failed"))
+                    "task" -> require(entry.id == entry.taskId && entry.scheduledAt == null && entry.timezone == null && !entry.sourceChanged && entry.seriesId == null && entry.status in setOf("open", "in_progress", "completed", "cancelled"))
+                    "reminder", "planned", "event" -> {
+                        when (entry.kind) {
+                            "planned" -> require(entry.status == "planned" && entry.seriesId != null)
+                            "event" -> require(entry.status in setOf("scheduled", "cancelled") && entry.seriesId == null && !entry.sourceChanged)
+                            else -> require(entry.status in setOf("scheduled", "available", "cancelled", "suppressed", "expired", "failed"))
+                        }
+                        entry.seriesId?.let { series -> require(UUID.fromString(series).toString() == series) }
                         require(entry.timezone != null && (entry.timezone == "UTC" || entry.timezone.contains('/')))
                         ZoneId.of(entry.timezone)
                         require(Instant.parse(entry.scheduledAt).atZone(zone).toLocalDate() == date)
@@ -70,7 +76,7 @@ class CalendarRepository @Inject constructor(private val api: CalendarApi, priva
 
     companion object {
         val calendarOrder: Comparator<CalendarEntryDto> = compareBy<CalendarEntryDto> { it.date }
-            .thenBy { it.kind == "reminder" }
+            .thenBy { it.kind != "task" }
             .thenBy { it.scheduledAt?.let(Instant::parse) ?: Instant.EPOCH }
             .thenBy { it.id }
     }

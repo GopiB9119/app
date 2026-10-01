@@ -2,6 +2,8 @@
 
 Status: DRAFT FOR PRODUCT, SECURITY, PRIVACY AND ENGINEERING REVIEW. This is a design and verification plan, not a completed security audit, penetration test, legal opinion, compliance certification or proof of secure runtime behavior.
 
+Source-of-truth role: the [documentation map](README.md) names this contract as the authority for security and privacy, at level 3 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). Approved requirements R11 and R12 in the [Product Constitution](PRODUCT_CONSTITUTION.md#article-2-approved-requirements) apply; the proposals below are not approved. Known gaps are tracked in [TASKS.md](TASKS.md).
+
 ## 1. Scope and Authority
 
 This consolidates the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [private Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md) and [backend operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) drafts. It develops C10-T12 and the existing security/privacy gates without replacing domain-specific requirements.

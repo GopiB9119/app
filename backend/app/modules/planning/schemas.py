@@ -10,6 +10,7 @@ from pydantic import (
     BeforeValidator,
     Field,
     StringConstraints,
+    StrictBool,
     model_validator,
 )
 
@@ -119,3 +120,40 @@ class TaskCursor(Input):
     status: TaskStatus | None
     after_id: UUID
     expires_at: AwareDatetime
+
+
+class ChecklistCommand(Input):
+    action: Literal["add", "rename", "check", "remove"]
+    item_id: UUID | None = None
+    title: TaskTitle | None = None
+    checked: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def exact_fields(self):
+        required = {
+            "add": {"action", "title"}, "rename": {"action", "item_id", "title"},
+            "check": {"action", "item_id", "checked"}, "remove": {"action", "item_id"},
+        }[self.action]
+        if self.model_fields_set != required or any(getattr(self, field) is None for field in required):
+            raise ValueError("Submit only the fields required by this checklist action.")
+        return self
+
+
+class ChecklistItemView(BaseModel):
+    id: str
+    title: str
+    checked: bool
+    checked_at: datetime | None
+    checked_by_account_id: str | None
+
+
+class ChecklistView(BaseModel):
+    task_id: str
+    space_id: str
+    task_title: str
+    task_status: TaskStatus
+    task_version: str
+    can_manage: bool
+    can_check: bool
+    items: list[ChecklistItemView]
+    etag: str

@@ -39,7 +39,13 @@ data class ReminderDto(
     @SerializedName("acknowledged_at") val acknowledgedAt: String?,
     val version: String,
     val channel: String,
-)
+    @SerializedName("series_id") val seriesId: String? = null,
+    @SerializedName("occurrence_date") val occurrenceDate: String? = null,
+    @SerializedName("follow_up_of") val followUpOf: String? = null,
+    @SerializedName("snooze_count") val snoozeCount: Int = 0,
+) {
+    val seriesOccurrence: Boolean get() = seriesId != null && followUpOf == null
+}
 data class InboxNotificationDto(
     val id: String,
     @SerializedName("reminder_id") val reminderId: String,
@@ -50,6 +56,11 @@ data class InboxNotificationDto(
     @SerializedName("created_at") val createdAt: String,
     @SerializedName("read_at") val readAt: String?,
     @SerializedName("acknowledged_at") val acknowledgedAt: String?,
+    @SerializedName("series_id") val seriesId: String? = null,
+    @SerializedName("snooze_count") val snoozeCount: Int = 0,
+    @SerializedName("snoozed_until") val snoozedUntil: String? = null,
+    @SerializedName("can_snooze") val canSnooze: Boolean = false,
+    @SerializedName("snooze_before") val snoozeBefore: String? = null,
 )
 data class ReminderPreferenceDto(@SerializedName("in_app_reminders_enabled") val enabled: Boolean, val version: String)
 data class UpdateReminderPreferenceDto(@SerializedName("in_app_reminders_enabled") val enabled: Boolean)
@@ -95,3 +106,79 @@ enum class ReminderRequestResponse { ACCEPT, DECLINE, CANCEL }
 data class ReminderRequestResponseIntent(
     val accountId: String, val request: ReminderRequestDto, val response: ReminderRequestResponse, val previewToken: String? = null,
 )
+
+enum class RepeatMode(val wireValue: String?) { ONCE(null), DAILY("daily"), WEEKLY("weekly") }
+val seriesWeekdays = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+data class PreviewReminderSeriesDto(
+    @SerializedName("task_id") val taskId: String,
+    @SerializedName("local_time") val localTime: String,
+    val timezone: String,
+    @SerializedName("start_date") val startDate: String,
+    @SerializedName("end_date") val endDate: String,
+    val frequency: String,
+    @SerializedName("repeat_every") val repeatEvery: Int,
+    val weekdays: List<String>,
+    @SerializedName("clock_change_policy") val clockChangePolicy: String,
+)
+data class SeriesOccurrenceDto(
+    @SerializedName("reminder_id") val reminderId: String?,
+    @SerializedName("local_date") val localDate: String,
+    @SerializedName("display_time") val displayTime: String,
+    @SerializedName("scheduled_at") val scheduledAt: String,
+    @SerializedName("utc_offset_minutes") val utcOffsetMinutes: Int,
+    val adjustment: String,
+)
+data class ClockChangeDto(@SerializedName("local_date") val localDate: String, val change: String)
+data class ReminderSeriesPreviewDto(
+    @SerializedName("task_id") val taskId: String,
+    @SerializedName("task_title") val taskTitle: String,
+    @SerializedName("task_version") val taskVersion: String,
+    val recipient: ReminderRecipientDto,
+    val frequency: String,
+    @SerializedName("repeat_every") val repeatEvery: Int,
+    val weekdays: List<String>,
+    @SerializedName("local_time") val localTime: String,
+    val timezone: String,
+    @SerializedName("start_date") val startDate: String,
+    @SerializedName("end_date") val endDate: String,
+    @SerializedName("clock_change_policy") val clockChangePolicy: String,
+    val occurrences: List<SeriesOccurrenceDto>,
+    @SerializedName("occurrence_count") val occurrenceCount: Int,
+    @SerializedName("clock_changes") val clockChanges: List<ClockChangeDto>,
+    val channel: String,
+    @SerializedName("preview_token") val previewToken: String,
+    @SerializedName("expires_at") val expiresAt: String,
+)
+data class ReminderSeriesDto(
+    val id: String,
+    @SerializedName("task_id") val taskId: String,
+    @SerializedName("space_id") val spaceId: String,
+    @SerializedName("task_title") val taskTitle: String,
+    @SerializedName("task_version") val taskVersion: String,
+    @SerializedName("source_changed") val sourceChanged: Boolean,
+    val frequency: String,
+    @SerializedName("repeat_every") val repeatEvery: Int,
+    val weekdays: List<String>,
+    @SerializedName("local_time") val localTime: String,
+    val timezone: String,
+    @SerializedName("start_date") val startDate: String,
+    @SerializedName("end_date") val endDate: String,
+    @SerializedName("clock_change_policy") val clockChangePolicy: String,
+    val status: String,
+    val reason: String?,
+    @SerializedName("next_occurrence") val nextOccurrence: SeriesOccurrenceDto?,
+    @SerializedName("created_at") val createdAt: String,
+    @SerializedName("updated_at") val updatedAt: String,
+    val version: String,
+    val etag: String,
+    val channel: String,
+)
+data class SeriesCreateIntent(val accountId: String, val requestKey: String, val previewToken: String, val rule: PreviewReminderSeriesDto)
+enum class SeriesOperation(val wireValue: String, val confirmed: Set<String>) {
+    SKIP("skip", setOf("active", "ended")), PAUSE("pause", setOf("paused")),
+    RESUME("resume", setOf("active", "ended")), CANCEL("cancel", setOf("cancelled")),
+}
+data class SeriesCommandIntent(val accountId: String, val series: ReminderSeriesDto, val operation: SeriesOperation, val requestKey: String)
+data class SnoozeDto(val minutes: Int)
+val snoozeChoices = listOf(10, 60, 180, 1440)
+data class SnoozeIntent(val accountId: String, val notification: InboxNotificationDto, val minutes: Int, val requestKey: String)

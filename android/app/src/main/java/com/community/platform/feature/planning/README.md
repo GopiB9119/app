@@ -14,3 +14,5 @@ Drafts and uncertain commands stay only in the ViewModel. Rotation retains them;
 Verified evidence and reproducible commands are in the [native task runbook](../../../../../../../../../../docs/runbooks/ANDROID_TASKS.md). Live client-to-server qualification remains blocked by the active loopback network policy. Existing native Space creation/invitation screens, reminders, recurrence, checklists, dependencies, calendar views and other planning capabilities are not implemented by this client.
 
 Source chapters 1, 3, 13 and 17 remain unchanged. See the [complete feature catalog](../../../../../../../../../../packages/feature-catalog/features.json) for retained scope.
+
+Calendar (`CalendarRepository.kt`, `CalendarScreen.kt`): a month agenda of task due dates and the person's reminders. Since 2026-10-01 it accepts and shows `planned` entries, the future times of active repeating reminders, and checks the server's order (tasks first, then timed entries by time). Before this, the repository refused any entry kind except `task` and `reminder` ([DEC-010](../../../../../../../../../../docs/DECISIONS.md#accepted-decisions)).

@@ -28,6 +28,18 @@ import java.util.UUID
 class SpaceRepositoryTest {
     private val fixture = Fixture()
 
+    @Test fun soloCreationKeepsTypeAndRejectsFamilyOrMemberResults(): Unit = runBlocking {
+        val command = SpaceCommand.Create(fixture.accountId, "My planning", UUID.randomUUID().toString(), "solo")
+        fixture.api.space = fixture.space.copy(spaceType = "solo")
+        val result = fixture.repository.execute(command) as SpaceCommandResult.SpaceSaved
+        assertEquals("solo", result.space.spaceType)
+        assertEquals(CreateFamilySpaceDto("My planning", "solo"), fixture.api.creations.single())
+        fixture.api.space = fixture.space
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.execute(command) } }
+        fixture.api.space = fixture.space.copy(spaceType = "solo", role = "member")
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.spaces(fixture.accountId) } }
+    }
+
     @Test fun boundedPagesRetainOpaqueCursorAndCurrentRole() = runBlocking {
         fixture.api.pagination = PaginationDto("opaque-next-page", true)
         val page = fixture.repository.spaces(fixture.accountId, "previous-page")

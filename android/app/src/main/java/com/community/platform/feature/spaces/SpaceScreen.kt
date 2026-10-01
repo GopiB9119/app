@@ -34,11 +34,16 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -104,10 +109,13 @@ data class SpaceActions(
     val offerOwnership: (SpaceMemberDto) -> Unit = {},
     val respondOwnership: (OwnershipTransferDto, OwnershipResponse) -> Unit = { _, _ -> },
     val moreOwnershipOffers: () -> Unit = {},
+    val creationType: (String) -> Unit = {},
+    val visibility: (String) -> Unit = {},
+    val description: (String) -> Unit = {},
 )
 
 @Composable
-fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onSessionLost: () -> Unit) {
+fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onSessionLost: () -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
@@ -117,15 +125,16 @@ fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, o
         viewModel::propose, viewModel::confirm, viewModel::cancelConfirmation, viewModel::retry,
         viewModel::closePanel, viewModel::discardDraft, viewModel::moreSpaces, viewModel::moreInvitations, viewModel::moreSent,
         viewModel::showMembers, viewModel::proposeMembership,
-        viewModel::offerOwnership, viewModel::respondOwnership, viewModel::moreOwnershipOffers,
-    ), timezone, onBack, onOpenTasks)
+        viewModel::offerOwnership, viewModel::respondOwnership, viewModel::moreOwnershipOffers, viewModel::creationType,
+        viewModel::visibility, viewModel::description,
+    ), timezone, onBack, onOpenTasks, onOpenSettings, onOpenChat, onOpenEvents, onFindGroups, onOpenGroupAccess)
 }
 
 private enum class ExitReview { DISCARD, UNCONFIRMED }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit) {
+fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(state.accountId) { mutableStateOf(false) }
     var exitReview by remember { mutableStateOf<ExitReview?>(null) }
@@ -147,7 +156,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = back, enabled = !state.busy) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(if (state.selectedSpace == null && !state.creating) R.string.spaces_back_account else R.string.spaces_back_list)) }
                 Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.family_spaces), style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(if (state.selectedSpace?.spaceType == "solo" || state.creationType == "solo" || state.spaces.any { it.spaceType == "solo" }) R.string.private_spaces else R.string.family_spaces), style = MaterialTheme.typography.titleLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Lock, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary); Text(stringResource(R.string.spaces_private), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
                 }
                 IconButton(onClick = actions.refresh, enabled = !state.navigationLocked && !state.creating) { Icon(Icons.Default.Refresh, stringResource(R.string.spaces_refresh)) }
@@ -189,9 +198,36 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                     val selected = state.selectedSpace
                     when {
                         state.creating -> {
-                            item("create-title") { Text(stringResource(R.string.spaces_new_family), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }) }
-                            item("create-name") { OutlinedTextField(value = state.nameDraft, onValueChange = { actions.name(it.take(160)) }, label = { Text(stringResource(R.string.spaces_name)) }, enabled = !state.locked, minLines = 1, maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("space-name")) }
-                            item("create-policy") { SpaceFact(stringResource(R.string.spaces_visibility), stringResource(R.string.spaces_private)); SpaceFact(stringResource(R.string.spaces_your_role), stringResource(R.string.spaces_owner)) }
+                            item("create-title") { Text(stringResource(when (state.creationType) { "solo" -> R.string.spaces_new_solo; "group" -> R.string.spaces_new_group; else -> R.string.spaces_new_family }), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }) }
+                            item("create-type") {
+                                Text(stringResource(R.string.spaces_type), style = MaterialTheme.typography.labelLarge)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    FilterChip(selected = state.creationType == "family", onClick = { actions.creationType("family") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_family_type)) })
+                                    FilterChip(selected = state.creationType == "group", onClick = { actions.creationType("group") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_group_type)) }, modifier = Modifier.testTag("space-type-group"))
+                                    FilterChip(selected = state.creationType == "solo", onClick = { actions.creationType("solo") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_solo_type)) })
+                                }
+                            }
+                            item("create-name") { OutlinedTextField(value = state.nameDraft, onValueChange = { actions.name(it.take(160)) }, label = { Text(stringResource(when (state.creationType) { "solo" -> R.string.space_settings_name; "group" -> R.string.spaces_group_name; else -> R.string.spaces_name })) }, enabled = !state.locked, minLines = 1, maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("space-name")) }
+                            if (state.creationType == "solo") item("solo-audience") { Text(stringResource(R.string.spaces_only_you)) }
+                            if (state.creationType == "group") {
+                                item("create-description") {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        OutlinedTextField(value = state.descriptionDraft, onValueChange = { actions.description(it.take(280)) }, label = { Text(stringResource(R.string.spaces_description_optional)) }, enabled = !state.locked, minLines = 2, maxLines = 6, modifier = Modifier.fillMaxWidth().testTag("space-description"))
+                                        Text("${state.descriptionDraft.length}/280", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.End))
+                                    }
+                                }
+                                item("create-visibility") {
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text(stringResource(R.string.spaces_who_can_find), style = MaterialTheme.typography.labelLarge)
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            FilterChip(selected = state.visibilityDraft == "private", onClick = { actions.visibility("private") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_private)) }, leadingIcon = { Icon(Icons.Default.Lock, null, Modifier.size(16.dp)) }, modifier = Modifier.testTag("space-visibility-private"))
+                                            FilterChip(selected = state.visibilityDraft == "public", onClick = { actions.visibility("public") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_public)) }, leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(16.dp)) }, modifier = Modifier.testTag("space-visibility-public"))
+                                        }
+                                        Text(stringResource(if (state.visibilityDraft == "public") R.string.spaces_public_explained else R.string.spaces_private_group_explained), style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                            item("create-policy") { SpaceFact(stringResource(R.string.spaces_visibility), stringResource(if (state.creationType == "group" && state.visibilityDraft == "public") R.string.spaces_public else R.string.spaces_private)); SpaceFact(stringResource(R.string.spaces_your_role), stringResource(R.string.spaces_owner)) }
                             item("create-actions") {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = actions.create, enabled = !state.locked && state.nameDraft.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp).testTag("space-create"), shape = RoundedCornerShape(6.dp)) { Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_create)) }
@@ -203,12 +239,18 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                             item("selected") {
                                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(selected.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.testTag("selected-space-name").semantics { heading() })
+                                    Text(stringResource(when (selected.spaceType) { "solo" -> R.string.spaces_only_you; "group" -> if (selected.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.labelLarge)
+                                    selected.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                                     SpaceFact(stringResource(R.string.spaces_your_role), stringResource(if (selected.role == "owner") R.string.spaces_owner else R.string.spaces_member))
+                                    if (selected.role == "owner" && onOpenSettings != null) OutlinedButton(onClick = { onOpenSettings(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-settings")) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.space_settings_title)) }
+                                    if (selected.role == "owner" && selected.spaceType == "group" && onOpenGroupAccess != null) OutlinedButton(onClick = { onOpenGroupAccess(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-group-access")) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.groups_access)) }
                                     Button(onClick = { onOpenTasks(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-tasks")) { Icon(Icons.AutoMirrored.Filled.List, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_open_tasks)) }
+                                    if (onOpenChat != null) OutlinedButton(onClick = { onOpenChat(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-chat")) { Icon(Icons.Default.Email, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.messages_open_chat)) }
+                                    if (onOpenEvents != null) OutlinedButton(onClick = { onOpenEvents(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-events")) { Icon(Icons.Default.DateRange, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.events_open)) }
                                     HorizontalDivider()
                                 }
                             }
-                            item("members-heading") {
+                            if (selected.spaceType != "solo") item("members-heading") {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(stringResource(R.string.spaces_members), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp).semantics { heading() })
                                     OutlinedButton(onClick = actions.showMembers, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-show-members")) {
@@ -218,7 +260,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                     }
                                 }
                             }
-                            if (state.showingMembers) {
+                            if (state.showingMembers && selected.spaceType != "solo") {
                                 val ownMembership = state.members.firstOrNull { it.accountId == state.accountId }
                                 items(state.members, key = { "member-${it.accountId}" }) { member ->
                                     Column(Modifier.fillMaxWidth().testTag("space-member-${member.accountId}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -261,7 +303,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 }
                                 if (state.ownershipCursor != null) item("more-ownership") { TextButton(onClick = actions.moreOwnershipOffers, enabled = !state.navigationLocked) { Text(stringResource(R.string.ownership_more)) } }
                             }
-                            if (selected.role == "owner") {
+                            if (selected.role == "owner" && selected.spaceType != "solo") {
                                 item("invite-title") { Text(stringResource(R.string.spaces_invite_member), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
                                 item("invite-form") {
                                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -296,7 +338,8 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 item("space-heading") {
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(stringResource(R.string.spaces_mine), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 8.dp).semantics { heading() })
-                                        Button(onClick = actions.startCreate, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-start-create")) { Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_new_family)) }
+                                        Button(onClick = actions.startCreate, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-start-create")) { Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_new)) }
+                                        if (onFindGroups != null) OutlinedButton(onClick = onFindGroups, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-find-groups")) { Icon(Icons.Default.Search, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.groups_find)) }
                                     }
                                 }
                                 if (state.spaces.isEmpty() && !state.busy && state.error == null) item("empty-spaces") { Text(stringResource(R.string.spaces_none)) }
@@ -304,6 +347,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                     Column(Modifier.fillMaxWidth().clickable(enabled = !state.navigationLocked, role = Role.Button) { actions.open(space.id) }.padding(vertical = 10.dp).testTag("space-row-${space.id}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Icon(Icons.Default.Home, null, Modifier.size(23.dp), tint = MaterialTheme.colorScheme.primary); Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge); Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp)) }
                                         Text(stringResource(if (space.role == "owner") R.string.spaces_owner else R.string.spaces_member), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                        Text(stringResource(when (space.spaceType) { "solo" -> R.string.spaces_solo_type; "group" -> if (space.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.bodySmall)
                                         HorizontalDivider(Modifier.padding(top = 8.dp))
                                     }
                                 }

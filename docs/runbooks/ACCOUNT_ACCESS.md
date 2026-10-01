@@ -46,7 +46,7 @@ Emulator debug networking uses `10.0.2.2:8000`. The instrumentation sources cont
 | --- | --- |
 | API | `/v1`; Chapter 7 `data` or `error` plus `request_id`; [generated OpenAPI](../../packages/openapi/openapi.json) |
 | Enrollment | Context-bound registration operation; 15-minute, six-digit challenge; five proof attempts; credentials enrolled at verification |
-| Abuse limits | Durable PostgreSQL buckets; five signup/recovery attempts or ten logins per identity per 15 minutes; sixty per network bucket |
+| Abuse limits | Durable PostgreSQL buckets; five signup/recovery attempts or ten logins per identity per 15 minutes; sixty per network (an IPv4 address or an IPv6 /64) |
 | Email normalization | Maintained parser; preserved normalized local-part; no provider-specific dot/alias merging |
 | Passwords | Argon2id, random salt, 19,456 KiB, two iterations, parallelism one; 12-128 characters; minimal common-password check |
 | Sessions | Random opaque bearer; keyed digest in PostgreSQL; eight-hour fixed lifetime; maximum twenty active sessions |
@@ -58,13 +58,13 @@ Emulator debug networking uses `10.0.2.2:8000`. The instrumentation sources cont
 | Durability | PostgreSQL transaction includes account/session mutation, minimal security event and outbox intent |
 | Test mail | Encrypted short-lived payload; bounded claims/retries; stable message ID; payload purged after sending/expiry; uncertain final claim is `unknown` |
 
-These are explicit development settings, not approved production limits, password calibration, recovery assurance or delivery SLAs. Web requests share the BFF's network bucket locally. Trusted-proxy client-IP handling, distributed abuse policy and risk-based recovery require further design and testing.
+These are explicit development settings, not approved production limits, password calibration, recovery assurance or delivery SLAs. Locally, every browser is `127.0.0.1`, so web sign-ins share one network bucket. Behind a reverse proxy that appends the client address to `X-Forwarded-For`, set the same secret `COMMUNITY_PROXY_KEY` on the API and the web app, and `COMMUNITY_TRUSTED_PROXY_HOPS` on the web app to the number of trusted proxies. The web app then names each browser's network on the five sign-in routes. Next.js keeps an `X-Forwarded-For` sent by the browser, so never set hops when the web app is reachable without the proxy. Distributed abuse policy and risk-based recovery still require further design and testing.
 
 ## Storage And Failure
 
 The database persists in Docker's `community-platform_postgres-data` volume. The ignored backend local directory holds the identity encryption/HMAC key. Keep that key with its database: changing it makes stored contacts and sessions unusable. This key file is not production KMS custody. Mailpit deliberately exposes synthetic codes locally and must never contain real identities.
 
-Do not use `down -v`, delete the identity key, or point tests at development data as routine troubleshooting. A local isolated restore drill exists (`scripts/restore-drill.ps1`; see the [platform notes](../../backend/app/modules/platform/README.md)). It checks the key's fingerprint but does not copy the key; key rotation and production backup custody have not been qualified. Test fixtures are restricted to a separate disposable `community_test` database and create a unique schema per invocation so concurrent test runs cannot reset each other's tables.
+Do not use `down -v`, delete the identity key, or point tests at development data as routine troubleshooting. A local isolated restore drill exists (`scripts/restore-drill.ps1`; see the [platform notes](../../backend/app/modules/platform/README.md)). It checks the key's fingerprint but does not copy the key. Key rotation is a local, staged procedure ([platform notes](../../backend/app/modules/platform/README.md#encryption-key-rotation)); production key custody and backup custody have not been qualified. Test fixtures are restricted to a separate disposable `community_test` database and create a unique schema per invocation so concurrent test runs cannot reset each other's tables.
 
 When the API is unavailable, clients show unconfirmed changes, not success. Browser mutations have no retries and use `networkMode: always`, so reconnecting does not silently submit an offline account edit. Expired/revoked sessions need a new sign-in.
 

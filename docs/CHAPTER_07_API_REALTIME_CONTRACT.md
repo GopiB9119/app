@@ -2,6 +2,8 @@
 
 Status: DRAFT FOR PRODUCT, CLIENT, BACKEND AND SECURITY REVIEW. This is a proposed communication contract, not generated OpenAPI, running endpoints, implemented clients or verified transport behavior.
 
+Source-of-truth role: the [documentation map](README.md) names this contract as the authority for the intended API contracts, at level 5 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). The API actually built is described by the generated [openapi.json](../packages/openapi/openapi.json), which is evidence of the implementation (level 8).
+
 ## 1. Scope and Authority
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md), [Space contract](CHAPTER_03_SPACE_CONTRACT.md) and [data contract](CHAPTER_06_DATA_CONTRACT.md). It develops C1-T05, C18-V22, C3-D11 and C6-T12 into a shared client/backend handoff.

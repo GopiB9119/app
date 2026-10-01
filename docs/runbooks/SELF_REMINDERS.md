@@ -33,6 +33,21 @@ Seven authenticated operations live under `/v1/reminder-requests`: preview, crea
 
 This narrowly scopes recipient consent to one ordinary task/time and in-app history. It does not grant ongoing organizer scheduling, arbitrary-recipient reminders, care/guardian authority, external messaging or production policy approval.
 
+## Repeating Reminders And Snooze
+
+Provisional ([DEC-010](../DECISIONS.md#accepted-decisions)). On the web, choose **Repeat** in the reminder editor: **Every day** or **Every week**. Set the time, how often, the weekdays (weekly), the first and last day (at most 365 days apart) and the timezone. **Review repeating reminder** lists the first times, the total and any clock changes. If the clock skips the time on some day, choose **Remind after the jump** or **Skip that day**. **Save repeating reminder** keeps its request for **Retry original save** after an unknown outcome. The **Repeating reminders** list shows the next time and offers **Skip next**, **Pause**, **Resume** and **Cancel**, each after a confirmation. Android offers the same choices on the task's reminder screen, with the list above **My reminders**.
+
+Only the next time is stored as a reminder. The reminder worker delivers it and schedules the following time in the same transaction. After downtime at most one late reminder arrives, within 24 hours of its time and before the next one; older times are marked expired. Changing or closing the task pauses the series at its next time: review the task, then **Resume**. Losing access, an inactive account or turning in-app reminders off stops the series for good.
+
+In the inbox, **Snooze** offers 10 minutes, 1 hour, 3 hours or 1 day; choices that would reach the series' next time are disabled. Snoozing marks the item read, and the follow-up arrives as a new inbox item. A reminder can be snoozed at most three times in a chain, and acknowledging any of them settles the rest. The calendar shows the planned times of active series as "Planned, repeating".
+
+Checks: `backend/tests/test_reminder_series.py`, `tests/scheduling-client.test.mjs`, Android `ReminderRepositoryTest` and `ReminderViewModelTest`, and the live journey below, which takes about 2.5 minutes because it waits for a real delivery. See the [checkpoint](../BUILD_STATUS.md#repeating-reminders-snooze-and-planned-times-checkpoint).
+
+```powershell
+$env:COMMUNITY_CHROMIUM_PATH = Join-Path $env:LOCALAPPDATA 'ms-playwright/chromium-1228/chrome-win64/chrome.exe'
+node --test tests/e2e/scheduling.test.mjs
+```
+
 ## Start Locally
 
 Use the repository root, Docker Desktop and the existing dependencies. Preserve the database volume and identity key.
@@ -141,4 +156,4 @@ The live result is retained in `.local/native-reminder-request-live-5580.txt`, w
 
 ## Still Not Qualified
 
-Earlier loopback denial was superseded by explicit local-only approval on 2026-09-20. The request web and native recipient journeys above now have real integration evidence; finite checks still do not qualify every browser/native workflow or full M1. Native Space/invitation evidence and concurrent live checks are recorded separately in [BUILD_STATUS.md](../BUILD_STATUS.md). Arbitrary or standing third-party consent, push/email/SMS/voice, recurrence, snooze/escalation, clinical data, retention/restore drills, measured latency/load, release dependency review and production deployment remain outside this slice. The full product inventory remains retained.
+Earlier loopback denial was superseded by explicit local-only approval on 2026-09-20. The request web and native recipient journeys above now have real integration evidence; finite checks still do not qualify every browser/native workflow or full M1. Native Space/invitation evidence and concurrent live checks are recorded separately in [BUILD_STATUS.md](../BUILD_STATUS.md). Arbitrary or standing third-party consent, push/email/SMS/voice, escalation, editing a saved repeating reminder, device runs of the native repeating and snooze screens, clinical data, retention/restore drills, measured latency/load, release dependency review and production deployment remain outside this slice. The full product inventory remains retained.
