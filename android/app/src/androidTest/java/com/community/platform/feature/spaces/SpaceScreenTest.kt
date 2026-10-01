@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
@@ -74,6 +75,7 @@ class SpaceScreenTest {
     ) = SpaceActions({}, {}, {}, startCreate, name, recipient, create, invite, propose, confirm, cancel, retry, close, {}, moreSpaces, {}, {}, showMembers, membership)
 
     private fun reveal(tag: String) { compose.onNodeWithTag("space-workspace").performScrollToNode(hasTestTag(tag)) }
+    private fun revealText(text: String) { compose.onNodeWithTag("space-workspace").performScrollToNode(hasText(text)) }
 
     @Test fun createSpaceKeepsTheEnteredNameAndShowsTheConfirmedOwnerView() {
         var state by mutableStateOf(workspace())
@@ -416,6 +418,66 @@ class SpaceScreenTest {
         compose.onNodeWithTag("space-action-dismiss").assertIsDisplayed()
         compose.onNodeWithTag("space-action-confirm").assertIsDisplayed()
         capture("role-review-native-large-text.png", dialog = true)
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun coupleChoiceAndPartnerStatusStayReadableAtLargeText() {
+        assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
+        var state by mutableStateOf(workspace().copy(creating = true))
+        val chosen = mutableListOf<String>()
+        val callbacks = actions(name = { state = state.copy(nameDraft = it) }).copy(creationType = { chosen += it; state = state.copy(creationType = it) })
+        compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
+        reveal("space-type-couple")
+        compose.onNodeWithTag("space-type-couple").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("couple"), chosen) }
+        revealText("New couple Space")
+        compose.onNodeWithText("New couple Space").assertIsDisplayed()
+        revealText("Only you and one partner you invite")
+        compose.onNodeWithText("Only you and one partner you invite").assertIsDisplayed()
+        reveal("space-create")
+        compose.onNodeWithTag("space-create").performScrollTo().assertIsDisplayed()
+
+        val couple = space.copy(name = "Us ${"A".repeat(60)}", spaceType = "couple")
+        val owner = SpaceMemberDto(accountId, "Alex", "owner", space.createdAt, "\"owner\"")
+        compose.runOnIdle { state = workspace().copy(selectedSpace = couple, spaces = listOf(couple), showingMembers = true, members = listOf(owner)) }
+        revealText("Waiting for your partner")
+        compose.onNodeWithText("Waiting for your partner").assertIsDisplayed()
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText("Waiting for your partner").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
+        assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)
+        revealText("A couple Space is for two people: you and one partner. One invitation can wait at a time.")
+        compose.onNodeWithText("A couple Space is for two people: you and one partner. One invitation can wait at a time.").assertIsDisplayed()
+        capture("couple-space-waiting-native-large-text.png")
+
+        compose.runOnIdle { state = state.copy(members = listOf(owner, SpaceMemberDto(otherId, "Sam Partner", "member", space.createdAt, "\"partner\""))) }
+        revealText("With Sam Partner")
+        compose.onNodeWithText("With Sam Partner").assertIsDisplayed()
+        compose.onNodeWithText("Waiting for your partner").assertDoesNotExist()
+        reveal("space-member-$otherId")
+        compose.onNodeWithTag("member-make-admin-$otherId").assertDoesNotExist()
+        compose.onNodeWithTag("member-make-member-$otherId").assertDoesNotExist()
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun spaceSettingsDescriptionCountsCharactersAndKeepsSaveReachableAtLargeText() {
+        assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
+        val basis = SpaceSettingsDto(space.id, "Walkers ${"A".repeat(60)}", "group", "public", "active", "owner", "1", space.createdAt, "\"settings\"", "Weekend walks")
+        var state by mutableStateOf(SpaceSettingsState(accountId = accountId, spaceId = space.id, basis = basis, name = basis.name, description = "Weekend walks"))
+        var saves = 0
+        val callbacks = SpaceSettingsActions(name = { state = state.copy(name = it) }, save = { saves += 1 }, retry = {}, reload = {}, description = { state = state.copy(description = it) })
+        compose.setContent { CommunityTheme { SpaceSettingsScreen(state, callbacks, {}) } }
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText("Current name: ${basis.name}").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
+        assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)
+        compose.onNodeWithText("Description (shown in Find groups)", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("space-settings-save").performScrollTo().assertIsNotEnabled()
+        // An emoji counts once, as the server counts it.
+        compose.onNodeWithTag("space-settings-description").performScrollTo().performTextReplacement("\uD83D\uDE00".repeat(280))
+        compose.onNodeWithText("280/280", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("space-settings-save").performScrollTo().assertIsDisplayed().assertIsEnabled().assertTextContains("Save changes")
+        capture("space-settings-description-native-large-text.png")
+        compose.onNodeWithTag("space-settings-save").performClick()
+        compose.runOnIdle { assertEquals(1, saves) }
     }
 
     @DeviceFontScale(2f)

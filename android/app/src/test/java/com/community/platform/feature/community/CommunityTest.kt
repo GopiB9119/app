@@ -10,11 +10,13 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -70,7 +72,7 @@ class CommunityTest {
         val comments = mutableListOf<CreateCommentDto>()
         val actions = mutableListOf<String>()
         val queries = mutableListOf<String?>()
-        val edits = mutableListOf<Pair<String, CreatePostDto>>()
+        val edits = mutableListOf<Pair<String, Map<String, String?>>>()
         var editFailure = 0
         private fun list() = PaginationDto(null, false)
         override suspend fun feed(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PostDto>>> = if (feedFailure != 0) failed(feedFailure) else ok(feedPosts, list())
@@ -94,10 +96,10 @@ class CommunityTest {
         override suspend fun createPost(authorization: String, pageId: String, key: String, body: CreatePostDto) =
             ok(post.copy(id = commentId, status = "draft", publishedAt = null, canManage = true, etag = "\"d1\""))
         override suspend fun post(authorization: String, postId: String) = ok(post)
-        override suspend fun updatePost(authorization: String, postId: String, etag: String, body: CreatePostDto): Response<EnvelopeDto<PostDto>> {
+        override suspend fun updatePost(authorization: String, postId: String, etag: String, body: Map<String, String?>): Response<EnvelopeDto<PostDto>> {
             edits += etag to body
             return if (editFailure != 0) failed(editFailure, "CONTENT_CHANGED")
-            else ok(post.copy(title = body.title, body = body.body, editedAt = "2026-09-19T10:05:00Z", canManage = true, etag = "\"v2\""))
+            else ok(post.copy(title = if ("title" in body) body["title"] else post.title, body = body["body"] ?: post.body, editedAt = "2026-09-19T10:05:00Z", canManage = true, etag = "\"v2\""))
         }
         override suspend fun publish(authorization: String, postId: String, etag: String, body: Map<String, String>) = ok(post)
         override suspend fun deletePost(authorization: String, postId: String, etag: String, body: Map<String, String>) = ok(OutcomeDto(postId, "deleted"))
@@ -269,6 +271,39 @@ class CommunityTest {
         }
     }
 
+    /** A server for one published post on a page the person owns. It keeps the current version, refuses an edit against any other version with 412, and can hold an edit open, refuse it, or lose its answer after applying it. */
+    inner class PostEditApi : CommunityApi by api {
+        var current = post.copy(canManage = true, etag = "\"v1\"")
+        val edits: MutableList<Pair<String, Map<String, String?>>> = Collections.synchronizedList(mutableListOf())
+        var failure = 0
+        var lost = false
+        var gate: CompletableDeferred<Unit>? = null
+        val entered = CompletableDeferred<Unit>()
+        private var version = 1
+
+        /** Applies a change as the server does and gives the post a new version, as when the owner edits it on another device. */
+        fun change(fields: Map<String, String?>) {
+            version += 1
+            current = current.copy(title = if ("title" in fields) fields["title"] else current.title, body = fields["body"] ?: current.body,
+                editedAt = "2026-09-19T10:0$version:00Z", etag = "\"v$version\"")
+        }
+        override suspend fun page(authorization: String, reference: String): Response<EnvelopeDto<PageDto>> = ok(page.copy(canManage = true, etag = "\"p1\""))
+        override suspend fun pagePosts(authorization: String, reference: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PostDto>>> =
+            ok(listOf(current), PaginationDto(null, false))
+        override suspend fun updatePost(authorization: String, postId: String, etag: String, body: Map<String, String?>): Response<EnvelopeDto<PostDto>> =
+            edit(postId, etag, body)
+        private suspend fun edit(postId: String, etag: String, fields: Map<String, String?>): Response<EnvelopeDto<PostDto>> {
+            edits += etag to fields
+            gate?.let { entered.complete(Unit); it.await() }
+            if (failure != 0) return failed(failure, "UNAVAILABLE")
+            if (postId != current.id) return failed(404, "NOT_FOUND")
+            if (etag != current.etag) return failed(412, "CONTENT_CHANGED")
+            change(fields)
+            if (lost) throw IOException("Synthetic lost answer")
+            return ok(current)
+        }
+    }
+
     private fun followedPage(index: Int) = page.copy(
         id = java.util.UUID.nameUUIDFromBytes("followed-$index".toByteArray()).toString(), handle = "walkers-$index", name = "Walkers $index", followerCount = 1, following = true,
     )
@@ -395,8 +430,8 @@ class CommunityTest {
         current.startEdit(owned)
         api.editFailure = 412
         assertTrue(current.editPost(owned, "  ", " Meet at 8 ")); idle(current)
-        assertEquals(listOf("\"v1\"" to CreatePostDto(null, "Meet at 8")), api.edits)
-        assertEquals("Synthetic CONTENT_CHANGED", current.state.value.error)
+        assertEquals(listOf("\"v1\"" to mapOf<String, String?>("title" to null, "body" to "Meet at 8")), api.edits)
+        assertEquals("This post changed since you opened it. Reload to review the current version.", current.state.value.error)
         assertEquals(postId, current.state.value.editingPostId)
         assertEquals("Meet at 7", current.state.value.posts.single().body)
 
@@ -431,6 +466,132 @@ class CommunityTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { wire.updatePost(fixture.accountId, owned, null, "Meet at 8") } }
         assertThrows(IdentityFailure::class.java) { runBlocking { wire.updatePost(fixture.accountId, post, null, "Meet at 8") } }
         assertEquals(2, requests.size)
+    }
+
+    @Test fun postEditSavesAgainstTheVersionItOpenedWithSoANewerVersionIsRefusedNotOverwritten() = runBlocking {
+        val server = PostEditApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        val opened = current.state.value.posts.single()
+        assertEquals("\"v1\"", opened.etag)
+        current.startEdit(opened)
+        // The owner changes the text on another device, and this screen refreshes while the editor stays open.
+        server.change(mapOf("body" to "Meet at 9"))
+        current.reload(); idle(current)
+        val refreshed = current.state.value.posts.single()
+        assertEquals("\"v2\"", refreshed.etag)
+        assertEquals(postId, current.state.value.editingPostId)
+
+        // The person changed only the title; the screen hands over the post it shows now, as Save does.
+        assertTrue(current.editPost(refreshed, "Sunday walk", "Meet at 7")); idle(current)
+        assertEquals(listOf("\"v1\"" to mapOf<String, String?>("title" to "Sunday walk")), server.edits)
+        val state = current.state.value
+        assertEquals("This post changed since you opened it. Reload to review the current version.", state.error)
+        assertNull(state.notice)
+        assertFalse(state.missing)
+        assertEquals(postId, state.editingPostId)
+        assertEquals(refreshed, state.posts.single())
+        assertEquals(Triple("Saturday walk", "Meet at 9", "\"v2\""), server.current.let { Triple(it.title, it.body, it.etag) })
+    }
+
+    @Test fun postEditSendsOnlyTheFieldsThatDifferFromTheOpenedPost() = runBlocking {
+        val server = PostEditApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        current.startEdit(current.state.value.posts.single())
+        assertTrue(current.editPost(current.state.value.posts.single(), " Saturday walk ", " Meet at 8 ")); idle(current)
+        current.startEdit(current.state.value.posts.single())
+        assertTrue(current.editPost(current.state.value.posts.single(), "  ", "Meet at 8")); idle(current)
+        assertEquals(listOf("\"v1\"" to mapOf<String, String?>("body" to "Meet at 8"), "\"v2\"" to mapOf<String, String?>("title" to null)), server.edits)
+        val saved = current.state.value.posts.single()
+        assertEquals(Triple(null, "Meet at 8", "\"v3\""), Triple(saved.title, saved.body, saved.etag))
+        assertNull(current.state.value.editingPostId)
+    }
+
+    @Test fun anUnchangedPostSendsNothingEvenAfterARefreshShowsANewerVersion() = runBlocking {
+        val server = PostEditApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        current.startEdit(current.state.value.posts.single())
+        // Spaces the server would remove are not a change.
+        assertTrue(current.editPost(current.state.value.posts.single(), " Saturday walk ", "Meet at 7\n")); idle(current)
+        assertNull(current.state.value.editingPostId)
+
+        current.startEdit(current.state.value.posts.single())
+        server.change(mapOf("title" to "Sunday walk", "body" to "Meet at 9"))
+        current.reload(); idle(current)
+        // The person kept the text the editor opened with, so Save sends nothing and cannot undo the newer version.
+        assertTrue(current.editPost(current.state.value.posts.single(), "Saturday walk", "Meet at 7")); idle(current)
+        assertTrue(server.edits.isEmpty())
+        assertNull(current.state.value.editingPostId)
+        assertNull(current.state.value.error)
+        assertEquals(Triple("Sunday walk", "Meet at 9", "\"v2\""), server.current.let { Triple(it.title, it.body, it.etag) })
+    }
+
+    @Test fun aPostEditShowsAsSavedOnlyAfterTheServerConfirmsIt() = runBlocking {
+        val server = PostEditApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        val shown = current.state.value.posts.single()
+        current.startEdit(shown)
+        fun unconfirmed(message: String?) {
+            val state = current.state.value
+            assertEquals(message, state.error)
+            assertNull(state.notice)
+            assertFalse(state.missing)
+            assertEquals(postId, state.editingPostId)
+            assertEquals(shown, state.posts.single())
+        }
+        server.failure = 503
+        assertTrue(current.editPost(shown, "Saturday walk", "Meet at 8")); idle(current)
+        unconfirmed("Synthetic UNAVAILABLE")
+
+        server.failure = 0
+        val gate = CompletableDeferred<Unit>(); server.gate = gate
+        assertTrue(current.editPost(shown, "Saturday walk", "Meet at 8"))
+        withTimeout(5000) { server.entered.await() }
+        assertTrue(current.state.value.working)
+        unconfirmed(null)
+        // The answer is lost after the server applied the change.
+        server.lost = true; server.gate = null; gate.complete(Unit); idle(current)
+        unconfirmed("No connection. Nothing new is confirmed.")
+        assertEquals("Meet at 8" to "\"v2\"", server.current.let { it.body to it.etag })
+
+        // Trying again still offers the version the editor opened with, so the server refuses it instead of applying it twice.
+        server.lost = false
+        assertTrue(current.editPost(shown, "Saturday walk", "Meet at 8")); idle(current)
+        unconfirmed("This post changed since you opened it. Reload to review the current version.")
+        assertEquals(List(3) { "\"v1\"" to mapOf<String, String?>("body" to "Meet at 8") }, server.edits)
+
+        // Closing the editor and editing the reloaded post saves, and only then does the screen show the server's answer.
+        current.cancelEdit(); current.reload(); idle(current)
+        val latest = current.state.value.posts.single()
+        assertEquals("\"v2\"", latest.etag)
+        current.startEdit(latest)
+        assertTrue(current.editPost(latest, "Saturday walk", "Meet at 8 by the bridge")); idle(current)
+        val state = current.state.value
+        assertEquals("Changes saved.", state.notice)
+        assertNull(state.error)
+        assertNull(state.editingPostId)
+        assertEquals(server.current, state.posts.single())
+        assertEquals("\"v3\"", state.posts.single().etag)
+    }
+
+    @Test fun postEditWireSendsOnlyTheChangedFields() = runBlocking {
+        val bodies = mutableListOf<String>()
+        val opened = post.copy(canManage = true, etag = "\"v1\"")
+        var reply = opened.copy(body = "Meet at 8", editedAt = "2026-09-19T10:05:00Z", etag = "\"v2\"")
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val request = chain.request()
+            val buffer = Buffer(); request.body?.writeTo(buffer); bodies += buffer.readUtf8()
+            okhttp3.Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(EnvelopeDto(reply, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = CommunityRepository(IdentityModule.community(http, Gson()), fixture.accounts)
+        assertEquals(reply, wire.updatePost(fixture.accountId, opened, "Saturday walk", "Meet at 8"))
+        reply = opened.copy(title = null, editedAt = "2026-09-19T10:05:00Z", etag = "\"v2\"")
+        assertEquals(reply, wire.updatePost(fixture.accountId, opened, null, "Meet at 7"))
+        assertEquals(listOf("""{"body":"Meet at 8"}""", """{"title":null}""").map(JsonParser::parseString), bodies.map(JsonParser::parseString))
     }
 
     @Test fun backNavigationReturnsThroughHistory() = runBlocking {
@@ -871,7 +1032,7 @@ class CommunityTest {
                 unless(postId) { api.publish(authorization, postId, etag, body) }
             override suspend fun deletePost(authorization: String, postId: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<OutcomeDto>> =
                 unless(postId) { api.deletePost(authorization, postId, etag, body) }
-            override suspend fun updatePost(authorization: String, postId: String, etag: String, body: CreatePostDto): Response<EnvelopeDto<PostDto>> =
+            override suspend fun updatePost(authorization: String, postId: String, etag: String, body: Map<String, String?>): Response<EnvelopeDto<PostDto>> =
                 unless(postId) { api.updatePost(authorization, postId, etag, body) }
             override suspend fun endComment(authorization: String, commentId: String, body: Map<String, String>): Response<EnvelopeDto<CommentDto>> =
                 unless(commentId) { api.endComment(authorization, commentId, body) }
@@ -1379,15 +1540,31 @@ class CommunityTest {
         assertTrue(server.edits.isEmpty())
     }
 
-    @Test fun ownedPageFailureDoesNotHideFollowedPages() = runBlocking {
+    @Test fun ownedPageFailureOffersOneRetryForBothListsWithoutEitherEmptyMessage() = runBlocking {
         val server = FollowApi(); server.ownedFailure = 503; server.followed = listOf(followedPage(1))
         val current = ready(CommunityRepository(server, fixture.accounts))
         current.open(Destination.MyPages); idle(current)
-        assertFalse(current.state.value.ownedLoaded)
-        assertEquals("Synthetic UNAVAILABLE", current.state.value.ownedError)
-        assertEquals(ListStatus.LOADED, current.state.value.followedStatus)
-        assertEquals(server.followed, current.state.value.followed)
-        assertNull(current.state.value.followedError)
+        current.state.value.let { state ->
+            assertFalse(state.ownedLoaded)
+            assertEquals("Synthetic UNAVAILABLE", state.ownedError)
+            assertEquals(ListStatus.FAILED, state.followedStatus)
+            assertEquals("Synthetic UNAVAILABLE", state.followedError)
+            assertFalse(state.noOwnedPages)
+            assertFalse(state.noFollowedPages)
+            assertTrue(state.followed.isEmpty())
+        }
+        // The followed list is not asked for once the screen already shows a failure.
+        assertEquals(listOf("GET /v1/me/pages"), server.calls)
+        server.ownedFailure = 0
+        current.retryFollowing(); idle(current)
+        assertEquals(listOf("GET /v1/me/pages", "GET /v1/me/pages", "GET /v1/me/following?limit=20"), server.calls)
+        current.state.value.let { state ->
+            assertTrue(state.ownedLoaded)
+            assertNull(state.ownedError)
+            assertEquals(ListStatus.LOADED, state.followedStatus)
+            assertEquals(server.followed, state.followed)
+            assertNull(state.followedError)
+        }
     }
 
     @Test fun followingFailureDoesNotHideOwnedPages() = runBlocking {
@@ -1451,7 +1628,7 @@ class CommunityTest {
         for ((heading, text, topic) in listOf(Triple(" ", "", "hobbies"), Triple(name + "\uD83D\uDE00", "", "hobbies"),
             Triple("River Walkers", description + "\uD83D\uDE00", "hobbies"), Triple("River Walkers", "", "gossip"))) {
             assertFalse(current.editPage(heading, text, topic))
-            assertEquals("Enter a name of 1 to 80 characters and a description of up to 500.", current.state.value.error)
+            assertEquals("Use a name of 1 to 80 characters and a description of up to 500.", current.state.value.error)
             assertEquals(server.current, current.state.value.editingPage)
         }
         assertTrue(server.edits.isEmpty())
@@ -1466,7 +1643,7 @@ class CommunityTest {
         val opened = current.state.value.page!!
         current.startPageEdit(opened)
         assertTrue(current.editPage("New name", "", "hobbies")); idle(current)
-        assertEquals("The change is not confirmed. Close the editor and reload the page to check it.", current.state.value.error)
+        assertEquals("No connection. Nothing new is confirmed.", current.state.value.error)
         assertEquals(opened, current.state.value.editingPage)
         assertEquals(opened, current.state.value.page)
         assertNull(current.state.value.notice)
@@ -1478,8 +1655,8 @@ class CommunityTest {
         assertNull(current.state.value.error)
     }
 
-    @Test fun pageEditTimeoutAndServerFailuresUseUnknownOutcomeMessage() = runBlocking {
-        val server = PageEditApi()
+    @Test fun pageEditTimeoutAndServerFailuresKeepTheEditorAndTheOpenedVersion() = runBlocking {
+        val server = PageEditApi(); server.failureCode = "UNAVAILABLE"
         val current = ready(CommunityRepository(server, fixture.accounts))
         current.open(Destination.Page(page.handle)); idle(current)
         val opened = current.state.value.page!!
@@ -1487,12 +1664,13 @@ class CommunityTest {
         for (status in listOf(408, 500, 503)) {
             server.failure = status
             assertTrue(current.editPage("New name", "", "hobbies")); idle(current)
-            assertEquals("The change is not confirmed. Close the editor and reload the page to check it.", current.state.value.error)
+            assertEquals("Synthetic UNAVAILABLE", current.state.value.error)
+            assertTrue(current.state.value.pageEditFailed)
             assertEquals(opened, current.state.value.editingPage)
             assertEquals(opened, current.state.value.page)
             assertNull(current.state.value.notice)
         }
-        assertEquals(3, server.edits.size)
+        assertEquals(List(3) { "\"p1\"" to mapOf("name" to "New name", "description" to "") }, server.edits)
     }
 
     @Test fun pageEditConflictKeepsSnapshotAndClosingReloadsLatest() = runBlocking {
@@ -1527,5 +1705,79 @@ class CommunityTest {
         assertEquals("\"p1\"", server.edits.single().first)
         assertEquals(server.current, current.state.value.page)
         assertEquals(opened, current.state.value.editingPage)
+    }
+
+    @Test fun followingLateAnswerAfterAccountChangeIsIgnored() = runBlocking {
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val returned = CompletableDeferred<Unit>()
+        val server = object : CommunityApi by api {
+            override suspend fun following(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PageDto>>> = withContext(NonCancellable) {
+                entered.complete(Unit); release.await()
+                ok(listOf(followedPage(1)), PaginationDto(null, false)).also { returned.complete(Unit) }
+            }
+        }
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.MyPages)
+        withTimeout(5000) { entered.await() }
+        current.bind(null)
+        release.complete(Unit)
+        withTimeout(5000) { returned.await() }
+        assertEquals(CommunityState(), current.state.value)
+    }
+
+    @Test fun followingLateAnswerAfterNavigationIsIgnored() = runBlocking {
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val returned = CompletableDeferred<Unit>()
+        val server = object : CommunityApi by api {
+            override suspend fun following(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PageDto>>> = withContext(NonCancellable) {
+                entered.complete(Unit); release.await()
+                ok(listOf(followedPage(1)), PaginationDto(null, false)).also { returned.complete(Unit) }
+            }
+        }
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.MyPages)
+        withTimeout(5000) { entered.await() }
+        current.open(Destination.Discover)
+        release.complete(Unit)
+        withTimeout(5000) { returned.await() }
+        idle(current)
+        assertEquals(Destination.Discover, current.state.value.destination)
+        assertTrue(current.state.value.followed.isEmpty())
+        assertEquals(listOf(page), current.state.value.pages)
+        assertNull(current.state.value.followedError)
+    }
+
+    @Test fun unfollowKeepsTheRowUntilTheServerAnswersAndBlocksAnotherCommand() = runBlocking {
+        val followed = followedPage(1)
+        val server = FollowApi(); server.followed = listOf(followed)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var requests = 0
+        val delayed = object : CommunityApi by server {
+            override suspend fun follow(authorization: String, pageId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PageDto>> {
+                requests += 1; entered.complete(Unit); release.await()
+                return server.follow(authorization, pageId, action, body)
+            }
+        }
+        val current = ready(CommunityRepository(delayed, fixture.accounts))
+        current.open(Destination.MyPages); idle(current)
+        current.unfollow(followed)
+        withTimeout(5000) { entered.await() }
+        assertTrue(current.state.value.working)
+        assertEquals(listOf(followed), current.state.value.followed)
+        assertNull(current.state.value.notice)
+        current.unfollow(followed)
+        assertEquals(1, requests)
+        release.complete(Unit); idle(current)
+        assertTrue(current.state.value.followed.isEmpty())
+        assertTrue(current.state.value.noFollowedPages)
+        assertNull(current.state.value.error)
+    }
+
+    @Test fun pageInputCapsNeverSplitEmoji() {
+        val emoji = "\uD83D\uDE00"
+        for (limit in listOf(160, 1000)) {
+            val capped = ("x" + emoji.repeat(limit)).takeCodePoints(limit)
+            assertEquals("x" + emoji.repeat(limit - 1), capped)
+            assertEquals(limit, capped.codePointLength())
+            assertEquals(0L, capped.codePoints().filter { it in 0xD800..0xDFFF }.count())
+        }
     }
 }

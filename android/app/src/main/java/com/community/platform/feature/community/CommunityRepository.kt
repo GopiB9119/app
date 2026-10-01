@@ -86,7 +86,7 @@ interface CommunityApi {
     @POST("v1/pages/{id}/{action}") suspend fun follow(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PageDto>>
     @POST("v1/pages/{id}/posts") suspend fun createPost(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Header("Idempotency-Key") key: String, @Body body: CreatePostDto): Response<EnvelopeDto<PostDto>>
     @GET("v1/posts/{id}") suspend fun post(@Header("Authorization") authorization: String, @Path("id") postId: String): Response<EnvelopeDto<PostDto>>
-    @PATCH("v1/posts/{id}") suspend fun updatePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: CreatePostDto): Response<EnvelopeDto<PostDto>>
+    @PATCH("v1/posts/{id}") suspend fun updatePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String?>): Response<EnvelopeDto<PostDto>>
     @POST("v1/posts/{id}/publish") suspend fun publish(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
     @POST("v1/posts/{id}/delete") suspend fun deletePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<OutcomeDto>>
     @POST("v1/posts/{id}/{action}") suspend fun react(@Header("Authorization") authorization: String, @Path("id") postId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
@@ -235,9 +235,15 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
             if (result.id != post.id || result.status != "deleted") invalid("The deletion could not be confirmed.")
         }
     }
-    suspend fun updatePost(accountId: String, post: PostDto, title: String?, body: String): PostDto = accounts.authorized(accountId) {
-        post(accounts.result(api.updatePost(it, post.id, post.etag ?: invalid(), CreatePostDto(title, body)))).also { result ->
-            if (result.id != post.id || result.status != post.status || !result.canManage) invalid("The edit could not be confirmed.")
+    /** Sends only the fields that differ from [opened], the post as the editor opened it, against that version's tag. A removed title is sent as null. */
+    suspend fun updatePost(accountId: String, opened: PostDto, title: String?, body: String): PostDto = accounts.authorized(accountId) {
+        val changes = buildMap<String, String?> {
+            if (title != opened.title) put("title", title)
+            if (body != opened.body) put("body", body)
+        }
+        if (changes.isEmpty()) invalid()
+        post(accounts.result(api.updatePost(it, opened.id, opened.etag ?: invalid(), changes))).also { result ->
+            if (result.id != opened.id || result.status != opened.status || !result.canManage) invalid("The edit could not be confirmed.")
         }
     }
     suspend fun endComment(accountId: String, comment: CommentDto): CommentDto = accounts.authorized(accountId) {

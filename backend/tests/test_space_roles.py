@@ -145,3 +145,71 @@ def test_ownership_can_be_handed_to_an_admin(client, app):
     assert accepted.status_code == 200, accepted.text
     assert client.get(f"/v1/spaces/{space_id}", headers=auth(member)).json()["data"]["role"] == "owner"
     assert client.get(f"/v1/spaces/{space_id}", headers=auth(owner)).json()["data"]["role"] == "member"
+
+
+def test_an_admin_who_lost_the_role_gets_the_original_answer_for_their_own_removal(client, app):
+    owner = account(client, app)
+    helper = account(client, app, "replay-helper@example.test")
+    ordinary = account(client, app, "replay-ordinary@example.test")
+    space_id = group(client, owner).json()["data"]["id"]
+    for person in (helper, ordinary):
+        admit(client, owner, space_id, person)
+    promote(client, owner, space_id, helper)
+    path = f"/v1/spaces/{space_id}/members/{ordinary['user']['id']}/remove"
+    headers = {**auth(helper), "Idempotency-Key": str(uuid4()), "If-Match": roster_entry(client, helper, space_id, ordinary["user"]["id"])["etag"]}
+    removed = client.post(path, headers=headers, json={})
+    assert removed.status_code == 200, removed.text
+
+    helper_entry = roster_entry(client, owner, space_id, helper["user"]["id"])
+    assert change_role(client, owner, space_id, helper["user"]["id"], "member", helper_entry["etag"]).status_code == 200
+    again = client.post(path, headers=headers, json={})
+    assert again.status_code == 200, again.text
+    assert again.json()["data"] == removed.json()["data"]
+    assert client.post(path, headers={**headers, "Idempotency-Key": str(uuid4())}, json={}).status_code == 404
+
+    mine = roster_entry(client, helper, space_id, helper["user"]["id"])
+    left = client.post(f"/v1/spaces/{space_id}/leave", headers={**auth(helper), "Idempotency-Key": str(uuid4()), "If-Match": mine["etag"]}, json={})
+    assert left.status_code == 200, left.text
+    after = client.post(path, headers=headers, json={})
+    assert after.status_code == 200, after.text
+    assert after.json()["data"] == removed.json()["data"]
+    # Any other key from the former member gets exactly the answer for a Space that does not exist (T42).
+    other = client.post(path, headers={**headers, "Idempotency-Key": str(uuid4())}, json={})
+    missing = client.post(f"/v1/spaces/{uuid4()}/members/{ordinary['user']['id']}/remove",
+                          headers={**headers, "Idempotency-Key": str(uuid4())}, json={})
+    assert other.status_code == missing.status_code == 404
+    assert other.json()["error"] == missing.json()["error"]
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceAuditEvent).where(
+            SpaceAuditEvent.space_id == space_id, SpaceAuditEvent.action == "space.member_removed")) == 1
+
+
+def test_a_former_owner_gets_the_original_answer_for_their_own_role_change(client, app):
+    owner, member, space_id, _invitation, reviewed = membership_fixture(client, app)
+    successor = account(client, app, "role-successor@example.test")
+    admit(client, owner, space_id, successor)
+    key = str(uuid4())
+    target = member["user"]["id"]
+    promoted = change_role(client, owner, space_id, target, "admin", reviewed["etag"], key)
+    assert promoted.status_code == 200, promoted.text
+
+    base = f"/v1/spaces/{space_id}/ownership-transfers"
+    entry = roster_entry(client, owner, space_id, successor["user"]["id"])
+    offered = client.post(base, headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": entry["etag"]},
+                          json={"recipient_account_id": successor["user"]["id"]})
+    assert offered.status_code == 201, offered.text
+    transfer = offered.json()["data"]
+    accepted = client.post(f"{base}/{transfer['id']}/accept", headers={**auth(successor), "If-Match": transfer["etag"]}, json={})
+    assert accepted.status_code == 200, accepted.text
+
+    again = change_role(client, owner, space_id, target, "admin", reviewed["etag"], key)
+    assert again.status_code == 200, again.text
+    assert again.json()["data"] == promoted.json()["data"]
+    assert change_role(client, owner, space_id, target, "member", promoted.json()["data"]["etag"]).status_code == 404
+
+    # Once they have left, even that key shows nothing current about the Space.
+    mine = roster_entry(client, owner, space_id, owner["user"]["id"])
+    left = client.post(f"/v1/spaces/{space_id}/leave", headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": mine["etag"]}, json={})
+    assert left.status_code == 200, left.text
+    gone = change_role(client, owner, space_id, target, "admin", reviewed["etag"], key)
+    assert gone.status_code == 404 and gone.json()["error"]["message"] == "Space not found."

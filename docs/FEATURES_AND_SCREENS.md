@@ -59,8 +59,8 @@ Rule: discovery never uses private chats, family tasks, calendars, health data o
 
 | Capability | B / W / A | Status |
 | --- | --- | --- |
-| Public pages: create, view, owner/admin roles | Yes / Yes / Yes | Working (limited): create, view signed out, owner edits; editors/admins not built |
-| Follow and unfollow pages | Yes / Yes / Yes | Working (limited) |
+| Public pages: create, view, owner/admin roles | Yes / Yes / Yes | Working (limited): create, view signed out, owner edits (on Android since 2026-10-01, [T73](TASKS.md#approved-requirements-not-built-yet)); editors/admins not built |
+| Follow and unfollow pages | Yes / Yes / Yes | Working (limited); Android lists the pages you follow since 2026-10-01 ([T72](TASKS.md#approved-requirements-not-built-yet)) |
 | Posts: drafts, explicit publish, edit, delete | Yes / Yes / Yes | Working (limited); Android post editing added on 2026-10-01 ([T31](TASKS.md#approved-requirements-not-built-yet)) |
 | Comments and replies, reactions, saves, shares | Yes / Yes / Yes | Working (limited): comments with one reply level, like, save; shares not built |
 | Report and block | Yes / Yes / Yes | Working (limited): reports are stored; moderator review tools not built |

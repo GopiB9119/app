@@ -351,7 +351,8 @@ test('browser alerts: denied permission stays off with a plain error and unsuppo
       await page.getByRole('heading', { name: 'Preferences', exact: true }).waitFor();
       const toggle = page.getByRole('switch', { name: alertsLabel, exact: true });
       if (supported) {
-        await toggle.check();
+        // The fixture refuses at once, so the switch is back off before a check() could see it on.
+        await toggle.click();
         await page.getByRole('alert').filter({ hasText: 'Your browser did not allow alerts. Alerts are off.' }).waitFor();
         assert.equal(await toggle.isChecked(), false);
         assert.equal(await page.evaluate(() => window.liveFixture.permissionRequests), 1);

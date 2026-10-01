@@ -207,8 +207,14 @@ class IdentityService:
         result = None
         with self.sessions.begin() as database:
             user = database.scalar(select(User).where(User.email_lookup == lookup).with_for_update())
-            encoded = user.password_hash if user else self.security.dummy_hash
+            encoded = user.password_hash if user and user.password_hash else self.security.dummy_hash
             correct = self.security.verify_password(encoded, body.password)
+            if user and correct and user.status == "deletion_requested":
+                # Only someone who knows the password learns this; the answer offers to cancel the deletion.
+                raise DomainError(
+                    409, "ACCOUNT_DELETION_PENDING", "This account is waiting to be deleted. You can still cancel the deletion.",
+                    details={"purge_after": user.purge_after.isoformat()},
+                )
             if user and correct and user.status == "active":
                 if self.security.passwords.check_needs_rehash(user.password_hash):
                     user.password_hash = self.security.passwords.hash(body.password)

@@ -23,6 +23,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
@@ -134,6 +135,78 @@ class CommunityScreenTest {
         compose.onAllNodesWithTag("post-editor-$postId").assertCountEquals(0)
         reveal("edit-$postId")
         compose.onNodeWithTag("edit-$postId").assertIsDisplayed()
+    }
+
+    @Test fun followedPagesLoadingEmptyFailureAndUnfollowUseSeparateStates() {
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.MyPages, loading = true, ownedLoaded = true))
+        val opened = mutableListOf<Destination>()
+        val unfollowed = mutableListOf<PageDto>()
+        var retries = 0
+        val actions = CommunityActions(open = { opened += it }, unfollow = { unfollowed += it }, retryFollowing = { retries += 1 })
+        compose.setContent { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
+        reveal("followed-loading")
+        compose.onNodeWithText("Loading pages you follow\u2026").assertIsDisplayed()
+        compose.onAllNodesWithText("You do not follow any pages.").assertCountEquals(0)
+
+        state = state.copy(loading = false, followedStatus = ListStatus.LOADED)
+        reveal("followed-empty")
+        compose.onNodeWithText("You do not follow any pages.").assertIsDisplayed()
+        compose.onNodeWithTag("followed-discover").performScrollTo().performClick()
+        assertEquals(listOf(Destination.Discover), opened)
+
+        state = state.copy(followedStatus = ListStatus.FAILED, followedError = "Synthetic list failure", error = "Synthetic list failure")
+        reveal("followed-retry")
+        compose.onNodeWithTag("followed-error").performScrollTo().assertTextContains("Synthetic list failure")
+        compose.onAllNodesWithText("You do not follow any pages.").assertCountEquals(0)
+        compose.onNodeWithTag("followed-retry").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(1, retries)
+
+        val followed = page.copy(following = true, followerCount = 1)
+        state = state.copy(followedStatus = ListStatus.LOADED, followedError = null, error = null, followed = listOf(followed))
+        reveal("unfollow-river-walkers")
+        compose.onNodeWithText("@river-walkers / hobbies / 1 follower").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("unfollow-river-walkers").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(listOf(followed), unfollowed)
+    }
+
+    @Test fun largeTextNarrowPageEditorKeepsFieldsAndCommandsReachable() {
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = owned))
+        val edits = mutableListOf<Triple<String, String, String>>()
+        var closes = 0
+        val actions = CommunityActions(
+            startPageEdit = { state = state.copy(editingPage = it, pageEditSession = state.pageEditSession + 1) },
+            editPage = { name, description, topic -> edits += Triple(name, description, topic); true },
+            cancelPageEdit = { closes += 1; state = state.copy(editingPage = null) },
+        )
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                Box(Modifier.width(320.dp).fillMaxHeight()) { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
+            }
+        }
+        reveal("page-edit")
+        compose.onNodeWithTag("page-edit").performScrollTo().assertIsDisplayed().performClick()
+        val parent = compose.onNodeWithTag("community-content").fetchSemanticsNode().boundsInRoot
+        for (tag in listOf("page-edit-name", "page-edit-topic", "page-edit-description", "page-edit-save", "page-edit-cancel")) {
+            reveal(tag)
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(tag, !bounds.isEmpty && bounds.left >= parent.left && bounds.right <= parent.right)
+        }
+        reveal("page-edit-name")
+        compose.onNodeWithTag("page-edit-name").performScrollTo().assertTextContains("River Walkers").performTextReplacement("New name")
+        reveal("page-edit-topic-events")
+        compose.onNodeWithTag("page-edit-topic-events").performScrollTo().performClick()
+        reveal("page-edit-description")
+        compose.onNodeWithTag("page-edit-description").performScrollTo().assertTextContains("Weekend walks").performTextReplacement("Line one\nLine two")
+        reveal("page-edit-save")
+        compose.onNodeWithText("Save page").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(listOf(Triple("New name", "Line one\nLine two", "events")), edits)
+        reveal("page-edit-cancel")
+        compose.onNodeWithText("Close editor").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(1, closes)
+        compose.onAllNodesWithTag("page-editor").assertCountEquals(0)
     }
 
     private fun capture(name: String) {

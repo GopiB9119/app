@@ -558,6 +558,13 @@
     <string name="community_unfollow_page">Unfollow %1$s</string>
     <string name="community_edit_page">Edit page</string>
     <string name="community_save_page">Save page</string>
+    <string name="community_close_editor">Close editor</string>
+    <string name="community_edit_name">Name</string>
+    <string name="community_edit_description">Description</string>
+    <string name="community_edit_topic">Topic</string>
+    <string name="community_page_edit_invalid">Use a name of 1 to 80 characters and a description of up to 500.</string>
+    <string name="community_page_edit_conflict">This page changed since you opened the editor. Close it and reload before editing again.</string>
+    <string name="community_page_saved">Page saved.</string>
     <string name="events_title">Events</string>
     <string name="events_open">Events</string>
     <string name="events_back">Back</string>

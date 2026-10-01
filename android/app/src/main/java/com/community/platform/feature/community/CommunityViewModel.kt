@@ -44,6 +44,8 @@ data class CommunityState(
     val drafts: List<PostDto> = emptyList(),
     val post: PostDto? = null,
     val editingPostId: String? = null,
+    /** The post as it was when Edit was chosen: Save sends its version tag and only the fields that differ from it, never a version refreshed since. */
+    val editingPost: PostDto? = null,
     val comments: List<CommentDto> = emptyList(),
     val blocks: List<BlockDto> = emptyList(),
     val pending: CreateIntent? = null,
@@ -69,9 +71,8 @@ data class CommunityState(
 /** A list that loads on its own: its empty message needs a successful load, and a failed load offers Retry instead. */
 enum class ListStatus { LOADING, LOADED, FAILED }
 
-const val PAGE_EDIT_INVALID = "Enter a name of 1 to 80 characters and a description of up to 500."
+const val PAGE_EDIT_INVALID = "Use a name of 1 to 80 characters and a description of up to 500."
 const val PAGE_EDIT_CONFLICT = "This page changed since you opened the editor. Close it and reload before editing again."
-const val PAGE_EDIT_UNCONFIRMED = "The change is not confirmed. Close the editor and reload the page to check it."
 const val PAGE_EDIT_SAVED = "Page saved."
 
 /** The server allows 1,000 characters of report details, counted as code points (Python `len`). */
@@ -213,8 +214,10 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                             catch (error: Exception) {
                                 if (mutableState.value.destination == destination) {
                                     fail(error, expected)
-                                    apply(expected, destination) { it.copy(ownedError = it.error) }
+                                    // One error and one Retry for the screen: Retry loads both lists again, so neither says it is empty meanwhile.
+                                    apply(expected, destination) { it.copy(ownedError = it.error, followedStatus = ListStatus.FAILED, followedError = it.error) }
                                 }
+                                return@launch
                             }
                         }
                         if (generation != expected || mutableState.value.destination != destination) return@launch
@@ -359,11 +362,12 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     private fun reloadAfterCommand() = reload()
 
     fun publish(post: PostDto) = command("Published. Anyone can see this post now.", subject = post.id) { replacePost(repository.publish(it, post)); reloadAfterCommand() }
-    fun startEdit(post: PostDto) = mutableState.update { if (it.working || !post.canManage) it else it.copy(editingPostId = post.id, error = null, notice = null) }
-    fun cancelEdit() = mutableState.update { if (it.working) it else it.copy(editingPostId = null) }
+    fun startEdit(post: PostDto) = mutableState.update { if (it.working || !post.canManage) it else it.copy(editingPostId = post.id, editingPost = post, error = null, notice = null) }
+    fun cancelEdit() = mutableState.update { if (it.working) it else it.copy(editingPostId = null, editingPost = null) }
 
-    /** The editor keeps the person's text open until the server confirms the change. */
+    /** Saves against the post as it was when Edit was chosen, and keeps the person's text open until the server confirms the change. */
     fun editPost(post: PostDto, title: String, body: String): Boolean {
+        val opened = mutableState.value.editingPost?.takeIf { it.id == post.id } ?: return false
         val text = body.trim()
         val heading = title.trim()
         if (text.isEmpty() || text.codePointCount(0, text.length) > 5000 || heading.codePointCount(0, heading.length) > 120) {
@@ -371,13 +375,16 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
             return false
         }
         val newTitle = heading.ifEmpty { null }
-        if (newTitle == post.title && text == post.body) { cancelEdit(); return true }
-        command("Changes saved.", subject = post.id) { account ->
-            val saved = repository.updatePost(account, post, newTitle, text)
+        if (newTitle == opened.title && text == opened.body) { cancelEdit(); return true }
+        command("Changes saved.", subject = opened.id) { account ->
+            val saved = try { repository.updatePost(account, opened, newTitle, text) } catch (error: IdentityFailure) {
+                // As on the web: a newer version is refused instead of overwritten, and the person's text stays open.
+                throw if (error.status == 412) IdentityFailure(error.code, "This post changed since you opened it. Reload to review the current version.", 412) else error
+            }
             mutableState.update { state ->
                 state.copy(
                     posts = state.posts.map { if (it.id == saved.id) saved else it }, drafts = state.drafts.map { if (it.id == saved.id) saved else it },
-                    post = if (state.post?.id == saved.id) saved else state.post, editingPostId = null,
+                    post = if (state.post?.id == saved.id) saved else state.post, editingPostId = null, editingPost = null,
                 )
             }
         }
@@ -422,11 +429,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                 apply(expected, destination) { it.copy(pageEditFailed = true) }
                 val failure = error as? IdentityFailure
                 // As on the web: reloading alone cannot help, because this editor keeps the version it opened with.
-                throw when {
-                    failure?.status == 412 -> IdentityFailure(failure.code, PAGE_EDIT_CONFLICT, failure.status)
-                    error is IOException || failure?.status == 408 || failure?.status in 500..599 -> IdentityFailure("PAGE_EDIT_UNCONFIRMED", PAGE_EDIT_UNCONFIRMED, failure?.status ?: 0)
-                    else -> error
-                }
+                // A lost answer keeps the app's usual "Nothing new is confirmed" message; closing the editor then reloads the page.
+                throw if (failure?.status == 412) IdentityFailure(failure.code, PAGE_EDIT_CONFLICT, failure.status) else error
             }
             apply(expected, destination) { state -> state.copy(page = if (state.page?.id == saved.id) saved else state.page,
                 pages = if (state.pages.any { it.id == saved.id }) state.pages.map { if (it.id == saved.id) saved else it } else state.pages + saved,

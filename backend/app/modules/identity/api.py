@@ -13,6 +13,8 @@ from app.modules.identity.schemas import (
     ChallengeView,
     CompleteRecovery,
     CompleteRegistration,
+    DeletionRequest,
+    DeletionView,
     DoneView,
     Envelope,
     ErrorEnvelope,
@@ -88,6 +90,17 @@ def login(request: Request, body: Login):
     service = request.app.state.identity
     service.rate_limit("login", body.email, client_network(request))
     return envelope(request, service.login(body))
+
+
+@router.post("/auth/cancel-deletion", response_model=Envelope[AuthView])
+def cancel_deletion(request: Request, body: Login):
+    request.app.state.identity.rate_limit("login", body.email, client_network(request))
+    return envelope(request, request.app.state.account_deletion.cancel(body))
+
+
+@router.post("/me/deletion", response_model=Envelope[DeletionView], status_code=202, dependencies=signed_in)
+def request_deletion(request: Request, body: DeletionRequest):
+    return envelope(request, request.app.state.account_deletion.request(token(request), body.password, client_network(request)))
 
 
 @router.post("/auth/recover", response_model=Envelope[ChallengeView], status_code=202)

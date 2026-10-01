@@ -237,7 +237,7 @@ test('offline inbox preferences use a confirmed version and denied refresh remov
     const { page, outbound, errors } = await fixture(context, { inbox: true });
     await page.getByRole('checkbox', { name: 'In-app task reminders' }).click();
     await page.waitForFunction(() => window.reminderFixture.preferences === false);
-    await page.locator('input[type="checkbox"]:not(:checked)').waitFor();
+    await page.getByRole('checkbox', { name: 'In-app task reminders', checked: false }).waitFor();
     const change = await page.evaluate(() => window.reminderFixture.calls.find(call => call.method === 'PATCH'));
     assert.equal(change.headers['if-match'], '"preferences-1"');
     assert.deepEqual(change.body, { in_app_reminders_enabled: false });

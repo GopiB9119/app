@@ -30,6 +30,7 @@ from app.modules.events.service import EventService
 from app.modules.files.api import router as document_router
 from app.modules.files.service import DocumentService
 from app.modules.identity.api import router
+from app.modules.identity.deletion import AccountDeletionService
 from app.modules.identity.exports import ExportService
 from app.modules.identity.security import Security
 from app.modules.identity.service import IdentityService, utcnow
@@ -172,6 +173,7 @@ def create_app(settings=None, clock=utcnow):
     application.state.sessions = sessions
     application.state.security = security
     application.state.identity = IdentityService(sessions, security, settings, clock)
+    application.state.account_deletion = AccountDeletionService(application.state.identity)
     application.state.spaces = SpaceService(application.state.identity)
     application.state.ownership = OwnershipTransferService(application.state.spaces)
     application.state.space_directory = SpaceDirectoryService(application.state.spaces)
@@ -238,7 +240,7 @@ def create_app(settings=None, clock=utcnow):
 
     @application.exception_handler(DomainError)
     async def domain_error(request: Request, error: DomainError):
-        return error_response(request, error.status, error.code, error.message)
+        return error_response(request, error.status, error.code, error.message, getattr(error, "details", None))
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):

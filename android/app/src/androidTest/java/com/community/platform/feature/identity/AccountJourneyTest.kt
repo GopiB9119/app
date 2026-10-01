@@ -466,6 +466,8 @@ class AccountJourneyTest {
         compose.onNodeWithTag("space-row-$spaceId").performClick()
         reveal("space-workspace", "space-show-members")
         compose.onNodeWithTag("space-show-members").performClick()
+        // The members and the ownership offers load after this click; wait for them, as the membership journey does.
+        waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "ownership-review-$identifier")
         compose.onNodeWithTag("ownership-cancel-$identifier").assertDoesNotExist()
         compose.onNodeWithTag("ownership-review-$identifier").performClick()

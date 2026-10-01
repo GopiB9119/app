@@ -109,6 +109,15 @@ class Login(EmailInput, DeviceInput):
     password: str = Field(min_length=1, max_length=128)
 
 
+class DeletionRequest(Input):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class DeletionView(BaseModel):
+    status: Literal["deletion_requested"]
+    purge_after: datetime
+
+
 class ChallengeView(BaseModel):
     challenge_id: str
     expires_at: datetime

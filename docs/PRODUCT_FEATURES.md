@@ -66,11 +66,11 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| community.pages | P/P/P | Public page detail by handle, signed-out reads, owner edits with reviewed version; archive/delete/lifecycle remain |
+| community.pages | P/P/P | Public page detail by handle, signed-out reads, owner edits with reviewed version (Android too since T73); archive/delete/lifecycle remain |
 | community.page-onboarding | P/P/P | Explicit page creation (handle/name/topic/description) with exact retry; publication review remains |
 | community.page-roles | U/U/U | Owner only today; editors/admins, acting-page attribution and target-aware role changes remain |
 | community.page-membership | U/U/U | Admission separate from following |
-| community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following |
+| community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following; the list of pages you follow on web and Android (T72) |
 | community.posts-drafts | P/P/P | Private drafts, explicit publish, owner edits (edited mark) on web and Android ([T31](TASKS.md#approved-requirements-not-built-yet)), tombstone delete; revision history remains |
 | community.publication-review | U/U/U | Exact revision/media clearance, withdraw and remoderation |
 | community.media-posts | U/U/U | Safe ready media with compatible audience |

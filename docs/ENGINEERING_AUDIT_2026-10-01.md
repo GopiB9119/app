@@ -155,6 +155,8 @@ Other evidence gaps:
 - The default `npm` test scripts skip the identity, care and alerts client suites (15 tests) and the alerts journey (T51).
 - One saved test report, `.local/live-sweep-20261001.xml`, is not valid XML because it contains terminal colour codes.
 
+**Since then:** T51 completed the test commands and documented how to save a valid report, and [T64](TASKS.md#defects-that-break-approved-requirements) added `npm run verify`, one local command that runs every check and writes one summary, including the files that changed during the run. A CI service is still blocked, as the Operations row in section 6 says.
+
 ### M6. Sessions disturb each other
 
 All sessions share one working tree and one live stack, and the API and workers bind-mount the source ([infra/compose.yaml](../infra/compose.yaml)). Three effects so far:
@@ -274,7 +276,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
     - 9 needs no new test. The API takes a local time and a zone and works out the instant itself, and it refuses times that a clock change skips or repeats (`test_event_times_and_text_are_validated`). A check in the apps would refuse valid events whenever the server's and the device's timezone rules differ, so none was added.
   - **The holes listed above:**
     - The lock test is [T60](TASKS.md#defects-that-break-approved-requirements).
-    - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens wait for T13.
+    - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens are [T78](TASKS.md#defects-that-break-approved-requirements), after the live updates work (T65) settles on the web.
 
 ## 6. What Is Missing, and Why
 

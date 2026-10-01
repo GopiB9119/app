@@ -9,3 +9,15 @@ Source chapters: 1, 2, 15.
 Feature inventory: pages, page-onboarding, page-roles, page-membership, following, posts-drafts, publication-review, media-posts, comments-replies, reactions, shares, saved-posts, topics-hashtags, page-analytics, scheduled-publication.
 
 See the [complete feature catalog](../../../../../../../../../../packages/feature-catalog/features.json). Future implementation files belong here as each feature is built.
+
+## Post Editing Keeps The Opened Version (T77)
+
+Editing a post keeps the post as it was when Edit was chosen. Save sends only the fields that differ from it, with the ETag captured then, so a refresh or a reload another command causes never turns an old text into an overwrite. An unchanged post sends nothing. A conflict (412) says "This post changed since you opened it. Reload to review the current version." and keeps the text open; the post shows as saved only after the server confirms it ([T77](../../../../../../../../../../docs/TASKS.md#defects-that-break-approved-requirements)).
+
+## Followed Pages And Page Editing (T72, T73)
+
+Your pages now includes a separately tracked followed list with loading, successful-empty and failure states, Retry, duplicate-free Load more and server-confirmed Unfollow (the list then reloads from the server). A followed-list failure does not hide owned pages. If your own pages fail to load, the followed list is not asked for: both sections show the failure with Retry, and neither says it is empty. Account changes and navigation discard late list answers.
+
+Owners can edit a page's name, topic and description inline. Save sends only changed string fields with the ETag captured when the editor opened; refreshing never replaces that review. A conflict (412) says the page changed since the editor opened; a lost answer shows the app's usual "No connection. Nothing new is confirmed."; both keep the text open, and closing a failed editor reloads the current page. Creation and editing count Unicode code points, and raw input caps keep emoji whole. New labels and messages are English resources until translated.
+
+Following requests keep `limit=20` and the existing 64 KiB response limit; IdentityModule is unchanged. Names and descriptions take at most `20 * (80 + 500) * 4 = 46,400` UTF-8 bytes. With other fields, about 2.7 KB per page gives about 55 KB for twenty pages; even a cursor of up to 2 KiB stays below 65,536 bytes. A wire test decodes twenty maximum-length emoji pages through that unchanged limit. `CommunityScreenTest` covers the list states and actions and the editor at 320 dp with 200% text; all 6 of its tests passed on the API 36 emulator on 2026-10-01.

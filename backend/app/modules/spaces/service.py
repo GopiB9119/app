@@ -198,12 +198,15 @@ class SpaceService:
             # their own key keeps the earlier answers (the outcome, or 409 and 428 for a changed or missing review).
             if actor is None or (actor.status != "active" and receipt is None):
                 raise DomainError(404, "NOT_FOUND", "Space not found.")
-            if target is None or (action == "remove" and (actor.role not in MANAGERS or actor.status != "active")):
+            # The caller's own earlier command on these same admissions is answered from its receipt, even after they lost the role or left.
+            replay = (receipt is not None and target is not None and receipt.action == action
+                      and receipt.actor_admission_id == actor.admission_id and receipt.target_admission_id == target.admission_id)
+            if target is None or (action == "remove" and not replay and (actor.role not in MANAGERS or actor.status != "active")):
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             self.identity.authenticate(database, token, lock=True)
             if target.role == "owner":
                 raise DomainError(409, "OWNER_REQUIRED", "The owner must remain in this family Space.")
-            if action == "remove" and actor.role == "admin" and target.role == "admin":
+            if action == "remove" and not replay and actor.role == "admin" and target.role == "admin":
                 raise DomainError(409, "OWNER_ONLY", "Only the owner can remove an admin.")
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current member before continuing.")
@@ -257,7 +260,14 @@ class SpaceService:
             actor, target = by_account.get(caller.id), by_account.get(target_id)
             if actor is None or actor.status != "active":
                 raise DomainError(404, "NOT_FOUND", "Space not found.")
-            if actor.role != "owner" or target is None or target.status != "active" or target.account_id == caller.id:
+            receipt = database.scalar(select(SpaceMembershipCommand).where(
+                SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
+                SpaceMembershipCommand.request_key == key,
+            ))
+            # The caller's own earlier role change is answered from its receipt, even after they handed over ownership.
+            replay = (receipt is not None and target is not None and receipt.action == action
+                      and receipt.actor_admission_id == actor.admission_id and receipt.target_admission_id == target.admission_id)
+            if (actor.role != "owner" and not replay) or target is None or target.status != "active" or target.account_id == caller.id:
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             self.identity.authenticate(database, token, lock=True)
             if space.space_type not in ROLE_SPACE_TYPES:
@@ -265,10 +275,6 @@ class SpaceService:
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current member before continuing.")
             digest = self.security.digest("space.membership.command", ":".join((action, target_id, expected)))
-            receipt = database.scalar(select(SpaceMembershipCommand).where(
-                SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
-                SpaceMembershipCommand.request_key == key,
-            ))
             if receipt is not None:
                 if receipt.actor_admission_id != actor.admission_id or receipt.target_admission_id != target.admission_id:
                     raise DomainError(404, "NOT_FOUND", "Membership not found.")

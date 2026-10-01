@@ -54,7 +54,7 @@ Template:
 
 | ID | Question | Blocks |
 | --- | --- | --- |
-| D1 | Is a public community a kind of Space? Answered provisionally by DEC-011 (both: Pages stay, and group Spaces can be public); awaiting the owner's review. | Public community model (R3) |
+| D1 | Is a public community a kind of Space? Answered provisionally by DEC-011 (both: Pages stay, and group Spaces can be public); awaiting the owner's review. The text the owner shared on 2026-10-01 (part A) describes public communities whose members post publicly, which neither provides ([C12](PRODUCT_UNDERSTANDING.md#40-conflicts-with-the-existing-repository), Q24). | Public community model (R3) |
 | D2 | Keep, drop or postpone temporary event Spaces? | Space types |
 | D3 | Should new members still not see earlier items, and should direct chats stay private to two people? | History rules |
 | D4 | What can the agent do in the first release, and is it still a separate workstream? Answered provisionally by DEC-012 (a rule-based agent with exact approvals, built here); awaiting the owner's review. | Agent work (R7, R8) |
@@ -62,7 +62,7 @@ Template:
 | D6 | Which single build order is the roadmap? Seven documents give different orders (below). | Roadmap and task order |
 | D7 | How should the product look and be navigated? Answered by DEC-013 (one design system and screen rules) and DEC-014 (Home as a personal overview and five main sections), which the owner confirmed on 2026-10-01. | Nothing; kept here for the record |
 
-D1–D5, D7 and the open questions Q6–Q21 are explained in [section 39 of the Product Understanding](PRODUCT_UNDERSTANDING.md#39-open-questions). Entity-level open decisions U-01 to U-18 are listed in the [Domain Contract](DOMAIN.md#unresolved-decisions).
+D1–D5, D7 and the open questions Q6–Q28 are explained in [section 39 of the Product Understanding](PRODUCT_UNDERSTANDING.md#39-open-questions). Entity-level open decisions U-01 to U-18 are listed in the [Domain Contract](DOMAIN.md#unresolved-decisions).
 
 ### D6: Competing Build Orders
 
