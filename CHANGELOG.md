@@ -49,6 +49,7 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ### Product (audit session)
 
+- **`npm run verify` catches clashing migrations at once** (T64): when two sessions add a migration with the same number, every backend test fails after minutes with "Multiple heads". The command now checks the migration files first and names the two that clash.
 - **Security review of the code built today** (T88–T91): two reviews of the newer features (live updates, account deletion, moderation, Space roles and couples, documents, search, the agent and the web proxy) found four problems, all now fixed:
   - **Blocks and join requests:** an admin could let into a group someone the owner had blocked.
   - **The agent:** agent requests that waited for a lock could still show history to a removed member, or act on a revoked session.

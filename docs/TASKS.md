@@ -154,7 +154,7 @@ From Part A, the community and public content text the product owner shared on 2
 | ID | Task | Waiting for | Status |
 | --- | --- | --- | --- |
 | T83 | Page rules and pinned posts on backend, web and Android (DEC-025 parts 1 and 2). Migration `0029`. Existing behaviour kept: a page's post list still holds every published post in date order, so a client that does not know about pins still shows pinned posts; pinning changes neither the post nor its version tag. Changed behaviour: a page edit may be up to 64 KiB, like a post edit, because 2,000 characters of rules exceed 16 KiB when every character is escaped; Android accepts found and followed page lists up to 512 KiB, because twenty pages with rules can exceed 64 KiB. | — | Done 2026-10-01: backend 72, web client 11, offline screens 6, the live `community:` journey, Android `CommunityTest` 64 and `CommunityScreenTest` 7 of 7 on the emulator at 320 dp and 200% text passed; the dev database is at `0029` and the shared API serves the new routes ([checkpoint](BUILD_STATUS.md#page-rules-and-pinned-posts-checkpoint)) |
-| T84 | Page moderators and handing over a page (DEC-025 parts 3 and 4). | — | In progress (building session, from 23:56): backend first |
+| T84 | Page moderators and handing over a page (DEC-025 parts 3 and 4). | — | In progress (building session, from 23:56): backend first, migration `0031` (0030 was already claimed by T13 for DEC-026) |
 | T85 | Archive, delete and restore a page (DEC-025 part 5). Account deletion (T68) already marks the pages it deletes as `archived`, so the read-only state needs a value of its own. | — | Ready |
 
 ## Documentation

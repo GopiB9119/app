@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_serializer, model_validator
 
-from app.modules.community.models import REPORT_REASONS, TOPICS
+from app.modules.community.models import MODERATOR_STATES, REPORT_REASONS, TOPICS
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
 
@@ -183,9 +183,11 @@ class PageView(ModeratedView):
     description: str
     rules: str
     topic: Topic
+    status: Literal["active", "read_only", "deleted"]
     follower_count: int = Field(ge=0)
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    purge_after: AwareDatetime | None = None
     following: bool
     blocked: bool
     can_manage: bool
@@ -249,6 +251,65 @@ class BlockView(BaseModel):
 class BlockOutcome(BaseModel):
     id: str
     status: Literal["removed"]
+
+
+class InviteModerator(Input):
+    account_id: UUID
+
+
+class ModeratorView(BaseModel):
+    id: str
+    page_id: str
+    account_id: str
+    display_name: str
+    status: Literal[MODERATOR_STATES]
+    created_at: AwareDatetime
+    expires_at: AwareDatetime | None
+    resolved_at: AwareDatetime | None
+    etag: str
+
+
+class ModeratorRoleView(BaseModel):
+    """One of the caller's own invitations or appointments, with the page it concerns."""
+
+    id: str
+    page_id: str
+    page_handle: str
+    page_name: str
+    status: Literal[MODERATOR_STATES]
+    created_at: AwareDatetime
+    expires_at: AwareDatetime | None
+    resolved_at: AwareDatetime | None
+    etag: str
+
+
+class OfferHandover(Input):
+    to_account_id: UUID
+
+
+class HandoverView(BaseModel):
+    id: str
+    page_id: str
+    page_handle: str
+    page_name: str
+    from_account_id: str
+    from_name: str
+    to_account_id: str
+    to_name: str
+    status: Literal["pending", "accepted", "declined", "cancelled", "expired", "invalidated"]
+    created_at: AwareDatetime
+    expires_at: AwareDatetime | None
+    resolved_at: AwareDatetime | None
+    etag: str
+
+
+class DeletePage(Input):
+    confirm: str = Field(min_length=1, max_length=160, description="The page's name, typed to confirm the deletion.")
+
+    @field_validator("confirm")
+    @classmethod
+    def valid_confirm(cls, value: str) -> str:
+        return clean_text(value, 80, multiline=False)
 
 
 class PageList(Envelope[list[PageView]]):

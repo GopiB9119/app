@@ -11,6 +11,8 @@ from app.modules.community.models import (
     CommunityAuditEvent,
     ContentReport,
     PageFollow,
+    PageHandover,
+    PageModerator,
     PostComment,
     PostReaction,
     PublicPage,
@@ -22,13 +24,16 @@ from app.modules.community.schemas import (
     BlockView,
     CommentView,
     CommunityCursor,
+    HandoverView,
     ModerationMark,
+    ModeratorRoleView,
+    ModeratorView,
     PageView,
     PostOutcome,
     PostView,
     ReportView,
 )
-from app.modules.identity.models import OutboxEvent, User
+from app.modules.identity.models import AccountSession, OutboxEvent, User
 from app.modules.spaces.schemas import Pagination
 
 MAX_PAGES_PER_OWNER = 5
@@ -41,7 +46,12 @@ MAX_BLOCKS = 500
 MAX_FOLLOWS = 1000
 MAX_SAVED = 1000
 MAX_PINNED_POSTS = 3
+MAX_MODERATORS = 10
 CURSOR_MINUTES = 15
+MODERATOR_INVITE_LIFETIME = timedelta(hours=72)
+HANDOVER_OFFER_LIFETIME = timedelta(minutes=15)
+HANDOVER_AUTH_MAX_AGE = timedelta(minutes=15)
+PAGE_PURGE_GRACE = timedelta(days=7)
 
 
 def not_found(subject):
@@ -104,6 +114,101 @@ class CommunityService:
         if audited:
             database.add(CommunityAuditEvent(id=identifier, actor_id=actor_id, page_id=page_id, target_id=target_id, action=action, created_at=now))
         database.add(OutboxEvent(id=identifier, event_type=action, actor_id=actor_id, aggregate_id=target_id, schema_version=1, created_at=now))
+
+    @staticmethod
+    def can_view_page(page, viewer):
+        if page.status in ("active", "read_only"):
+            return True
+        # A deleted page stays reachable to its owner until it is erased; 'archived' is the account-deletion state
+        # (T68) whose erased pages stay invisible to everyone.
+        if page.status == "deleted":
+            return viewer is not None and page.owner_id == viewer.id and page.purge_after is not None
+        return False
+
+    @staticmethod
+    def present_pages(account_id):
+        """Pages that still exist for their owner: active, read only, or deleted and not yet erased."""
+        return and_(
+            PublicPage.owner_id == account_id,
+            or_(
+                PublicPage.status.in_(("active", "read_only")),
+                and_(PublicPage.status == "deleted", PublicPage.purge_after.is_not(None)),
+            ),
+        )
+
+    @staticmethod
+    def writable(page):
+        if page.status == "read_only":
+            raise DomainError(409, "PAGE_READ_ONLY", "This page is read only. The owner can restore it.")
+        if page.status == "deleted":
+            raise DomainError(409, "PAGE_DELETED", "This page is deleted. The owner can restore it within seven days.")
+
+    def active_moderator(self, database, user, page_id, lock=False):
+        if user is None:
+            return None
+        statement = select(PageModerator).where(
+            PageModerator.page_id == page_id, PageModerator.account_id == user.id, PageModerator.status == "active",
+        )
+        return database.scalar(statement.with_for_update() if lock else statement)
+
+    def moderator_etag(self, row):
+        return '"' + self.security.digest("public.moderator", row.id, str(row.version), row.status) + '"'
+
+    def moderator_state(self, database, row, page):
+        if row.status != "pending":
+            return row.status
+        if row.expires_at <= self.clock():
+            return "expired"
+        invitee = database.get(User, row.account_id, populate_existing=True)
+        if (page.status != "active" or page.owner_id != row.invited_by_id
+                or invitee is None or invitee.status != "active" or invitee.verified_at is None):
+            return "invalidated"
+        return "pending"
+
+    def moderator_view(self, database, row):
+        invitee = database.get(User, row.account_id)
+        return ModeratorView(
+            id=row.id, page_id=row.page_id, account_id=row.account_id, display_name=invitee.display_name,
+            status=row.status, created_at=row.created_at, expires_at=row.expires_at, resolved_at=row.resolved_at,
+            etag=self.moderator_etag(row),
+        )
+
+    def handover_etag(self, offer):
+        return '"' + self.security.digest("public.handover", offer.id, str(offer.version), offer.status) + '"'
+
+    def handover_state(self, database, offer, page):
+        if offer.status != "pending":
+            return offer.status
+        if offer.expires_at <= self.clock():
+            return "expired"
+        session = database.get(AccountSession, offer.from_session_id, populate_existing=True)
+        recipient = database.scalar(select(PageModerator).where(
+            PageModerator.page_id == offer.page_id, PageModerator.account_id == offer.to_account_id,
+            PageModerator.status == "active",
+        ))
+        if (page.status != "active" or page.version != offer.source_version or page.owner_id != offer.from_account_id
+                or recipient is None or session is None or session.account_id != offer.from_account_id
+                or session.revoked_at is not None or session.expires_at <= self.clock()):
+            return "invalidated"
+        return "pending"
+
+    def handover_view(self, database, offer, page):
+        sender = database.get(User, offer.from_account_id)
+        recipient = database.get(User, offer.to_account_id)
+        return HandoverView(
+            id=offer.id, page_id=page.id, page_handle=page.handle, page_name=page.name,
+            from_account_id=offer.from_account_id, from_name=sender.display_name,
+            to_account_id=offer.to_account_id, to_name=recipient.display_name,
+            status=self.handover_state(database, offer, page),
+            created_at=offer.created_at, expires_at=offer.expires_at, resolved_at=offer.resolved_at,
+            etag=self.handover_etag(offer),
+        )
+
+    def recent(self, database, token):
+        caller, session = self.identity.authenticate(database, token, lock=True)
+        if self.clock() - session.created_at > HANDOVER_AUTH_MAX_AGE:
+            raise DomainError(403, "REAUTHENTICATION_REQUIRED", "Sign in again before changing who owns the page.")
+        return caller, session
 
     def seal_cursor(self, kind, viewer, scope, after_id, after_time=None, after_number=None):
         return self.security.seal(CommunityCursor(
@@ -175,6 +280,7 @@ class CommunityService:
             blocked = page.id in self.blocked(database, viewer, "page")
         return PageView(
             id=page.id, handle=page.handle, name=page.name, description=page.description, rules=page.rules, topic=page.topic,
+            status=page.status, purge_after=page.purge_after if manager else None,
             follower_count=page.follower_count, created_at=page.created_at, updated_at=page.updated_at,
             following=bool(following), blocked=bool(blocked), can_manage=manager,
             etag=self.page_etag(page) if manager else None,
@@ -217,7 +323,7 @@ class CommunityService:
         column = PublicPage.id if is_uuid(reference) else PublicPage.handle
         statement = select(PublicPage).where(column == reference.lower()).execution_options(populate_existing=True)
         page = database.scalar(statement.with_for_update() if lock else statement)
-        if page is None or page.status != "active" or not self.can_view_moderated(page, viewer):
+        if page is None or not self.can_view_page(page, viewer) or not self.can_view_moderated(page, viewer):
             raise not_found("Page")
         return page
 
@@ -236,7 +342,7 @@ class CommunityService:
             raise not_found("Post")
         post, page = row
         manager = viewer is not None and page.owner_id == viewer.id
-        hidden = page.status != "active" or post.status == "deleted" or (post.status == "draft" and not (drafts and manager))
+        hidden = not self.can_view_page(page, viewer) or post.status == "deleted" or (post.status == "draft" and not (drafts and manager))
         hidden = hidden or not self.can_view_moderated(page, viewer) or not self.can_view_moderated(post, viewer, page)
         if hidden or (not manager and page.id in self.blocked(database, viewer, "page")):
             raise not_found("Post")
@@ -254,7 +360,7 @@ class CommunityService:
                 if existing.status != "active":
                     raise not_found("Page")
                 return self.page_view(database, existing, user)
-            owned = database.scalar(select(func.count()).select_from(PublicPage).where(PublicPage.owner_id == user.id, PublicPage.status == "active"))
+            owned = database.scalar(select(func.count()).select_from(PublicPage).where(self.present_pages(user.id)))
             if owned >= MAX_PAGES_PER_OWNER:
                 raise DomainError(409, "PAGE_LIMIT_REACHED", f"You can own up to {MAX_PAGES_PER_OWNER} public pages in this local build.")
             if database.scalar(select(PublicPage.id).where(PublicPage.handle == body.handle)) is not None:
@@ -282,13 +388,14 @@ class CommunityService:
         with self.sessions() as database:
             user, _session = self.identity.authenticate(database, token)
             pages = database.scalars(select(PublicPage).where(
-                PublicPage.owner_id == user.id, PublicPage.status == "active",
+                self.present_pages(user.id),
             ).order_by(PublicPage.created_at, PublicPage.id)).all()
             return self.page_views(database, pages, user)
 
     def update_page(self, token, page_id, body, etag):
         with self.identity.signed_in_write(token) as (database, user):
             page = self.managed_page(database, user, page_id)
+            self.writable(page)
             self.require_etag(etag, self.page_etag(page), "page")
             changed = False
             for field in body.model_fields_set:
@@ -306,6 +413,8 @@ class CommunityService:
     def follow(self, token, page_id, following):
         with self.identity.signed_in_write(token) as (database, user):
             page = self.find_page(database, page_id, lock=True, viewer=user)
+            if following:
+                self.writable(page)
             existing = database.get(PageFollow, (page.id, user.id))
             if following and existing is None:
                 if page.id in self.blocked(database, user, "page"):
@@ -325,7 +434,7 @@ class CommunityService:
         with self.sessions() as database:
             user, _session = self.identity.authenticate(database, token)
             statement = select(PublicPage, PageFollow.created_at).join(PageFollow, PageFollow.page_id == PublicPage.id).where(
-                PageFollow.account_id == user.id, PublicPage.status == "active", self.moderation_visible(PublicPage, user),
+                PageFollow.account_id == user.id, PublicPage.status.in_(("active", "read_only")), self.moderation_visible(PublicPage, user),
             )
             rows, more = self.newest_first(database, statement, PageFollow.created_at, PublicPage.id, limit, cursor, "following", user, "")
             next_cursor = self.seal_cursor("following", user, "", rows[-1][0].id, after_time=rows[-1][1]) if more else None
@@ -337,6 +446,7 @@ class CommunityService:
         digest = self.security.digest("public.post.create", page_id, body.title or "", body.body)
         with self.identity.signed_in_write(token) as (database, user):
             page = self.managed_page(database, user, page_id)
+            self.writable(page)
             existing = database.scalar(select(PublicPost).where(
                 PublicPost.page_id == page.id, PublicPost.author_id == user.id, PublicPost.creation_key == key,
             ))
@@ -366,6 +476,7 @@ class CommunityService:
         post, page = self.visible_post(database, user, post_id, lock=True, drafts=True)
         if page.owner_id != user.id:
             raise DomainError(403, "PAGE_MANAGER_REQUIRED", "Only the page owner can change this post.")
+        self.writable(page)
         return post, page
 
     def update_post(self, token, post_id, body, etag):
@@ -438,7 +549,11 @@ class CommunityService:
                 raise not_found("Post")
             # The page is locked before the post, so parallel pins on one page count each other.
             self.find_page(database, page_id, lock=True, viewer=user)
-            post, page = self.managed_post(database, user, post_id)
+            post, page = self.visible_post(database, user, post_id, lock=True, drafts=True)
+            moderator = self.active_moderator(database, user, page.id) is not None
+            if page.owner_id != user.id and not moderator:
+                raise DomainError(403, "PAGE_MANAGER_REQUIRED", "Only the page owner or a moderator can pin posts.")
+            self.writable(page)
             if pinned and not self.is_pinned(post):
                 if post.status != "published":
                     raise DomainError(409, "NOT_PUBLISHED", "Publish the post before pinning it.")
@@ -504,7 +619,7 @@ class CommunityService:
         with self.sessions() as database:
             viewer = self.identity.authenticate(database, token)[0] if followed_only else self.viewer(database, token)
             statement = select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id).where(
-                PublicPost.status == "published", PublicPage.status == "active",
+                PublicPost.status == "published", PublicPage.status.in_(("active", "read_only")),
                 self.moderation_visible(PublicPage, viewer), self.moderation_visible(PublicPost, viewer),
             )
             if followed_only:
@@ -557,6 +672,8 @@ class CommunityService:
     def like(self, token, post_id, liked):
         with self.identity.signed_in_write(token) as (database, user):
             post, page = self.visible_post(database, user, post_id, lock=True)
+            if liked:
+                self.writable(page)
             existing = database.get(PostReaction, (post.id, user.id))
             if liked and existing is None:
                 database.add(PostReaction(post_id=post.id, account_id=user.id, kind="like", created_at=self.clock()))
@@ -570,6 +687,8 @@ class CommunityService:
     def save(self, token, post_id, saved):
         with self.identity.signed_in_write(token) as (database, user):
             post, page = self.visible_post(database, user, post_id)
+            if saved:
+                self.writable(page)
             existing = database.get(SavedPost, (post.id, user.id))
             if saved and existing is None:
                 count = database.scalar(select(func.count()).select_from(SavedPost).where(SavedPost.account_id == user.id))
@@ -586,7 +705,7 @@ class CommunityService:
             user, _session = self.identity.authenticate(database, token)
             statement = select(PublicPost, PublicPage, SavedPost.created_at).join(PublicPage, PublicPage.id == PublicPost.page_id).join(
                 SavedPost, and_(SavedPost.post_id == PublicPost.id, SavedPost.account_id == user.id),
-            ).where(PublicPost.status == "published", PublicPage.status == "active",
+            ).where(PublicPost.status == "published", PublicPage.status.in_(("active", "read_only")),
                     self.moderation_visible(PublicPage, user), self.moderation_visible(PublicPost, user))
             blocked = self.blocked(database, user, "page")
             if blocked:
@@ -597,9 +716,11 @@ class CommunityService:
 
     # Comments
 
-    def comment_view(self, database, comment, author, viewer, page):
+    def comment_view(self, database, comment, author, viewer, page, moderator=None):
         mine = viewer is not None and comment.author_id == viewer.id
         manager = viewer is not None and page.owner_id == viewer.id
+        if moderator is None and viewer is not None:
+            moderator = self.active_moderator(database, viewer, page.id) is not None
         parent_id = comment.parent_id
         if parent_id is not None:
             parent = database.get(PostComment, parent_id)
@@ -608,7 +729,7 @@ class CommunityService:
         return CommentView(
             id=comment.id, post_id=comment.post_id, parent_id=parent_id, author_name=author.display_name,
             body=comment.body, status=comment.status, created_at=comment.created_at, mine=mine,
-            can_remove=comment.status == "visible" and (mine or manager),
+            can_remove=comment.status == "visible" and (mine or manager or moderator),
             moderation=self.moderation_mark(database, comment, viewer),
         )
 
@@ -635,20 +756,22 @@ class CommunityService:
             more = len(rows) > limit
             rows = rows[:limit]
             next_cursor = self.seal_cursor("comments", viewer, post.id, rows[-1][0].id, after_time=rows[-1][0].created_at) if more else None
-            return [self.comment_view(database, comment, author, viewer, page) for comment, author in rows], Pagination(next_cursor=next_cursor, has_more=more)
+            moderator = viewer is not None and self.active_moderator(database, viewer, page.id) is not None
+            return [self.comment_view(database, comment, author, viewer, page, moderator) for comment, author in rows], Pagination(next_cursor=next_cursor, has_more=more)
 
     def create_comment(self, token, post_id, body, key):
         parent_id = str(body.parent_id) if body.parent_id else None
         digest = self.security.digest("public.comment.create", post_id, parent_id or "", body.body)
         with self.identity.signed_in_write(token) as (database, user):
             post, page = self.visible_post(database, user, post_id, lock=True)
+            self.writable(page)
             if post.status != "published":
                 raise not_found("Post")
             existing = database.scalar(select(PostComment).where(PostComment.author_id == user.id, PostComment.creation_key == key))
             if existing is not None:
                 if existing.creation_digest != digest or existing.post_id != post.id:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original comment.")
-                return self.comment_view(database, existing, user, user, page)
+                return self.comment_view(database, existing, user, user, page, moderator=False)
             if page.owner_id != user.id and database.scalar(select(AccountBlock.id).where(
                 AccountBlock.blocker_id == page.owner_id, AccountBlock.target_type == "account", AccountBlock.target_id == user.id,
             )) is not None:
@@ -678,7 +801,7 @@ class CommunityService:
             database.add(comment)
             database.flush()
             self.record(database, user.id, page.id, comment.id, "public.comment_created", audited=False)
-            return self.comment_view(database, comment, user, user, page)
+            return self.comment_view(database, comment, user, user, page, moderator=False)
 
     def end_comment(self, token, comment_id):
         with self.identity.signed_in_write(token) as (database, user):
@@ -686,13 +809,15 @@ class CommunityService:
             if located is None:
                 raise not_found("Comment")
             post, page = self.visible_post(database, user, located, lock=True)
+            self.writable(page)
             comment = database.scalar(select(PostComment).where(PostComment.id == comment_id).with_for_update().execution_options(populate_existing=True))
             if not self.can_view_moderated(comment, user):
                 raise not_found("Comment")
             mine = comment.author_id == user.id
             manager = page.owner_id == user.id
-            if not mine and not manager:
-                raise DomainError(403, "COMMENT_NOT_YOURS", "Only the author or the page owner can remove this comment.")
+            moderator = self.active_moderator(database, user, page.id) is not None
+            if not mine and not manager and not moderator:
+                raise DomainError(403, "COMMENT_NOT_YOURS", "Only the author, the page owner or a moderator can remove this comment.")
             if comment.status == "visible":
                 comment.status = "deleted" if mine else "removed"
                 comment.body = None
@@ -701,7 +826,7 @@ class CommunityService:
                 database.flush()
                 self.record(database, user.id, page.id, comment.id, f"public.comment_{comment.status}", audited=not mine)
             author = database.get(User, comment.author_id)
-            return self.comment_view(database, comment, author, user, page)
+            return self.comment_view(database, comment, author, user, page, moderator)
 
     # Reports and blocks
 
@@ -810,3 +935,367 @@ class CommunityService:
             rows = database.scalars(select(AccountBlock).where(AccountBlock.blocker_id == user.id)
                                     .order_by(AccountBlock.created_at.desc(), AccountBlock.id.desc())).all()
             return [self.block_view(database, block) for block in rows]
+
+    # Moderators (DEC-025 part 3)
+
+    def invite_moderator(self, token, page_id, body, key):
+        account_id = str(body.account_id)
+        digest = self.security.digest("public.moderator.invite", page_id, account_id)
+        with self.identity.signed_in_write(token) as (database, user):
+            page = self.managed_page(database, user, page_id)
+            self.writable(page)
+            if account_id == user.id:
+                raise DomainError(409, "MODERATOR_SELF", "You own this page, so you cannot moderate it.")
+            invitee = database.scalar(select(User).where(
+                User.id == account_id, User.status == "active", User.verified_at.is_not(None),
+            ))
+            if invitee is None:
+                raise not_found("Account")
+            existing = database.scalar(select(PageModerator).where(
+                PageModerator.page_id == page.id, PageModerator.invited_by_id == user.id, PageModerator.request_key == key,
+            ))
+            if existing is not None:
+                if existing.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original invitation.")
+                return self.moderator_view(database, existing)
+            if database.scalar(select(PageModerator.id).where(
+                PageModerator.page_id == page.id, PageModerator.account_id == account_id, PageModerator.status == "active",
+            )) is not None:
+                raise DomainError(409, "MODERATOR_ALREADY_ACTIVE", "This person already moderates the page.")
+            count = database.scalar(select(func.count()).select_from(PageModerator).where(
+                PageModerator.page_id == page.id, PageModerator.status == "active",
+            ))
+            if count >= MAX_MODERATORS:
+                raise DomainError(409, "MODERATOR_LIMIT_REACHED", f"A page can have up to {MAX_MODERATORS} moderators.")
+            pending = database.scalar(select(PageModerator).where(
+                PageModerator.page_id == page.id, PageModerator.status == "pending",
+            ).with_for_update().execution_options(populate_existing=True))
+            now = self.clock()
+            if pending is not None:
+                if pending.expires_at > now:
+                    raise DomainError(409, "MODERATOR_INVITATION_PENDING", "Withdraw the current invitation before starting another.")
+                pending.status = "expired"
+                pending.resolved_at = now
+                pending.expires_at = None
+                pending.version += 1
+                self.record(database, user.id, page.id, pending.id, "public.moderator_expired")
+                database.flush()
+            row = PageModerator(
+                id=str(uuid4()), page_id=page.id, account_id=account_id, invited_by_id=user.id, status="pending",
+                version=1, request_key=key, request_digest=digest, created_at=now,
+                expires_at=now + MODERATOR_INVITE_LIFETIME,
+            )
+            database.add(row)
+            database.flush()
+            self.record(database, user.id, page.id, row.id, "public.moderator_invited")
+            return self.moderator_view(database, row)
+
+    def page_moderators(self, token, page_id):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            page = self.managed_page(database, user, page_id)
+            rows = database.scalars(select(PageModerator).where(
+                PageModerator.page_id == page.id, PageModerator.status.in_(("pending", "active")),
+            ).order_by(PageModerator.created_at, PageModerator.id)).all()
+            return [self.moderator_view(database, row) for row in rows]
+
+    def my_moderator_roles(self, token):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            now = self.clock()
+            rows = database.execute(select(PageModerator, PublicPage).join(
+                PublicPage, PublicPage.id == PageModerator.page_id,
+            ).where(
+                PageModerator.account_id == user.id, PageModerator.status.in_(("pending", "active")),
+            ).order_by(PageModerator.created_at, PageModerator.id)).all()
+            views = []
+            for row, page in rows:
+                if page.status not in ("active", "read_only") or (row.status == "pending" and row.expires_at <= now):
+                    continue
+                views.append(ModeratorRoleView(
+                    id=row.id, page_id=page.id, page_handle=page.handle, page_name=page.name, status=row.status,
+                    created_at=row.created_at, expires_at=row.expires_at, resolved_at=row.resolved_at,
+                    etag=self.moderator_etag(row),
+                ))
+            return views
+
+    def resolve_moderator(self, token, page_id, moderator_id, action, expected):
+        outcome = {"accept": "active", "decline": "declined", "withdraw": "withdrawn", "remove": "removed", "step-down": "stepped_down"}[action]
+        recorded = {"accept": "accepted", "decline": "declined", "withdraw": "withdrawn", "remove": "removed", "step-down": "stepped_down"}[action]
+        with self.sessions.begin() as database:
+            caller, _session = self.identity.authenticate(database, token)
+            row = database.scalar(select(PageModerator).where(PageModerator.id == moderator_id)
+                                  .with_for_update().execution_options(populate_existing=True))
+            if row is None or row.page_id != page_id:
+                raise not_found("Invitation")
+            page = database.get(PublicPage, page_id, populate_existing=True)
+            if page is None or page.status == "archived":
+                raise not_found("Invitation")
+            if page.status == "deleted":
+                raise DomainError(409, "PAGE_DELETED", "This page is deleted. The owner can restore it within seven days.")
+            if action in ("accept", "decline", "step-down"):
+                actor_ok = caller.id == row.account_id
+            else:
+                actor_ok = caller.id == page.owner_id
+            if not actor_ok:
+                raise not_found("Invitation")
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the exact invitation first.")
+            if row.status == outcome:
+                if row.decision_etag != expected:
+                    raise DomainError(409, "MODERATOR_INVITATION_CLOSED", "Use the original reviewed action to reconcile this invitation.")
+                return self.moderator_view(database, row)
+            required = "active" if action in ("remove", "step-down") else "pending"
+            if row.status != required:
+                raise DomainError(409, "MODERATOR_INVITATION_CLOSED", "This invitation or role has already ended.")
+            if expected != self.moderator_etag(row):
+                raise DomainError(412, "CONTENT_CHANGED", "This invitation changed since you reviewed it. Reload to continue.")
+            if action == "accept":
+                if page.status == "read_only":
+                    raise DomainError(409, "PAGE_READ_ONLY", "This page is read only. The owner can restore it.")
+                state = self.moderator_state(database, row, page)
+                if state == "expired":
+                    raise DomainError(410, "MODERATOR_INVITATION_EXPIRED", "This invitation expired.")
+                if state != "pending":
+                    raise DomainError(409, "MODERATOR_INVITATION_INVALIDATED", "This invitation is no longer valid.")
+                count = database.scalar(select(func.count()).select_from(PageModerator).where(
+                    PageModerator.page_id == page.id, PageModerator.status == "active",
+                ))
+                if count >= MAX_MODERATORS:
+                    raise DomainError(409, "MODERATOR_LIMIT_REACHED", f"A page can have up to {MAX_MODERATORS} moderators.")
+            row.status = outcome
+            row.resolved_at = self.clock()
+            row.expires_at = None
+            row.decision_etag = expected
+            row.version += 1
+            self.record(database, caller.id, page.id, row.id, f"public.moderator_{recorded}")
+            database.flush()
+            return self.moderator_view(database, row)
+
+    # Handing a page over (DEC-025 part 4)
+
+    def offer_handover(self, token, page_id, body, key, expected):
+        to_id = str(body.to_account_id)
+        with self.sessions.begin() as database:
+            caller, _session = self.identity.authenticate(database, token)
+            page = self.managed_page(database, caller, page_id)
+            self.writable(page)
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the page first.")
+            digest = self.security.digest("public.handover.offer", page_id, to_id, expected)
+            existing = database.scalar(select(PageHandover).where(
+                PageHandover.page_id == page.id, PageHandover.from_account_id == page.owner_id,
+                PageHandover.request_key == key,
+            ))
+            if existing is not None:
+                if existing.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original offer.")
+                return self.handover_view(database, existing, page)
+            recipient = database.scalar(select(PageModerator.id).where(
+                PageModerator.page_id == page.id, PageModerator.account_id == to_id, PageModerator.status == "active",
+            ))
+            if recipient is None:
+                raise DomainError(409, "MODERATOR_REQUIRED", "Offer the page to a person who is a current moderator.")
+            if expected != self.page_etag(page):
+                raise DomainError(412, "CONTENT_CHANGED", "This page changed since you reviewed it. Reload to continue.")
+            pending = database.scalar(select(PageHandover).where(
+                PageHandover.page_id == page.id, PageHandover.status == "pending",
+            ).with_for_update().execution_options(populate_existing=True))
+            if pending is not None:
+                stale = pending.expires_at <= self.clock() or pending.source_version != page.version
+                old_session = database.get(AccountSession, pending.from_session_id, populate_existing=True)
+                stale = stale or old_session is None or old_session.revoked_at is not None or old_session.expires_at <= self.clock()
+                if not stale:
+                    raise DomainError(409, "HANDOVER_PENDING", "Cancel the current handover offer before starting another.")
+                pending.status = "expired" if pending.expires_at <= self.clock() else "invalidated"
+                pending.resolved_at = self.clock()
+                pending.expires_at = None
+                pending.version += 1
+                self.record(database, caller.id, page.id, pending.id, f"public.handover_{pending.status}")
+                database.flush()
+            caller, session = self.recent(database, token)
+            now = self.clock()
+            offer = PageHandover(
+                id=str(uuid4()), page_id=page.id, from_account_id=caller.id, to_account_id=to_id,
+                from_session_id=session.id, source_version=page.version, request_key=key, request_digest=digest,
+                status="pending", version=1, created_at=now,
+                expires_at=min(now + HANDOVER_OFFER_LIFETIME, session.expires_at),
+            )
+            database.add(offer)
+            database.flush()
+            self.record(database, caller.id, page.id, offer.id, "public.handover_offered")
+            return self.handover_view(database, offer, page)
+
+    def page_handover(self, token, page_id):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            offer = database.scalar(select(PageHandover).where(PageHandover.page_id == page_id)
+                                    .order_by(PageHandover.created_at.desc(), PageHandover.id.desc()).limit(1))
+            page = database.get(PublicPage, page_id)
+            if offer is None or page is None or user.id not in (offer.from_account_id, offer.to_account_id):
+                raise not_found("Handover offer")
+            return self.handover_view(database, offer, page)
+
+    def my_handover_offers(self, token):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            rows = database.execute(select(PageHandover, PublicPage).join(
+                PublicPage, PublicPage.id == PageHandover.page_id,
+            ).where(
+                PageHandover.to_account_id == user.id, PageHandover.status == "pending",
+                PageHandover.expires_at > self.clock(),
+            ).order_by(PageHandover.created_at, PageHandover.id)).all()
+            return [self.handover_view(database, offer, page) for offer, page in rows
+                    if self.handover_state(database, offer, page) == "pending"]
+
+    def respond_handover(self, token, page_id, identifier, action, expected):
+        outcome = {"accept": "accepted", "decline": "declined", "cancel": "cancelled"}[action]
+        with self.sessions.begin() as database:
+            caller, _session = self.identity.authenticate(database, token)
+            offer = database.scalar(select(PageHandover).where(PageHandover.id == identifier)
+                                    .with_for_update().execution_options(populate_existing=True))
+            if offer is None or offer.page_id != page_id:
+                raise not_found("Handover offer")
+            page = database.scalar(select(PublicPage).where(PublicPage.id == page_id)
+                                   .with_for_update().execution_options(populate_existing=True))
+            if page is None:
+                raise not_found("Handover offer")
+            expected_actor = offer.from_account_id if action == "cancel" else offer.to_account_id
+            if caller.id != expected_actor:
+                raise not_found("Handover offer")
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the exact handover offer first.")
+            if offer.status == outcome:
+                if offer.decision_etag != expected:
+                    raise DomainError(409, "HANDOVER_CLOSED", "Use the original reviewed action to reconcile this offer.")
+                return self.handover_view(database, offer, page)
+            if offer.status != "pending":
+                raise DomainError(409, "HANDOVER_CLOSED", "This handover offer has already ended.")
+            if expected != self.handover_etag(offer):
+                raise DomainError(412, "CONTENT_CHANGED", "This handover offer changed since you reviewed it. Reload to continue.")
+            if action == "accept":
+                self.recent(database, token)
+                state = self.handover_state(database, offer, page)
+                if state == "expired":
+                    raise DomainError(410, "HANDOVER_EXPIRED", "This handover offer expired.")
+                if state != "pending":
+                    raise DomainError(409, "HANDOVER_INVALIDATED", "The handover offer is no longer valid.")
+                if database.scalar(select(func.count()).select_from(PublicPage).where(
+                    self.present_pages(offer.to_account_id),
+                )) >= MAX_PAGES_PER_OWNER:
+                    raise DomainError(409, "PAGE_LIMIT_REACHED", "The new owner already keeps the most pages.")
+                now = self.clock()
+                recipient_row = database.scalar(select(PageModerator).where(
+                    PageModerator.page_id == page.id, PageModerator.account_id == offer.to_account_id,
+                    PageModerator.status == "active",
+                ).with_for_update())
+                # The moderator steps up, and the old owner takes their place as a moderator.
+                recipient_row.status = "stepped_down"
+                recipient_row.resolved_at = now
+                recipient_row.version += 1
+                database.add(PageModerator(
+                    id=str(uuid4()), page_id=page.id, account_id=offer.from_account_id, invited_by_id=offer.to_account_id,
+                    status="active", version=1, request_key=str(uuid4()),
+                    request_digest=self.security.digest("public.moderator.handover", offer.id),
+                    created_at=now, resolved_at=now,
+                ))
+                page.owner_id = offer.to_account_id
+                page.version += 1
+                page.updated_at = now
+                database.flush()
+                # An invitation the old owner left waiting is not the new owner's to keep.
+                for waiting in database.scalars(select(PageModerator).where(
+                    PageModerator.page_id == page.id, PageModerator.status == "pending",
+                ).with_for_update()).all():
+                    waiting.status = "invalidated"
+                    waiting.resolved_at = now
+                    waiting.expires_at = None
+                    waiting.version += 1
+                    self.record(database, caller.id, page.id, waiting.id, "public.moderator_invalidated")
+                database.flush()
+            offer.status = outcome
+            offer.resolved_at = self.clock()
+            offer.expires_at = None
+            offer.decision_etag = expected
+            offer.version += 1
+            self.record(database, caller.id, page.id, offer.id, f"public.handover_{outcome}")
+            database.flush()
+            return self.handover_view(database, offer, page)
+
+    # Archiving, deleting and restoring a page (DEC-025 part 5)
+
+    def archive_page(self, token, page_id, etag):
+        with self.identity.signed_in_write(token) as (database, user):
+            page = self.managed_page(database, user, page_id)
+            if page.status == "read_only":
+                return self.page_view(database, page, user)
+            self.writable(page)
+            self.require_etag(etag, self.page_etag(page), "page")
+            page.status = "read_only"
+            page.version += 1
+            page.updated_at = self.clock()
+            self.record(database, user.id, page.id, page.id, "public.page_archived")
+            database.flush()
+            return self.page_view(database, page, user)
+
+    def restore_page(self, token, page_id, etag):
+        with self.identity.signed_in_write(token) as (database, user):
+            page = self.managed_page(database, user, page_id)
+            if page.status == "active":
+                return self.page_view(database, page, user)
+            if page.status == "deleted":
+                if page.purge_after is None or page.purge_after <= self.clock():
+                    raise DomainError(410, "PAGE_RESTORE_EXPIRED", "The seven days to restore this page have passed.")
+                self.require_etag(etag, self.page_etag(page), "page")
+                page.status = page.pre_delete_status or "active"
+                page.pre_delete_status = None
+                page.purge_after = None
+                page.deleted_at = None
+            elif page.status == "read_only":
+                self.require_etag(etag, self.page_etag(page), "page")
+                page.status = "active"
+            else:
+                raise not_found("Page")
+            page.version += 1
+            page.updated_at = self.clock()
+            self.record(database, user.id, page.id, page.id, "public.page_restored")
+            database.flush()
+            return self.page_view(database, page, user)
+
+    def delete_page(self, token, page_id, body, etag):
+        with self.identity.signed_in_write(token) as (database, user):
+            page = self.managed_page(database, user, page_id)
+            if page.status == "deleted":
+                return self.page_view(database, page, user)
+            if page.status not in ("active", "read_only"):
+                raise not_found("Page")
+            if body.confirm != page.name:
+                raise DomainError(409, "PAGE_NAME_MISMATCH", "Type the page's name exactly to delete it.")
+            self.require_etag(etag, self.page_etag(page), "page")
+            now = self.clock()
+            page.pre_delete_status = page.status
+            page.status = "deleted"
+            page.deleted_at = now
+            page.purge_after = now + PAGE_PURGE_GRACE
+            page.version += 1
+            page.updated_at = now
+            # Pending invitations and offers end with the page; restoring it does not revive them.
+            for waiting in database.scalars(select(PageModerator).where(
+                PageModerator.page_id == page.id, PageModerator.status == "pending",
+            ).with_for_update()).all():
+                waiting.status = "invalidated"
+                waiting.resolved_at = now
+                waiting.expires_at = None
+                waiting.version += 1
+                self.record(database, user.id, page.id, waiting.id, "public.moderator_invalidated")
+            for waiting in database.scalars(select(PageHandover).where(
+                PageHandover.page_id == page.id, PageHandover.status == "pending",
+            ).with_for_update()).all():
+                waiting.status = "invalidated"
+                waiting.resolved_at = now
+                waiting.expires_at = None
+                waiting.version += 1
+                self.record(database, user.id, page.id, waiting.id, "public.handover_invalidated")
+            self.record(database, user.id, page.id, page.id, "public.page_deleted")
+            database.flush()
+            return self.page_view(database, page, user)

@@ -4,7 +4,7 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstrai
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-from app.modules.identity.models import User
+from app.modules.identity.models import AccountSession, User
 
 TOPICS = ("community", "education", "health", "local", "family", "events", "hobbies", "support", "news", "other")
 REPORT_REASONS = ("spam", "harassment", "hate", "violence", "sexual", "misinformation", "self_harm", "privacy", "other")
@@ -17,7 +17,8 @@ def listed(values):
 class PublicPage(Base):
     __tablename__ = "public_pages"
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'archived')", name="ck_public_page_status"),
+        CheckConstraint("status IN ('active', 'archived', 'read_only', 'deleted')", name="ck_public_page_status"),
+        CheckConstraint("pre_delete_status IS NULL OR pre_delete_status IN ('active', 'read_only')", name="ck_public_page_restore"),
         CheckConstraint(f"topic IN ({listed(TOPICS)})", name="ck_public_page_topic"),
         CheckConstraint("handle ~ '^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$'", name="ck_public_page_handle"),
         CheckConstraint("follower_count >= 0 AND version >= 1", name="ck_public_page_counts"),
@@ -42,6 +43,9 @@ class PublicPage(Base):
     creation_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pre_delete_status: Mapped[str | None] = mapped_column(String(16))
     moderation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     moderation_decision_id: Mapped[str | None] = mapped_column(
         ForeignKey("moderation_decisions.id", name="fk_public_pages_moderation_decision"),
@@ -55,6 +59,75 @@ class PageFollow(Base):
     page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id), primary_key=True)
     account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+MODERATOR_STATES = (
+    "pending", "active", "declined", "cancelled", "withdrawn", "removed", "stepped_down", "expired", "invalidated",
+)
+
+
+class PageModerator(Base):
+    """One invitation or active appointment (DEC-025 part 3). A resolved row keeps its history; only 'pending' rows expire."""
+
+    __tablename__ = "page_moderators"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({listed(MODERATOR_STATES)})", name="ck_page_moderator_status"),
+        CheckConstraint("version > 0 AND (expires_at IS NULL OR expires_at > created_at)", name="ck_page_moderator_bounds"),
+        CheckConstraint(
+            "(status = 'pending') = (resolved_at IS NULL) AND (status = 'pending') = (expires_at IS NOT NULL)",
+            name="ck_page_moderator_resolution",
+        ),
+        CheckConstraint("account_id <> invited_by_id", name="ck_page_moderator_participants"),
+        UniqueConstraint("page_id", "invited_by_id", "request_key", name="uq_page_moderator_request"),
+        Index("uq_page_moderator_pending", "page_id", unique=True, postgresql_where=text("status = 'pending'")),
+        Index("uq_page_moderator_active", "page_id", "account_id", unique=True, postgresql_where=text("status = 'active'")),
+        Index("ix_page_moderator_account", "account_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id))
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    invited_by_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    status: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer)
+    request_key: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    decision_etag: Mapped[str | None] = mapped_column(String(70))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PageHandover(Base):
+    """One offer to hand a page to a current moderator (DEC-025 part 4)."""
+
+    __tablename__ = "page_handovers"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'accepted', 'declined', 'cancelled', 'expired', 'invalidated')", name="ck_page_handover_status"),
+        CheckConstraint("version > 0 AND source_version > 0 AND (expires_at IS NULL OR expires_at > created_at)", name="ck_page_handover_bounds"),
+        CheckConstraint(
+            "(status = 'pending') = (resolved_at IS NULL) AND (status = 'pending') = (expires_at IS NOT NULL)",
+            name="ck_page_handover_resolution",
+        ),
+        CheckConstraint("from_account_id <> to_account_id", name="ck_page_handover_participants"),
+        UniqueConstraint("page_id", "from_account_id", "request_key", name="uq_page_handover_request"),
+        Index("uq_page_handover_pending", "page_id", unique=True, postgresql_where=text("status = 'pending'")),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id))
+    from_account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    to_account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    from_session_id: Mapped[str] = mapped_column(ForeignKey(AccountSession.id))
+    source_version: Mapped[int] = mapped_column(Integer)
+    request_key: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    decision_etag: Mapped[str | None] = mapped_column(String(70))
+    status: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PublicPost(Base):

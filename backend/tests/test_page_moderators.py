@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from app.modules.community.models import CommunityAuditEvent
 from tests.test_community import advance, comment, create_page, published
-from tests.test_identity import account, auth
+from tests.test_identity import PASSWORD, account, auth
 
 
 def invite(client, owner, page_id, account_id, key=None):
@@ -178,11 +178,13 @@ def test_an_invitation_expires_after_seventy_two_hours_and_the_owner_invites_aga
     invitation = invite(client, owner, page["id"], helper["user"]["id"]).json()["data"]
 
     advance(app, hours=72, minutes=1)
+    helper = sign_in(client, "helper@example.test")
     assert roles(client, helper) == []
     expired = respond(client, helper, page["id"], invitation["id"], "accept", invitation["etag"])
     assert expired.status_code == 410 and expired.json()["error"]["code"] == "MODERATOR_INVITATION_EXPIRED"
 
     # The stale pending row is cleared in place, so the owner can invite that person again.
+    owner = sign_in(client, "alex@example.test")
     fresh = invite(client, owner, page["id"], helper["user"]["id"])
     assert fresh.status_code == 201 and fresh.json()["data"]["id"] != invitation["id"]
     accepted = respond(client, helper, page["id"], fresh.json()["data"]["id"], "accept", fresh.json()["data"]["etag"])
@@ -285,3 +287,104 @@ def test_handing_over_moves_the_page_and_the_old_owner_becomes_a_moderator(clien
     closed = respond(client, third, page["id"], dangling.json()["data"]["id"], "accept", dangling.json()["data"]["etag"])
     assert closed.status_code == 409 and closed.json()["error"]["code"] == "MODERATOR_INVITATION_CLOSED"
     assert roles(client, third) == []
+
+
+def sign_in(client, email):
+    response = client.post("/v1/auth/login", json={"email": email, "password": PASSWORD})
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def test_handover_offers_need_a_recent_sign_in_and_stop_at_the_page_limit(client, app):
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    moderating(client, owner, page, helper)
+
+    # An offer, like accepting one, needs a sign-in from the last fifteen minutes.
+    advance(app, minutes=16)
+    late = offer_handover(client, owner, page, helper["user"]["id"], etag=page["etag"])
+    assert late.status_code == 403 and late.json()["error"]["code"] == "REAUTHENTICATION_REQUIRED"
+    owner = sign_in(client, "alex@example.test")
+    offered = offer_handover(client, owner, page, helper["user"]["id"], etag=page["etag"])
+    assert offered.status_code == 201, offered.text
+    offer = offered.json()["data"]
+    stale = client.post(
+        f"/v1/pages/{page['id']}/handover/{offer['id']}/accept",
+        headers={**auth(helper), "If-Match": offer["etag"]}, json={},
+    )
+    assert stale.status_code == 403 and stale.json()["error"]["code"] == "REAUTHENTICATION_REQUIRED"
+    helper = sign_in(client, "helper@example.test")
+    accepted = client.post(
+        f"/v1/pages/{page['id']}/handover/{offer['id']}/accept",
+        headers={**auth(helper), "If-Match": offer["etag"]}, json={},
+    )
+    assert accepted.status_code == 200 and accepted.json()["data"]["status"] == "accepted"
+
+    # A person who already keeps five pages cannot take on another one.
+    owner = account(client, app, "crowded@example.test")
+    full = account(client, app, "full@example.test")
+    for index in range(5):
+        assert create_page(client, full, handle=f"full-page-{index}", name=f"Full Page {index}").status_code == 201
+    page = create_page(client, owner, handle="parcel", name="Parcel").json()["data"]
+    moderating(client, owner, page, full)
+    offer = offer_handover(client, owner, page, full["user"]["id"], etag=page["etag"]).json()["data"]
+    refused = client.post(
+        f"/v1/pages/{page['id']}/handover/{offer['id']}/accept",
+        headers={**auth(full), "If-Match": offer["etag"]}, json={},
+    )
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "PAGE_LIMIT_REACHED"
+
+
+def test_handover_offers_can_be_declined_cancelled_expired_or_invalidated(client, app):
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    moderating(client, owner, page, helper)
+
+    first = offer_handover(client, owner, page, helper["user"]["id"], etag=page["etag"]).json()["data"]
+    assert client.post(
+        f"/v1/pages/{page['id']}/handover/{first['id']}/decline", headers=auth(helper), json={},
+    ).status_code == 428
+    assert client.post(
+        f"/v1/pages/{page['id']}/handover/{first['id']}/decline",
+        headers={**auth(owner), "If-Match": first["etag"]}, json={},
+    ).status_code == 404
+    declined = client.post(
+        f"/v1/pages/{page['id']}/handover/{first['id']}/decline",
+        headers={**auth(helper), "If-Match": first["etag"]}, json={},
+    )
+    assert declined.status_code == 200 and declined.json()["data"]["status"] == "declined"
+    assert client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]["can_manage"] is True
+    assert [(row["status"], row["page_id"]) for row in roles(client, helper)] == [("active", page["id"])]
+
+    second = offer_handover(client, owner, page, helper["user"]["id"], etag=page["etag"]).json()["data"]
+    cancelled = client.post(
+        f"/v1/pages/{page['id']}/handover/{second['id']}/cancel",
+        headers={**auth(owner), "If-Match": second["etag"]}, json={},
+    )
+    assert cancelled.status_code == 200 and cancelled.json()["data"]["status"] == "cancelled"
+    assert offers(client, helper) == []
+
+    # A page edit invalidates the pending offer, and the recipient is told why.
+    third = offer_handover(client, owner, page, helper["user"]["id"], etag=page["etag"]).json()["data"]
+    edited = client.patch(
+        f"/v1/pages/{page['id']}", headers={**auth(owner), "If-Match": page["etag"]}, json={"name": "River Walkers Club"},
+    )
+    assert edited.status_code == 200, edited.text
+    invalidated = client.post(
+        f"/v1/pages/{page['id']}/handover/{third['id']}/accept",
+        headers={**auth(helper), "If-Match": third["etag"]}, json={},
+    )
+    assert invalidated.status_code == 409 and invalidated.json()["error"]["code"] == "HANDOVER_INVALIDATED"
+
+    # Fifteen minutes end an offer; a fresh sign-in does not revive it.
+    fourth = offer_handover(client, owner, page, helper["user"]["id"], etag=edited.json()["data"]["etag"]).json()["data"]
+    advance(app, minutes=15, seconds=1)
+    helper = sign_in(client, "helper@example.test")
+    expired = client.post(
+        f"/v1/pages/{page['id']}/handover/{fourth['id']}/accept",
+        headers={**auth(helper), "If-Match": fourth["etag"]}, json={},
+    )
+    assert expired.status_code == 410 and expired.json()["error"]["code"] == "HANDOVER_EXPIRED"
+    assert offers(client, helper) == []

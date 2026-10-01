@@ -22,6 +22,7 @@ from app.modules.care.api import router as care_router
 from app.modules.care.service import CareService
 from app.modules.community.api import public_router as community_public_router
 from app.modules.community.api import router as community_router
+from app.modules.community.lifecycle import PageLifecycleService
 from app.modules.community.service import CommunityService
 from app.modules.discovery.api import router as search_router
 from app.modules.discovery.service import PrivateSearchService
@@ -189,6 +190,7 @@ def create_app(settings=None, clock=utcnow):
     application.state.notifications = NotificationService(application.state.reminders)
     application.state.messaging = MessagingService(application.state.spaces, MessageCipher(keyring))
     application.state.community = CommunityService(application.state.identity)
+    application.state.page_lifecycle = PageLifecycleService(application.state.identity)
     application.state.events = EventService(application.state.spaces)
     application.state.documents = DocumentService(application.state.spaces)
     application.state.search = PrivateSearchService(application.state.spaces)

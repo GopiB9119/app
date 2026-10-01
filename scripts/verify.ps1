@@ -121,6 +121,23 @@ function Format-Tally($Tally) {
 
 function Get-Blocker([string]$Name) {
     if ($Name -eq 'backend' -and -not (Get-Command docker -ErrorAction SilentlyContinue)) { return 'Docker is not installed or not on PATH.' }
+    if ($Name -eq 'backend') {
+        # Sessions sharing this tree have written migrations with the same number at the same time; every test then fails
+        # with "Multiple heads". Say so at once instead.
+        $revisions = @{}
+        $follows = @{}
+        foreach ($file in @(Get-ChildItem -Path (Join-Path $root 'backend\migrations\versions') -Filter '*.py' -ErrorAction SilentlyContinue)) {
+            $code = [IO.File]::ReadAllText($file.FullName)
+            $revision = [regex]::Match($code, '(?m)^revision\s*=\s*[''"]([^''"]+)').Groups[1].Value
+            if (-not $revision) { continue }
+            if ($revisions.ContainsKey($revision)) { return "Two migrations both say revision $revision ($($revisions[$revision]) and $($file.Name)); one must be renumbered." }
+            $revisions[$revision] = $file.Name
+            $previous = [regex]::Match($code, '(?m)^down_revision\s*=\s*[''"]([^''"]+)').Groups[1].Value
+            if ($previous) { $follows[$previous] = $true }
+        }
+        $heads = @($revisions.Keys | Where-Object { -not $follows.ContainsKey($_) } | Sort-Object)
+        if ($heads.Count -gt 1) { return "The migrations have more than one newest revision ($($heads -join ', ')); one must follow the other." }
+    }
     if ($Name -eq 'android') {
         if (-not $env:JAVA_HOME) { return 'JAVA_HOME is not set and Android Studio''s runtime was not found.' }
         if (-not (Test-Path (Join-Path $root 'android\gradlew.bat'))) { return 'android\gradlew.bat is missing.' }

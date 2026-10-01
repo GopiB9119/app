@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Check, CheckCheck, Clock3, Globe2, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, X } from "lucide-react";
+import { Check, CheckCheck, Clock3, Download, Globe2, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, X } from "lucide-react";
 import { Account, ApiError, api, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
 import { Shell } from "./shell";
 import { TimezoneListProblem } from "./timezone-list-problem";
@@ -80,7 +80,7 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
   const timezoneOptions = zones.data?.data ?? [user.timezone];
   return <Shell account>
     <main className="account-main">
-      <nav className="workspace-nav" aria-label="Profile"><span className="nav-active"><UserRound size={18} />Account</span><Link className="text-button" href="/app/safety"><ShieldBan size={18} aria-hidden />Blocked</Link><button className="text-button" onClick={() => setConfirm({ path: "auth/logout", method: "POST", current: true, label: "Sign out of this session?" })}><LogOut size={17} />Sign out</button></nav>
+      <nav className="workspace-nav" aria-label="Profile"><span className="nav-active"><UserRound size={18} />Account</span><Link className="text-button" href="/app/safety"><ShieldBan size={18} aria-hidden />Blocked</Link><Link className="text-button" href="/app/settings/data"><Download size={18} aria-hidden />Your data</Link><button className="text-button" onClick={() => setConfirm({ path: "auth/logout", method: "POST", current: true, label: "Sign out of this session?" })}><LogOut size={17} />Sign out</button></nav>
       <div className="account-heading"><div><span className="section-kicker">PERSONAL SETTINGS</span><h1>Your account</h1><p>Profile &amp; security</p></div><div className="verified-badge"><ShieldCheck size={17} />Email verified</div></div>
       {notice && <div className="message success" role="status"><Check size={18} />{notice}</div>}
       {error && <div className="message error" role="alert">{error}<button className="text-button" onClick={reloadProfile}><RefreshCw size={16} />Reload profile</button></div>}

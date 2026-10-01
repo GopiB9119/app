@@ -22,19 +22,22 @@ def main():
         while not stopped.is_set():
             try:
                 outcome = service.purge_due(limit=5)
+                pages = application.state.page_lifecycle.purge_due(limit=5)
             except SQLAlchemyError:
                 if arguments.once:
                     print(json.dumps({"event": "account_deletion", "result": "database_unavailable"}), flush=True)
                     raise SystemExit(1) from None
-                outcome = None
+                outcome = pages = None
             # Counts only: an erased account's details must not reach the logs either.
             if outcome is None or any(outcome.values()) or arguments.once:
                 print(json.dumps({"event": "account_deletion", **(outcome or {"result": "database_unavailable"})}), flush=True)
+            if pages is None or pages["purged"] or arguments.once:
+                print(json.dumps({"event": "page_deletion", **(pages or {"result": "database_unavailable"})}), flush=True)
             if arguments.once:
                 break
             failures = min(failures + 1, 6) if outcome is None else 0
-            # Keep going only while accounts are being erased; blocked ones wait for the next pass.
-            if outcome is None or not outcome["purged"]:
+            # Keep going only while accounts or pages are being erased; blocked ones wait for the next pass.
+            if outcome is None or not (outcome["purged"] or pages["purged"]):
                 stopped.wait(min(300, 30 * 2 ** failures) if failures else 60)
     finally:
         application.state.engine.dispose()

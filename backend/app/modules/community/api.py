@@ -15,7 +15,13 @@ from app.modules.community.schemas import (
     CreatePage,
     CreatePost,
     CreateReport,
+    DeletePage,
     EmptyAction,
+    HandoverView,
+    InviteModerator,
+    ModeratorRoleView,
+    ModeratorView,
+    OfferHandover,
     PageList,
     PageView,
     PostList,
@@ -170,6 +176,95 @@ def block(request: Request, body: CreateBlock):
 @router.post("/blocks/{block_id}/remove", response_model=Envelope[BlockOutcome])
 def unblock(request: Request, block_id: UUID, body: EmptyAction):
     return envelope(request, service(request).unblock(token(request), str(block_id)))
+
+
+@router.post("/pages/{page_id}/moderators", response_model=Envelope[ModeratorView], status_code=201)
+def invite_moderator(request: Request, page_id: UUID, body: InviteModerator, idempotency_key: UUID = Header()):
+    return envelope(request, service(request).invite_moderator(token(request), str(page_id), body, str(idempotency_key)))
+
+
+@router.get("/pages/{page_id}/moderators", response_model=Envelope[list[ModeratorView]])
+def page_moderators(request: Request, page_id: UUID):
+    return envelope(request, service(request).page_moderators(token(request), str(page_id)))
+
+
+@router.get("/me/moderator-roles", response_model=Envelope[list[ModeratorRoleView]])
+def my_moderator_roles(request: Request):
+    return envelope(request, service(request).my_moderator_roles(token(request)))
+
+
+def respond_moderator(request: Request, page_id: UUID, moderator_id: UUID, action: str, if_match: str | None):
+    return envelope(request, service(request).resolve_moderator(token(request), str(page_id), str(moderator_id), action, if_match))
+
+
+@router.post("/pages/{page_id}/moderators/{moderator_id}/accept", response_model=Envelope[ModeratorView])
+def accept_moderator(request: Request, page_id: UUID, moderator_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return respond_moderator(request, page_id, moderator_id, "accept", if_match)
+
+
+@router.post("/pages/{page_id}/moderators/{moderator_id}/decline", response_model=Envelope[ModeratorView])
+def decline_moderator(request: Request, page_id: UUID, moderator_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return respond_moderator(request, page_id, moderator_id, "decline", if_match)
+
+
+@router.post("/pages/{page_id}/moderators/{moderator_id}/withdraw", response_model=Envelope[ModeratorView])
+def withdraw_moderator(request: Request, page_id: UUID, moderator_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return respond_moderator(request, page_id, moderator_id, "withdraw", if_match)
+
+
+@router.post("/pages/{page_id}/moderators/{moderator_id}/remove", response_model=Envelope[ModeratorView])
+def remove_moderator(request: Request, page_id: UUID, moderator_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return respond_moderator(request, page_id, moderator_id, "remove", if_match)
+
+
+@router.post("/pages/{page_id}/moderators/{moderator_id}/step-down", response_model=Envelope[ModeratorView])
+def step_down(request: Request, page_id: UUID, moderator_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return respond_moderator(request, page_id, moderator_id, "step-down", if_match)
+
+
+@router.post("/pages/{page_id}/handover", response_model=Envelope[HandoverView], status_code=201)
+def offer_handover(request: Request, page_id: UUID, body: OfferHandover, idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).offer_handover(token(request), str(page_id), body, str(idempotency_key), if_match))
+
+
+@router.get("/pages/{page_id}/handover", response_model=Envelope[HandoverView])
+def page_handover(request: Request, page_id: UUID):
+    return envelope(request, service(request).page_handover(token(request), str(page_id)))
+
+
+@router.get("/me/handover-offers", response_model=Envelope[list[HandoverView]])
+def my_handover_offers(request: Request):
+    return envelope(request, service(request).my_handover_offers(token(request)))
+
+
+@router.post("/pages/{page_id}/handover/{offer_id}/accept", response_model=Envelope[HandoverView])
+def accept_handover(request: Request, page_id: UUID, offer_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).respond_handover(token(request), str(page_id), str(offer_id), "accept", if_match))
+
+
+@router.post("/pages/{page_id}/handover/{offer_id}/decline", response_model=Envelope[HandoverView])
+def decline_handover(request: Request, page_id: UUID, offer_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).respond_handover(token(request), str(page_id), str(offer_id), "decline", if_match))
+
+
+@router.post("/pages/{page_id}/handover/{offer_id}/cancel", response_model=Envelope[HandoverView])
+def cancel_handover(request: Request, page_id: UUID, offer_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).respond_handover(token(request), str(page_id), str(offer_id), "cancel", if_match))
+
+
+@router.post("/pages/{page_id}/archive", response_model=Envelope[PageView])
+def archive_page(request: Request, page_id: UUID, body: EmptyAction, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).archive_page(token(request), str(page_id), if_match))
+
+
+@router.post("/pages/{page_id}/restore", response_model=Envelope[PageView])
+def restore_page(request: Request, page_id: UUID, body: EmptyAction, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).restore_page(token(request), str(page_id), if_match))
+
+
+@router.post("/pages/{page_id}/delete", response_model=Envelope[PageView])
+def delete_page(request: Request, page_id: UUID, body: DeletePage, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).delete_page(token(request), str(page_id), body, if_match))
 
 
 @public_router.get("/pages/{page_ref}", response_model=Envelope[PageView], openapi_extra=optional_session)

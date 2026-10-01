@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, KeyRound, LoaderCircle, Mail } from "lucide-react";
-import { api, authSchema, challengeSchema, doneSchema } from "./client";
+import { ApiError, api, authSchema, challengeSchema, doneSchema } from "./client";
 import { Shell } from "./shell";
 import { TimezoneListProblem } from "./timezone-list-problem";
 
@@ -40,6 +40,16 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   const [initialZone] = useState(() => signUpTimezone(startingTimezones));
   const [requestIntent, setRequestIntent] = useState<{ email: string; key: string } | null>(null);
   const form = useForm<Fields>({ resolver: zodResolver(inputSchema), defaultValues: { email: "", password: "", code: "", display_name: "", timezone: initialZone } });
+  const [pendingDeletion, setPendingDeletion] = useState<string | null>(null);
+  const [cancellingDeletion, setCancellingDeletion] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "login") return;
+    const subscription = form.watch((_fields, { name }) => {
+      if (name === "email" || name === "password") setPendingDeletion(null);
+    });
+    return () => subscription.unsubscribe();
+  }, [mode, form.watch]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,11 +67,17 @@ export function AuthScreen({ mode }: { mode: Mode }) {
     setMessage("");
     setNotice("");
     if (mode === "login") {
+      setPendingDeletion(null);
       if (!fields.password) { form.setError("password", { message: "Enter your password." }); return; }
       try {
         await api("auth/login", authSchema, { method: "POST", body: { email: fields.email, password: fields.password } });
         window.location.assign("/app/settings/account");
-      } catch (error) { setMessage((error as Error).message); }
+      } catch (error) {
+        if (error instanceof ApiError && error.code === "ACCOUNT_DELETION_PENDING" && error.details.purge_after && !Number.isNaN(Date.parse(error.details.purge_after))) {
+          const current = form.getValues();
+          if (current.email === fields.email && current.password === fields.password) setPendingDeletion(error.details.purge_after);
+        } else setMessage((error as Error).message);
+      }
       return;
     }
     if (!challenge) {
@@ -94,6 +110,16 @@ export function AuthScreen({ mode }: { mode: Mode }) {
     } catch (error) { setMessage((error as Error).message); }
   }
 
+  async function cancelDeletion() {
+    setCancellingDeletion(true); setMessage("");
+    const { email, password } = form.getValues();
+    try {
+      await api("auth/cancel-deletion", authSchema, { method: "POST", body: { email, password } });
+      window.location.assign("/app/settings/account");
+    } catch (error) { setMessage((error as Error).message); }
+    finally { setCancellingDeletion(false); }
+  }
+
   function restart() {
     setChallenge(null); setRequestIntent(null); setMessage("");
     form.resetField("password"); form.resetField("code");
@@ -116,8 +142,9 @@ export function AuthScreen({ mode }: { mode: Mode }) {
         {challenge && mode === "register" && <label><span id="signup-timezone-label">Timezone</span><select aria-labelledby="signup-timezone-label" {...form.register("timezone")}>{timezones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>}
         {challenge && mode === "register" && zoneLoad.failed && <TimezoneListProblem retry={() => setZoneLoad(load => ({ attempt: load.attempt + 1, failed: false }))} />}
         {message && <div role="alert" className="message error">{message}</div>}
+        {mode === "login" && pendingDeletion && <div role="alert" className="message error"><div><p>This account is waiting to be deleted on {new Intl.DateTimeFormat("en", { dateStyle: "long", timeStyle: "short" }).format(new Date(pendingDeletion))}. Cancel the deletion to keep your account and sign in.</p><button className="primary-button" type="button" disabled={cancellingDeletion || form.formState.isSubmitting} onClick={cancelDeletion}>{cancellingDeletion ? <LoaderCircle size={19} className="spin" aria-hidden /> : <ArrowRight size={19} aria-hidden />}Cancel deletion and sign in</button></div></div>}
         {notice && <div role="status" className="message success"><Check size={18} />{notice}<Link href="/login">Sign in</Link></div>}
-        <button className="primary-button" type="submit" disabled={!interactive || form.formState.isSubmitting}>{form.formState.isSubmitting ? <LoaderCircle size={19} className="spin" aria-hidden /> : mode === "recover" ? <KeyRound size={19} aria-hidden /> : <ArrowRight size={19} aria-hidden />}<span>{form.formState.isSubmitting ? "Please wait" : mode === "login" ? "Sign in" : challenge ? mode === "register" ? "Verify and create account" : "Change password" : "Send verification code"}</span></button>
+        <button className="primary-button" type="submit" disabled={!interactive || form.formState.isSubmitting || (mode === "login" && cancellingDeletion)}>{form.formState.isSubmitting ? <LoaderCircle size={19} className="spin" aria-hidden /> : mode === "recover" ? <KeyRound size={19} aria-hidden /> : <ArrowRight size={19} aria-hidden />}<span>{form.formState.isSubmitting ? "Please wait" : mode === "login" ? "Sign in" : challenge ? mode === "register" ? "Verify and create account" : "Change password" : "Send verification code"}</span></button>
         {mode === "login" && <Link className="form-link" href="/recover">Forgot your password?</Link>}
         {challenge && <button className="text-button" type="button" onClick={restart} disabled={form.formState.isSubmitting}><ArrowLeft size={16} />Request a new code</button>}
         {mode === "recover" && <Link className="form-link" href="/login">Back to sign in</Link>}

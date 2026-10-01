@@ -109,7 +109,7 @@ function DataDetails({ user, onDeleted }: { user: Account; onDeleted: (purgeAfte
   async function signInAgain() {
     setSigningOut(true);
     try { await api("auth/logout", doneSchema, { method: "POST", body: {}, accountId: user.id }); }
-    catch { /* Sign-in is still needed if this session could not be closed here. */ }
+    catch {}
     finally { window.location.assign("/login"); }
   }
 

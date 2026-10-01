@@ -1,10 +1,13 @@
-"""Page moderators, handover and page archive and delete (DEC-025 parts 3 to 5)."""
+"""Page moderators, handover and page archive and delete (DEC-025 parts 3 to 5).
+
+Follows 0030 (DEC-026 Space member invites), which another session claimed first, hence the number 0031.
+"""
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0030"
-down_revision = "0029"
+revision = "0031"
+down_revision = "0030"
 branch_labels = None
 depends_on = None
 
