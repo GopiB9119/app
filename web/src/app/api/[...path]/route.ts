@@ -21,6 +21,7 @@ const allowed = new Set([
   "POST auth/register", "POST auth/verify-email", "POST auth/login", "POST auth/recover",
   "POST auth/reset-password", "POST auth/logout", "GET me", "PATCH me/profile",
   "GET me/sessions", "POST me/sessions/revoke-others", "GET me/security-events", "GET timezones",
+  "GET live",
   "POST spaces", "GET spaces", "GET invitations",
   "POST tasks", "GET tasks", "GET tasks/assignees", "GET calendar",
   "POST reminders/preview", "POST reminders", "GET reminders", "GET notifications",
@@ -122,6 +123,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
   const documents = documentCommand || documentRead;
   if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !sessionDelete && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (route === "live" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Live updates do not accept query parameters.");
   if (agents && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Agent commands do not accept query parameters.");
   if (documentCommand && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Document commands do not accept query parameters.");
   if (alerts && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Alert commands do not accept query parameters.");
@@ -155,6 +157,25 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
         return rejected;
       }
       if (currentBody.data.id !== expected) return failure(409, "ACCOUNT_CHANGED", "The signed-in account changed. Reload before continuing.");
+    }
+    if (route === "live") {
+      const upstream = await fetch(`${backend}/v1/live`, {
+        headers: { Authorization: `Bearer ${sessionToken}`, Accept: "text/event-stream", traceparent },
+        cache: "no-store", redirect: "error", signal: request.signal,
+      });
+      if (upstream.ok) return new Response(upstream.body, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store, no-transform",
+          "X-Accel-Buffering": "no",
+        },
+      });
+      const response = NextResponse.json(await upstream.json(), { status: upstream.status, headers: { "Cache-Control": "no-store" } });
+      const retryAfter = upstream.headers.get("retry-after");
+      if (retryAfter) response.headers.set("Retry-After", retryAfter);
+      if (upstream.status === 401) response.cookies.delete(sessionName);
+      return response;
     }
     let body: Record<string, unknown> | undefined;
     if (mutating) {

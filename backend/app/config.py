@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Bearer key for /metrics; while unset, the endpoint answers 404.
     metrics_key: str | None = None
     reminder_dispatch_enabled: bool = True
+    # Live updates: a comment line every heartbeat, the session checked again this often, a stream closed after the maximum.
+    live_heartbeat_seconds: int = 15
+    live_recheck_seconds: int = 60
+    live_max_seconds: int = 1800
 
     def load_key(self) -> bytes:
         if self.secret_key:

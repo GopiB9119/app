@@ -28,6 +28,123 @@ import java.util.UUID
 class SpaceRepositoryTest {
     private val fixture = Fixture()
 
+    @Test fun adminSpacesAndRosterRowsAreAccepted(): Unit = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "admin")
+        assertEquals("admin", fixture.repository.spaces(fixture.accountId).items.single().role)
+        assertEquals("admin", fixture.repository.read(fixture.accountId, fixture.spaceId).role)
+        fixture.api.roster = listOf(fixture.ownerMember, fixture.otherMember.copy(role = "admin"))
+        assertEquals("admin", fixture.repository.members(fixture.accountId, fixture.spaceId).last().role)
+        fixture.api.roster = listOf(fixture.ownerMember.copy(role = "admin"), fixture.otherMember.copy(role = "owner"))
+        assertEquals("admin", fixture.repository.members(fixture.accountId, fixture.spaceId).first().role)
+    }
+
+    @Test fun adminSupportStillRejectsUnknownRolesAndTwoOwners(): Unit = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "administrator")
+        val spaceError = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.spaces(fixture.accountId) } }
+        assertEquals("INVALID_RESPONSE", spaceError.code)
+        for (roster in listOf(
+            listOf(fixture.ownerMember, fixture.otherMember.copy(role = "owner")),
+            listOf(fixture.ownerMember, fixture.otherMember.copy(role = "administrator")),
+        )) {
+            fixture.api.roster = roster
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.members(fixture.accountId, fixture.spaceId) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+        }
+    }
+
+    @Test fun roleCommandSendsExactPathHeadersAndRoleBody(): Unit = runBlocking {
+        val requests = mutableListOf<okhttp3.Request>()
+        val bodies = mutableListOf<String>()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests.add(request)
+            val buffer = Buffer()
+            request.body!!.writeTo(buffer)
+            val body = buffer.readUtf8()
+            bodies.add(body)
+            val role = JsonParser.parseString(body).asJsonObject["role"].asString
+            okhttp3.Response.Builder().request(request).code(200).message("Synthetic").protocol(Protocol.HTTP_1_1)
+                .body(Gson().toJson(EnvelopeDto(fixture.otherMember.copy(role = role), null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val api = Retrofit.Builder().baseUrl("https://offline.invalid/").client(http).addConverterFactory(GsonConverterFactory.create(Gson())).build().create(SpaceApi::class.java)
+        val repository = SpaceRepository(api, fixture.accounts)
+        for (role in listOf("admin", "member")) {
+            val member = fixture.otherMember.copy(role = if (role == "admin") "member" else "admin")
+            val command = SpaceCommand.ChangeRole(fixture.accountId, fixture.space, member, role, UUID.randomUUID().toString())
+            val result = repository.execute(command) as SpaceCommandResult.MemberRoleSaved
+            assertEquals(role, result.member.role)
+            val request = requests.last()
+            assertEquals("POST", request.method)
+            assertEquals("/v1/spaces/${fixture.spaceId}/members/${fixture.recipientId}/role", request.url.encodedPath)
+            assertEquals("Bearer ${fixture.token}", request.header("Authorization"))
+            assertEquals(command.requestKey, request.header("Idempotency-Key"))
+            assertEquals(command.etag, request.header("If-Match"))
+            assertEquals("{\"role\":\"$role\"}", bodies.last())
+        }
+    }
+
+    @Test fun roleResponseMustMatchTheRequestedAccountAndRole(): Unit = runBlocking {
+        val command = SpaceCommand.ChangeRole(fixture.accountId, fixture.space, fixture.otherMember, "admin", UUID.randomUUID().toString())
+        for (response in listOf(
+            fixture.otherMember.copy(accountId = fixture.invitationId, role = "admin"),
+            fixture.otherMember,
+            fixture.otherMember.copy(role = "owner"),
+            fixture.otherMember.copy(role = "admin", etag = "*"),
+        )) {
+            fixture.api.roleResult = response
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.execute(command) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+        }
+    }
+
+    @Test fun roleCommandsRequireOwnerAnotherMemberAndFamilyOrGroup(): Unit = runBlocking {
+        val command = SpaceCommand.ChangeRole(fixture.accountId, fixture.space, fixture.otherMember, "admin", UUID.randomUUID().toString())
+        for (invalid in listOf(
+            command.copy(space = fixture.space.copy(role = "admin")),
+            command.copy(space = fixture.space.copy(role = "member")),
+            command.copy(space = fixture.space.copy(spaceType = "couple")),
+            command.copy(space = fixture.space.copy(spaceType = "solo")),
+            command.copy(member = fixture.ownerMember),
+            command.copy(member = fixture.ownerMember.copy(role = "member")),
+            command.copy(role = "owner"),
+            command.copy(etag = "\"not-reviewed\""),
+        )) {
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.execute(invalid) } }
+        }
+        assertTrue(fixture.api.roleCommands.isEmpty())
+        assertEquals("admin", (fixture.repository.execute(command) as SpaceCommandResult.MemberRoleSaved).member.role)
+        assertEquals("admin", (fixture.repository.execute(command.copy(space = fixture.space.copy(spaceType = "group"))) as SpaceCommandResult.MemberRoleSaved).member.role)
+    }
+
+    @Test fun removalCommandsRespectOwnerAndAdminLimits(): Unit = runBlocking {
+        fun command(role: String, member: SpaceMemberDto) = SpaceCommand.EndMembership(
+            MembershipIntent(fixture.accountId, fixture.spaceId, member.accountId, MembershipAction.REMOVE, member.etag, UUID.randomUUID().toString()),
+            member, fixture.space.name, fixture.space.copy(role = role),
+        )
+        for (invalid in listOf(
+            command("admin", fixture.otherMember.copy(role = "admin")),
+            command("admin", fixture.otherMember.copy(role = "owner")),
+            command("owner", fixture.otherMember.copy(role = "owner")),
+            command("owner", fixture.ownerMember.copy(role = "member")),
+            command("admin", fixture.ownerMember.copy(role = "member")),
+            command("member", fixture.otherMember),
+        )) {
+            assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.execute(invalid) } }
+        }
+        assertTrue(fixture.api.membershipCommands.isEmpty())
+        for (allowed in listOf(command("owner", fixture.otherMember), command("owner", fixture.otherMember.copy(role = "admin")), command("admin", fixture.otherMember))) {
+            assertEquals(fixture.recipientId, (fixture.repository.execute(allowed) as SpaceCommandResult.MembershipEnded).outcome.accountId)
+        }
+        assertEquals(3, fixture.api.membershipCommands.size)
+    }
+
+    @Test fun ownerCanOfferOwnershipToAnAdminButAdminsCannotOffer(): Unit = runBlocking {
+        val command = SpaceCommand.OfferOwnership(fixture.accountId, fixture.space, fixture.otherMember.copy(role = "admin"), UUID.randomUUID().toString())
+        assertEquals(fixture.recipientId, (fixture.repository.execute(command) as SpaceCommandResult.OwnershipSaved).transfer.toAccountId)
+        assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.execute(command.copy(space = fixture.space.copy(role = "admin"))) } }
+        assertEquals(1, fixture.api.ownershipKeys.size)
+    }
+
     @Test fun soloCreationKeepsTypeAndRejectsFamilyOrMemberResults(): Unit = runBlocking {
         val command = SpaceCommand.Create(fixture.accountId, "My planning", UUID.randomUUID().toString(), "solo")
         fixture.api.space = fixture.space.copy(spaceType = "solo")
@@ -302,6 +419,8 @@ class SpaceRepositoryTest {
         assertEquals("/v1/spaces/${fixture.spaceId}/ownership-transfers/${incoming.id}/accept", requests[1].url.encodedPath)
     }
 
+    data class RoleRequest(val spaceId: String, val accountId: String, val key: String, val etag: String, val body: ChangeSpaceMemberRoleDto)
+
     class Fixture {
         val accountId = "62f3da14-12e9-4575-9541-caf8b98e2dfd"
         val recipientId = "0f97b948-9800-432f-9d15-407df739d08e"
@@ -333,6 +452,8 @@ class SpaceRepositoryTest {
         var actorId: String = ""
         var membershipOutcome: MembershipOutcomeDto? = null
         val membershipCommands = mutableListOf<MembershipIntent>()
+        var roleResult: SpaceMemberDto? = null
+        val roleCommands = mutableListOf<RoleRequest>()
         var transfer: OwnershipTransferDto? = null
         var transfers: List<OwnershipTransferDto> = emptyList()
         val ownershipKeys = mutableListOf<String>()
@@ -373,6 +494,15 @@ class SpaceRepositoryTest {
         override suspend fun removeMember(authorization: String, spaceId: String, accountId: String, key: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<MembershipOutcomeDto>> {
             membershipCommands.add(MembershipIntent(actorId, spaceId, accountId, MembershipAction.REMOVE, etag, key))
             return result(membershipOutcome ?: MembershipOutcomeDto(spaceId, accountId, "removed"))
+        }
+        override suspend fun changeMemberRole(authorization: String, spaceId: String, accountId: String, key: String, etag: String, body: ChangeSpaceMemberRoleDto): Response<EnvelopeDto<SpaceMemberDto>> {
+            roleCommands.add(RoleRequest(spaceId, accountId, key, etag, body))
+            val member = roleResult ?: roster.single { it.accountId == accountId }.copy(role = body.role, etag = "\"role-${body.role}\"")
+            if (failure == 0) {
+                roster = roster.map { if (it.accountId == accountId) member else it }
+                space = space.copy(version = (space.version.toLong() + 1).toString())
+            }
+            return result(member)
         }
         override suspend fun leave(authorization: String, spaceId: String, key: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<MembershipOutcomeDto>> {
             membershipCommands.add(MembershipIntent(actorId, spaceId, actorId, MembershipAction.LEAVE, etag, key))

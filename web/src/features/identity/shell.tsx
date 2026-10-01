@@ -6,6 +6,7 @@ import { ArrowUpRight, Bell, Bot, Compass, Layers2, Search, ShieldCheck } from "
 import { api, userSchema } from "@/features/identity/client";
 import { MainFrame } from "@/features/platform/navigation";
 import { notificationPage } from "@/features/scheduling/client";
+import { useLiveUpdates } from "@/features/realtime/live";
 
 // Signed-in pages show the five main sections (DEC-014); the header keeps search, the notification inbox and the agent.
 export function Shell({ children, account = false }: { children: React.ReactNode; account?: boolean }) {
@@ -32,6 +33,7 @@ export function Shell({ children, account = false }: { children: React.ReactNode
 function InboxBell() {
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }), retry: false });
   const accountId = profile.data?.data.id;
+  useLiveUpdates(accountId);
   const unread = useQuery({
     queryKey: ["notifications", accountId, "count"], enabled: Boolean(accountId), retry: false,
     queryFn: async ({ signal }) => (await notificationPage(accountId!, null, signal)).unreadCount,

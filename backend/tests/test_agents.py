@@ -1,5 +1,5 @@
 import threading
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun
 from app.modules.planning.models import Task
 from app.modules.scheduling.models import Reminder
 from tests.test_identity import account, auth
-from tests.test_messaging import admit
+from tests.test_messaging import admit, wait_until_blocked
 from tests.test_spaces import create_space
 from tests.test_tasks import create_task
 
@@ -306,7 +306,8 @@ def test_the_last_note_slot_goes_to_one_approval_only(client, app, monkeypatch):
         saved = pool.submit(approve, client, person, first)
         assert reached.wait(10)
         refused = pool.submit(approve, client, person, second)
-        blocked = bool(wait([refused], timeout=1).not_done)
+        wait_until_blocked(app, refused)
+        blocked = not refused.done()
         release.set()
         results = [saved.result(timeout=10).json()["data"], refused.result(timeout=10).json()["data"]]
     assert blocked, "The second approval must wait for the first one."

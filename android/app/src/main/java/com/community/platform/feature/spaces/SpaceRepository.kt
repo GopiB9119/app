@@ -37,7 +37,7 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
             require(value.visibility == "private" || value.spaceType == "group")
             value.description?.let { require(it.codePointCount(0, it.length) <= 280) }
             require(value.spaceType != "solo" || value.role == "owner")
-            require(value.role in setOf("owner", "member") && value.version.matches(Regex("[1-9][0-9]*")) && value.version.toLong() > 0)
+            require(value.role in setOf("owner", "admin", "member") && value.version.matches(Regex("[1-9][0-9]*")) && value.version.toLong() > 0)
             Instant.parse(value.createdAt)
         }
         return value
@@ -89,17 +89,22 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
         result
     }
 
+    private fun member(value: SpaceMemberDto): SpaceMemberDto {
+        validate {
+            identifier(value.accountId)
+            label(value.displayName, 80)
+            require(value.role in setOf("owner", "admin", "member"))
+            Instant.parse(value.joinedAt)
+            require(value.etag.length in 3..140 && value.etag.matches(Regex("\"[^\"\\r\\n]+\"")))
+        }
+        return value
+    }
+
     suspend fun members(accountId: String, spaceId: String): List<SpaceMemberDto> = accounts.authorized(accountId) { authorization ->
         val result = accounts.result(api.members(authorization, spaceId))
         validate {
             require(result.size in 1..50)
-            result.forEach { member ->
-                identifier(member.accountId)
-                label(member.displayName, 80)
-                require(member.role in setOf("owner", "member"))
-                Instant.parse(member.joinedAt)
-                require(member.etag.length in 3..140 && member.etag.matches(Regex("\"[^\"\\r\\n]+\"")))
-            }
+            result.forEach(::member)
             require(result.map { it.accountId }.distinct().size == result.size)
             require(result.count { it.role == "owner" } == 1)
             require(result.any { it.accountId == accountId })
@@ -149,8 +154,19 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
 
     suspend fun execute(command: SpaceCommand): SpaceCommandResult = accounts.authorized(command.accountId) { authorization ->
         when (command) {
+            is SpaceCommand.ChangeRole -> {
+                if (command.space.role != "owner" || command.space.spaceType !in setOf("family", "group")
+                    || command.member.role !in setOf("admin", "member") || command.member.accountId == command.accountId
+                    || command.role !in setOf("admin", "member") || command.etag != command.member.etag) {
+                    throw IdentityFailure("ACCESS_DENIED", "Only the Space owner can change another member's role in a family or group Space.", 403)
+                }
+                val result = member(accounts.result(api.changeMemberRole(authorization, command.space.id, command.member.accountId,
+                    command.requestKey, command.etag, ChangeSpaceMemberRoleDto(command.role))))
+                if (result.accountId != command.member.accountId || result.role != command.role) invalid()
+                SpaceCommandResult.MemberRoleSaved(result)
+            }
             is SpaceCommand.OfferOwnership -> {
-                if (command.space.role != "owner" || command.member.role != "member" || command.member.accountId == command.accountId) {
+                if (command.space.role != "owner" || command.member.role !in setOf("admin", "member") || command.member.accountId == command.accountId) {
                     throw IdentityFailure("ACCESS_DENIED", "Choose another current member for this ownership offer.", 403)
                 }
                 val result = ownership(accounts.result(api.offerOwnership(authorization, command.space.id, command.requestKey, command.member.etag,
@@ -195,7 +211,19 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
                 SpaceCommandResult.InvitationResolved(outcome(api.decline(authorization, command.invitation.id, emptyMap()), command.invitation.id, "declined"))
             }
             is SpaceCommand.Revoke -> SpaceCommandResult.InvitationResolved(outcome(api.revoke(authorization, command.invitation.spaceId, command.invitation.id, emptyMap()), command.invitation.id, "revoked"))
-            is SpaceCommand.EndMembership -> SpaceCommandResult.MembershipEnded(endMembership(authorization, command.intent))
+            is SpaceCommand.EndMembership -> {
+                val intent = command.intent
+                val allowed = when (intent.action) {
+                    MembershipAction.REMOVE -> command.member.accountId != command.accountId &&
+                        ((command.space.role == "owner" && command.member.role in setOf("admin", "member")) ||
+                            (command.space.role == "admin" && command.member.role == "member"))
+                    MembershipAction.LEAVE -> command.member.accountId == command.accountId && command.space.role in setOf("admin", "member")
+                }
+                if (!allowed || command.space.id != intent.spaceId || command.member.accountId != intent.targetId || command.member.etag != intent.etag) {
+                    throw IdentityFailure("ACCESS_DENIED", "Choose a current membership you can leave or remove.", 403)
+                }
+                SpaceCommandResult.MembershipEnded(endMembership(authorization, intent))
+            }
         }
     }
 

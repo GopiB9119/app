@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -79,6 +80,8 @@ data class CommunityActions(
     val blockPage: (PageDto) -> Unit = {}, val blockAuthor: (CommentDto) -> Unit = {}, val unblock: (BlockDto) -> Unit = {},
     val searchFor: (Boolean) -> Unit = {},
     val startEdit: (PostDto) -> Unit = {}, val cancelEdit: () -> Unit = {}, val editPost: (PostDto, String, String) -> Boolean = { _, _, _ -> false },
+    val unfollow: (PageDto) -> Unit = {}, val startPageEdit: (PageDto) -> Unit = {}, val cancelPageEdit: () -> Unit = {},
+    val editPage: (String, String, String) -> Boolean = { _, _, _ -> false },
 )
 
 private data class Confirmation(val title: String, val text: String, val confirm: String, val action: () -> Unit)
@@ -94,6 +97,7 @@ fun CommunityRoute(viewModel: CommunityViewModel, accountId: String, timezone: S
         viewModel::retry, viewModel::discardPending, viewModel::publish, viewModel::deletePost, viewModel::endComment,
         viewModel::report, viewModel::blockPage, viewModel::blockAuthor, viewModel::unblock, viewModel::searchFor,
         viewModel::startEdit, viewModel::cancelEdit, viewModel::editPost,
+        viewModel::unfollow, viewModel::startPageEdit, viewModel::cancelPageEdit, viewModel::editPage,
     ), timezone, onBack)
 }
 
@@ -117,9 +121,10 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
                 Text(title(state), style = MaterialTheme.typography.titleLarge, maxLines = 2, modifier = Modifier.weight(1f).semantics { heading() })
                 IconButton(onClick = actions.reload, enabled = !state.busy) { Icon(Icons.Default.Refresh, stringResource(R.string.community_refresh)) }
             }
-            FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Discover's own places. The blocked list belongs to Profile (DEC-014), so it opens from there without these chips.
+            if (state.destination != Destination.Blocked) FlowRow(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Destination.Feed(FeedTab.FOLLOWING) to R.string.community_home, Destination.Discover to R.string.community_discover,
-                    Destination.MyPages to R.string.community_my_pages, Destination.Blocked to R.string.community_blocked).forEach { (target, label) ->
+                    Destination.MyPages to R.string.community_my_pages).forEach { (target, label) ->
                     val selected = if (target is Destination.Feed) state.destination is Destination.Feed else state.destination == target
                     FilterChip(selected = selected, onClick = { if (!selected) actions.open(target) }, enabled = !state.working, label = { Text(stringResource(label)) })
                 }
@@ -268,7 +273,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
             Text(page.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
             if (page.description.isNotEmpty()) Text(page.description)
-            if (page.canManage) Text(stringResource(R.string.community_you_own), color = MaterialTheme.colorScheme.primary)
+            if (page.canManage) {
+                Text(stringResource(R.string.community_you_own), color = MaterialTheme.colorScheme.primary)
+                val opened = state.editingPage?.takeIf { it.id == page.id }
+                if (opened != null) PageEditor(opened, state, actions)
+                else OutlinedButton(onClick = { actions.startPageEdit(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-edit")) { Text(stringResource(R.string.community_edit_page)) }
+            }
             else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val blockLabel = stringResource(R.string.community_block_page)
                 val blockText = stringResource(R.string.community_block_page_text, page.name)
@@ -328,6 +339,27 @@ private fun PostEditor(post: PostDto, state: CommunityState, actions: CommunityA
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { actions.editPost(post, title, body) }, enabled = !state.working && body.isNotBlank(), modifier = Modifier.testTag("edit-save-${post.id}")) { Text(stringResource(R.string.save_changes)) }
             TextButton(onClick = actions.cancelEdit, enabled = !state.working, modifier = Modifier.testTag("edit-cancel-${post.id}")) { Text(stringResource(R.string.community_cancel)) }
+        }
+    }
+}
+
+/** Starts from the version the editor opened with and keeps the person's text until the server confirms the change. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PageEditor(opened: PageDto, state: CommunityState, actions: CommunityActions) {
+    var name by rememberSaveable(opened.id, opened.etag) { mutableStateOf(opened.name) }
+    var description by rememberSaveable(opened.id, opened.etag) { mutableStateOf(opened.description) }
+    var topic by rememberSaveable(opened.id, opened.etag) { mutableStateOf(opened.topic) }
+    Column(Modifier.testTag("page-editor"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.community_edit_page), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+        OutlinedTextField(value = name, onValueChange = { name = it.takeCodePoints(160) }, label = { Text(stringResource(R.string.community_page_name)) }, enabled = !state.working, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("page-edit-name"))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TOPICS.forEach { value -> FilterChip(selected = topic == value, onClick = { topic = value }, enabled = !state.working, label = { Text(value.replaceFirstChar(Char::uppercase)) }) }
+        }
+        OutlinedTextField(value = description, onValueChange = { description = it.takeCodePoints(1000) }, label = { Text(stringResource(R.string.community_description)) }, enabled = !state.working, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("page-edit-description"))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { actions.editPage(name, description, topic) }, enabled = !state.working && name.isNotBlank(), modifier = Modifier.testTag("page-edit-save")) { Text(stringResource(R.string.community_save_page)) }
+            TextButton(onClick = actions.cancelPageEdit, enabled = !state.working, modifier = Modifier.testTag("page-edit-cancel")) { Text(stringResource(R.string.community_cancel)) }
         }
     }
 }
@@ -402,7 +434,7 @@ private fun CommentComposer(state: CommunityState, actions: CommunityActions, pa
 @OptIn(ExperimentalLayoutApi::class)
 private fun androidx.compose.foundation.lazy.LazyListScope.myPages(state: CommunityState, actions: CommunityActions) {
     item("owned-heading") { Text(stringResource(R.string.community_owned), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
-    if (!state.loading && state.pages.isEmpty()) item("none") { Text(stringResource(R.string.community_no_owned)) }
+    if (state.noOwnedPages) item("none") { Text(stringResource(R.string.community_no_owned)) }
     items(state.pages, key = { it.id }) { page -> PageItem(page, state, actions) }
     if (state.pages.size < 5) item("create") {
         var handle by rememberSaveable { mutableStateOf("") }
@@ -415,15 +447,53 @@ private fun androidx.compose.foundation.lazy.LazyListScope.myPages(state: Commun
             Text(stringResource(R.string.community_public_warning), style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(value = handle, onValueChange = { handle = it.take(30) }, label = { Text(stringResource(R.string.community_handle)) }, enabled = !locked, singleLine = true,
                 supportingText = { Text(stringResource(R.string.community_handle_help)) }, isError = handle.isNotBlank() && !handle.trim().lowercase().matches(HANDLE_PATTERN), modifier = Modifier.fillMaxWidth().testTag("page-handle"))
-            OutlinedTextField(value = name, onValueChange = { name = it.take(160) }, label = { Text(stringResource(R.string.community_page_name)) }, enabled = !locked, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("page-name"))
+            OutlinedTextField(value = name, onValueChange = { name = it.takeCodePoints(160) }, label = { Text(stringResource(R.string.community_page_name)) }, enabled = !locked, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("page-name"))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TOPICS.forEach { value -> FilterChip(selected = topic == value, onClick = { topic = value }, enabled = !locked, label = { Text(value.replaceFirstChar(Char::uppercase)) }) }
             }
-            OutlinedTextField(value = description, onValueChange = { description = it.take(1000) }, label = { Text(stringResource(R.string.community_description)) }, enabled = !locked, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("page-description"))
+            OutlinedTextField(value = description, onValueChange = { description = it.takeCodePoints(1000) }, label = { Text(stringResource(R.string.community_description)) }, enabled = !locked, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("page-description"))
             Button(onClick = { if (actions.createPage(handle, name, topic, description)) { handle = ""; name = ""; description = "" } }, enabled = !locked && handle.isNotBlank() && name.isNotBlank(), modifier = Modifier.testTag("page-create")) {
                 Text(stringResource(R.string.community_create_page))
             }
         }
+    }
+    item("followed-heading") { Text(stringResource(R.string.community_followed), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
+    when (state.followedStatus) {
+        ListStatus.LOADING -> item("followed-loading") { Text(stringResource(R.string.community_loading_followed), modifier = Modifier.testTag("followed-loading")) }
+        // The reason is shown at the top; a failed list never says it is empty.
+        ListStatus.FAILED -> item("followed-failed") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.community_followed_failed), color = MaterialTheme.colorScheme.error)
+                OutlinedButton(onClick = actions.reload, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("followed-retry")) { Text(stringResource(R.string.community_retry)) }
+            }
+        }
+        ListStatus.LOADED -> if (state.noFollowedPages) item("followed-empty") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.community_no_followed))
+                TextButton(onClick = { actions.open(Destination.Discover) }, enabled = !state.working, modifier = Modifier.testTag("followed-discover")) { Text(stringResource(R.string.community_discover_pages)) }
+            }
+        }
+    }
+    // A page can be both yours and followed, so these keys differ from the owned list's.
+    items(state.followed, key = { "followed-${it.id}" }) { page -> FollowedItem(page, state, actions) }
+    if (state.followedStatus == ListStatus.LOADED && state.nextCursor != null) item("followed-more") {
+        TextButton(onClick = actions.more, enabled = !state.busy, modifier = Modifier.testTag("followed-more")) { Text(stringResource(R.string.community_more)) }
+    }
+}
+
+@Composable
+private fun FollowedItem(page: PageDto, state: CommunityState, actions: CommunityActions) {
+    val unfollowLabel = stringResource(R.string.community_unfollow_page, page.name)
+    Column(Modifier.fillMaxWidth().clickable(role = Role.Button, enabled = !state.working) { actions.open(Destination.Page(page.handle)) }.padding(vertical = 6.dp).testTag("followed-page-${page.handle}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(page.name, style = MaterialTheme.typography.titleMedium)
+        Text("@${page.handle}", style = MaterialTheme.typography.bodySmall)
+        // Disabled until the list has reloaded, so a page just unfollowed cannot be sent again.
+        OutlinedButton(onClick = { actions.unfollow(page) }, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).semantics { contentDescription = unfollowLabel }.testTag("unfollow-${page.handle}")) {
+            Text(stringResource(R.string.community_unfollow))
+        }
+        HorizontalDivider()
     }
 }
 
@@ -456,7 +526,7 @@ private fun ReportDialog(target: ReportTarget, onDismiss: () -> Unit, onSend: (S
                     Text(value.replace("_", " ").replaceFirstChar(Char::uppercase))
                 }
             }
-            OutlinedTextField(value = details, onValueChange = { details = it.take(1000) }, label = { Text(stringResource(R.string.community_report_details)) }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = details, onValueChange = { details = it.takeCodePoints(REPORT_DETAILS_LIMIT) }, label = { Text(stringResource(R.string.community_report_details)) }, minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth())
         }
     }, confirmButton = {
         TextButton(onClick = { reason?.let { onSend(it, details) } }, enabled = reason != null, modifier = Modifier.testTag("report-send")) { Text(stringResource(R.string.community_send_report)) }

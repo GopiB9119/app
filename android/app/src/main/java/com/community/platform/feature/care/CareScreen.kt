@@ -70,6 +70,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+private val unit = DesignTokens.SpaceUnit
+
 data class CareActions(
     val back: () -> Unit = {}, val reload: () -> Unit = {}, val showDay: () -> Unit = {}, val showMedicines: (Boolean) -> Unit = {},
     val move: (Long) -> Unit = {}, val today: () -> Unit = {}, val report: (CareOccurrenceDto, String) -> Unit = { _, _ -> },
@@ -146,7 +148,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
     BackHandler(onBack = back)
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(unit * 2), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = back, enabled = !state.working, modifier = Modifier.testTag("care-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.care_back)) }
                 Text(stringResource(R.string.care_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).semantics { heading() })
                 IconButton(onClick = actions.reload, enabled = !state.busy && state.view != CareView.ADD) { Icon(Icons.Default.Refresh, stringResource(R.string.care_refresh)) }
@@ -154,13 +156,13 @@ fun CareScreen(state: CareState, actions: CareActions) {
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("care-content"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("care-content"), contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
                     state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-error")) } }
                     state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-notice")) } }
                     if (state.view != CareView.ADD) {
                         item("intro") { Text(stringResource(R.string.care_intro), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("care-intro")) }
                         item("views") {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                 FilterChip(selected = state.view == CareView.DAY, onClick = actions.showDay, enabled = !state.working, label = { Text(stringResource(R.string.care_day_plan)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-show-day"))
                                 FilterChip(selected = state.view == CareView.MEDICINES, onClick = { actions.showMedicines(state.stopped) }, enabled = !state.working, label = { Text(stringResource(R.string.care_my_medicines)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-show-medicines"))
                             }
@@ -177,7 +179,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
                                 val names = day.instructions.associateBy { it.id }
                                 items(day.occurrences, key = { "${it.instructionId}-${it.localTime}" }) { occurrence -> DoseRow(occurrence, names[occurrence.instructionId], state, actions) }
                                 if (day.omitted.isNotEmpty()) item("omitted") {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(unit)) {
                                         day.omitted.forEach { omitted ->
                                             Text(stringResource(R.string.care_omitted, names[omitted.instructionId]?.medicineName ?: "", omitted.localTime, omitted.sameMomentAs), style = MaterialTheme.typography.bodySmall)
                                         }
@@ -188,7 +190,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
                         }
                         CareView.MEDICINES -> {
                             item("medicine-controls") {
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                     FilterChip(selected = !state.stopped, onClick = { actions.showMedicines(false) }, enabled = !state.working, label = { Text(stringResource(R.string.care_current)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-current"))
                                     FilterChip(selected = state.stopped, onClick = { actions.showMedicines(true) }, enabled = !state.working, label = { Text(stringResource(R.string.care_stopped)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-stopped"))
                                     Button(onClick = actions.startAdd, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-add")) { Text(stringResource(R.string.care_add)) }
@@ -219,7 +221,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
 
 @Composable
 private fun DayBar(state: CareState, actions: CareActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { actions.move(-1) }, enabled = !state.working && state.canGoBack, modifier = Modifier.testTag("care-previous")) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, stringResource(R.string.care_previous_day))
@@ -241,10 +243,10 @@ private fun DayBar(state: CareState, actions: CareActions) {
 @Composable
 private fun DoseRow(occurrence: CareOccurrenceDto, medicine: CareDayInstructionDto?, state: CareState, actions: CareActions) {
     val current = occurrence.report?.outcome
-    Column(Modifier.fillMaxWidth().testTag("care-dose"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth().testTag("care-dose"), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
         Row(verticalAlignment = Alignment.Top) {
             Text(occurrence.displayTime, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(unit * 3))
             Column(Modifier.weight(1f)) {
                 Text(medicine?.let { medicineTitle(it.medicineName, it.strength, it.form) } ?: "", style = MaterialTheme.typography.titleMedium)
                 medicine?.dose?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
@@ -259,7 +261,7 @@ private fun DoseRow(occurrence: CareOccurrenceDto, medicine: CareDayInstructionD
         if (occurrence.clockChange == "shifted_forward") Text(stringResource(R.string.care_shifted, occurrence.localTime, occurrence.displayTime), style = MaterialTheme.typography.bodySmall)
         if (occurrence.clockChange == "repeated_time_first") Text(stringResource(R.string.care_repeated, occurrence.localTime), style = MaterialTheme.typography.bodySmall)
         if (occurrence.canReport) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                 DOSE_OUTCOMES.forEach { value ->
                     val label = if (current != null && current != value) stringResource(R.string.care_change_to, outcomeLabel(value)) else outcomeLabel(value)
                     FilterChip(
@@ -278,7 +280,7 @@ private fun DoseRow(occurrence: CareOccurrenceDto, medicine: CareDayInstructionD
 
 @Composable
 private fun MedicineRow(item: CareInstructionDto, state: CareState, actions: CareActions) {
-    Column(Modifier.fillMaxWidth().testTag("care-medicine"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth().testTag("care-medicine"), verticalArrangement = Arrangement.spacedBy(unit)) {
         Text(medicineTitle(item.medicineName, item.strength, item.form), style = MaterialTheme.typography.titleMedium)
         Text(item.dose, style = MaterialTheme.typography.bodyMedium)
         Text(stringResource(R.string.care_schedule, item.times.joinToString(", "), item.timezone), style = MaterialTheme.typography.bodySmall)
@@ -301,12 +303,12 @@ private fun MedicineRow(item: CareInstructionDto, state: CareState, actions: Car
 private fun MedicineForm(state: CareState, actions: CareActions) {
     val draft = state.draft
     val locked = state.working || state.pendingCreate != null
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.testTag("care-form")) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 3), modifier = Modifier.testTag("care-form")) {
         Text(stringResource(R.string.care_add_title), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Text(stringResource(R.string.care_add_intro), style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(value = draft.name, onValueChange = { value -> actions.draft { it.copy(name = value.take(240)) } }, enabled = !locked, singleLine = true,
             label = { Text(stringResource(R.string.care_field_name)) }, modifier = Modifier.fillMaxWidth().testTag("care-name"))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
             OutlinedTextField(value = draft.strength, onValueChange = { value -> actions.draft { it.copy(strength = value.take(120)) } }, enabled = !locked, singleLine = true,
                 label = { Text(stringResource(R.string.care_field_strength)) }, modifier = Modifier.widthIn(min = 140.dp).testTag("care-strength"))
             OutlinedTextField(value = draft.form, onValueChange = { value -> actions.draft { it.copy(form = value.take(120)) } }, enabled = !locked, singleLine = true,
@@ -326,7 +328,7 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = draft.source == value, onClick = null, enabled = !locked)
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(unit * 2))
                     Text(sourceLabel(value))
                 }
             }
@@ -347,7 +349,7 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
         }
         OutlinedTextField(value = draft.timezone, onValueChange = { value -> actions.draft { it.copy(timezone = value.take(64)) } }, enabled = !locked, singleLine = true,
             label = { Text(stringResource(R.string.care_field_zone)) }, modifier = Modifier.fillMaxWidth().testTag("care-zone"))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
             OutlinedTextField(value = draft.startDate, onValueChange = { value -> actions.draft { it.copy(startDate = value.take(10)) } }, enabled = !locked, singleLine = true,
                 label = { Text(stringResource(R.string.care_field_start)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 160.dp).testTag("care-start"))
             OutlinedTextField(value = draft.endDate, onValueChange = { value -> actions.draft { it.copy(endDate = value.take(10)) } }, enabled = !locked, singleLine = true,
@@ -360,11 +362,11 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(checked = draft.confirmed, onCheckedChange = null, enabled = !locked)
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(unit * 2))
             Text(stringResource(R.string.care_confirm))
         }
         state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-problem")) }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
             if (state.pendingCreate != null) {
                 Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-retry")) { Text(stringResource(R.string.care_retry)) }
                 OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-discard")) { Text(stringResource(R.string.care_discard)) }

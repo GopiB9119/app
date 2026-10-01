@@ -37,6 +37,25 @@ def expire_while_waiting(app, table, row_id, request):
         return pending.result(timeout=10)
 
 
+def wait_until_blocked(app, pending):
+    """Wait until PostgreSQL shows a request waiting for a lock that another request of this test run holds.
+
+    Not finishing within some time proves nothing: on a busy machine a request can be slow without waiting for anything.
+    The holder is found by the locks it holds on this run's own schema, so other test runs' locks never count."""
+    deadline = time.monotonic() + 30
+    with app.state.engine.connect() as watcher:
+        # pg_locks is read live; pg_stat_activity would keep one snapshot for the whole watcher transaction.
+        while not watcher.scalar(text(
+            "SELECT count(*) FROM pg_locks waiting WHERE NOT waiting.granted AND EXISTS ("
+            " SELECT 1 FROM pg_locks held JOIN pg_class relation ON relation.oid = held.relation"
+            " WHERE held.pid = ANY(pg_blocking_pids(waiting.pid))"
+            " AND relation.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema()))"
+        )):
+            assert not pending.done(), f"The request finished without waiting for a lock: {pending.result().text}"
+            assert time.monotonic() < deadline, "The request never waited for a lock."
+            time.sleep(0.05)
+
+
 def admit(client, owner, space_id, person):
     invitation = invite_account(client, owner, space_id, person["user"]["id"])
     assert invitation.status_code == 201, invitation.text
@@ -230,11 +249,8 @@ def test_direct_send_cannot_commit_after_the_other_person_leaves(client, app, mo
             client.post, f"/v1/spaces/{space_id}/leave",
             headers={**auth(member), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]}, json={},
         )
-        try:
-            leaving.result(timeout=1)
-            left_during_send = True
-        except TimeoutError:
-            left_during_send = False
+        wait_until_blocked(app, leaving)
+        left_during_send = leaving.done()
         release.set()
         sent = sending.result(timeout=10)
         left = leaving.result(timeout=10)

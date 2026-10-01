@@ -58,6 +58,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+private val unit = DesignTokens.SpaceUnit
+
 data class EventsActions(
     val back: () -> Unit = {}, val reload: () -> Unit = {}, val more: () -> Unit = {}, val showPast: (Boolean) -> Unit = {},
     val open: (EventDto) -> Unit = {}, val close: () -> Unit = {}, val startCreate: () -> Unit = {}, val startEdit: () -> Unit = {},
@@ -126,7 +128,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
     BackHandler(onBack = back)
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(unit * 2), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = back, enabled = !state.working, modifier = Modifier.testTag("events-back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.events_back)) }
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.events_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
@@ -137,14 +139,14 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("events-content"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("events-content"), contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
                     state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("events-error")) } }
                     state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("events-notice")) } }
                     when (state.mode) {
                         EventMode.LIST -> {
                             item("intro") { Text(stringResource(R.string.events_intro), style = MaterialTheme.typography.bodyMedium) }
                             item("controls") {
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                     FilterChip(selected = !state.past, onClick = { actions.showPast(false) }, label = { Text(stringResource(R.string.events_upcoming)) }, modifier = Modifier.testTag("events-upcoming"))
                                     FilterChip(selected = state.past, onClick = { actions.showPast(true) }, label = { Text(stringResource(R.string.events_past)) }, modifier = Modifier.testTag("events-past"))
                                     Button(onClick = actions.startCreate, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("events-new")) { Text(stringResource(R.string.events_new)) }
@@ -176,8 +178,8 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
 @Composable
 private fun EventRow(event: EventDto, state: EventsState, actions: EventsActions) {
     Column(
-        Modifier.fillMaxWidth().clickable(enabled = !state.working, role = Role.Button) { actions.open(event) }.padding(vertical = 6.dp).testTag("event-row"),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        Modifier.fillMaxWidth().clickable(enabled = !state.working, role = Role.Button) { actions.open(event) }.padding(vertical = unit * 2).testTag("event-row"),
+        verticalArrangement = Arrangement.spacedBy(unit),
     ) {
         Text(event.title, style = MaterialTheme.typography.titleMedium)
         if (event.status == "cancelled") Text(stringResource(R.string.events_cancelled), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
@@ -195,7 +197,7 @@ private fun EventRow(event: EventDto, state: EventsState, actions: EventsActions
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("event-detail")) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 2), modifier = Modifier.testTag("event-detail")) {
         Text(event.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         if (event.status == "cancelled") Text(stringResource(R.string.events_cancelled_notice), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("event-cancelled"))
         else if (event.ended) Text(stringResource(R.string.events_ended_notice))
@@ -211,7 +213,7 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
         if (event.canRespond) {
             Text(stringResource(R.string.events_your_response), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
             if (event.myResponseOutdated) Text(stringResource(R.string.events_outdated), modifier = Modifier.testTag("event-outdated"))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2)) {
                 EVENT_RESPONSES.forEach { value ->
                     FilterChip(
                         selected = event.myResponse == value && !event.myResponseOutdated, enabled = !state.working,
@@ -237,7 +239,7 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
         if (event.canManage) {
             val editable = EventsViewModel.editableHere(event)
             if (!editable) Text(stringResource(R.string.events_edit_web), style = MaterialTheme.typography.bodySmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                 OutlinedButton(onClick = actions.startEdit, enabled = editable && !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-edit")) { Text(stringResource(R.string.events_edit)) }
                 OutlinedButton(onClick = actions.askCancel, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-cancel")) { Text(stringResource(R.string.events_cancel)) }
             }
@@ -251,13 +253,13 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
 private fun EventForm(state: EventsState, actions: EventsActions) {
     val draft = state.draft
     val locked = state.working || state.pending != null
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 3)) {
         Text(stringResource(if (state.mode == EventMode.EDIT) R.string.events_edit else R.string.events_new), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         OutlinedTextField(value = draft.title, onValueChange = { value -> actions.draft { it.copy(title = value.take(240)) } }, enabled = !locked, singleLine = true,
             label = { Text(stringResource(R.string.events_field_title)) }, modifier = Modifier.fillMaxWidth().testTag("event-title"))
         OutlinedTextField(value = draft.date, onValueChange = { value -> actions.draft { it.copy(date = value.take(10)) } }, enabled = !locked, singleLine = true,
             label = { Text(stringResource(R.string.events_field_date)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().testTag("event-date"))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2)) {
             OutlinedTextField(value = draft.start, onValueChange = { value -> actions.draft { it.copy(start = value.take(5)) } }, enabled = !locked, singleLine = true,
                 label = { Text(stringResource(R.string.events_field_start)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 140.dp).testTag("event-start"))
             OutlinedTextField(value = draft.end, onValueChange = { value -> actions.draft { it.copy(end = value.take(5)) } }, enabled = !locked, singleLine = true,
@@ -271,7 +273,7 @@ private fun EventForm(state: EventsState, actions: EventsActions) {
             label = { Text(stringResource(R.string.events_field_details)) }, modifier = Modifier.fillMaxWidth().testTag("event-details"))
         Text(stringResource(R.string.events_visibility), style = MaterialTheme.typography.bodySmall)
         state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("event-problem")) }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
             if (state.pending != null && state.mode == EventMode.CREATE) {
                 Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-retry")) { Text(stringResource(R.string.events_retry)) }
                 OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-discard")) { Text(stringResource(R.string.events_discard)) }

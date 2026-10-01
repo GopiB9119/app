@@ -1,6 +1,6 @@
 # identity
 
-Built: sign-in, registration with email verification, recovery, and the account screen with profile, device sessions, security activity, sign-out and the buttons that open the other features (`IdentityScreen.kt`, `IdentityViewModel.kt`).
+Built: sign-in, registration with email verification, recovery, and the account screen (**Profile** in the bottom bar) with profile, device sessions, security activity, sign-out, the reminder inbox and tasks in its header, and buttons for the agent and the blocked list (`IdentityScreen.kt`, `IdentityViewModel.kt`). The other features open from the bottom bar and Home ([platform](../platform/README.md)).
 
 When a saved sign-in cannot be checked at start (no connection or a server error), the screen keeps it and offers Try again instead of the sign-in form, so the person never signs in a second time and starts another server session. Typed sign-in fields survive rotation; the password and verification code are kept in memory only, never in saved state. Sign-up starts in the device's timezone under the name the service lists (an older name such as Asia/Calcutta becomes Asia/Kolkata), otherwise in UTC.
 

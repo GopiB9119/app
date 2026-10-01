@@ -230,7 +230,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 - **W10.** The reminder tabs have no keyboard behaviour. Tracked as [T55](TASKS.md#defects-that-break-approved-requirements).
 - **W11.** The followed-pages list shows "empty" when loading fails. Tracked as [T56](TASKS.md#defects-that-break-approved-requirements).
 - **W12.** Failures to load the timezone list are silent. Tracked as [T59](TASKS.md#defects-that-break-approved-requirements).
-- **W07.** The Space pickers read only the first 50 Spaces. That is safe only while accounts are capped at 50.
+- **W07.** The Space pickers read only the first 50 Spaces. That is safe only while accounts are capped at 50. Rechecked after group, couple and role Spaces were built: creating a Space, accepting an invitation and approving a join request all check the cap (`check_account_capacity`), so it still holds.
 
 ## 5. Tests and Evidence
 
@@ -263,6 +263,18 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
   8. Android series and snooze controls.
   9. An event time that contradicts its timezone is refused.
   10. Quiet hours behave correctly across daylight-saving changes (if alerts stay).
+- **Where these stand, later on 2026-10-01.**
+  - **The ten missing tests:**
+    - 1 to 3 are covered by T51 and T52.
+    - 4 and 10 wait for C10.
+    - 5 is T67, which the gaps session is building under DEC-021.
+    - 6 is covered by [T62](TASKS.md#defects-that-break-approved-requirements).
+    - 7 is covered by [T61](TASKS.md#defects-that-break-approved-requirements), which also found and fixed a defect.
+    - 8 was partly covered already, and [T76](TASKS.md#defects-that-break-approved-requirements) adds the rest.
+    - 9 needs no new test. The API takes a local time and a zone and works out the instant itself, and it refuses times that a clock change skips or repeats (`test_event_times_and_text_are_validated`). A check in the apps would refuse valid events whenever the server's and the device's timezone rules differ, so none was added.
+  - **The holes listed above:**
+    - The lock test is [T60](TASKS.md#defects-that-break-approved-requirements).
+    - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens wait for T13.
 
 ## 6. What Is Missing, and Why
 

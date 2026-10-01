@@ -114,6 +114,7 @@ data class SpaceActions(
     val creationType: (String) -> Unit = {},
     val visibility: (String) -> Unit = {},
     val description: (String) -> Unit = {},
+    val proposeRole: (SpaceMemberDto, String) -> Unit = { _, _ -> },
 )
 
 @Composable
@@ -128,7 +129,7 @@ fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, o
         viewModel::closePanel, viewModel::discardDraft, viewModel::moreSpaces, viewModel::moreInvitations, viewModel::moreSent,
         viewModel::showMembers, viewModel::proposeMembership,
         viewModel::offerOwnership, viewModel::respondOwnership, viewModel::moreOwnershipOffers, viewModel::creationType,
-        viewModel::visibility, viewModel::description,
+        viewModel::visibility, viewModel::description, viewModel::proposeRole,
     ), timezone, onBack, onOpenTasks, onOpenSettings, onOpenChat, onOpenEvents, onFindGroups, onOpenGroupAccess, onOpenDocuments)
 }
 
@@ -176,11 +177,21 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                     state.notice?.let { item("notice") { SpaceMessage(it, false) } }
                     if (state.pending != null && !state.busy) item("retry") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(stringResource(if (state.pending is SpaceCommand.EndMembership) R.string.spaces_change_unconfirmed else R.string.tasks_save_unconfirmed), style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(when (state.pending) {
+                                is SpaceCommand.EndMembership -> R.string.spaces_change_unconfirmed
+                                is SpaceCommand.ChangeRole -> R.string.spaces_role_unconfirmed
+                                else -> R.string.tasks_save_unconfirmed
+                            }), style = MaterialTheme.typography.titleMedium)
                             Text(stringResource(R.string.tasks_may_be_saved))
                             (state.pending as? SpaceCommand.EndMembership)?.let { command ->
                                 Text(stringResource(if (command.intent.action == MembershipAction.LEAVE) R.string.spaces_confirm_leave else R.string.spaces_confirm_remove_member), style = MaterialTheme.typography.titleSmall)
                                 SpaceFact(stringResource(R.string.spaces_space_label), command.spaceName)
+                                SpaceFact(stringResource(R.string.spaces_member), command.member.displayName)
+                                SpaceFact(stringResource(R.string.spaces_member_account_id), command.member.accountId)
+                            }
+                            (state.pending as? SpaceCommand.ChangeRole)?.let { command ->
+                                Text(stringResource(if (command.role == "admin") R.string.spaces_make_admin else R.string.spaces_make_member), style = MaterialTheme.typography.titleSmall)
+                                SpaceFact(stringResource(R.string.spaces_space_label), command.space.name)
                                 SpaceFact(stringResource(R.string.spaces_member), command.member.displayName)
                                 SpaceFact(stringResource(R.string.spaces_member_account_id), command.member.accountId)
                             }
@@ -253,9 +264,9 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                         }
                                     }
                                     selected.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                                    SpaceFact(stringResource(R.string.spaces_your_role), stringResource(if (selected.role == "owner") R.string.spaces_owner else R.string.spaces_member))
+                                    SpaceFact(stringResource(R.string.spaces_your_role), stringResource(spaceRole(selected.role)))
                                     if (selected.role == "owner" && onOpenSettings != null) OutlinedButton(onClick = { onOpenSettings(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-settings")) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.space_settings_title)) }
-                                    if (selected.role == "owner" && selected.spaceType == "group" && onOpenGroupAccess != null) OutlinedButton(onClick = { onOpenGroupAccess(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-group-access")) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.groups_access)) }
+                                    if (selected.role in setOf("owner", "admin") && selected.spaceType == "group" && onOpenGroupAccess != null) OutlinedButton(onClick = { onOpenGroupAccess(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("space-open-group-access")) { Icon(Icons.Default.Search, null); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.groups_access)) }
                                     Button(onClick = { onOpenTasks(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-tasks")) { Icon(Icons.AutoMirrored.Filled.List, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_open_tasks)) }
                                     if (onOpenChat != null) OutlinedButton(onClick = { onOpenChat(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-chat")) { Icon(Icons.Default.Email, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.messages_open_chat)) }
                                     if (onOpenEvents != null) OutlinedButton(onClick = { onOpenEvents(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-events")) { Icon(Icons.Default.DateRange, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.events_open)) }
@@ -278,17 +289,32 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 items(state.members, key = { "member-${it.accountId}" }) { member ->
                                     Column(Modifier.fillMaxWidth().testTag("space-member-${member.accountId}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(if (member.accountId == state.accountId) stringResource(R.string.spaces_member_you, member.displayName) else member.displayName, style = MaterialTheme.typography.titleMedium)
-                                        Text(stringResource(if (member.role == "owner") R.string.spaces_owner else R.string.spaces_member), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                        Text(stringResource(spaceRole(member.role)), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                         Text(member.accountId, style = MaterialTheme.typography.bodyMedium)
-                                        if (ownMembership?.role == "owner" && member.role == "member" && member.accountId != state.accountId) {
+                                        if (member.accountId != state.accountId &&
+                                            ((ownMembership?.role == "owner" && member.role in setOf("admin", "member")) ||
+                                                (ownMembership?.role == "admin" && member.role == "member"))) {
                                             OutlinedButton(onClick = { actions.proposeMembership(member, MembershipAction.REMOVE) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-remove-${member.accountId}")) {
                                                 Icon(Icons.Default.Close, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_remove_member))
                                             }
+                                        }
+                                        if (selected.role == "owner" && ownMembership?.role == "owner" && selected.spaceType in setOf("family", "group")
+                                            && member.role in setOf("admin", "member") && member.accountId != state.accountId) {
+                                            val role = if (member.role == "member") "admin" else "member"
+                                            OutlinedButton(onClick = { actions.proposeRole(member, role) }, enabled = !state.navigationLocked,
+                                                shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)
+                                                    .testTag(if (role == "admin") "member-make-admin-${member.accountId}" else "member-make-member-${member.accountId}")) {
+                                                Icon(Icons.Default.Create, null, Modifier.size(DesignTokens.SpaceUnit * 4))
+                                                Spacer(Modifier.width(DesignTokens.SpaceUnit * 2))
+                                                Text(stringResource(if (role == "admin") R.string.spaces_make_admin else R.string.spaces_make_member))
+                                            }
+                                        }
+                                        if (selected.role == "owner" && ownMembership?.role == "owner" && member.role in setOf("admin", "member") && member.accountId != state.accountId) {
                                             OutlinedButton(onClick = { actions.offerOwnership(member) }, enabled = !state.navigationLocked && state.ownershipLoaded && state.ownershipOffers.none { it.status == "pending" }, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("ownership-offer-${member.accountId}")) {
                                                 Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.ownership_offer))
                                             }
                                         }
-                                        if (member.accountId == state.accountId && member.role == "member") {
+                                        if (member.accountId == state.accountId && member.role in setOf("admin", "member")) {
                                             OutlinedButton(onClick = { actions.proposeMembership(member, MembershipAction.LEAVE) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-leave")) {
                                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_leave))
                                             }
@@ -316,7 +342,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 }
                                 if (state.ownershipCursor != null) item("more-ownership") { TextButton(onClick = actions.moreOwnershipOffers, enabled = !state.navigationLocked) { Text(stringResource(R.string.ownership_more)) } }
                             }
-                            if (selected.role == "owner" && selected.spaceType != "solo") {
+                            if (selected.role in setOf("owner", "admin") && selected.spaceType != "solo") {
                                 item("invite-title") { Text(stringResource(R.string.spaces_invite_member), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
                                 item("invite-form") {
                                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -360,7 +386,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 items(state.spaces, key = { "space-${it.id}" }) { space ->
                                     Column(Modifier.fillMaxWidth().clickable(enabled = !state.navigationLocked, role = Role.Button) { actions.open(space.id) }.padding(vertical = 10.dp).testTag("space-row-${space.id}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Icon(Icons.Default.Home, null, Modifier.size(23.dp), tint = MaterialTheme.colorScheme.primary); Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge); Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp)) }
-                                        Text(stringResource(if (space.role == "owner") R.string.spaces_owner else R.string.spaces_member), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                        Text(stringResource(spaceRole(space.role)), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                         Text(stringResource(when (space.spaceType) { "solo" -> R.string.spaces_solo_type; "couple" -> R.string.spaces_couple_space; "group" -> if (space.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.bodySmall)
                                         HorizontalDivider(Modifier.padding(top = 8.dp))
                                     }
@@ -390,12 +416,14 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
     state.confirmation?.let { command ->
         val invitation = when (command) { is SpaceCommand.Accept -> command.invitation; is SpaceCommand.Decline -> command.invitation; is SpaceCommand.Revoke -> command.invitation; else -> null }
         val membership = command as? SpaceCommand.EndMembership
+        val roleChange = command as? SpaceCommand.ChangeRole
         val offer = command as? SpaceCommand.OfferOwnership
         val response = command as? SpaceCommand.RespondOwnership
-        if (invitation != null || membership != null || offer != null || response != null) {
+        if (invitation != null || membership != null || roleChange != null || offer != null || response != null) {
             val title = when (command) {
             is SpaceCommand.OfferOwnership -> R.string.ownership_confirm_offer
             is SpaceCommand.RespondOwnership -> when (command.response) { OwnershipResponse.ACCEPT -> R.string.ownership_confirm_accept; OwnershipResponse.DECLINE -> R.string.ownership_confirm_decline; OwnershipResponse.CANCEL -> R.string.ownership_confirm_withdraw }
+            is SpaceCommand.ChangeRole -> if (command.role == "admin") R.string.spaces_confirm_make_admin else R.string.spaces_confirm_make_member
                 is SpaceCommand.Accept -> R.string.spaces_confirm_join
                 is SpaceCommand.Decline -> R.string.spaces_confirm_decline
                 is SpaceCommand.EndMembership -> if (command.intent.action == MembershipAction.LEAVE) R.string.spaces_confirm_leave else R.string.spaces_confirm_remove_member
@@ -404,6 +432,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
             val action = when (command) {
                 is SpaceCommand.OfferOwnership -> R.string.ownership_send
                 is SpaceCommand.RespondOwnership -> when (command.response) { OwnershipResponse.ACCEPT -> R.string.ownership_accept; OwnershipResponse.DECLINE -> R.string.ownership_decline; OwnershipResponse.CANCEL -> R.string.ownership_withdraw }
+                is SpaceCommand.ChangeRole -> if (command.role == "admin") R.string.spaces_make_admin else R.string.spaces_make_member
                 is SpaceCommand.Accept -> R.string.spaces_join
                 is SpaceCommand.Decline -> R.string.spaces_decline
                 is SpaceCommand.EndMembership -> if (command.intent.action == MembershipAction.LEAVE) R.string.spaces_leave else R.string.spaces_remove_member
@@ -434,6 +463,11 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                     SpaceFact(stringResource(R.string.spaces_member_account_id), membership.member.accountId)
                                     Text(stringResource(if (membership.intent.action == MembershipAction.LEAVE) R.string.spaces_leave_effect else R.string.spaces_remove_effect))
                                     Text(stringResource(R.string.spaces_membership_limit))
+                                } else if (roleChange != null) {
+                                    Text(roleChange.space.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("role-review-space"))
+                                    Text(roleChange.member.displayName, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("role-review-member"))
+                                    SpaceFact(stringResource(R.string.spaces_member_account_id), roleChange.member.accountId)
+                                    Text(stringResource(if (roleChange.role == "admin") R.string.spaces_admin_effect else R.string.spaces_member_effect))
                                 } else if (invitation != null) {
                                     Text(invitation.spaceName, style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("invitation-review-name"))
                                     SpaceFact(stringResource(R.string.spaces_inviter), invitation.inviterName)
@@ -479,4 +513,5 @@ private fun SpaceFact(label: String, value: String) { Column(verticalArrangement
 private fun SpaceMessage(message: String, error: Boolean) { Surface(color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) { Text(message, Modifier.padding(12.dp)) } }
 private fun formatDate(value: String, timezone: String) = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.of(timezone)).format(Instant.parse(value))
 private fun invitationStatus(status: String) = when (status) { "pending" -> R.string.spaces_pending; "accepted" -> R.string.spaces_accepted; "declined" -> R.string.spaces_declined; "revoked" -> R.string.spaces_revoked; else -> R.string.spaces_expired }
+private fun spaceRole(role: String) = when (role) { "owner" -> R.string.spaces_owner; "admin" -> R.string.spaces_admin; else -> R.string.spaces_member }
 private fun ownershipStatus(status: String) = when (status) { "pending" -> R.string.ownership_pending; "accepted" -> R.string.spaces_accepted; "declined" -> R.string.spaces_declined; "cancelled" -> R.string.ownership_withdrawn; "expired" -> R.string.spaces_expired; else -> R.string.ownership_invalidated }

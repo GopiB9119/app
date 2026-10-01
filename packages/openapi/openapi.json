@@ -4088,6 +4088,181 @@
         }
       }
     },
+    "/v1/spaces/{space_id}/members/{account_id}/role": {
+      "post": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Change Member Role",
+        "operationId": "change_member_role_v1_spaces__space_id__members__account_id__role_post",
+        "security": [
+          {
+            "AccountSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "space_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Space Id"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 140
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeMemberRole"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_SpaceMemberView_"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          }
+        }
+      }
+    },
     "/v1/spaces/{space_id}/leave": {
       "post": {
         "tags": [
@@ -23149,6 +23324,62 @@
           }
         ]
       }
+    },
+    "/v1/live": {
+      "get": {
+        "tags": [
+          "Live updates"
+        ],
+        "summary": "Live",
+        "operationId": "live_v1_live_get",
+        "responses": {
+          "200": {
+            "description": "Server-sent events. `ready` once listening; `change` with a kind (`conversation` or `notifications`), a reason and identifiers only; `resync` when hints were lost; `end` with a reason before the stream closes. A comment line arrives every 15 seconds. Read the changed data through the other operations.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AccountSession": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -25758,6 +25989,24 @@
         ],
         "title": "ChallengeView"
       },
+      "ChangeMemberRole": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member"
+            ],
+            "title": "Role"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "ChangeMemberRole"
+      },
       "ChangeSpaceVisibility": {
         "properties": {
           "visibility": {
@@ -28166,6 +28415,23 @@
           "request_id"
         ],
         "title": "Envelope[SpaceDirectoryEntry]"
+      },
+      "Envelope_SpaceMemberView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SpaceMemberView"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[SpaceMemberView]"
       },
       "Envelope_SpaceSettingsView_": {
         "properties": {
@@ -31965,6 +32231,7 @@
                 "type": "string",
                 "enum": [
                   "owner",
+                  "admin",
                   "member"
                 ]
               },
@@ -32238,6 +32505,7 @@
             "type": "string",
             "enum": [
               "owner",
+              "admin",
               "member"
             ],
             "title": "Role"
@@ -32328,6 +32596,7 @@
             "type": "string",
             "enum": [
               "owner",
+              "admin",
               "member"
             ],
             "title": "Role"
@@ -32402,6 +32671,7 @@
             "type": "string",
             "enum": [
               "owner",
+              "admin",
               "member"
             ],
             "title": "Role"

@@ -1,6 +1,6 @@
 # spaces
 
-The `/app/spaces` screen provides private family Space creation/listing plus in-app invitations using the existing account shell, TanStack Query, Zod and protected same-origin BFF. It is linked from account settings. There are no placeholder task or reminder controls.
+The `/app/spaces` screen provides private family Space creation/listing plus in-app invitations using the existing account shell, TanStack Query, Zod and protected same-origin BFF. It is **Spaces** in the main navigation, and Home links to it. There are no placeholder task or reminder controls.
 
 The signed-in account can copy its own account ID. A Space owner selects invitation management and submits the intended existing account ID. Sent history is paginated and pending invitations can be revoked with confirmation. The recipient has a separate paginated inbox with Space/inviter/role/expiry, explicit join review and decline. Members do not receive owner invitation controls. No email/phone lookup, external message or transferable invite token is used.
 

@@ -74,6 +74,9 @@ interface GroupApi {
     @POST("v1/spaces/{id}/join-requests/{requestId}/decline")
     suspend fun decline(@Header("Authorization") authorization: String, @Path("id") spaceId: String, @Path("requestId") requestId: String, @Body body: Map<String, String>): Response<EnvelopeDto<JoinRequestDto>>
 
+    @GET("v1/spaces/{id}")
+    suspend fun space(@Header("Authorization") authorization: String, @Path("id") spaceId: String): Response<EnvelopeDto<SpaceDto>>
+
     @GET("v1/spaces/{id}/settings")
     suspend fun settings(@Header("Authorization") authorization: String, @Path("id") spaceId: String): Response<EnvelopeDto<SpaceSettingsDto>>
 
@@ -102,7 +105,7 @@ class GroupRepository @Inject constructor(private val api: GroupApi, private val
 
     private fun entry(value: SpaceDirectoryEntryDto) = checked(value) {
         identifier(it.id); text(it.name, 80, blank = false); text(it.description, 280)
-        require(it.memberCount in 1..50 && (it.viewerRole == null || it.viewerRole in setOf("owner", "member")))
+        require(it.memberCount in 1..50 && (it.viewerRole == null || it.viewerRole in setOf("owner", "admin", "member")))
         it.pendingRequestId?.let(::identifier)
         require(!(it.viewerRole != null && (it.pendingRequestId != null || it.canRequest)) && !(it.pendingRequestId != null && it.canRequest))
     }
@@ -159,6 +162,18 @@ class GroupRepository @Inject constructor(private val api: GroupApi, private val
         val response = if (approve) api.approve(authorization, spaceId, review.id, emptyMap()) else api.decline(authorization, spaceId, review.id, emptyMap())
         val result = request(accounts.result(response))
         if (result.id != review.id || result.spaceId != spaceId || result.status != (if (approve) "approved" else "declined")) invalid()
+        result
+    }
+
+    suspend fun access(accountId: String, spaceId: String): SpaceDto = accounts.authorized(accountId) { authorization ->
+        val result = checked(accounts.result(api.space(authorization, spaceId))) {
+            identifier(it.id); text(it.name, 80, blank = false)
+            require(it.id == spaceId && it.spaceType == "group" && it.status == "active" && it.visibility in setOf("private", "public"))
+            require(it.role in setOf("owner", "admin", "member") && it.version.matches(Regex("[1-9][0-9]*")) && it.version.toLong() > 0)
+            it.description?.let { description -> text(description, 280) }
+            Instant.parse(it.createdAt)
+        }
+        if (result.role !in setOf("owner", "admin")) throw IdentityFailure("ACCESS_DENIED", "Only owners and admins can review join requests.", 403)
         result
     }
 

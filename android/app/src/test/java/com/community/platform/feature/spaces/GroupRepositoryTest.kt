@@ -8,15 +8,26 @@ import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.identity.PaginationDto
 import com.community.platform.feature.identity.UserDto
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class GroupRepositoryTest {
     private val accountId = "7fe1a0cb-1a5b-4f42-9b4c-0b6d8a0f2a11"
     private val spaceId = "c2937183-70fb-4d7a-b0b6-b1bc9c499444"
@@ -25,8 +36,13 @@ class GroupRepositoryTest {
     private val entry = SpaceDirectoryEntryDto(spaceId, "Weekend hikers", "Lake walks", 3, null, null, true)
     private val request = JoinRequestDto(requestId, spaceId, "Weekend hikers", "Hello", "pending", "2026-09-19T10:00:00Z", "2026-10-03T10:00:00Z", null)
     private val settings = SpaceSettingsDto(spaceId, "Weekend hikers", "group", "private", "active", "owner", "2", "2026-09-19T10:00:00Z", "\"${"a".repeat(64)}\"", "Lake walks")
+    private val space = SpaceDto(spaceId, settings.name, "group", "private", "active", "owner", "2", settings.createdAt, settings.description)
     private val api = FakeApi()
     private val repository: GroupRepository
+    private var model: GroupViewModel? = null
+
+    @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
+    @After fun cleanup() { model?.bind(null); Dispatchers.resetMain() }
 
     init {
         val store = AccountRepositoryTest.MemoryStore().apply { save(Credentials(token, accountId)) }
@@ -40,7 +56,7 @@ class GroupRepositoryTest {
         assertNull(repository.find(accountId, "   ").nextCursor)
         assertNull(api.queries.last())
         for (invalid in listOf(entry.copy(viewerRole = "member"), entry.copy(pendingRequestId = requestId), entry.copy(memberCount = 0),
-            entry.copy(viewerRole = "admin", canRequest = false), entry.copy(description = "x".repeat(281)), entry.copy(id = "not-an-id"))) {
+            entry.copy(viewerRole = "administrator", canRequest = false), entry.copy(description = "x".repeat(281)), entry.copy(id = "not-an-id"))) {
             api.entries = listOf(invalid)
             assertThrows(IdentityFailure::class.java) { runBlocking { repository.find(accountId, "") } }
         }
@@ -49,6 +65,105 @@ class GroupRepositoryTest {
         api.entries = listOf(entry)
         api.pagination = PaginationDto(null, true)
         assertThrows(IdentityFailure::class.java) { runBlocking { repository.find(accountId, "") } }
+    }
+
+    @Test fun adminDirectoryEntriesAreAccepted(): Unit = runBlocking {
+        val admin = entry.copy(viewerRole = "admin", canRequest = false)
+        api.entries = listOf(admin)
+        assertEquals(listOf(admin), repository.find(accountId, "").items)
+        api.entries = listOf(admin.copy(canRequest = true))
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.find(accountId, "") } }
+        api.entries = listOf(admin.copy(pendingRequestId = requestId))
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.find(accountId, "") } }
+    }
+
+    @Test fun groupAccessRejectsWrongScopeTypeAndUnknownRoles(): Unit = runBlocking {
+        for (invalid in listOf(space.copy(id = accountId), space.copy(spaceType = "family"), space.copy(role = "administrator"))) {
+            api.space = invalid
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { repository.access(accountId, spaceId) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+        }
+        api.space = space.copy(role = "admin")
+        assertEquals("admin", repository.access(accountId, spaceId).role)
+    }
+
+    @Test fun adminGroupAccessNeverLoadsOwnerSettings(): Unit = runBlocking {
+        api.space = space.copy(role = "admin")
+        val review = JoinReviewDto(requestId, "4d7dff75-e4b8-4686-b779-744cdb8d09fb", "Sam", "", request.createdAt, request.expiresAt)
+        api.reviews = listOf(review)
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals("admin", value.state.value.managedSpace!!.role)
+        assertEquals(listOf(review), value.state.value.reviews)
+        assertNull(value.state.value.settings)
+        assertEquals(0, api.settingsReads)
+        value.proposeVisibility(); value.confirmVisibility()
+        assertTrue(!value.state.value.confirmingVisibility)
+        assertTrue(api.etags.isEmpty())
+        value.refresh()
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals(2, api.pendingReads)
+        assertEquals(0, api.settingsReads)
+    }
+
+    @Test fun adminApprovesAndDeclinesWithoutLoadingSettings(): Unit = runBlocking {
+        api.space = space.copy(role = "admin")
+        val first = JoinReviewDto(requestId, "4d7dff75-e4b8-4686-b779-744cdb8d09fb", "Sam", "", request.createdAt, request.expiresAt)
+        val second = first.copy(id = "e36cd6c7-8a5f-40c8-88f4-e8c3fa4a6cff", displayName = "Casey")
+        api.reviews = listOf(first)
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        api.request = request.copy(status = "approved", resolvedAt = "2026-09-19T11:00:00Z")
+        api.reviews = listOf(second)
+        value.decide(first, approve = true)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals("Sam joined the group.", value.state.value.notice)
+        assertEquals(listOf(second), value.state.value.reviews)
+        api.request = request.copy(id = second.id, status = "declined", resolvedAt = "2026-09-19T11:00:00Z")
+        api.reviews = emptyList()
+        value.decide(second, approve = false)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals("You declined Casey. They can ask again in 7 days.", value.state.value.notice)
+        assertTrue(value.state.value.reviews.isEmpty())
+        assertEquals(listOf(first.id to true, second.id to false), api.decisions)
+        assertEquals(0, api.settingsReads)
+    }
+
+    @Test fun ownerGroupAccessRetainsVisibilityControls(): Unit = runBlocking {
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals(settings, value.state.value.settings)
+        assertEquals(1, api.settingsReads)
+        value.proposeVisibility()
+        assertTrue(value.state.value.confirmingVisibility)
+        api.settings = settings.copy(visibility = "public")
+        value.confirmVisibility()
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals("public", value.state.value.settings!!.visibility)
+        assertEquals(listOf(settings.etag), api.etags)
+        assertNull(value.state.value.pendingVisibility)
+    }
+
+    @Test fun demotionToMemberClearsGroupAccessAndBlocksDecisions(): Unit = runBlocking {
+        api.space = space.copy(role = "admin")
+        val review = JoinReviewDto(requestId, "4d7dff75-e4b8-4686-b779-744cdb8d09fb", "Sam", "", request.createdAt, request.expiresAt)
+        api.reviews = listOf(review)
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        api.space = space.copy(role = "member")
+        value.refresh()
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertNull(value.state.value.managedSpace)
+        assertNull(value.state.value.settings)
+        assertTrue(value.state.value.reviews.isEmpty())
+        assertEquals("Only owners and admins can review join requests.", value.state.value.error)
+        value.decide(review, approve = true)
+        assertTrue(api.decisions.isEmpty())
+        assertEquals(0, api.settingsReads)
     }
 
     @Test fun askKeepsTheExactIntentAndRejectsAMismatchedResult(): Unit = runBlocking {
@@ -96,6 +211,10 @@ class GroupRepositoryTest {
         var request = this@GroupRepositoryTest.request
         var reviews: List<JoinReviewDto> = emptyList()
         var settings = this@GroupRepositoryTest.settings
+        var space = this@GroupRepositoryTest.space
+        var settingsReads = 0
+        var pendingReads = 0
+        val decisions = mutableListOf<Pair<String, Boolean>>()
         val queries = mutableListOf<String?>()
         val keys = mutableListOf<String>()
         val notes = mutableListOf<CreateJoinRequestDto>()
@@ -111,10 +230,11 @@ class GroupRepositoryTest {
         override suspend fun ask(authorization: String, spaceId: String, key: String, body: CreateJoinRequestDto) = result(request).also { keys.add(key); notes.add(body) }
         override suspend fun cancel(authorization: String, requestId: String, body: Map<String, String>) = result(request)
         override suspend fun mine(authorization: String) = result(listOf(request))
-        override suspend fun pending(authorization: String, spaceId: String) = result(reviews)
-        override suspend fun approve(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request)
-        override suspend fun decline(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request)
-        override suspend fun settings(authorization: String, spaceId: String) = result(settings)
+        override suspend fun pending(authorization: String, spaceId: String) = result(reviews).also { pendingReads += 1 }
+        override suspend fun approve(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request).also { decisions.add(requestId to true) }
+        override suspend fun decline(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request).also { decisions.add(requestId to false) }
+        override suspend fun space(authorization: String, spaceId: String) = result(space)
+        override suspend fun settings(authorization: String, spaceId: String) = result(settings).also { settingsReads += 1 }
         override suspend fun visibility(authorization: String, spaceId: String, etag: String, key: String, body: VisibilityChangeDto) = result(settings).also { etags.add(etag) }
     }
 }

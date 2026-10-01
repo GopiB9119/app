@@ -184,7 +184,7 @@ function InstructionCard({ user, item, alertOn, onChanged }: { user: Account; it
     </div>}
     {item.status === "active" && !confirm && <div className={styles.actions}><button className="secondary-button" onClick={() => setConfirm(true)}><Ban size={16} aria-hidden />Stop tracking</button></div>}
     {confirm && <div className={styles.confirm} role="group" aria-label="Confirm stop">
-      <p>Stop tracking {item.medicine_name}? This only ends reminders of it on this page from now on. It does not tell you to stop taking it; ask your prescriber or pharmacist about that. Notes you already made stay.</p>
+      <p className={styles.description}>Stop tracking {item.medicine_name}? This only ends reminders of it on this page from now on. It does not tell you to stop taking it; ask your prescriber or pharmacist about that. Notes you already made stay.</p>
       <div className={styles.actions}>
         <button className="primary-button" disabled={stop.isPending} onClick={submit}>{stop.isPending ? "Stopping..." : stop.isError && isUnknown(stop.error) ? "Retry stop" : "Yes, stop tracking"}</button>
         <button className="secondary-button" disabled={stop.isPending} onClick={() => { setConfirm(false); setKey(null); stop.reset(); }}>Keep it</button>

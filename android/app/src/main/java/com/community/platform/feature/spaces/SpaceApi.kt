@@ -58,6 +58,9 @@ interface SpaceApi {
     @POST("v1/spaces/{spaceId}/members/{accountId}/remove")
     suspend fun removeMember(@Header("Authorization") authorization: String, @Path("spaceId") spaceId: String, @Path("accountId") accountId: String, @Header("Idempotency-Key") key: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<MembershipOutcomeDto>>
 
+    @POST("v1/spaces/{spaceId}/members/{accountId}/role")
+    suspend fun changeMemberRole(@Header("Authorization") authorization: String, @Path("spaceId") spaceId: String, @Path("accountId") accountId: String, @Header("Idempotency-Key") key: String, @Header("If-Match") etag: String, @Body body: ChangeSpaceMemberRoleDto): Response<EnvelopeDto<SpaceMemberDto>>
+
     @POST("v1/spaces/{spaceId}/leave")
     suspend fun leave(@Header("Authorization") authorization: String, @Path("spaceId") spaceId: String, @Header("Idempotency-Key") key: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<MembershipOutcomeDto>>
 }

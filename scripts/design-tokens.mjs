@@ -33,6 +33,12 @@ export const tokenStylesheets = [
 export const tokenScreens = [
   'identity/IdentityScreen.kt', 'planning/TaskScreen.kt', 'messaging/MessagingScreen.kt',
   'community/CommunityScreen.kt', 'care/CareScreen.kt', 'events/EventsScreen.kt',
+  'platform/HomeScreen.kt', 'platform/MainNavigation.kt',
+].map(file => path.join(root, 'android/app/src/main/java/com/community/platform/feature', file));
+// Android screens whose spacing (padding, PaddingValues, spacedBy and Spacer widths and heights) is a whole number of DesignTokens.SpaceUnit.
+export const spacingScreens = [
+  'identity/IdentityScreen.kt', 'planning/TaskScreen.kt', 'care/CareScreen.kt', 'events/EventsScreen.kt',
+  'platform/HomeScreen.kt', 'platform/MainNavigation.kt',
 ].map(file => path.join(root, 'android/app/src/main/java/com/community/platform/feature', file));
 const olderNames = ['ink', 'muted', 'green', 'green-hover', 'green-soft', 'canvas', 'line', 'white', 'accent', 'danger', 'radius'];
 
@@ -181,6 +187,30 @@ export function findScreenViolations(texts = Object.fromEntries(tokenScreens.map
   return found;
 }
 
+export function findSpacingViolations(texts = Object.fromEntries(spacingScreens.map(file => [file, read(file)]))) {
+  const found = [];
+  for (const [file, text] of Object.entries(texts)) {
+    const where = path.relative(root, file).replaceAll('\\', '/');
+    const code = text.replace(/\/\/.*$/gm, '');
+    const values = [];
+    for (const call of code.matchAll(/(?<!\w)(?:padding|PaddingValues|spacedBy)\(|Spacer\(\s*Modifier\.(?:width|height)\(/g)) {
+      const open = call.index + call[0].length - 1;
+      let end = open;
+      for (let depth = 0; end < code.length; end++) {
+        if (code[end] === '(') depth++;
+        else if (code[end] === ')' && --depth === 0) break;
+      }
+      const lineEnd = code.indexOf('\n', end);
+      const line = code.slice(code.lastIndexOf('\n', call.index) + 1, lineEnd === -1 ? code.length : lineEnd);
+      // The 3 dp Spacer that keeps the place of a LinearProgressIndicator is a size, not spacing.
+      if (call[0].startsWith('Spacer') && line.includes('LinearProgressIndicator')) continue;
+      values.push(...[...code.slice(open, end + 1).matchAll(/(?<![\w.])(\d+(?:\.\d+)?)\.dp\b/g)].map(match => match[1]).filter(value => Number(value) !== 0));
+    }
+    for (const value of new Set(values)) found.push(`${where}: typed spacing ${value} dp`);
+  }
+  return found;
+}
+
 export function staleOutputs(tokens) {
   const expected = { [cssFile]: renderCss(tokens), [kotlinFile]: renderKotlin(tokens) };
   return Object.entries(expected).filter(([file, text]) => !existsSync(file) || read(file) !== text);
@@ -196,6 +226,7 @@ if (process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLTo
       ...findHandCopies(tokens),
       ...findStyleViolations(),
       ...findScreenViolations(),
+      ...findSpacingViolations(),
       ...contrastFailures(tokens),
     ];
     if (problems.length) {

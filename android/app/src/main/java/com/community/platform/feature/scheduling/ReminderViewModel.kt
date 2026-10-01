@@ -5,11 +5,16 @@ import androidx.lifecycle.viewModelScope
 import com.community.platform.feature.identity.AccountRepository
 import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.planning.TaskRepository
+import com.community.platform.feature.realtime.LiveEvent
+import com.community.platform.feature.realtime.LiveSignals
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -76,10 +81,12 @@ class ReminderViewModel @Inject constructor(
     private val repository: ReminderRepository,
     private val tasks: TaskRepository,
     private val accounts: AccountRepository,
+    private val live: LiveSignals = LiveSignals.None,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ReminderWorkspaceState())
     val state = mutableState.asStateFlow()
     private var work: Job? = null
+    private var hints: Job? = null
     private var generation = 0L
 
     fun bind(accountId: String?, taskId: String? = null, spaceId: String? = null, timezone: String = "UTC") {
@@ -87,20 +94,39 @@ class ReminderViewModel @Inject constructor(
         if (current.accountId == accountId && current.taskId == taskId && current.spaceId == spaceId) return
         generation += 1
         work?.cancel()
+        hints?.cancel()
         mutableState.value = ReminderWorkspaceState(accountId = accountId, taskId = taskId, spaceId = spaceId, timezone = timezone, timezones = listOf(timezone), tab = if (taskId == null) ReminderTab.INBOX else ReminderTab.REMINDERS)
-        if (accountId != null) refresh()
+        if (accountId != null) {
+            refresh()
+            listen()
+        }
+    }
+
+    /** The screen is bound only while it is shown: a live hint about notifications reads the inbox again. */
+    private fun listen() {
+        val expected = generation
+        hints = viewModelScope.launch {
+            live.events
+                .filter { it == LiveEvent.Ready || it == LiveEvent.Resync || it is LiveEvent.Change && it.kind == "notifications" }
+                .conflate()
+                .collect {
+                    // Let a running load or command finish first, then read what changed.
+                    mutableState.first { state -> !state.busy }
+                    if (generation == expected) reload(quiet = true)
+                }
+        }
     }
 
     private fun update(expected: Long, change: (ReminderWorkspaceState) -> ReminderWorkspaceState) {
         if (generation == expected) mutableState.update(change)
     }
 
-    private fun action(operation: suspend (String, Long) -> Unit) {
+    private fun action(quiet: Boolean = false, operation: suspend (String, Long) -> Unit) {
         val current = mutableState.value
         val accountId = current.accountId ?: return
         if (current.busy || current.requiresSignIn) return
         val expected = generation
-        mutableState.update { it.copy(busy = true, error = null, notice = null) }
+        mutableState.update { if (quiet) it.copy(busy = true) else it.copy(busy = true, error = null, notice = null) }
         work = viewModelScope.launch {
             try { operation(accountId, expected) }
             catch (error: CancellationException) { throw error }
@@ -120,10 +146,13 @@ class ReminderViewModel @Inject constructor(
         }
     }
 
-    fun refresh() {
+    fun refresh() = reload(quiet = false)
+
+    /** A quiet reload follows a live hint rather than a tap, so the notice and error stay on screen. */
+    private fun reload(quiet: Boolean) {
         val current = mutableState.value
         if (current.pending != null || current.reviewing) return
-        action { accountId, expected ->
+        action(quiet) { accountId, expected ->
             if (current.taskId != null && current.spaceId != null) {
                 val task = tasks.read(accountId, current.spaceId, current.taskId)
                 val assignee = task.task.assignee?.let { ReminderRecipientDto(it.accountId, it.displayName) }

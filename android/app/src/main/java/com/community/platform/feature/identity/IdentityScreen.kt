@@ -27,16 +27,13 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -85,6 +82,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+private val unit = DesignTokens.SpaceUnit
+
 data class IdentityActions(
     val mode: (EntryMode) -> Unit,
     val begin: (String) -> Unit,
@@ -98,20 +97,21 @@ data class IdentityActions(
 )
 
 @Composable
-fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null, onOpenSearch: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null) {
+fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
-    IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh), onOpenTasks, onOpenInbox, onOpenSpaces, onOpenCalendar, onOpenMessages, onOpenCommunity, onOpenCare, onOpenSearch, onOpenAgent)
+    IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh), onOpenTasks, onOpenInbox, onOpenAgent, onOpenBlocked)
 }
 
+/** Sign-in, and once signed in the Profile section: account, sessions, the agent and the blocked list (DEC-014). */
 @Composable
-fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenSpaces: (() -> Unit)? = null, onOpenCalendar: (() -> Unit)? = null, onOpenMessages: (() -> Unit)? = null, onOpenCommunity: (() -> Unit)? = null, onOpenCare: (() -> Unit)? = null, onOpenSearch: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, secrets: SignInSecrets = viewModel()) {
+fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, secrets: SignInSecrets = viewModel()) {
     SideEffect { if (state.profile != null) secrets.forget() }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = unit * 5, vertical = unit * 4), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.AccountCircle, null, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(unit * 3))
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
                     Text(stringResource(R.string.local_environment), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
@@ -126,23 +126,18 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
             if (state.loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(32.dp)) }
             } else {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(unit * 5), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(unit * 5)) {
                         state.error?.let { StatusMessage(it, true) }
                         state.notice?.let { StatusMessage(it, false) }
-                        if (state.profile != null && onOpenSpaces != null) OutlinedButton(onClick = onOpenSpaces, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-spaces")) { Icon(Icons.Default.Home, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.family_spaces)) }
-                        if (state.profile != null && onOpenCalendar != null) OutlinedButton(onClick = onOpenCalendar, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-calendar")) { Icon(Icons.Default.DateRange, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.calendar_title)) }
-                        if (state.profile != null && onOpenMessages != null) OutlinedButton(onClick = onOpenMessages, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-messages")) { Icon(Icons.Default.Email, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.messages_title)) }
-                        if (state.profile != null && onOpenCommunity != null) OutlinedButton(onClick = onOpenCommunity, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-community")) { Icon(Icons.Default.AccountCircle, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.community_title)) }
-                        if (state.profile != null && onOpenCare != null) OutlinedButton(onClick = onOpenCare, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-care")) { Icon(Icons.Default.Favorite, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text(stringResource(R.string.care_title)) }
-                        if (state.profile != null && onOpenSearch != null) OutlinedButton(onClick = onOpenSearch, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-search")) { Icon(Icons.Default.Search, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.search_title)) }
                         if (state.profile != null && onOpenAgent != null) OutlinedButton(onClick = onOpenAgent, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-agent")) { Icon(Icons.Default.Face, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.agent_title)) }
+                        if (state.profile != null && onOpenBlocked != null) OutlinedButton(onClick = onOpenBlocked, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-blocked")) { Icon(Icons.Default.Lock, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.account_blocked)) }
                         when {
                             state.profile != null -> AccountBody(state, actions)
                             state.signInUnchecked -> UncheckedSignIn(state, actions)
                             else -> AuthenticationBody(state, actions, secrets)
                         }
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(unit * 4))
                     }
                 }
             }
@@ -253,7 +248,7 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions) {
         Text(stringResource(R.string.your_account), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f).semantics { heading() })
         IconButton(onClick = { confirmation = Confirmation(logoutTitle, actions.logout) }, enabled = !state.busy) { Icon(Icons.AutoMirrored.Filled.ExitToApp, stringResource(R.string.sign_out)) }
     }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(unit * 2)) {
         Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
         Text(stringResource(R.string.email_verified), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
     }
@@ -263,16 +258,16 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions) {
     OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text(stringResource(R.string.display_name)) }, singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth().testTag("profile-name"))
     TimezonePicker(timezone, state.timezones, !state.busy) { timezone = it }
     val changed = name != profile.user.displayName || timezone != profile.user.timezone
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = { actions.save(name, timezone, baseEtag) }, enabled = changed && !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.save_changes)) }
+    Row(horizontalArrangement = Arrangement.spacedBy(unit * 3)) {
+        Button(onClick = { actions.save(name, timezone, baseEtag) }, enabled = changed && !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.save_changes)) }
         if (changed) TextButton(onClick = { name = profile.user.displayName; timezone = profile.user.timezone; baseEtag = profile.etag }, enabled = !state.busy) { Text(stringResource(R.string.discard)) }
     }
-    HorizontalDivider(Modifier.padding(top = 12.dp))
+    HorizontalDivider(Modifier.padding(top = unit * 3))
     Text(stringResource(R.string.active_sessions), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
     state.sessions.forEach { session ->
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Settings, null, Modifier.size(23.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(unit * 3))
             Column(Modifier.weight(1f)) {
                 Text(session.deviceName, style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(if (session.current) R.string.current_session else R.string.other_session), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -283,7 +278,7 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions) {
         HorizontalDivider()
     }
     if (state.sessions.size > 1) OutlinedButton(onClick = { confirmation = Confirmation(othersTitle, actions.revokeOthers) }, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.sign_out_others)) }
-    Text(stringResource(R.string.security_activity), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 12.dp).semantics { heading() })
+    Text(stringResource(R.string.security_activity), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = unit * 3).semantics { heading() })
     state.events.take(5).forEach { event ->
         Column {
             Text(stringResource(when (event.action) { "account.created" -> R.string.account_created; "session.created" -> R.string.signed_in; "session.revoked", "session.capacity_revoked" -> R.string.session_revoked; "profile.updated" -> R.string.profile_updated; "account.password_reset" -> R.string.password_changed; else -> R.string.account_activity }), style = MaterialTheme.typography.bodyMedium)
@@ -299,7 +294,7 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions) {
 private fun TimezonePicker(value: String, zones: List<String>, enabled: Boolean, onSelected: (String) -> Unit) {
     var opened by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
         Text(stringResource(R.string.timezone), style = MaterialTheme.typography.labelLarge)
         OutlinedButton(onClick = { opened = true; query = "" }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("timezone")) { Text(value.replace('_', ' '), Modifier.weight(1f)); Icon(Icons.Default.ArrowDropDown, stringResource(R.string.select_timezone)) }
     }
@@ -318,7 +313,7 @@ private fun TimezonePicker(value: String, zones: List<String>, enabled: Boolean,
 @Composable
 private fun StatusMessage(message: String, error: Boolean) {
     Surface(color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
-        Text(message, Modifier.padding(12.dp), color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyMedium)
+        Text(message, Modifier.padding(unit * 3), color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

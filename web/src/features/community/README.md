@@ -1,6 +1,6 @@
 # community
 
-Built: Home (`/app/home`, with Following, Latest and Saved), Discover (`/app/discover`, searching pages or posts), your pages and drafts (`/app/pages`), your blocked list (`/app/safety`), and public page and post views that work signed out (`/pages/<handle>`, `/posts/<id>`). The web proxy forwards public reads without a session when you are signed out. Report and block are available on pages, posts and comments.
+Built, under **Discover** in the main navigation ([DEC-014](../../../../docs/DECISIONS.md#accepted-decisions)): the Feed (`/app/home`, with Following, Latest and Saved), Pages and posts (`/app/discover`, searching pages or posts) and your pages and drafts (`/app/pages`); your blocked list (`/app/safety`), under Profile; and public page and post views that work signed out (`/pages/<handle>`, `/posts/<id>`). The web proxy forwards public reads without a session when you are signed out. Report and block are available on pages, posts and comments.
 
 Evidence: [public community checkpoint](../../../../docs/BUILD_STATUS.md#public-community-checkpoint).
 

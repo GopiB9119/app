@@ -8,6 +8,7 @@ from sqlalchemy.orm import aliased
 from app.errors import DomainError
 from app.modules.notifications.models import InAppNotification
 from app.modules.notifications.schemas import NotificationView, PreferencesView
+from app.modules.realtime.hub import signal
 from app.modules.scheduling.models import Reminder, ReminderSeries
 
 SNOOZE_LIMIT = 3
@@ -94,6 +95,7 @@ class NotificationService:
                 self.settle_follow_ups(database, caller, reminder)
             if changed:
                 self.reminders.record(database, reminder, f"notification.{action}", caller.id)
+                signal(database, "notifications", [caller.id], reason=action)
             return self.current_view(database, caller.id, notification, reminder, task)
 
     def settle_follow_ups(self, database, caller, reminder):
@@ -179,6 +181,7 @@ class NotificationService:
             reminder.version += 1
             self.reminders.record(database, reminder, "reminder.snoozed", caller.id)
             self.reminders.record(database, follow_up, "reminder.scheduled", caller.id)
+            signal(database, "notifications", [caller.id], reason="snoozed")
             return self.view(notification, reminder, task, follow_up, next_at, True)
 
     @staticmethod

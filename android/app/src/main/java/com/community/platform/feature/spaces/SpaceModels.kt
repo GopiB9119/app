@@ -50,6 +50,7 @@ data class MembershipOutcomeDto(
 
 enum class MembershipAction { REMOVE, LEAVE }
 data class MembershipIntent(val accountId: String, val spaceId: String, val targetId: String, val action: MembershipAction, val etag: String, val requestKey: String)
+data class ChangeSpaceMemberRoleDto(val role: String)
 
 data class OwnershipTransferDto(
     val id: String,
@@ -77,9 +78,10 @@ sealed interface SpaceCommand {
     data class Accept(override val accountId: String, val invitation: SpaceInvitationDto) : SpaceCommand
     data class Decline(override val accountId: String, val invitation: SpaceInvitationDto) : SpaceCommand
     data class Revoke(override val accountId: String, val invitation: SpaceInvitationDto) : SpaceCommand
-    data class EndMembership(val intent: MembershipIntent, val member: SpaceMemberDto, val spaceName: String) : SpaceCommand {
+    data class EndMembership(val intent: MembershipIntent, val member: SpaceMemberDto, val spaceName: String, val space: SpaceDto) : SpaceCommand {
         override val accountId: String get() = intent.accountId
     }
+    data class ChangeRole(override val accountId: String, val space: SpaceDto, val member: SpaceMemberDto, val role: String, val requestKey: String, val etag: String = member.etag) : SpaceCommand
     data class OfferOwnership(override val accountId: String, val space: SpaceDto, val member: SpaceMemberDto, val requestKey: String) : SpaceCommand
     data class RespondOwnership(override val accountId: String, val transfer: OwnershipTransferDto, val response: OwnershipResponse) : SpaceCommand
 }
@@ -89,5 +91,6 @@ sealed interface SpaceCommandResult {
     data class InvitationSaved(val invitation: SpaceInvitationDto) : SpaceCommandResult
     data class InvitationResolved(val outcome: InvitationOutcomeDto) : SpaceCommandResult
     data class MembershipEnded(val outcome: MembershipOutcomeDto) : SpaceCommandResult
+    data class MemberRoleSaved(val member: SpaceMemberDto) : SpaceCommandResult
     data class OwnershipSaved(val transfer: OwnershipTransferDto) : SpaceCommandResult
 }

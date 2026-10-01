@@ -77,8 +77,8 @@ function NeedsAttention({ user, spaces }: { user: Account; spaces: SpacesQuery }
   const invitations = useQuery({ queryKey: ["home", user.id, "invitations"], queryFn: ({ signal }) => invitationPage("invitations", user.id, null, signal) });
   const requests = useQuery({ queryKey: ["home", user.id, "reminder-requests"], queryFn: ({ signal }) => reminderRequestPage(user.id, "received", null, signal) });
   const inbox = useQuery({ queryKey: ["home", user.id, "inbox"], queryFn: ({ signal }) => notificationPage(user.id, null, signal) });
-  // Only public groups take join requests, and only their owner reviews them.
-  const reviewed = (spaces.data?.data ?? []).filter(space => space.role === "owner" && space.space_type === "group" && space.visibility === "public");
+  // The same groups whose join requests the Spaces screen lets this person answer: the owner's and an admin's.
+  const reviewed = (spaces.data?.data ?? []).filter(space => space.role !== "member" && space.space_type === "group");
   const joins = useQueries({ queries: reviewed.map(space => ({
     queryKey: ["home", user.id, "join-requests", space.id], queryFn: ({ signal }: { signal: AbortSignal }) => pendingJoinRequests(user.id, space.id, signal),
   })) });
@@ -169,7 +169,7 @@ function YourSpaces({ spaces }: { spaces: SpacesQuery }) {
     {spaces.isError && <Problem text="Couldn't load your Spaces." retry={() => void spaces.refetch()} />}
     {list.length > 0 && <ul className={styles.list}>
       {list.slice(0, SHOWN + 1).map(space => <li key={space.id} className={styles.row}>
-        <span className={styles.text}>{space.name}<span className={styles.detail}>{spaceTypeLabels[space.space_type]} · {space.role === "owner" ? "Owner" : "Member"}</span></span>
+        <span className={styles.text}>{space.name}<span className={styles.detail}>{spaceTypeLabels[space.space_type]} · {space.role === "owner" ? "Owner" : space.role === "admin" ? "Admin" : "Member"}</span></span>
         <Link href={`/app/tasks?space_id=${space.id}`} aria-label={`Tasks in ${space.name}`}>Tasks</Link>
       </li>)}
     </ul>}

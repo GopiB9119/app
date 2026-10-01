@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  checkTokens, contrastFailures, contrastPairs, contrastRatio, cssFile, findHandCopies, findScreenViolations, findStyleViolations, globalsFile, kotlinFile,
-  loadTokens, read, renderCss, renderKotlin, staleOutputs, themeFile, tokenScreens, tokenStylesheets,
+  checkTokens, contrastFailures, contrastPairs, contrastRatio, cssFile, findHandCopies, findScreenViolations, findSpacingViolations, findStyleViolations, globalsFile, kotlinFile,
+  loadTokens, read, renderCss, renderKotlin, spacingScreens, staleOutputs, themeFile, tokenScreens, tokenStylesheets,
 } from './design-tokens.mjs';
 
 const tokens = loadTokens();
@@ -94,7 +94,7 @@ test('feature stylesheets moved to tokens space in whole space units', () => {
 });
 
 test('Android screens moved to tokens take corners and target heights from DesignTokens', () => {
-  assert.equal(tokenScreens.length, 6);
+  assert.equal(tokenScreens.length, 8);
   assert.deepEqual(findScreenViolations(), []);
   const file = tokenScreens[0];
   assert.deepEqual(findScreenViolations({ [file]: [
@@ -106,6 +106,27 @@ test('Android screens moved to tokens take corners and target heights from Desig
     'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: corner size 6 dp',
     'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: target height 48 dp',
     'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: target height 44 dp',
+  ]);
+});
+
+test('Android screens moved to space units type no spacing', () => {
+  assert.equal(spacingScreens.length, 6);
+  assert.deepEqual(findSpacingViolations(), []);
+  const file = spacingScreens[0];
+  const where = 'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt';
+  assert.deepEqual(findSpacingViolations({ [file]: [
+    'Row(Modifier.padding(horizontal = 20.dp, vertical = unit * 4), horizontalArrangement = Arrangement.spacedBy(6.dp)) {',
+    '    Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Save")',
+    '}',
+    'LazyColumn(contentPadding = PaddingValues(unit * 5), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {}',
+    'if (busy) LinearProgressIndicator(Modifier.height(3.dp)) else Spacer(Modifier.height(3.dp))',
+    'Column(Modifier.padding(0.dp)) {} // Spacer(Modifier.height(14.dp)) in a comment',
+    'Box(Modifier.padding(top = 12.dp).size(48.dp))',
+  ].join('\n') }), [
+    `${where}: typed spacing 20 dp`,
+    `${where}: typed spacing 6 dp`,
+    `${where}: typed spacing 10 dp`,
+    `${where}: typed spacing 12 dp`,
   ]);
 });
 

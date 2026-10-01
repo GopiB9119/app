@@ -239,7 +239,7 @@ class SpaceScreenTest {
         var state by mutableStateOf(workspace().copy(selectedSpace = space, members = listOf(owner, member), showingMembers = true))
         val commands = mutableListOf<SpaceCommand.EndMembership>()
         val callbacks = actions(
-            membership = { selected, action -> state = state.copy(confirmation = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, selected.accountId, action, selected.etag, "original-membership-key"), selected, space.name)) },
+            membership = { selected, action -> state = state.copy(confirmation = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, selected.accountId, action, selected.etag, "original-membership-key"), selected, space.name, space)) },
             cancel = { state = state.copy(confirmation = null) },
             confirm = { val command = state.confirmation as SpaceCommand.EndMembership; commands.add(command); state = state.copy(confirmation = null, pending = command, error = "Synthetic response lost") },
             retry = { commands.add(state.pending as SpaceCommand.EndMembership); state = state.copy(pending = null, members = listOf(owner), error = null, notice = "Member removed.") },
@@ -268,7 +268,7 @@ class SpaceScreenTest {
         var state by mutableStateOf(workspace().copy(selectedSpace = space.copy(role = "member"), members = listOf(member, owner), showingMembers = true))
         var left: SpaceCommand.EndMembership? = null
         val callbacks = actions(
-            membership = { selected, action -> state = state.copy(confirmation = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, selected.accountId, action, selected.etag, "self-leave-key"), selected, space.name)) },
+            membership = { selected, action -> state = state.copy(confirmation = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, selected.accountId, action, selected.etag, "self-leave-key"), selected, space.name, space.copy(role = "member"))) },
             cancel = { state = state.copy(confirmation = null) },
             confirm = { left = state.confirmation as SpaceCommand.EndMembership; state = workspace().copy(notice = "You left the family Space.") },
         )
@@ -349,6 +349,75 @@ class SpaceScreenTest {
         compose.runOnIdle { assertEquals(1, retries); assertEquals(command, state.pending) }
     }
 
+    @Test fun roleActionsFollowTheViewersRoleAndConfirmOnlyTheReviewedMember() {
+        val ownerId = "7b4f6c1e-2d3a-4e5b-8c9d-0a1b2c3d4e5f"
+        val adminId = "5f0c2a7e-3b1d-4c55-9a52-0d6c1b7e9f10"
+        val admin = SpaceMemberDto(adminId, "Riya", "admin", space.createdAt, "\"admin\"")
+        val member = SpaceMemberDto(otherId, "Sam", "member", space.createdAt, "\"member\"")
+        var state by mutableStateOf(workspace().copy(selectedSpace = space, showingMembers = true, ownershipLoaded = true, members = listOf(SpaceMemberDto(accountId, "Alex", "owner", space.createdAt, "\"owner\""), admin, member)))
+        val proposals = mutableListOf<Pair<String, String>>()
+        val confirmed = mutableListOf<SpaceCommand.ChangeRole>()
+        val callbacks = actions(cancel = { state = state.copy(confirmation = null) }, confirm = { confirmed.add(state.confirmation as SpaceCommand.ChangeRole); state = state.copy(confirmation = null) })
+            .copy(proposeRole = { selected, role -> proposals.add(selected.accountId to role); state = state.copy(confirmation = SpaceCommand.ChangeRole(accountId, space, selected, role, "reviewed-role-key")) })
+        compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
+        reveal("space-member-$accountId")
+        compose.onNodeWithTag("member-make-admin-$accountId").assertDoesNotExist()
+        compose.onNodeWithTag("member-make-member-$accountId").assertDoesNotExist()
+        reveal("space-member-$adminId")
+        compose.onNodeWithTag("member-make-admin-$adminId").assertDoesNotExist()
+        compose.onNodeWithTag("member-make-member-$adminId").performScrollTo().assertIsDisplayed()
+        reveal("space-member-$otherId")
+        compose.onNodeWithTag("member-make-member-$otherId").assertDoesNotExist()
+        compose.onNodeWithTag("member-make-admin-$otherId").performScrollTo().performClick()
+        compose.onNodeWithText("Make this person an admin?").assertIsDisplayed()
+        compose.onNodeWithTag("role-review-member").assertTextContains("Sam")
+        compose.onNode(hasText(otherId) and hasAnyAncestor(hasTestTag("space-review-dialog"))).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("space-action-dismiss").performClick()
+        compose.runOnIdle { assertTrue(confirmed.isEmpty()) }
+        compose.onNodeWithTag("member-make-admin-$otherId").performScrollTo().performClick()
+        compose.onNodeWithTag("space-action-confirm").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(otherId to "admin", otherId to "admin"), proposals)
+            assertEquals(otherId, confirmed.single().member.accountId)
+            assertEquals("admin", confirmed.single().role)
+            assertEquals(member.etag, confirmed.single().etag)
+            state = workspace().copy(selectedSpace = space.copy(role = "admin"), showingMembers = true, ownershipLoaded = true, members = listOf(
+                SpaceMemberDto(ownerId, "Olivia", "owner", space.createdAt, "\"owner\""), SpaceMemberDto(accountId, "Alex", "admin", space.createdAt, "\"self\""), admin, member,
+            ))
+        }
+        for (id in listOf(ownerId, adminId)) {
+            reveal("space-member-$id")
+            compose.onNodeWithTag("space-remove-$id").assertDoesNotExist()
+            compose.onNodeWithTag("member-make-admin-$id").assertDoesNotExist()
+            compose.onNodeWithTag("member-make-member-$id").assertDoesNotExist()
+            compose.onNodeWithTag("ownership-offer-$id").assertDoesNotExist()
+        }
+        reveal("space-member-$otherId")
+        compose.onNodeWithTag("member-make-admin-$otherId").assertDoesNotExist()
+        compose.onNodeWithTag("ownership-offer-$otherId").assertDoesNotExist()
+        compose.onNodeWithTag("space-remove-$otherId").performScrollTo().assertIsDisplayed()
+        reveal("space-member-$accountId")
+        compose.onNodeWithTag("space-leave").performScrollTo().assertIsDisplayed()
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun roleReviewKeepsExactDetailsAndActionsAtLargeText() {
+        assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
+        val member = SpaceMemberDto(otherId, "Sam ${"A".repeat(70)}", "member", space.createdAt, "\"reviewed-member\"")
+        val command = SpaceCommand.ChangeRole(accountId, space.copy(name = "Family ${"B".repeat(70)}"), member, "admin", "reviewed-role")
+        val state = workspace().copy(selectedSpace = space, confirmation = command)
+        compose.setContent { CommunityTheme { SpaceScreen(state, actions(), "UTC", {}, {}) } }
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("role-review-member").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
+        assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)
+        compose.onNodeWithTag("role-review-space").assertTextContains(command.space.name)
+        compose.onNode(hasText(otherId) and hasAnyAncestor(hasTestTag("space-review-dialog"))).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Admins can invite people, remove members and answer join requests. They cannot change roles, Space settings or ownership.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("space-action-dismiss").assertIsDisplayed()
+        compose.onNodeWithTag("space-action-confirm").assertIsDisplayed()
+        capture("role-review-native-large-text.png", dialog = true)
+    }
+
     @DeviceFontScale(2f)
     @Test fun ownershipReviewUsesRealLargeTextWithReachableActions() {
         assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
@@ -370,7 +439,7 @@ class SpaceScreenTest {
     @Test fun membershipReviewKeepsExactDetailsAndActionsAtLargeText() {
         assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
         val member = SpaceMemberDto(otherId, "Sam ${"A".repeat(70)}", "member", space.createdAt, "\"reviewed-member\"")
-        val command = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, otherId, MembershipAction.REMOVE, member.etag, "reviewed-change"), member, space.name)
+        val command = SpaceCommand.EndMembership(MembershipIntent(accountId, space.id, otherId, MembershipAction.REMOVE, member.etag, "reviewed-change"), member, space.name, space)
         val state = workspace().copy(selectedSpace = space, confirmation = command)
         compose.setContent { CommunityTheme { SpaceScreen(state, actions(), "UTC", {}, {}) } }
         val layouts = mutableListOf<TextLayoutResult>()

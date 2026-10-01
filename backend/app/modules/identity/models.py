@@ -11,21 +11,33 @@ class User(Base):
     __table_args__ = (
         CheckConstraint("version > 0", name="ck_user_version"),
         CheckConstraint(
-            "status IN ('active', 'suspended', 'deactivated', 'deletion_requested')",
+            "status IN ('active', 'suspended', 'deactivated', 'deletion_requested', 'deleted')",
             name="ck_user_status",
         ),
+        # An erased account keeps only its identifier, so the rows that name it stay valid (DEC-022).
+        CheckConstraint("(status = 'deleted') = (email_cipher IS NULL)", name="ck_user_erased_email"),
+        CheckConstraint("(status = 'deleted') = (password_hash IS NULL)", name="ck_user_erased_password"),
+        CheckConstraint(
+            "status <> 'deletion_requested' OR (deletion_requested_at IS NOT NULL AND purge_after IS NOT NULL)",
+            name="ck_user_deletion_request",
+        ),
+        CheckConstraint("(status = 'deleted') = (purged_at IS NOT NULL)", name="ck_user_purged"),
+        Index("ix_user_purge_due", "purge_after", postgresql_where=text("status = 'deletion_requested'")),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email_lookup: Mapped[str] = mapped_column(String(64), unique=True)
-    email_cipher: Mapped[str] = mapped_column(Text)
-    password_hash: Mapped[str] = mapped_column(String(512))
+    email_cipher: Mapped[str | None] = mapped_column(Text)
+    password_hash: Mapped[str | None] = mapped_column(String(512))
     display_name: Mapped[str] = mapped_column(String(80))
     timezone: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24), default="active")
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Challenge(Base):

@@ -1,13 +1,17 @@
 package com.community.platform.feature.scheduling
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.feature.planning.FamilyTaskDto
 import com.community.platform.feature.planning.TaskPermissionsDto
 import com.community.platform.feature.planning.TaskAssigneeDto
 import com.community.platform.feature.planning.TaskRepository
 import com.community.platform.feature.planning.TaskRepositoryTest
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -30,7 +34,11 @@ class ReminderViewModelTest {
     private val model = ReminderViewModel(fixture.repository, TaskRepository(taskApi, fixture.accounts), fixture.accounts)
 
     @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model.bind(null); Dispatchers.resetMain() }
+    @After fun cleanup() = runBlocking {
+        val jobs = requireNotNull(model.viewModelScope.coroutineContext[Job]).children.toList()
+        model.bind(null)
+        try { withTimeout(5000) { jobs.joinAll() } } finally { Dispatchers.resetMain() }
+    }
     private suspend fun idle() = withTimeout(5000) { model.state.first { !it.busy } }
     private suspend fun start() { model.bind(fixture.accountId, fixture.taskId, fixture.spaceId, fixture.request.timezone); idle() }
     private suspend fun preview() { model.fields("2026-11-01", "01:30", fixture.request.timezone); model.preview(); idle() }
@@ -228,8 +236,11 @@ class ReminderViewModelTest {
         model.previewSeries(); idle()
         assertNotNull(model.state.value.seriesPreview)
         assertTrue(fixture.api.seriesKeys.isEmpty())
+        val before = model.state.value
         fixture.api.failure = 503
         model.saveSeries(); idle()
+        assertReminderDataUnchanged(before)
+        assertNotNull(model.state.value.error)
         val pending = model.state.value.pending
         assertTrue(pending is ReminderCommand.SaveSeries)
         model.changeSeries(); model.seriesFields("09:00", "2", emptySet(), "2026-11-01", "2026-11-07", "UTC"); model.repeat(RepeatMode.WEEKLY); model.refresh()
@@ -262,6 +273,7 @@ class ReminderViewModelTest {
 
     @Test fun seriesChangesNeedConfirmationAndRetryWithTheSameKey() = runBlocking {
         fixture.offerSeries(); start()
+        val before = model.state.value
         val series = model.state.value.series.single()
         model.proposeSeries(series, SeriesOperation.RESUME)
         assertNull(model.state.value.confirmation)
@@ -272,6 +284,8 @@ class ReminderViewModelTest {
         model.proposeSeries(series, SeriesOperation.PAUSE)
         fixture.api.failure = 503
         model.confirm(); idle()
+        assertReminderDataUnchanged(before)
+        assertNotNull(model.state.value.error)
         assertTrue(model.state.value.pending is ReminderCommand.Series)
         fixture.api.failure = 0
         model.retry(); idle()
@@ -284,6 +298,7 @@ class ReminderViewModelTest {
 
     @Test fun snoozeNeedsAnAvailableChoiceAndRetriesTheOriginalRequest() = runBlocking {
         fixture.offerSnooze(Instant.now().plusSeconds(7200).toString()); start()
+        val before = model.state.value
         val item = model.state.value.inbox.single()
         model.openSnooze(item)
         assertEquals(item, model.state.value.snoozing)
@@ -294,6 +309,8 @@ class ReminderViewModelTest {
         model.snoozeChoice(10)
         fixture.api.failure = 503
         model.snooze(); idle()
+        assertReminderDataUnchanged(before)
+        assertNotNull(model.state.value.error)
         assertTrue(model.state.value.pending is ReminderCommand.Snooze)
         model.closeSnooze(); model.snoozeChoice(60)
         assertNotNull(model.state.value.snoozing)
@@ -312,6 +329,314 @@ class ReminderViewModelTest {
         start()
         model.propose(ReminderCommand.Cancel(model.state.value.reminders.single()))
         assertNull(model.state.value.confirmation)
+        assertTrue(fixture.api.actions.isEmpty())
+    }
+
+    @Test fun pausedSeriesResumesOnlyAfterConfirmation() = runBlocking {
+        confirmSeriesControl(seriesCases.single { it.operation == SeriesOperation.RESUME })
+    }
+
+    @Test fun activeAndPausedSeriesCancelOnlyAfterConfirmation() = runBlocking {
+        for (case in seriesCases.filter { it.operation == SeriesOperation.CANCEL }) confirmSeriesControl(case)
+    }
+
+    @Test fun skippingNextOccurrenceWaitsForConfirmation() = runBlocking {
+        confirmSeriesControl(seriesCases.single { it.operation == SeriesOperation.SKIP })
+    }
+
+    @Test fun resumeAndSkipCanConfirmThatTheSeriesHasEnded() = runBlocking {
+        for (case in seriesCases.filter { it.operation in setOf(SeriesOperation.RESUME, SeriesOperation.SKIP) }) {
+            confirmSeriesControl(case.copy(after = fixture.series.copy(status = "ended", nextOccurrence = null),
+                notice = "No reminder times remain, so the repeating reminder ended."))
+        }
+    }
+
+    @Test fun lostSeriesAnswersKeepTheReviewedCommandUntilConfirmed() = runBlocking {
+        for (case in seriesCases) {
+            val confirmed = prepareSeries(case)
+            start()
+            val before = model.state.value
+            val calls = fixture.api.seriesCalls.size
+            model.proposeSeries(case.before, case.operation)
+            val command = model.state.value.confirmation as ReminderCommand.Series
+            val request = ReminderRepositoryTest.SeriesCommandCall(command.intent.requestKey, case.before.etag, case.before.id, case.operation.wireValue, emptyMap())
+            val changed = before.series.map { if (it.id == confirmed.id) confirmed else it }
+            fixture.api.loseCommandAnswer = true
+            whileCommandAnswerIsHeld({ model.confirm() }) {
+                assertEquals(changed, fixture.api.seriesItems)
+                assertEquals(confirmed, fixture.api.seriesValue)
+                assertReminderDataUnchanged(before)
+                assertEquals(command, model.state.value.pending)
+            }
+            assertEquals(listOf(request), fixture.api.seriesCalls.drop(calls))
+            assertReminderDataUnchanged(before)
+            assertEquals("No connection. Changes are not confirmed.", model.state.value.error)
+            assertEquals(command, model.state.value.pending)
+            assertNull(model.state.value.confirmation)
+
+            val allCalls = fixture.api.calls
+            model.proposeSeries(case.before, SeriesOperation.CANCEL)
+            model.cancelConfirmation(); model.confirm(); model.refresh()
+            assertEquals(allCalls, fixture.api.calls)
+            assertEquals(command, model.state.value.pending)
+            assertReminderDataUnchanged(before)
+
+            fixture.api.loseCommandAnswer = false
+            whileCommandAnswerIsHeld({ model.retry() }) {
+                assertReminderDataUnchanged(before)
+                assertEquals(command, model.state.value.pending)
+            }
+            assertEquals(listOf(request, request), fixture.api.seriesCalls.drop(calls))
+            assertEquals(changed, model.state.value.series)
+            assertEquals(case.notice, model.state.value.notice)
+            assertNull(model.state.value.error)
+            assertNull(model.state.value.pending)
+            model.retry(); idle()
+            assertEquals(calls + 2, fixture.api.seriesCalls.size)
+            assertTrue(fixture.api.actions.isEmpty())
+        }
+    }
+
+    @Test fun seriesConflictsDoNotChangeShownStateOrAllowBlindRetry() = runBlocking {
+        refuseSeriesControls(409)
+    }
+
+    @Test fun staleSeriesEtagsDoNotChangeShownStateOrAllowBlindRetry() = runBlocking {
+        refuseSeriesControls(412)
+    }
+
+    @Test fun lostSnoozeAnswerKeepsTheOriginalChoiceUntilConfirmed() = runBlocking {
+        fixture.offerSnooze(Instant.now().plusSeconds(7200).toString()); start()
+        val before = model.state.value
+        val item = before.inbox.single()
+        val confirmed = item.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T06:42:00Z")
+        fixture.api.snoozeValue = confirmed
+        model.openSnooze(item); model.snoozeChoice(10)
+        fixture.api.loseCommandAnswer = true
+        whileCommandAnswerIsHeld({ model.snooze() }) {
+            assertEquals(confirmed, fixture.api.notificationValue)
+            assertEquals(0, fixture.api.unread)
+            assertReminderDataUnchanged(before)
+            assertTrue(model.state.value.pending is ReminderCommand.Snooze)
+        }
+        val command = model.state.value.pending as ReminderCommand.Snooze
+        val request = ReminderRepositoryTest.SnoozeCall(command.intent.requestKey, item.id, SnoozeDto(10))
+        assertEquals(item, command.intent.notification)
+        assertEquals(10, command.intent.minutes)
+        assertEquals(listOf(request), fixture.api.snoozeCalls)
+        assertEquals("No connection. Changes are not confirmed.", model.state.value.error)
+        assertReminderDataUnchanged(before)
+        assertEquals(item, model.state.value.snoozing)
+        assertEquals(10, model.state.value.snoozeMinutes)
+
+        val calls = fixture.api.calls
+        model.closeSnooze(); model.snoozeChoice(60); model.snooze(); model.refresh()
+        assertEquals(calls, fixture.api.calls)
+        assertEquals(command, model.state.value.pending)
+        assertEquals(item, model.state.value.snoozing)
+        assertEquals(10, model.state.value.snoozeMinutes)
+        assertReminderDataUnchanged(before)
+
+        fixture.api.loseCommandAnswer = false
+        whileCommandAnswerIsHeld({ model.retry() }) {
+            assertReminderDataUnchanged(before)
+            assertEquals(command, model.state.value.pending)
+        }
+        assertEquals(listOf(request, request), fixture.api.snoozeCalls)
+        assertEquals(listOf(confirmed), model.state.value.inbox)
+        assertEquals(0, model.state.value.unreadCount)
+        assertNull(model.state.value.inbox.single().acknowledgedAt)
+        assertNull(model.state.value.snoozing)
+        assertNull(model.state.value.snoozeMinutes)
+        assertNull(model.state.value.pending)
+        assertNull(model.state.value.error)
+        assertTrue(model.state.value.notice!!.startsWith("Snoozed until "))
+        model.retry(); idle()
+        assertEquals(2, fixture.api.snoozeCalls.size)
+        assertEquals(0, model.state.value.unreadCount)
+        assertTrue(fixture.api.actions.isEmpty())
+    }
+
+    @Test fun snoozeConflictsDoNotChangeShownStateOrAllowBlindRetry() = runBlocking {
+        refuseSnooze(409)
+    }
+
+    @Test fun snoozePreconditionFailuresDoNotChangeShownStateOrAllowBlindRetry() = runBlocking {
+        refuseSnooze(412)
+    }
+
+    private data class SeriesCase(
+        val operation: SeriesOperation, val before: ReminderSeriesDto, val after: ReminderSeriesDto, val notice: String,
+    )
+    private val pausedSeries = fixture.series.copy(status = "paused", reason = "by_person", nextOccurrence = null)
+    private val cancelledSeries = fixture.series.copy(status = "cancelled", nextOccurrence = null)
+    private val seriesCases = listOf(
+        SeriesCase(SeriesOperation.PAUSE, fixture.series, pausedSeries, "Repeating reminder paused."),
+        SeriesCase(SeriesOperation.RESUME, pausedSeries, fixture.series, "Repeating reminder resumed."),
+        SeriesCase(SeriesOperation.SKIP, fixture.series, fixture.series.copy(nextOccurrence = fixture.series.nextOccurrence!!.copy(
+            reminderId = fixture.otherId, localDate = "2026-11-02", scheduledAt = "2026-11-02T02:30:00Z")), "Next reminder skipped."),
+        SeriesCase(SeriesOperation.CANCEL, fixture.series, cancelledSeries, "Repeating reminder cancelled."),
+        SeriesCase(SeriesOperation.CANCEL, pausedSeries, cancelledSeries, "Repeating reminder cancelled."),
+    )
+
+    private fun prepareSeries(case: SeriesCase): ReminderSeriesDto {
+        model.bind(null)
+        fixture.api.failure = 0
+        fixture.offerSeries()
+        fixture.api.seriesValue = case.before
+        fixture.api.seriesItems = listOf(case.before, fixture.series.copy(id = fixture.otherId))
+        val confirmed = case.after.copy(version = "2", etag = "\"series-2\"")
+        fixture.api.seriesResult = confirmed
+        return confirmed
+    }
+
+    private fun assertReminderDataUnchanged(before: ReminderWorkspaceState) {
+        val current = model.state.value
+        assertEquals(before.series, current.series)
+        assertEquals(before.reminders, current.reminders)
+        assertEquals(before.inbox, current.inbox)
+        assertEquals(before.unreadCount, current.unreadCount)
+        assertEquals(before.preferences, current.preferences)
+        assertNull(current.notice)
+    }
+
+    private suspend fun whileCommandAnswerIsHeld(command: () -> Unit, check: () -> Unit) {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        fixture.api.commandEntered = entered
+        fixture.api.commandGate = release
+        try {
+            command()
+            withTimeout(5000) { entered.await() }
+            assertTrue(model.state.value.busy)
+            check()
+        } finally {
+            release.complete(Unit)
+            idle()
+            fixture.api.commandEntered = null
+            fixture.api.commandGate = null
+        }
+    }
+
+    private suspend fun confirmSeriesControl(case: SeriesCase) {
+        val confirmed = prepareSeries(case)
+        start()
+        val before = model.state.value
+        val calls = fixture.api.seriesCalls.size
+        model.proposeSeries(case.before, case.operation)
+        assertTrue(model.state.value.confirmation is ReminderCommand.Series)
+        assertNull(model.state.value.pending)
+        assertEquals(calls, fixture.api.seriesCalls.size)
+        assertReminderDataUnchanged(before)
+        model.cancelConfirmation(); model.confirm(); idle()
+        assertNull(model.state.value.confirmation)
+        assertEquals(calls, fixture.api.seriesCalls.size)
+        assertReminderDataUnchanged(before)
+
+        model.proposeSeries(case.before, case.operation)
+        val command = model.state.value.confirmation as ReminderCommand.Series
+        assertEquals(fixture.accountId, command.intent.accountId)
+        assertEquals(case.before, command.intent.series)
+        assertEquals(case.operation, command.intent.operation)
+        model.confirm(); idle()
+        assertEquals(listOf(ReminderRepositoryTest.SeriesCommandCall(command.intent.requestKey, case.before.etag, case.before.id, case.operation.wireValue, emptyMap())),
+            fixture.api.seriesCalls.drop(calls))
+        assertEquals(before.series.map { if (it.id == confirmed.id) confirmed else it }, model.state.value.series)
+        assertEquals(case.notice, model.state.value.notice)
+        assertNull(model.state.value.error)
+        assertNull(model.state.value.pending)
+        assertNull(model.state.value.confirmation)
+        assertTrue(fixture.api.actions.isEmpty())
+    }
+
+    private suspend fun refuseSeriesControls(status: Int) {
+        for (case in seriesCases) {
+            prepareSeries(case); start()
+            val before = model.state.value
+            val calls = fixture.api.seriesCalls.size
+            model.proposeSeries(case.before, case.operation)
+            val command = model.state.value.confirmation as ReminderCommand.Series
+            fixture.api.failure = status
+            model.confirm(); idle()
+            assertEquals(listOf(ReminderRepositoryTest.SeriesCommandCall(command.intent.requestKey, case.before.etag, case.before.id, case.operation.wireValue, emptyMap())),
+                fixture.api.seriesCalls.drop(calls))
+            assertReminderDataUnchanged(before)
+            assertEquals(before.series, fixture.api.seriesItems)
+            assertEquals(case.before, fixture.api.seriesValue)
+            assertEquals("Synthetic failure", model.state.value.error)
+            assertNull(model.state.value.pending)
+            assertNull(model.state.value.confirmation)
+
+            fixture.api.failure = 0
+            val allCalls = fixture.api.calls
+            model.retry(); model.confirm(); idle()
+            assertEquals(allCalls, fixture.api.calls)
+            assertReminderDataUnchanged(before)
+
+            val refreshed = case.before.copy(version = "2", etag = "\"series-2\"")
+            val confirmed = case.after.copy(version = "3", etag = "\"series-3\"")
+            fixture.api.seriesValue = refreshed
+            fixture.api.seriesItems = before.series.map { if (it.id == refreshed.id) refreshed else it }
+            fixture.api.seriesResult = confirmed
+            model.refresh(); idle()
+            model.proposeSeries(refreshed, case.operation)
+            val reviewed = model.state.value.confirmation as ReminderCommand.Series
+            assertTrue(command.intent.requestKey != reviewed.intent.requestKey)
+            assertEquals(calls + 1, fixture.api.seriesCalls.size)
+            assertNull(model.state.value.notice)
+            model.confirm(); idle()
+            assertEquals(calls + 2, fixture.api.seriesCalls.size)
+            assertEquals(ReminderRepositoryTest.SeriesCommandCall(reviewed.intent.requestKey, refreshed.etag, refreshed.id, case.operation.wireValue, emptyMap()),
+                fixture.api.seriesCalls.last())
+            assertEquals(before.series.map { if (it.id == confirmed.id) confirmed else it }, model.state.value.series)
+            assertEquals(case.notice, model.state.value.notice)
+            assertNull(model.state.value.error)
+            assertNull(model.state.value.pending)
+        }
+    }
+
+    private suspend fun refuseSnooze(status: Int) {
+        fixture.offerSnooze(Instant.now().plusSeconds(7200).toString()); start()
+        val before = model.state.value
+        val item = before.inbox.single()
+        model.openSnooze(item); model.snoozeChoice(10)
+        fixture.api.failure = status
+        model.snooze(); idle()
+        val request = fixture.api.snoozeCalls.single()
+        assertEquals(item.id, request.identifier)
+        assertEquals(SnoozeDto(10), request.body)
+        assertReminderDataUnchanged(before)
+        assertEquals(item, fixture.api.notificationValue)
+        assertEquals(1, fixture.api.unread)
+        assertEquals("Synthetic failure", model.state.value.error)
+        assertNull(model.state.value.pending)
+        assertNull(model.state.value.snoozing)
+        assertNull(model.state.value.snoozeMinutes)
+
+        fixture.api.failure = 0
+        val calls = fixture.api.calls
+        model.retry(); model.snooze(); idle()
+        assertEquals(calls, fixture.api.calls)
+        assertReminderDataUnchanged(before)
+
+        val confirmed = item.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T07:32:00Z")
+        fixture.api.snoozeValue = confirmed
+        model.openSnooze(item); model.snoozeChoice(60)
+        assertEquals(1, fixture.api.snoozeCalls.size)
+        assertReminderDataUnchanged(before)
+        model.snooze(); idle()
+        assertEquals(2, fixture.api.snoozeCalls.size)
+        val reviewed = fixture.api.snoozeCalls.last()
+        assertTrue(request.key != reviewed.key)
+        assertEquals(item.id, reviewed.identifier)
+        assertEquals(SnoozeDto(60), reviewed.body)
+        assertEquals(listOf(confirmed), model.state.value.inbox)
+        assertEquals(0, model.state.value.unreadCount)
+        assertNull(model.state.value.pending)
+        assertNull(model.state.value.snoozing)
+        assertNull(model.state.value.snoozeMinutes)
+        assertNull(model.state.value.error)
+        assertTrue(model.state.value.notice!!.startsWith("Snoozed until "))
         assertTrue(fixture.api.actions.isEmpty())
     }
 }

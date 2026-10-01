@@ -201,18 +201,19 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Route | Purpose | Status |
 | --- | --- | --- |
 | `/login`, `/register`, `/recover` | Sign in, registration with email proof, recovery | Working (limited) |
-| `/app/settings/account` | Profile, timezone, sessions, security activity, sign out | Working (limited) |
+| `/app` | Home: needs attention, today, your Spaces and posts from pages you follow, each section loading on its own; Calendar and Medicines open from here | Working (limited), web only ([T38](TASKS.md#design-and-experience)) |
+| `/app/settings/account` | Profile: name, timezone, sessions, security activity, Blocked, sign out | Working (limited) |
 | `/app/spaces` | Space list/create, invitations, members, ownership, settings | Working (limited) |
 | `/app/tasks` | Task list/detail/editor/status per Space | Working (limited) |
 | `/app/calendar` | Month agenda | Working (limited) |
 | `/app/reminders` | Reminder review/create/list/cancel, repeating reminders and requests | Working (limited) |
 | `/app/notifications` | In-app inbox with snooze, and preferences | Working (limited) |
 | `/app/messages` | Space chats and direct messages | Working (limited) |
-| `/app/home`, `/app/discover`, `/pages/[handle]`, `/posts/[id]` | Home feed, discover, public page and post (public page and post work signed out) | Working (limited) |
+| `/app/home`, `/app/discover`, `/pages/[handle]`, `/posts/[id]` | Discover: the feed (Following, Latest, Saved), page and post search, public page and post (public page and post work signed out) | Working (limited) |
 | `/app/pages` | Your pages, create a page, pages you follow | Working (limited) |
 | `/app/events` | Space events and RSVP | Working (limited) |
 | `/app/care` | Medication instructions and daily care reminders | Working (limited): day plan and medicines list; no notifications |
-| `/app/safety` | Blocked pages and people | Working (limited) |
+| `/app/safety` | Blocked pages and people, under Profile | Working (limited) |
 | `/app/documents` | Documents of a Space: add, list, open at cited lines, delete | Working (limited) |
 | `/app/search` | Search inside your Spaces | Working (limited) |
 | `/app/agent` | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Working (limited): no AI model; under provisional DEC-012 |
@@ -223,24 +224,25 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Screen | Entry | Status |
 | --- | --- | --- |
 | Login, register, verify, recover | App start | Working (limited) |
-| Account: profile, timezone, sessions, security activity | After sign in | Working (limited) |
-| Spaces: list, create, detail, invitations, members, ownership | Account screen | Working (limited) |
+| Home: needs attention, today, your Spaces, pages you follow | Home in the bottom bar | Working (limited); offline screen tests and a live journey on the emulator ([T38](TASKS.md#design-and-experience)) |
+| Account: profile, timezone, sessions, security activity | Profile in the bottom bar; opens after sign in | Working (limited) |
+| Spaces: list, create, detail, invitations, members, ownership | Spaces in the bottom bar / Home | Working (limited) |
 | Space settings | Owner Space detail | Working (limited) |
-| Tasks: list, detail, editor, status | Account header / Space detail | Working (limited) |
-| Calendar agenda | Account screen | Working (limited); not device-qualified |
-| Reminders, repeating reminders and notification inbox with snooze | Account header / task detail | Working (limited); repeating reminders and snooze not device-qualified |
-| Messages: conversation list and chat | Account screen / Space detail | Working (limited); not device-qualified |
-| Community: Home, Discover, page, post, comments, your pages, blocked | Account screen | Working (limited); not device-qualified |
-| Events and RSVP | Space detail | Working (limited); not device-qualified |
-| Care instructions and medication reminders | Account screen | Working (limited); not device-qualified |
+| Tasks: list, detail, editor, status | Profile header / Space detail / Home | Working (limited) |
+| Calendar agenda | Home | Working (limited); not device-qualified |
+| Reminders, repeating reminders and notification inbox with snooze | Bell on Home and Profile / task detail | Working (limited); repeating reminders and snooze not device-qualified |
+| Messages: conversation list and chat | Messages in the bottom bar / Space detail | Working (limited); not device-qualified |
+| Community: Feed, Pages and posts, page, post, comments, your pages | Discover in the bottom bar / Home | Working (limited); not device-qualified |
+| Events and RSVP | Space detail / Home | Working (limited); not device-qualified |
+| Care instructions and medication reminders | Home (Medicines) | Working (limited); not device-qualified |
 | Documents: add, list, open at cited lines, delete | Space detail | Working (limited); 7 offline screen tests and a live journey on the emulator |
-| Search inside your Spaces | Account screen | Working (limited); covered by the same device tests |
-| Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Account screen | Working (limited): no AI model; under provisional DEC-012; 6 offline screen tests and a live journey on the emulator ([T35](TASKS.md#approved-requirements-not-built-yet)) |
-| Safety, privacy, export, deletion | Account screen | Blocked list inside Community works; privacy, export and deletion not built |
+| Search inside your Spaces | Home header | Working (limited); covered by the same device tests |
+| Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Profile | Working (limited): no AI model; under provisional DEC-012; 6 offline screen tests and a live journey on the emulator ([T35](TASKS.md#approved-requirements-not-built-yet)) |
+| Safety, privacy, export, deletion | Profile | The blocked list works, opened from Profile; privacy, export and deletion not built |
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.
 
-Target navigation ([DEC-014](DECISIONS.md#accepted-decisions); [T38](TASKS.md#design-and-experience)): the same five main sections in both apps, Home, Spaces, Messages, Discover and Profile, with Home as a personal overview (needs attention, today, your Spaces, pages you follow). Today Android opens every feature from the account screen, and the web header uses icons without words and has no Spaces link.
+Navigation ([DEC-014](DECISIONS.md#accepted-decisions); [T38](TASKS.md#design-and-experience)): the same five main sections in both apps, Home, Spaces, Messages, Discover and Profile, with Home as a personal overview (needs attention, today, your Spaces, pages you follow). On the web every signed-in page shows them with visible labels, as a bar under the header and from 1200 px as a column at the side; the header keeps search, the notification bell with its unread count and the agent. On Android a bottom bar with the same five labels shows on the five top-level screens. It hides while one Space or one chat is open, where the screen's own back button leads out, and it is disabled while leaving would lose an unconfirmed or unsaved change. Android Home has search, the bell with its unread count, Calendar and Medicines; Profile keeps the account, sessions, the agent and the blocked list. Sign-in still opens Profile in both apps; which section should open is open question [Q21](PRODUCT_UNDERSTANDING.md#39-open-questions).
 
 ## 4. Rules Every Feature Follows
 

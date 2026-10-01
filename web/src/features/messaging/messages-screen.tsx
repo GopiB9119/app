@@ -8,6 +8,7 @@ import { ArrowLeft, ClipboardList, LoaderCircle, LockKeyhole, MessageSquare, Ref
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { subscribeLive, useLiveConnected } from "@/features/realtime/live";
 import { readMembers, spacesSchema } from "@/features/spaces/client";
 import {
   MAX_MESSAGE_CHARACTERS, bodyProblem, conversationPage, deleteMessage, markRead, mergeMessages, messagePage,
@@ -18,6 +19,9 @@ import styles from "./messages.module.css";
 
 type Pending = SendIntent & { state: "sending" | "unknown" | "failed"; error?: string };
 const POLL_MILLISECONDS = 5000;
+// While the live connection is up it announces changes, so the timers only catch a lost hint.
+const LIVE_POLL_MILLISECONDS = 30000;
+const LIVE_LIST_MILLISECONDS = 60000;
 const time = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 // Browser-only: written from event handlers, never during server rendering, and cleared by the full reload on sign-out.
@@ -92,13 +96,14 @@ function Messaging({ user, initialSpaceId }: { user: Account; initialSpaceId: st
   const [selected, setSelected] = useState<Conversation | null>(null);
   const [spaceId, setSpaceId] = useState(initialSpaceId);
   const autoOpened = useRef(false);
+  const live = useLiveConnected();
   usePendingVersion();
   const conversations = useInfiniteQuery({
     queryKey: ["conversations", user.id],
     queryFn: ({ pageParam, signal }) => conversationPage(user.id, pageParam, signal),
     initialPageParam: null as string | null,
     getNextPageParam: last => last.pagination.next_cursor,
-    refetchInterval: POLL_MILLISECONDS * 3,
+    refetchInterval: live ? LIVE_LIST_MILLISECONDS : POLL_MILLISECONDS * 3,
     networkMode: "always",
   });
   const spaces = useQuery({
@@ -216,6 +221,8 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   const markedThrough = useRef(Number(initial.read_position));
   const itemsRef = useRef<Message[]>([]);
   const endRef = useRef<HTMLLIElement | null>(null);
+  const runPoll = useRef<(first: boolean, queue?: boolean) => void>(() => undefined);
+  const live = useLiveConnected();
   const conversationId = initial.id;
 
   const fail = useCallback((problem: unknown) => {
@@ -289,17 +296,31 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    // One poll at a time, so a slow response cannot overwrite a newer one.
+    // One poll at a time, so a slow response cannot overwrite a newer one; a hint during a poll runs one more after it.
     let running = false;
-    const run = (first: boolean) => {
-      if (running) return;
+    let again = false;
+    const run = (first: boolean, queue = false) => {
+      if (!active) return;
+      if (running) { again ||= queue; return; }
       running = true;
-      void poll(controller.signal, first).finally(() => { running = false; });
+      void poll(controller.signal, first).finally(() => {
+        running = false;
+        if (again) { again = false; run(false); }
+      });
     };
+    runPoll.current = run;
     run(true);
-    const timer = window.setInterval(() => { if (active && document.visibilityState === "visible") run(false); }, POLL_MILLISECONDS);
-    return () => { active = false; window.clearInterval(timer); controller.abort(); };
-  }, [poll]);
+    const unsubscribe = subscribeLive(event => {
+      if (event.accountId !== user.id) return;
+      if (event.kind === "resync" || (event.kind === "conversation" && event.conversation_id === conversationId)) run(false, true);
+    });
+    return () => { active = false; runPoll.current = () => undefined; unsubscribe(); controller.abort(); };
+  }, [poll, conversationId, user.id]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") runPoll.current(false); }, live ? LIVE_POLL_MILLISECONDS : POLL_MILLISECONDS);
+    return () => window.clearInterval(timer);
+  }, [live]);
 
   useEffect(() => {
     if (!draft.trim()) return;

@@ -193,22 +193,12 @@ class SpaceService:
                 SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
                 SpaceMembershipCommand.request_key == key,
             ))
-            # Only a current member may learn that this private Space exists; anyone else gets exactly the answer for a
-            # missing Space (T42). The one exception is a former member repeating their own confirmed leave exactly.
-            if actor is not None and actor.status != "active":
-                repeated = (
-                    action == "leave" and receipt is not None and expected is not None
-                    and receipt.actor_admission_id == actor.admission_id
-                    and receipt.request_digest == self.security.digest(
-                        "space.membership.command", ":".join((action, target_id, expected)))
-                )
-                if not repeated:
-                    raise DomainError(404, "NOT_FOUND", "Space not found.")
-                self.identity.authenticate(database, token, lock=True)
-                return MembershipOutcome(space_id=space.id, account_id=actor.account_id)
-            if actor is None:
+            # Only a current member, or a former member using the key of their own earlier command, may learn that this
+            # private Space exists; anyone else gets exactly the answer for a missing Space (T42). A former member with
+            # their own key keeps the earlier answers (the outcome, or 409 and 428 for a changed or missing review).
+            if actor is None or (actor.status != "active" and receipt is None):
                 raise DomainError(404, "NOT_FOUND", "Space not found.")
-            if target is None or (action == "remove" and actor.role not in MANAGERS):
+            if target is None or (action == "remove" and (actor.role not in MANAGERS or actor.status != "active")):
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             self.identity.authenticate(database, token, lock=True)
             if target.role == "owner":
@@ -226,7 +216,7 @@ class SpaceService:
                 if target.status != "removed":
                     raise DomainError(409, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")
                 return MembershipOutcome(space_id=space.id, account_id=target.account_id)
-            if target.status != "active":
+            if actor.status != "active" or target.status != "active":
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             if expected != self.membership_etag(target):
                 raise DomainError(412, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")

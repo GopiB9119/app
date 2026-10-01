@@ -3,7 +3,7 @@ import unicodedata
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_serializer, model_validator
 
 from app.modules.community.models import REPORT_REASONS, TOPICS
 from app.modules.identity.schemas import Envelope, Input
@@ -154,7 +154,23 @@ class CreateBlock(Input):
     target_id: UUID
 
 
-class PageView(BaseModel):
+class ModerationMark(BaseModel):
+    hidden: Literal[True] = True
+    reason: ReportReason
+
+
+class ModeratedView(BaseModel):
+    moderation: ModerationMark | None = None
+
+    @model_serializer(mode="wrap")
+    def author_only_moderation(self, serializer):
+        result = serializer(self)
+        if self.moderation is None:
+            result.pop("moderation", None)
+        return result
+
+
+class PageView(ModeratedView):
     id: str
     handle: str
     name: str
@@ -169,7 +185,7 @@ class PageView(BaseModel):
     etag: str | None
 
 
-class PostView(BaseModel):
+class PostView(ModeratedView):
     id: str
     page_id: str
     page_handle: str
@@ -193,7 +209,7 @@ class PostOutcome(BaseModel):
     status: Literal["deleted"]
 
 
-class CommentView(BaseModel):
+class CommentView(ModeratedView):
     id: str
     post_id: str
     parent_id: str | None

@@ -959,20 +959,19 @@ Builds [T12](TASKS.md#approved-requirements-not-built-yet) (couple Spaces, R6) u
   | Operation | Before | Now |
   | --- | --- | --- |
   | Leave, remove (T42) | "Membership not found." | "Space not found." |
-  | A former member reusing their leave key with another or no review | `409` or `428` | "Space not found."; the exact repeat of their confirmed leave still answers with it |
   | Offering ownership | "Ownership transfer not available." | "Space not found." |
   | Answering an ownership offer after leaving | "Ownership transfer not available." | "Ownership transfer not found." |
   | Revoking an invitation one knows, without owning the Space | "Space not found." | "Invitation not found." |
   | Approving or declining a join request one knows, without owning the Space | "Space not found." | "Join request not found." |
 
-  Approving a join request is also refused unless the Space is a group, so a request planted in the database cannot admit a couple partner.
+  Approving a join request is also refused unless the Space is a group, so a request planted in the database cannot admit a couple partner. A former member who uses the key of their own confirmed leave or removal keeps the earlier answers (the outcome, `409` for a changed review, `428` without one): they already know the Space, and `test_membership_departure_retries_return_only_an_attributed_minimal_receipt` protects that contract. The review asked for the missing-Space answer there too; that change made the existing test fail in the complete suite, so it was taken back ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)).
 - **Changed tests** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): four existing tests asserted that a couple Space could not be created: `test_creation_rejects_invalid_and_authority_fields` and `test_space_openapi_documents_authentication_and_private_projections` in `test_spaces.py`, one case in `test_space_directory.py`, and one in `tests/web-client.test.mjs`. DEC-017 changed that requirement, so each now checks that a couple is accepted while an unknown type and a public couple are refused.
 
 | Check (2026-10-01) | Result |
 | --- | --- |
 | Backend | `tests/test_couple_spaces.py` **8 passed**: privacy and the one-partner limit; a planted invitation; parallel invitations; parallel accepts of a real and a planted invitation (one joins, one gets `COUPLE_FULL`); the database rule against a third member and a type change; after a separation the new partner sees no earlier document, event or chat message and the former partner none; handing over and then leaving. `tests/test_space_privacy.py` **5 passed**: every signed-in operation that names a Space in its path, query or body (33), called with schema-valid values, as an outsider of a family, couple, solo and private group Space holding an invitation or a join request it really received, and as a former member holding an ownership offer made to them. With the two updated Space tests and the worker recovery test: **26 passed** (`.local/t42-after.txt`). |
 | The fixes are needed | Each committed method was put back on its own by a test-only plugin, with no source file changed (`backend/.local/t42_before_all.py`, `.local/t42-before-all-result.txt`). Old leave and remove: 5 privacy tests failed. Old invitation revoke: 3. Old ownership offer: 4. Old answer to an offer: 1. Old join request decision: 1. Nothing put back: 5 passed. |
-| Complete backend suite | Before the review fixes: **455 passed, 3 failed** in 2,933 s (`.local/full-backend-couples-20261001.xml`). Two were tests that still expected a couple to be refused, updated as described above. The third, `test_separate_worker_process_recovers_persisted_due_work_without_duplicate`, ran while an Android build and two other test runs loaded the machine; it passed on its own. |
+| Complete backend suite | Before the review fixes: **455 passed, 3 failed** in 2,933 s (`.local/full-backend-couples-20261001.xml`). Two were tests that still expected a couple to be refused, updated as described above. The third, `test_separate_worker_process_recovers_persisted_due_work_without_duplicate`, ran while an Android build and two other test runs loaded the machine; it passed on its own. After the review fixes: **464 passed, 2 failed** in 2,293 s (`.local/full-backend-t42-20261001.xml`): both were `test_membership_departure_retries_return_only_an_attributed_minimal_receipt` for leave, caught by the stricter former-member rule described above, which was then taken back. With that and the admin role (next checkpoint), every Space, privacy, couple, directory, migration and security test file: **160 passed** (`.local/roles-backend.txt`). |
 | Independent review | A blind review by a second model (Grok 4.7) against the stated rules found the four further differences in the table, the join request path, and the test gaps closed above: generic calls stopping at validation, random IDs where a person knows real ones, a family Space only, a Space ID in the query or body, and no handover, parallel-accept or event and chat checks for couples. |
 | Web | Type check passed. All client tests: **106 passed**. Live, against the local API at `0025`: all 8 Space journeys (`spaces:` two, `invitations:`, `members:`, `solo:`, `space settings:`, `groups:` and the new `couples:`) **passed** before the privacy fixes (`.local/spaces-live-20261001.txt`) and again after the API was restarted with them (`.local/spaces-live-t42-20261001.txt`). Screenshots: `.local/screenshots/couple-invite-live-desktop.png`, `couple-partner-live-320-200pct.png`. |
 | Offline web screens | **38 passed, 15 failed**, none of them about Spaces. The 15 fail on a header change another session made at 17:14 for T38: the shared header now reads `/api/notifications`, which the document screen tests do not expect, and imports a new CSS module that the account screen tests' builder cannot load. That work is in progress, and this session left it alone. |
@@ -982,7 +981,7 @@ Builds [T12](TASKS.md#approved-requirements-not-built-yet) (couple Spaces, R6) u
 Live since about 16:20: the development database is at `0025`; the shared API was restarted at 17:21 with the privacy fixes.
 
 **Boundary.**
-- **Device:** the 15 offline Space screen tests were not re-run on the emulator for the couple choice or the description field, and no device test covers either yet.
+- **Device:** no device test covers the couple choice or the description field yet. The Space screen tests were run on the emulator later, with the admin change (17 passed; [Space Admins Checkpoint](#space-admins-checkpoint)), but none of them opens either.
 - **Text size:** the 200% check sets the root font size, and most Spaces text is sized in pixels, so it shows nothing overflows rather than that the text grows; the shared text-size scale is still open (DEC-013).
 - **Not built:** roles beyond owner and member (P5, T13); partner-only privacy beyond the family rules; a database rule for "one waiting invitation", which the service enforces and which cannot admit a third person anyway.
 
@@ -1002,6 +1001,176 @@ Builds [T59](TASKS.md#defects-that-break-approved-requirements), audit finding W
 | Live journeys | `desktop:` (sign-up and the account's timezone), `reminders:` and `repeating reminders:` passed. `reminder requests:` failed once in that run, at 36.8 s, and passed when run again alone; the first failure's detail was not captured. |
 
 **Boundary.** The audit found this on the web (W12). On Android the timezone list loads with the rest of the screen, so a failure fails that whole refresh with its error message; it is not silent there, and this task leaves it as it is.
+## Home And Main Navigation Checkpoint
+
+[T38](TASKS.md#design-and-experience) on the web and on Android, under [DEC-014](DECISIONS.md#accepted-decisions), which the owner confirmed. Changed behaviour, named as [Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour) requires.
+
+### Web
+
+- **Five main sections on every signed-in page:** Home, Spaces, Messages, Discover and Profile, each with an icon and a visible label: a bar under the header, and from 1200 px wide a column at the side. The section you are in is marked. The header keeps search, the notification bell, which now shows the unread count, and Agent. The icon-only Home feed, Discover, Messages, Calendar and Medicines links left the header. The brand and the address `/` open Home.
+- **Home** (`/app`, new): Needs attention (Space invitations, join requests to the groups whose requests the Spaces screen lets you answer, that is groups you own or administer, reminder requests sent to you, reminders you have not acknowledged), Today (tasks due, reminders and events today in your timezone, from each Space's calendar, without cancelled ones), Your Spaces (with Owner, Admin or Member), and From pages you follow. Each section loads and fails on its own, with its own Retry and a View all link; Calendar and Medicines open from here. Home shows nothing that the screen behind View all does not.
+- **Discover:** the public feed, now headed Feed (it was Home), page and post search (Pages and posts, it was Discover) and Your pages share one navigation.
+- **Profile:** the account page's own navigation now leads to Blocked (it was in the community navigation) and Sign out. Its Spaces link went, because Spaces is a main section. The Blocked page shows the Profile navigation.
+- Not changed: every screen and address stays; `/app/home` is still the feed.
+
+### Android
+
+- **Bottom bar:** Home, Spaces, Messages, Discover and Profile, each with an icon and its name, under Home, the Spaces list, the conversation list, the community screens and the account screen. The section you are in is marked; choosing it again does nothing, except Discover, which goes back to the feed. The bar hides while one Space, a new Space or one chat is open, and cannot be used while the screen holds a change the service has not confirmed. Names shrink to stay on one line, so all five fit at 320 dp with 200% text.
+- **Home** (new): the web's four sections, each loading and failing on its own with its own Retry and View all. Needs attention shows up to 6 items and how many more there are; Today comes from each Space's calendar for today in your timezone, without cancelled or finished entries; Your Spaces shows 4 with your role; From pages you follow shows 3 posts. The header has search, the bell with the unread count, and refresh; Calendar and Medicines open from Home. The calendar, medicines, search, and a task, event or reminder opened from Home return to Home. Home loads again when you come back to it after at least 5 seconds.
+- **Profile** (the account screen): its buttons for Spaces, the calendar, messages, community, medicines and search went, because the bar and Home open them. It keeps the agent, and the reminder inbox and tasks in its header, and gains Blocked.
+- **Discover:** the community chips are Feed (it was Home), Pages and posts (it was Discover) and Your pages. Blocked moved to Profile and shows no chips.
+- **Words:** the calendar and search say "Back to Home"; tasks say "Back", because they return to wherever they were opened. The Hindi and Telugu texts changed with them, and the two counts on Home are plurals in all three languages.
+- Not changed: back from Home, Spaces, Messages and Discover still returns to Profile.
+
+On both, every screen stays reachable, and sign-in still opens Profile. DEC-014 does not say which section opens after sign-in; opening Home would change the sign-in step of every live journey, so it is asked as [Q21](PRODUCT_UNDERSTANDING.md#39-open-questions).
+
+Tests changed, with the reason ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)), all following DEC-014: the web agent and documents offline fixtures now answer the inbox count that every signed-in header asks for (they reject unknown requests); the live web calendar journey opens the calendar from Home instead of the header; the live Android account journeys (`AccountJourneyTest`) open Spaces from the bar instead of the account screen's Spaces button, in 9 places, and search from Home; the token guard lists the two new Android files, so its test counts 8 screens.
+
+#### Web results
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| New offline tests | `tests/unit/home-ui.test.mjs`: **2 passed**. Each section shows its own source; a failing source shows its own message and Retry while the others stay, and Retry asks only that source again; cancelled entries stay out of Today; the five sections show with Home marked; the bell names the unread count; Home fits at 320 px, also with 200% text, and each main section link is at least 44 px tall. Four deliberate breakages (cancelled entries kept, the bell's count lost, a failed section silent, Home not marked) each made them fail (`.local/t38/mutations.mjs`). |
+| All offline screen tests | Every file in `tests/unit`: **59 passed** (`.local/t38-unit-all-2.txt`). |
+| Live journeys | All 28 journeys in `identity.test.mjs`, `scheduling.test.mjs` and `alerts.test.mjs` against http://127.0.0.1:3000 (17:38 to 17:56, `.local/t38/live-all.txt`): **27 passed**, including `calendar:`, which now opens the calendar from Home, `agent:` through the header's Agent link, and the Spaces, invitations, members, community, messages, events, care, documents and groups journeys with the new navigation on every page; most of them check that their screens fit at 320, 390 and 768 px. The 1 failure is `roles:`, a journey for Space admins that the completion session was building at the time (T13): it waited for "Alex Morgan is now an admin.", a message that was not yet in the web code. |
+| Live Home | `.local/t38/probe-home.mjs` with a new synthetic account: Home showed the task due today, a reminder and an event later that day, "Nothing needs your attention.", the Space and the empty pages section. No sideways scrolling at 1440, 390 and 320 px or at 320 px with 200% text, no page errors, and the right section marked on Home, Spaces, Discover, Feed, Profile, Blocked and Calendar. Screenshots in `.local/t38/probe/`. |
+| Token and type checks | `npm run test:tokens` **9 passed** and `npm run check:tokens` passes with `platform/home.module.css` on the token list; `npm --prefix web run typecheck` passes. |
+
+Boundary: Home asks each Space's calendar for today, one request per Space (at most 50), and shows up to 6 items needing attention with a count of the rest. Its sections do not refresh by themselves. The 200% text checks double the root and body text; text sized in px keeps its size.
+
+After those results, Home's join requests changed from "public groups you own" to every group you own or administer, as on the Spaces screen, and the role shows Owner, Admin or Member; the type check passes. The two `home-ui.test.mjs` tests then pass every Home check but fail their last one, which refuses any request the fixture does not expect: since 19:52 the header also opens the live updates connection (`GET /api/live`) that the gaps session is adding for T65, and the fixture does not answer it yet.
+
+#### Android results
+
+Built and tested on a copy of the shared Android tree (`.local/t38/android-copy`), because other sessions build that tree all the time.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| New JVM tests | `HomeTest`: **9 passed**. Each section loads, fails and retries on its own; only pending invitations not yet expired, pending reminder requests and unacknowledged reminders need attention; join requests only for groups the person owns or administers; Today in the account's timezone, in calendar order, retried per Space; a lost sign-in stops every section; an answer arriving after an account switch is dropped; Home reloads on return only after 5 seconds; and the bar's section for each screen. |
+| All JVM tests | Every class on the final code (`.local/t38/gates-6-summary.txt`): **338 tests, 337 passed**, 24 classes. The 1 failure is `MessagingLiveTest` (1 of 6), part of the live updates the gaps session is building for T65 at the same time; T38 changed no messaging code. The first full run, before other sessions added 4 classes and 39 tests, passed 299 of 299 in 20 classes. |
+| Lint and builds | Lint **0 errors**, 12 warnings, all of kinds that were there before (outdated dependencies and target, the app icon, one older plural); the debug app and test app build (`.local/t38/gates-5.txt`). |
+| Token checks | `npm run test:tokens` **9 passed** with the two new screens on the list; `npm run check:tokens` passes. |
+
+## Lock Wait Proofs Checkpoint
+
+Builds [T60](TASKS.md#defects-that-break-approved-requirements), from section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence): "A lock test treats one second of waiting as proof that requests were serialised."
+
+- **The weakness:** two backend tests took "the second request had not finished after one second" as proof that it waited for a lock: `test_direct_send_cannot_commit_after_the_other_person_leaves` (leaving a Space must wait for a direct message being sent, T03) and `test_the_last_note_slot_goes_to_one_approval_only` (a second agent approval must wait for the first). On a busy machine a request can take longer than a second without waiting for anything, so both tests could pass even if the lock were gone.
+- **The fix:** a helper beside `expire_while_waiting` in `backend/tests/test_messaging.py`, `wait_until_blocked(app, pending)`.
+  - It reads PostgreSQL's lock table until a request is waiting for a lock that another request of the same test run holds. A request belongs to the run if it holds locks on that run's own schema, so other sessions' test runs never count.
+  - It fails at once with the response if the request finishes without waiting, and after 30 seconds if no wait appears.
+  - Both tests now use it, and the rest of each test is unchanged.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| The old test could pass falsely | The backend code was copied inside the one-off test container, so the shared files were not changed. In the copy, the send's shared lock on the Space was removed and leaving was made to take 1.5 seconds, as on a busy machine. The old test **passed**. The new test **failed**: "The request finished without waiting for a lock", showing the leave's answer. |
+| The new tests on the real code | Both **passed**. All of `test_messaging.py` and `test_agents.py`: **33 passed**. |
+## Care Screen Offline Tests Checkpoint
+
+Builds [T63](TASKS.md#defects-that-break-approved-requirements), from section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence): "The web has no offline tests for Spaces, care or repeating reminders." Written by a background agent on GPT-6.1 Sol, then checked by the audit session. The Spaces screens wait for T13, which is changing them.
+
+- **New file:** `tests/unit/care-ui.test.mjs`, 13 tests in the same form as the other offline screen tests: the screen runs in Chromium with simulated answers, every network request is refused, and none is attempted. The simulated service checks request keys and versions as the API does.
+  - **Covered:**
+    - the day plan and date navigation;
+    - creating a medicine only after confirmation, with a lost answer retried with the same key and body;
+    - a refused creation that adds nothing;
+    - stopping after confirmation with the version shown, and a stale stop refused until the current instruction is reviewed;
+    - a lost stop retried with the same key and version;
+    - dose notes sent with the version shown, a lost note retried once, and a refused note leaving the last confirmed one;
+    - dose alerts changing only after confirmation;
+    - denied reads removing what was shown, and a denied account reading no care data;
+    - every view fitting 320 px at 200% text.
+- **Defect found and fixed:** a valid long medicine name made the "Stop tracking" confirmation 1,970 px wide on a 320 px screen at 200% text, so the buttons were off screen. Its paragraph now uses the stylesheet's existing wrapping class (`styles.description` in `web/src/features/care/care-screen.tsx`). Nothing else changed.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Offline care tests | **13 passed**. All of `tests/unit`: **72 passed**, 0 failed, 0 skipped. The web type check passes. |
+| The tests can fail | Each check rebuilt the screen inside a throwaway copy of the test file, so the shared source was not changed. With the wrapping class removed, the layout test failed: the page measured 1,970 px wide at 320 px. A new key on the create retry failed the key assertion, and a wrong version on a dose note failed the `If-Match` assertion. |
+| Live journey | `care:` against the real preview, API and PostgreSQL. The first run stopped at its 180 s limit while the complete backend suite and an Android build ran on the same machine. The second run **passed** in 138 s, with Playwright's action log on. |
+## Android Report, Block And Care Failure Tests Checkpoint
+
+Builds [T61 and T62](TASKS.md#defects-that-break-approved-requirements), items 7 and 6 of the missing tests in section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence). Written by a background agent on Claude Opus 5.5, then reviewed by the audit session.
+
+- **T61, report, block and unblock (R12): 7 new tests** in `CommunityTest.kt`. A stateful simulated server records each call and its session, can answer with an error, can apply a command and lose its answer, or can answer about the wrong item, and it alone decides what a block hides. The tests cover:
+  - real Retrofit requests, with the exact path, body and session and no other headers;
+  - no success notice while a request is in flight, and one only after the server confirms;
+  - after a block or unblock, the screen reloads what the server now shows;
+  - answers about another item are refused;
+  - a failed report or block about another item keeps the page or post shown.
+- **Defect found and fixed:** any "not found" (404) answer to a community command made the shown page or post look deleted ("This page does not exist or is no longer public."), even when the answer was about something else. For example, unblocking a block already removed on another device hid a page that exists.
+  - **The fix** is in `CommunityViewModel.kt`. Report, block and unblock name the item they act on, and a 404 marks the shown page or post as gone only when the command was about it. Loading and the other commands behave as before.
+  - **Before and after:** before, all six cases in the new test marked the page or post gone, including the four where it still exists; after, only the two real ones do.
+  - **One trade-off:** when blocking a comment's author answers 404 because the post itself was deleted, the post stays shown with "Post not found." instead of the deleted view.
+- **T62, care failures (R9): 4 new tests** in `CareTest.kt`. Care has three commands: create, stop and noting a dose. Each already had a test for a server error. The new tests add, for each, a lost answer after the server applied the command, plus a refusal for stop. They check that nothing shows as saved, stopped or noted, and that a retry sends the same key and body. No defect was found.
+- **Where the runs happened:** the shared tree twice failed to compile because of the navigation work in progress (T38: `MainNavigation.kt`, then `MainActivity.kt`). So the runs after the fix and the checks below used an isolated copy of `android/`. The first runs, the defect evidence and the full suite used the shared tree.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Before the fix | `CommunityTest` 23 tests, **1 failed**: the new test for 404 answers about another item. `CareTest` 14 passed. |
+| After the fix | `CommunityTest` **23 passed** (16 before this task), `CareTest` **14 passed** (10 before). All Android JVM tests: **299 passed** in 20 classes, 0 failed, 0 skipped. |
+| The tests can fail | Each check broke one behaviour in the isolated copy: a success notice shown before the call (5 new tests failed), the stop notice shown before the answer (2 failed), no reload after block or unblock (3 failed), and a lost create answer releasing its key (the create test failed). Every existing test stayed green. |
+
+**Found, not fixed here, and now tasks:**
+- [T74](TASKS.md#defects-that-break-approved-requirements): the same 404 flaw in liking or saving a listed post, ending a comment, and publishing, deleting or editing a listed draft.
+- [T75](TASKS.md#defects-that-break-approved-requirements): report details are cut at 1,000 UTF-16 units while the server counts 1,000 characters, so text full of emoji is cut at about 500 characters, and the cut can split an emoji.
+- [T76](TASKS.md#defects-that-break-approved-requirements): Android tests never send resume or cancel for a repeating reminder. Repeating reminder commands and snooze have no tests for a lost answer or a refusal.
+- **Not a task:** answers to report and block are not checked for their own id, label or time. Nothing misbehaves because of it today.
+## Space Admins Checkpoint
+
+Builds the admin role of [T13](TASKS.md#approved-requirements-not-built-yet) (R2) and step 4 of the [end-to-end plan](TASKS.md#end-to-end-plan) under [DEC-018](DECISIONS.md#accepted-decisions), decided provisionally under the owner's delegation ([DEC-016](DECISIONS.md#accepted-decisions)), following the Space contract's proposal C3-D03.
+
+- **Roles:** one owner, any number of admins, and members. In family and group Spaces the owner makes a member an admin, or an admin a member again, after a confirmation naming the Space, the person and what changes; it carries the reviewed membership version and a request key, so a lost answer can be retried exactly once. Solo and couple Spaces have no admins (`409 ROLE_NOT_AVAILABLE`).
+- **What admins do:** invite people (always as members) and withdraw invitations; remove ordinary members; see and answer requests to join a group. **What they cannot do:** change roles, remove the owner or another admin (`409 OWNER_ONLY`), open the Space's settings or visibility, or offer ownership. An invitation admits someone only while its sender is still the owner or an admin, and it leaves the inbox when they are not. Ownership can be handed to an admin; the old owner becomes a member. Rights over tasks, events and documents are unchanged: an admin has a member's.
+- **API and data:** `POST /v1/spaces/{space_id}/members/{account_id}/role` with `{"role": "admin" or "member"}`, `Idempotency-Key` and `If-Match`; audit and outbox `space.member_made_admin` and `space.admin_made_member`. Migration `0026` widens the role rule and the membership-command rule; its downgrade refuses while admins or role changes exist.
+- **Screens:** web members dialog with role labels, "Make admin" and "Make member", and a removal button for admins only on ordinary members; invitations and join requests open for admins; the group finder says "You are an admin". Android: the same, and an admin's Group access lists only the waiting requests, without the owner-only visibility switch.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | `tests/test_space_roles.py` **5 passed**: the owner's reviewed, retried and refused role changes, with their audit; what an admin can and cannot do, including invitations, join requests, removing members and admins, settings and ownership offers; an invitation that lapses when its sender stops being an admin; no roles in couples; ownership handed to an admin. Every Space, privacy, couple, directory, migration and security test file: **160 passed** (`.local/roles-backend.txt`); the privacy sweep now covers 34 operations, including the new one. |
+| Web | Type check passed. All client tests: **127 passed**, including 5 new in `tests/spaces-roles-client.test.mjs` (schemas, the exact request and response checks, and the proxy allowing only `POST` with the review headers). Live, against the API at `0026`: the new `roles:` journey **passed**: the owner makes an admin, the admin invites a newcomer who joins, removes an ordinary member, sees no removal for the owner and no role buttons, and the owner makes them a member again; nothing overflows at 320 px or with 200% text. Screenshots: `.local/screenshots/roles-make-admin-live-desktop.png`, `roles-members-live-320-200pct.png`. In the same run 6 more Space journeys passed (`.local/spaces-live-roles-20261001.txt`); `solo:` timed out loading the sign-up page and passed on a rerun; `space settings:` ran past its 120-second limit twice while another session's two Gradle builds kept the processor at 100%, then **passed** at 19:59 in 110 seconds with the processor still near 97% (`.local/space-settings-rerun-20261001.txt`). In that last run the test file itself was reported cancelled after the journey passed ("Promise resolution is still pending but the event loop has already resolved"), in the hook that closes the browser; the cause is unknown and the journey's own result is a pass. |
+| Android | `SpaceRepositoryTest` **30**, `SpaceViewModelTest` **32**, `GroupRepositoryTest` **10** and `SpaceSettingsTest` **13 passed** (22 new role tests). Debug app and test app built; lint 0 errors. Lint warnings rose from 11 to 129 because another session added Hindi and Telugu string files at 18:24 that do not yet translate every string (115 warnings). On the API 36 emulator (`emulator-5582`, read-only, networking off, 320 dp): all **17** Space screen tests **passed** (`.local/ownership-native-offline-5582.txt`), the 15 earlier ones plus 2 new: `roleActionsFollowTheViewersRoleAndConfirmOnlyTheReviewedMember` (the owner sees Make admin and Make member only on other people, and confirming sends only the reviewed member and version; an admin sees no role actions, no removal for the owner or another admin, removal for members, and Leave) and `roleReviewKeepsExactDetailsAndActionsAtLargeText` (measured font scale 2.0; the account ID and what changes can be scrolled to; both actions stay visible; `.local/screenshots/role-review-native-large-text.png` checked). The VS Code task now expects 17 and, as the newer device scripts already do, sets the `mobile_data` setting to 0, because on this image `svc data disable` left it at 1 and stopped the first attempt before installation. Every Android JVM test class at 20:28: **338 tests, 337 passed**; the failure is `MessagingLiveTest.pollsEveryThirtySecondsWhileConnectedAndEveryFiveSecondsOtherwise`, a new test of another session's live updates work in progress (T65); all 85 Space tests passed. |
+| Contract | [OpenAPI](../packages/openapi/openapi.json) regenerated: 161 operations on 134 paths, adding the role change and, from another session's work in progress, `GET /v1/live`. |
+
+Live since about 19:20: the development database is at `0026` and the shared API was restarted.
+
+**Boundary.**
+- **Not decided or built:** per-Space permission settings, such as letting every member invite; moderator, guest and observer roles; admins with rights over content.
+- **Device:** the role controls and the role confirmation were run on the emulator offline, with simulated answers; no live Android journey changes a role against the API.
+
+## Android Not-Found Answers And Report Length Checkpoint
+
+Builds [T74 and T75](TASKS.md#defects-that-break-approved-requirements), which [T61](#android-report-block-and-care-failure-tests-checkpoint) found. Written by the same background agent on Claude Opus 5.5, then reviewed by the audit session.
+
+- **T74, other commands (R4).** Liking or saving a post listed on a page, ending a comment, and publishing, editing or deleting a listed draft now say which item they act on, as report and block do since T61. A 404 marks the shown page or post as gone only when the command was about it.
+  - **The new test:** `aFailedCommandAboutAListedPostDraftOrCommentKeepsThePageOrPostShown` has nine 404 cases. In six, the command is about something inside the shown page or post. In three, it is about the shown post itself (like, edit, delete), which must still show as gone.
+  - **Before the fix:** all nine marked the page or post as gone.
+  - **Not changed:** creating a comment or reply (the server answers a reply to a removed comment with 409, not 404), and following a page, which is always about the shown page.
+  - **Still possible:** a 404 for ending a comment or acting on a listed post can also mean the whole page or post is gone. The screen then shows the error and keeps the content until the next reload.
+- **T75, report details (R12).** A new helper, `takeCodePoints`, keeps at most 1,000 characters counted as the server counts them (code points) and never splits a character made of two UTF-16 units. The view model trims the details and then applies it, and the report dialog's input limit uses it too (one line in `CommunityScreen.kt`, away from the navigation change T38 made there).
+  - **Before:** 1,000 emoji were sent as 500 characters, and a letter followed by 1,000 emoji was cut to 501 characters, ending in half an emoji. Plain text was already right.
+  - **Still possible:** emoji made of several code points, such as flags and family emoji, can still be cut into parts at the limit, because the server counts code points too.
+  - **The same flaw elsewhere:** a page description is checked in UTF-16 units (`description.trim().length > 500`), so emoji-heavy descriptions are refused early. [T73](TASKS.md#approved-requirements-not-built-yet), which adds page editing with the same checks, fixes it.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Before the fix (shared tree) | `CommunityTest` 25 tests, **2 failed**: the two new tests. |
+| After the fix | `CommunityTest` **26 passed**. A third test, of the dialog's limit helper, was added with the fix, because the helper did not exist before. This run used an isolated copy: the shared tree briefly did not compile, because the generated `MessagingViewModel_Factory` did not match another session's messaging changes. All Android JVM tests, in the shared tree: **323 passed** in 21 classes, 0 failed, 0 skipped. |
+| The tests can fail | Each check broke one behaviour in the isolated copy, and exactly the expected tests failed. Without the subject on `save`, the listed-post save case failed. Ignoring which item a 404 is about on a post failed the three shown-post cases and T61's report case. A helper cutting UTF-16 units again failed both T75 tests. |
+## Android Repeating Reminder And Snooze Tests Checkpoint
+
+Builds [T76](TASKS.md#defects-that-break-approved-requirements), item 8 of the missing tests in section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence), whose remaining gaps T61 listed. Written by a background agent on GPT-6 Astra, then reviewed by the audit session.
+
+- **13 new tests (R9).**
+  - **Controls** (`ReminderViewModelTest`): resuming a paused repeating reminder, cancelling an active or paused one, and skipping the next time, each only after confirmation; resume and skip report when the reminder has already ended. Before this, no test sent resume or cancel, and skip was tested only in the repository.
+  - **Lost answers and refusals** (`ReminderViewModelTest`): for every repeating reminder command and for snooze, the simulated server applies the command and then loses the answer, or refuses it (409, or 412 for a stale version). The shown reminder does not change, no success notice appears, and a retry sends the same key, body and version. A refusal is not retried blindly. Three existing tests for a server error now also check that no notice appears.
+  - **Exact requests** (`ReminderRepositoryTest`): real Retrofit requests for creating a repeating reminder (only the reviewed token and the key), snoozing (only the offered minutes and the key), and resume, skip and cancel (the reviewed version and the key).
+- **No defect found.** Only the two scheduling test files changed. Lines were removed only where the simulated server was rewritten (a cancelled reminder now has no pause reason, as the schema requires), and in the clean-up, which now waits for held answers and cancelled work, because a deliberately failed test had left them running.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Test classes | `ReminderRepositoryTest` **26 passed** (23 before), `ReminderViewModelTest` **29 passed** (19 before). |
+| The tests can fail | In an isolated copy, a new key on retry failed the original-command check, and a snooze notice shown before the answer failed the no-notice check. |
+| All Android JVM tests | **312 passed**, 0 failed, 0 skipped, in an isolated copy of `android/` taken at 19:39 with these tests added (it predates T74 and T75, whose run had 323). |
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

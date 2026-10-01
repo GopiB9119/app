@@ -33,6 +33,7 @@ data class GroupState(
     val requiresSignIn: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
+    val managedSpace: SpaceDto? = null,
 ) {
     val managing: Boolean get() = managedSpaceId != null
     val locked: Boolean get() = busy || pendingAsk != null || pendingVisibility != null
@@ -72,6 +73,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
                     val definite = error.status in 400..499 && error.status != 408
                     when {
                         error.status == 401 || error.code == "ACCOUNT_CHANGED" -> GroupState(accountId = it.accountId, requiresSignIn = true, error = error.message)
+                        error.status in setOf(403, 404) && it.managing -> it.copy(managedSpace = null, settings = null, reviews = emptyList(), pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message)
                         // A refused command is final; only an unconfirmed one keeps its key for an exact retry.
                         definite -> it.copy(pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message)
                         else -> it.copy(error = error.message)
@@ -90,15 +92,21 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
         action { accountId, expected ->
             val managed = current.managedSpaceId
             if (managed != null) {
-                val settings = repository.settings(accountId, managed)
-                val reviews = repository.pending(accountId, managed)
-                update(expected) { it.copy(settings = settings, reviews = reviews) }
+                loadAccess(accountId, managed, expected)
             } else {
                 val page = repository.find(accountId, current.searched)
                 val requests = repository.mine(accountId)
                 update(expected) { it.copy(groups = page.items, cursor = page.nextCursor, requests = requests) }
             }
         }
+    }
+
+    private suspend fun loadAccess(accountId: String, spaceId: String, expected: Long) {
+        val space = repository.access(accountId, spaceId)
+        update(expected) { it.copy(managedSpace = space, settings = null, reviews = emptyList(), confirmingVisibility = false) }
+        val settings = if (space.role == "owner") repository.settings(accountId, spaceId) else null
+        val reviews = repository.pending(accountId, spaceId)
+        update(expected) { it.copy(settings = settings, reviews = reviews) }
     }
 
     fun query(value: String) { if (!mutableState.value.locked) mutableState.update { it.copy(query = value.take(80)) } }
@@ -149,7 +157,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
             val request = repository.ask(intent)
             val requests = repository.mine(account)
             val page = repository.find(account, mutableState.value.searched)
-            update(expected) { it.copy(pendingAsk = null, asking = null, note = "", requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request sent to ${request.spaceName}. The owner will review it.") }
+            update(expected) { it.copy(pendingAsk = null, asking = null, note = "", requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request sent to ${request.spaceName}. The owner or an admin will review it.") }
         }
     }
 
@@ -166,18 +174,17 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
     fun decide(review: JoinReviewDto, approve: Boolean) {
         val current = mutableState.value
         val spaceId = current.managedSpaceId ?: return
-        if (current.locked || current.reviews.none { it.id == review.id }) return
+        if (current.locked || current.managedSpace?.role !in setOf("owner", "admin") || current.reviews.none { it.id == review.id }) return
         action { accountId, expected ->
             repository.decide(accountId, spaceId, review, approve)
-            val reviews = repository.pending(accountId, spaceId)
-            val settings = repository.settings(accountId, spaceId)
-            update(expected) { it.copy(reviews = reviews, settings = settings, notice = if (approve) "${review.displayName} joined the group." else "You declined ${review.displayName}. They can ask again in 7 days.") }
+            loadAccess(accountId, spaceId, expected)
+            update(expected) { it.copy(notice = if (approve) "${review.displayName} joined the group." else "You declined ${review.displayName}. They can ask again in 7 days.") }
         }
     }
 
     fun proposeVisibility() {
         val current = mutableState.value
-        if (!current.locked && current.settings != null) mutableState.update { it.copy(confirmingVisibility = true, error = null, notice = null) }
+        if (!current.locked && current.managedSpace?.role == "owner" && current.settings != null) mutableState.update { it.copy(confirmingVisibility = true, error = null, notice = null) }
     }
 
     fun keepVisibility() { if (!mutableState.value.locked) mutableState.update { it.copy(confirmingVisibility = false) } }
@@ -186,7 +193,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
         val current = mutableState.value
         val accountId = current.accountId ?: return
         val settings = current.settings ?: return
-        if (current.busy || !current.confirmingVisibility) return
+        if (current.busy || !current.confirmingVisibility || current.managedSpace?.role != "owner") return
         val intent = current.pendingVisibility ?: VisibilityIntent(accountId, settings.id, if (settings.visibility == "public") "private" else "public", settings.etag, UUID.randomUUID().toString())
         mutableState.update { it.copy(pendingVisibility = intent) }
         action { account, expected ->

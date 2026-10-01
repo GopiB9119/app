@@ -40,6 +40,10 @@ class PublicPage(Base):
     creation_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    moderation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("moderation_decisions.id", name="fk_public_pages_moderation_decision"),
+    )
 
 
 class PageFollow(Base):
@@ -82,6 +86,10 @@ class PublicPost(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("moderation_decisions.id", name="fk_public_posts_moderation_decision"),
+    )
 
 
 class PostComment(Base):
@@ -110,6 +118,10 @@ class PostComment(Base):
     creation_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("moderation_decisions.id", name="fk_public_post_comments_moderation_decision"),
+    )
 
 
 class PostReaction(Base):
@@ -153,6 +165,9 @@ class ContentReport(Base):
     details: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("moderation_decisions.id", name="fk_content_report_decision"),
+    )
 
 
 class AccountBlock(Base):

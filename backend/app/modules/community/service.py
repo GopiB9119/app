@@ -22,6 +22,7 @@ from app.modules.community.schemas import (
     BlockView,
     CommentView,
     CommunityCursor,
+    ModerationMark,
     PageView,
     PostOutcome,
     PostView,
@@ -132,6 +133,35 @@ class CommunityService:
         rows = database.execute(statement.order_by(time_column.desc(), id_column.desc()).limit(limit + 1)).all()
         return rows[:limit], len(rows) > limit
 
+    @staticmethod
+    def moderation_visible(model, viewer):
+        public = model.moderation_hidden_at.is_(None)
+        if viewer is None:
+            return public
+        author = model.owner_id if model is PublicPage else model.author_id
+        owners = [author == viewer.id]
+        if model is PublicPost:
+            owners.append(PublicPage.owner_id == viewer.id)
+        return or_(public, *owners)
+
+    @staticmethod
+    def can_view_moderated(target, viewer, page=None):
+        if target.moderation_hidden_at is None:
+            return True
+        if viewer is None:
+            return False
+        author_id = target.owner_id if isinstance(target, PublicPage) else target.author_id
+        return author_id == viewer.id or (isinstance(target, PublicPost) and page is not None and page.owner_id == viewer.id)
+
+    @staticmethod
+    def moderation_mark(database, target, viewer, page=None):
+        from app.modules.safety.models import ModerationDecision
+
+        if target.moderation_hidden_at is None or not CommunityService.can_view_moderated(target, viewer, page):
+            return None
+        decision = database.get(ModerationDecision, target.moderation_decision_id)
+        return ModerationMark(reason=decision.reason)
+
     def page_view(self, database, page, viewer, following=None, blocked=None):
         manager = viewer is not None and page.owner_id == viewer.id
         if viewer is not None and following is None:
@@ -143,6 +173,7 @@ class CommunityService:
             follower_count=page.follower_count, created_at=page.created_at, updated_at=page.updated_at,
             following=bool(following), blocked=bool(blocked), can_manage=manager,
             etag=self.page_etag(page) if manager else None,
+            moderation=self.moderation_mark(database, page, viewer),
         )
 
     def page_views(self, database, pages, viewer):
@@ -159,28 +190,34 @@ class CommunityService:
         if viewer is not None and ids:
             liked = set(database.scalars(select(PostReaction.post_id).where(PostReaction.account_id == viewer.id, PostReaction.post_id.in_(ids))))
             saved = set(database.scalars(select(SavedPost.post_id).where(SavedPost.account_id == viewer.id, SavedPost.post_id.in_(ids))))
+        hidden_counts = dict(database.execute(select(PostComment.post_id, func.count()).where(
+            PostComment.post_id.in_(ids), PostComment.status == "visible", PostComment.moderation_hidden_at.is_not(None),
+            *([PostComment.author_id != viewer.id] if viewer is not None else []),
+        ).group_by(PostComment.post_id)).all()) if ids else {}
         views = []
         for post, page in rows:
             manager = viewer is not None and page.owner_id == viewer.id
             views.append(PostView(
                 id=post.id, page_id=page.id, page_handle=page.handle, page_name=page.name, title=post.title,
-                body=post.body, status=post.status, like_count=post.like_count, comment_count=post.comment_count,
+                body=post.body, status=post.status, like_count=post.like_count,
+                comment_count=post.comment_count - hidden_counts.get(post.id, 0),
                 created_at=post.created_at, published_at=post.published_at, edited_at=post.edited_at,
                 liked=post.id in liked, saved=post.id in saved, can_manage=manager,
                 etag=self.post_etag(post) if manager else None,
+                moderation=self.moderation_mark(database, post, viewer, page),
             ))
         return views
 
-    def find_page(self, database, reference, lock=False):
+    def find_page(self, database, reference, lock=False, viewer=None):
         column = PublicPage.id if is_uuid(reference) else PublicPage.handle
         statement = select(PublicPage).where(column == reference.lower()).execution_options(populate_existing=True)
         page = database.scalar(statement.with_for_update() if lock else statement)
-        if page is None or page.status != "active":
+        if page is None or page.status != "active" or not self.can_view_moderated(page, viewer):
             raise not_found("Page")
         return page
 
     def managed_page(self, database, user, page_id):
-        page = self.find_page(database, page_id, lock=True)
+        page = self.find_page(database, page_id, lock=True, viewer=user)
         if page.owner_id != user.id:
             raise DomainError(403, "PAGE_MANAGER_REQUIRED", "Only the page owner can do this.")
         return page
@@ -195,6 +232,7 @@ class CommunityService:
         post, page = row
         manager = viewer is not None and page.owner_id == viewer.id
         hidden = page.status != "active" or post.status == "deleted" or (post.status == "draft" and not (drafts and manager))
+        hidden = hidden or not self.can_view_moderated(page, viewer) or not self.can_view_moderated(post, viewer, page)
         if hidden or (not manager and page.id in self.blocked(database, viewer, "page")):
             raise not_found("Post")
         return post, page
@@ -233,7 +271,7 @@ class CommunityService:
     def read_page(self, token, reference):
         with self.sessions() as database:
             viewer = self.viewer(database, token)
-            return self.page_view(database, self.find_page(database, reference), viewer)
+            return self.page_view(database, self.find_page(database, reference, viewer=viewer), viewer)
 
     def my_pages(self, token):
         with self.sessions() as database:
@@ -262,7 +300,7 @@ class CommunityService:
 
     def follow(self, token, page_id, following):
         with self.identity.signed_in_write(token) as (database, user):
-            page = self.find_page(database, page_id, lock=True)
+            page = self.find_page(database, page_id, lock=True, viewer=user)
             existing = database.get(PageFollow, (page.id, user.id))
             if following and existing is None:
                 if page.id in self.blocked(database, user, "page"):
@@ -282,7 +320,7 @@ class CommunityService:
         with self.sessions() as database:
             user, _session = self.identity.authenticate(database, token)
             statement = select(PublicPage, PageFollow.created_at).join(PageFollow, PageFollow.page_id == PublicPage.id).where(
-                PageFollow.account_id == user.id, PublicPage.status == "active",
+                PageFollow.account_id == user.id, PublicPage.status == "active", self.moderation_visible(PublicPage, user),
             )
             rows, more = self.newest_first(database, statement, PageFollow.created_at, PublicPage.id, limit, cursor, "following", user, "")
             next_cursor = self.seal_cursor("following", user, "", rows[-1][0].id, after_time=rows[-1][1]) if more else None
@@ -395,11 +433,12 @@ class CommunityService:
     def page_posts(self, token, reference, limit, cursor):
         with self.sessions() as database:
             viewer = self.viewer(database, token)
-            page = self.find_page(database, reference)
+            page = self.find_page(database, reference, viewer=viewer)
             if page.owner_id != (viewer.id if viewer else None) and page.id in self.blocked(database, viewer, "page"):
                 return [], Pagination(next_cursor=None, has_more=False)
             statement = select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id).where(
                 PublicPost.page_id == page.id, PublicPost.status == "published",
+                self.moderation_visible(PublicPost, viewer),
             )
             rows, more = self.newest_first(database, statement, PublicPost.published_at, PublicPost.id, limit, cursor, "page_posts", viewer, page.id)
             next_cursor = self.seal_cursor("page_posts", viewer, page.id, rows[-1][0].id, after_time=rows[-1][0].published_at) if more else None
@@ -408,7 +447,7 @@ class CommunityService:
     def drafts(self, token, page_id):
         with self.sessions() as database:
             user, _session = self.identity.authenticate(database, token)
-            page = self.find_page(database, page_id)
+            page = self.find_page(database, page_id, viewer=user)
             if page.owner_id != user.id:
                 raise DomainError(403, "PAGE_MANAGER_REQUIRED", "Only the page owner can see drafts.")
             posts = database.scalars(select(PublicPost).where(PublicPost.page_id == page.id, PublicPost.status == "draft")
@@ -421,6 +460,7 @@ class CommunityService:
             viewer = self.identity.authenticate(database, token)[0] if followed_only else self.viewer(database, token)
             statement = select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id).where(
                 PublicPost.status == "published", PublicPage.status == "active",
+                self.moderation_visible(PublicPage, viewer), self.moderation_visible(PublicPost, viewer),
             )
             if followed_only:
                 statement = statement.join(PageFollow, and_(PageFollow.page_id == PublicPage.id, PageFollow.account_id == viewer.id))
@@ -440,7 +480,7 @@ class CommunityService:
         query = " ".join((query or "").split())
         with self.sessions() as database:
             viewer = self.viewer(database, token)
-            statement = select(PublicPage).where(PublicPage.status == "active")
+            statement = select(PublicPage).where(PublicPage.status == "active", self.moderation_visible(PublicPage, viewer))
             if query:
                 pattern = contains(query)
                 statement = statement.where(or_(
@@ -501,7 +541,8 @@ class CommunityService:
             user, _session = self.identity.authenticate(database, token)
             statement = select(PublicPost, PublicPage, SavedPost.created_at).join(PublicPage, PublicPage.id == PublicPost.page_id).join(
                 SavedPost, and_(SavedPost.post_id == PublicPost.id, SavedPost.account_id == user.id),
-            ).where(PublicPost.status == "published", PublicPage.status == "active")
+            ).where(PublicPost.status == "published", PublicPage.status == "active",
+                    self.moderation_visible(PublicPage, user), self.moderation_visible(PublicPost, user))
             blocked = self.blocked(database, user, "page")
             if blocked:
                 statement = statement.where(PublicPage.id.notin_(blocked))
@@ -511,13 +552,19 @@ class CommunityService:
 
     # Comments
 
-    def comment_view(self, comment, author, viewer, page):
+    def comment_view(self, database, comment, author, viewer, page):
         mine = viewer is not None and comment.author_id == viewer.id
         manager = viewer is not None and page.owner_id == viewer.id
+        parent_id = comment.parent_id
+        if parent_id is not None:
+            parent = database.get(PostComment, parent_id)
+            if parent is not None and not self.can_view_moderated(parent, viewer):
+                parent_id = None
         return CommentView(
-            id=comment.id, post_id=comment.post_id, parent_id=comment.parent_id, author_name=author.display_name,
+            id=comment.id, post_id=comment.post_id, parent_id=parent_id, author_name=author.display_name,
             body=comment.body, status=comment.status, created_at=comment.created_at, mine=mine,
             can_remove=comment.status == "visible" and (mine or manager),
+            moderation=self.moderation_mark(database, comment, viewer),
         )
 
     def comments(self, token, post_id, limit, cursor):
@@ -526,7 +573,9 @@ class CommunityService:
             post, page = self.visible_post(database, viewer, post_id)
             if post.status != "published":
                 return [], Pagination(next_cursor=None, has_more=False)
-            statement = select(PostComment, User).join(User, User.id == PostComment.author_id).where(PostComment.post_id == post.id)
+            statement = select(PostComment, User).join(User, User.id == PostComment.author_id).where(
+                PostComment.post_id == post.id, self.moderation_visible(PostComment, viewer),
+            )
             hidden = self.blocked(database, viewer, "account")
             if hidden:
                 statement = statement.where(PostComment.author_id.notin_(hidden))
@@ -541,7 +590,7 @@ class CommunityService:
             more = len(rows) > limit
             rows = rows[:limit]
             next_cursor = self.seal_cursor("comments", viewer, post.id, rows[-1][0].id, after_time=rows[-1][0].created_at) if more else None
-            return [self.comment_view(comment, author, viewer, page) for comment, author in rows], Pagination(next_cursor=next_cursor, has_more=more)
+            return [self.comment_view(database, comment, author, viewer, page) for comment, author in rows], Pagination(next_cursor=next_cursor, has_more=more)
 
     def create_comment(self, token, post_id, body, key):
         parent_id = str(body.parent_id) if body.parent_id else None
@@ -554,14 +603,14 @@ class CommunityService:
             if existing is not None:
                 if existing.creation_digest != digest or existing.post_id != post.id:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original comment.")
-                return self.comment_view(existing, user, user, page)
+                return self.comment_view(database, existing, user, user, page)
             if page.owner_id != user.id and database.scalar(select(AccountBlock.id).where(
                 AccountBlock.blocker_id == page.owner_id, AccountBlock.target_type == "account", AccountBlock.target_id == user.id,
             )) is not None:
                 raise DomainError(403, "COMMENTING_UNAVAILABLE", "You cannot comment on this page.")
             if parent_id:
                 parent = database.scalar(select(PostComment).where(PostComment.id == parent_id, PostComment.post_id == post.id))
-                if parent is None:
+                if parent is None or not self.can_view_moderated(parent, user):
                     raise not_found("Comment")
                 if parent.parent_id is not None:
                     raise DomainError(409, "REPLY_DEPTH", "Reply to the original comment instead.")
@@ -584,7 +633,7 @@ class CommunityService:
             database.add(comment)
             database.flush()
             self.record(database, user.id, page.id, comment.id, "public.comment_created", audited=False)
-            return self.comment_view(comment, user, user, page)
+            return self.comment_view(database, comment, user, user, page)
 
     def end_comment(self, token, comment_id):
         with self.identity.signed_in_write(token) as (database, user):
@@ -593,6 +642,8 @@ class CommunityService:
                 raise not_found("Comment")
             post, page = self.visible_post(database, user, located, lock=True)
             comment = database.scalar(select(PostComment).where(PostComment.id == comment_id).with_for_update().execution_options(populate_existing=True))
+            if not self.can_view_moderated(comment, user):
+                raise not_found("Comment")
             mine = comment.author_id == user.id
             manager = page.owner_id == user.id
             if not mine and not manager:
@@ -605,7 +656,7 @@ class CommunityService:
                 database.flush()
                 self.record(database, user.id, page.id, comment.id, f"public.comment_{comment.status}", audited=not mine)
             author = database.get(User, comment.author_id)
-            return self.comment_view(comment, author, user, page)
+            return self.comment_view(database, comment, author, user, page)
 
     # Reports and blocks
 
@@ -613,18 +664,24 @@ class CommunityService:
         target_id = str(body.target_id)
         with self.identity.signed_in_write(token) as (database, user):
             if body.target_type == "page":
-                owner = self.find_page(database, target_id).owner_id
+                owner = self.find_page(database, target_id, lock=True, viewer=user).owner_id
             elif body.target_type == "post":
-                post = database.get(PublicPost, target_id)
+                post = database.scalar(select(PublicPost).where(PublicPost.id == target_id).with_for_update())
                 page = database.get(PublicPage, post.page_id) if post else None
-                if post is None or post.status != "published" or page.status != "active":
+                if post is None or page is None or post.status != "published" or page.status != "active" or not (
+                    self.can_view_moderated(page, user) and self.can_view_moderated(post, user, page)
+                ):
                     raise not_found("Post")
                 owner = page.owner_id
             else:
                 comment = database.get(PostComment, target_id)
-                post = database.get(PublicPost, comment.post_id) if comment else None
+                post = database.scalar(select(PublicPost).where(PublicPost.id == comment.post_id).with_for_update()) if comment else None
+                if comment is not None:
+                    database.refresh(comment, with_for_update=True)
                 page = database.get(PublicPage, post.page_id) if post else None
-                if comment is None or comment.status != "visible" or post.status != "published" or page.status != "active":
+                if comment is None or post is None or page is None or comment.status != "visible" or post.status != "published" or page.status != "active" or not (
+                    self.can_view_moderated(page, user) and self.can_view_moderated(post, user, page) and self.can_view_moderated(comment, user)
+                ):
                     raise not_found("Comment")
                 owner = comment.author_id
             if owner == user.id:
@@ -665,13 +722,13 @@ class CommunityService:
         with self.identity.signed_in_write(token) as (database, user):
             page = None
             if body.target_type == "page":
-                page = self.find_page(database, reference, lock=True)
+                page = self.find_page(database, reference, lock=True, viewer=user)
                 if page.owner_id == user.id:
                     raise DomainError(409, "OWN_CONTENT", "You cannot block your own page.")
                 target_type, target_id = "page", page.id
             else:
                 comment = database.get(PostComment, reference)
-                if comment is None:
+                if comment is None or not self.can_view_moderated(comment, user):
                     raise not_found("Comment")
                 self.visible_post(database, user, comment.post_id)
                 if comment.author_id == user.id:

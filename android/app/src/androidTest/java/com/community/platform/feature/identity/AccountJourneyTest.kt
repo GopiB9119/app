@@ -45,6 +45,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -195,7 +196,9 @@ class AccountJourneyTest {
             member.token, UUID.randomUUID().toString())["id"].asString
 
         signIn(member)
-        compose.onNodeWithTag("account-search").performScrollTo().performClick()
+        openSection("main-home")
+        waitForEnabled(hasTestTag("home-search"))
+        compose.onNodeWithTag("home-search").performClick()
         waitForEnabled(hasTestTag("search-query"))
         compose.onNodeWithTag("search-query").performTextInput(word)
         compose.onNodeWithTag("search-submit").performScrollTo().performClick()
@@ -212,6 +215,47 @@ class AccountJourneyTest {
             .execute().use { it.code }
         assertEquals(404, gone)
         assertEquals(0, getJson("http://10.0.2.2:8000/v1/search?q=$word", owner.token).getAsJsonObject("data").getAsJsonArray("documents").size())
+    }
+
+    // DEC-014 (T38): Home reads every section from the real services and opens the screen behind each item.
+    @Test fun nativeHomeShowsWhatNeedsAttentionAndTodayFromTheRealBackend() {
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "A disposable emulator is required." }
+        check(InstrumentationRegistry.getArguments().getString("community_local_integration") == "true") { "Explicit local integration authorization is required." }
+        val owner = account("Home Owner")
+        val member = account("Home Member")
+        val invited = postApi("/v1/spaces", payload("name" to "Home invitation family", "space_type" to "family"), owner.token, UUID.randomUUID().toString())["id"].asString
+        val invitation = postApi("/v1/spaces/$invited/invitations", payload("recipient_account_id" to member.id), owner.token, UUID.randomUUID().toString())["id"].asString
+        val own = postApi("/v1/spaces", payload("name" to "Home member family", "space_type" to "family"), member.token, UUID.randomUUID().toString())["id"].asString
+        val task = postApi("/v1/tasks", payload("space_id" to own, "title" to "Home native errand", "due_date" to LocalDate.now(ZoneOffset.UTC).toString()),
+            member.token, UUID.randomUUID().toString())["id"].asString
+
+        signIn(member)
+        openSection("main-home")
+        waitForText("Home Owner invited you to Home invitation family")
+        // Each section loads on its own, so wait for today's row once its section is on screen.
+        compose.onNodeWithTag("home-content").performScrollToNode(hasTestTag("home-today"))
+        compose.waitUntil(20000) { compose.onAllNodes(hasTestTag("home-today-task-$task-action")).fetchSemanticsNodes().isNotEmpty() }
+        reveal("home-content", "home-today-task-$task-action")
+        compose.onNodeWithText("Home native errand").assertIsDisplayed()
+        reveal("home-content", "home-space-$own")
+        compose.onNodeWithText("Home member family").assertIsDisplayed()
+        reveal("home-content", "home-pages")
+        waitForText("Pages you follow have not posted yet.")
+        assertTrue(compose.onAllNodesWithText("Couldn't", substring = true).fetchSemanticsNodes().isEmpty())
+        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        val evidence = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("test-evidence"), "home-native-live.png")
+        evidence.outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+
+        reveal("home-content", "home-today-task-$task-action")
+        compose.onNodeWithTag("home-today-task-$task-action").performClick()
+        waitForEnabled(hasTestTag("task-space"))
+        compose.onNodeWithTag("task-space").assertTextContains("Home member family")
+        compose.onNodeWithContentDescription("Back").performClick()
+        waitForText("Home Owner invited you to Home invitation family")
+        reveal("home-content", "home-invitation-$invitation-action")
+        compose.onNodeWithTag("home-invitation-$invitation-action").performClick()
+        waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
+        assertTrue(evidence.length() > 1000)
     }
 
     private data class TestAccount(val email: String, val password: String, val id: String, val token: String)
@@ -258,6 +302,12 @@ class AccountJourneyTest {
         compose.onNodeWithTag(tag).performScrollTo()
     }
 
+    // DEC-014 (T38): Spaces, Messages and Discover moved from buttons on the account screen to the bottom bar, and search to Home.
+    private fun openSection(tag: String) {
+        waitForEnabled(hasTestTag(tag))
+        compose.onNodeWithTag(tag).performClick()
+    }
+
     @Test fun nativeMembershipRemovalAndSelfLeaveRevokeRealAccess() {
         check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "A disposable emulator is required." }
         check(InstrumentationRegistry.getArguments().getString("community_local_integration") == "true") { "Explicit local integration authorization is required." }
@@ -278,7 +328,7 @@ class AccountJourneyTest {
         val (leavingSpace, _invitation) = family("Native leaving family")
         val task = postApi("/v1/tasks", payload("space_id" to removalSpace, "title" to "Membership private task", "assignee_account_id" to member.id), owner.token, UUID.randomUUID().toString())
         signIn(owner)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-row-$removalSpace")
         compose.onNodeWithTag("space-row-$removalSpace").performClick()
@@ -306,7 +356,7 @@ class AccountJourneyTest {
         compose.onNodeWithContentDescription("Back to Spaces").performClick()
         compose.onNodeWithContentDescription("Back to account").performClick()
         signIn(member)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         compose.onNodeWithTag("space-row-$removalSpace").assertDoesNotExist()
         reveal("space-workspace", "space-row-$leavingSpace")
@@ -353,7 +403,7 @@ class AccountJourneyTest {
         fun status(route: String, token: String, viaPost: Boolean = false) = http.newCall(Request.Builder().url("http://10.0.2.2:8000$route")
             .header("Authorization", "Bearer $token").apply { if (viaPost) post("{}".toRequestBody("application/json".toMediaType())) }.build()).execute().use { it.code }
         signIn(owner)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-row-$spaceId")
         compose.onNodeWithTag("space-row-$spaceId").performClick()
@@ -368,7 +418,7 @@ class AccountJourneyTest {
         compose.onNodeWithContentDescription("Back to Spaces").performClick()
         compose.onNodeWithContentDescription("Back to account").performClick()
         signIn(member)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         compose.onNodeWithTag("space-row-$spaceId").assertDoesNotExist()
         compose.onNodeWithText("Invitations").performClick()
@@ -410,7 +460,7 @@ class AccountJourneyTest {
             UUID.randomUUID().toString(), reviewedMember["etag"].asString)
         val identifier = transfer["id"].asString
         signIn(nextOwner)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-row-$spaceId")
         compose.onNodeWithTag("space-row-$spaceId").performClick()
@@ -436,11 +486,10 @@ class AccountJourneyTest {
         assertEquals(404, deniedHistory)
         compose.activityRule.scenario.recreate()
         compose.waitUntil(20000) {
-            compose.onAllNodes(hasTestTag("account-spaces") or hasTestTag("space-show-members")).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(hasTestTag("main-spaces") or hasTestTag("space-show-members")).fetchSemanticsNodes().isNotEmpty()
         }
-        if (compose.onAllNodes(hasTestTag("account-spaces")).fetchSemanticsNodes().isNotEmpty()) {
-            waitForEnabled(hasTestTag("account-spaces"))
-            compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        if (compose.onAllNodes(hasTestTag("main-spaces")).fetchSemanticsNodes().isNotEmpty()) {
+            openSection("main-spaces")
             waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
             reveal("space-workspace", "space-row-$spaceId")
             compose.onNodeWithTag("space-row-$spaceId").performClick()
@@ -452,7 +501,7 @@ class AccountJourneyTest {
         compose.onNodeWithContentDescription("Back to Spaces").performClick()
         compose.onNodeWithContentDescription("Back to account").performClick()
         signIn(owner)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-row-$spaceId")
         compose.onNodeWithTag("space-row-$spaceId").performClick()
@@ -474,7 +523,7 @@ class AccountJourneyTest {
         val owner = account("Native Owner")
         val member = account("Native Member")
         signIn(owner)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-start-create")
         compose.onNodeWithTag("space-start-create").performClick()
@@ -498,7 +547,7 @@ class AccountJourneyTest {
         compose.onNodeWithContentDescription("Back to Spaces").performClick()
         compose.onNodeWithContentDescription("Back to account").performClick()
         signIn(member)
-        compose.onNodeWithTag("account-spaces").performScrollTo().performClick()
+        openSection("main-spaces")
         waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         compose.onNodeWithText("Invitations").performClick()
         reveal("space-workspace", "invitation-review-$invitationId")

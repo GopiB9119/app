@@ -18,7 +18,7 @@ npm --prefix web run dev
 Use **only `http://127.0.0.1:3000` for the web app**, per the user's explicit requirement. If that port is occupied, identify/reuse the project preview or coordinate stopping only its owned process; do not choose another port. The VS Code **Community Platform: preview web** task runs this development command and watches source in `web/.local/build-local-web`. Old reminder/ownership preview labels alias the same task. Ports and build labels in older evidence sections below are historical, not current startup instructions. Do not overwrite the output directory of a compiled preview while it is running.
 
 - Web: `http://127.0.0.1:3000/app/spaces`, alongside Tasks, Calendar, Reminders and Inbox; unauthenticated users sign in first.
-- API: `http://127.0.0.1:8000`; current migration head `0025` (`0021` alerts, `0022` group Spaces and join requests, `0023` agent requests, `0024` Space documents, `0025` couple Spaces). Migrations are additive and do not reset existing data; `0022` refuses to downgrade while group Spaces, descriptions or join requests exist, and `0025` while couple Spaces exist.
+- API: `http://127.0.0.1:8000`; current migration head `0026` (`0021` alerts, `0022` group Spaces and join requests, `0023` agent requests, `0024` Space documents, `0025` couple Spaces, `0026` Space admins). Migrations are additive and do not reset existing data; `0022` refuses to downgrade while group Spaces, descriptions or join requests exist, `0025` while couple Spaces exist, and `0026` while admins or role changes exist.
 - Readiness: `/health/ready` answers 503 `SERVICE_UNAVAILABLE` while the database lacks a migration that the running API's code needs; the API log's request line then shows `"failure": "MigrationsPending"`. Run the migrate command above; no restart is needed. A database that newer code has migrated still counts as ready. `alembic check` and `alembic revision --autogenerate` compare every table.
 - Documents and search: `http://127.0.0.1:3000/app/documents?space_id=<id>` (also the Documents button on each Space) and `http://127.0.0.1:3000/app/search` (Search in the header). Only `.txt`, `.md` and `.csv` files up to 512 KB are accepted.
 - Synthetic inbox: `http://127.0.0.1:8025`; verification codes are not printed in application logs.
@@ -26,7 +26,7 @@ Use **only `http://127.0.0.1:3000` for the web app**, per the user's explicit re
 
 Register and verify two synthetic accounts. Each account's Spaces screen exposes its own account ID with a copy control. The owner creates a family Space, opens its invitation management and enters the intended recipient's account ID. That account refreshes its invitation inbox and explicitly reviews/accepts or declines; the owner can revoke a pending invitation. Acceptance creates a member, not another owner, and grants no old chat/file history. Invitations expire after 72 hours in this local build. No mail, phone lookup or unbound-contact onboarding is performed by family invitations.
 
-Android exposes the same existing-account flow from **Family Spaces** on the account screen. A selected family's **Open family tasks** action passes that exact Space identity. Native drafts and uncertain commands remain in memory only; a changed account or denied Space clears protected views. The real local family/task/self-reminder journey now passes; see the [native Space boundary](../../android/app/src/main/java/com/community/platform/feature/spaces/README.md) and [live verification checkpoint](../BUILD_STATUS.md#live-manual-workflow-checkpoint).
+Android exposes the same existing-account flow from **Spaces** in the bottom bar (before [T38](../TASKS.md#design-and-experience), **Family Spaces** on the account screen). A selected family's **Open family tasks** action passes that exact Space identity. Native drafts and uncertain commands remain in memory only; a changed account or denied Space clears protected views. The real local family/task/self-reminder journey now passes; see the [native Space boundary](../../android/app/src/main/java/com/community/platform/feature/spaces/README.md) and [live verification checkpoint](../BUILD_STATUS.md#live-manual-workflow-checkpoint).
 
 Open **Members** on the web or **View members** in the native Space to review its roster. Owners can remove ordinary members; ordinary members can leave. Both require exact confirmation and retain their original ETag/key for unknown-outcome retries. Owners cannot depart and shared content is not deleted. A former member can return only through a new invitation that they accept, without their earlier tasks or reminders. See the [membership rules and verification](FAMILY_MEMBERSHIP.md).
 
@@ -38,12 +38,27 @@ The existing-account path does not resolve legal identity, caregiver representat
 
 ## Verification Commands
 
+One command runs every check one after another and writes one summary ([T64](../TASKS.md#defects-that-break-approved-requirements)):
+
 ```powershell
-docker compose -f infra/compose.yaml --profile test run --rm tests pytest -q
-node --test tests/web-client.test.mjs
-npm --prefix web run typecheck
-npm run test:structure
-npm run check:structure
+npm run verify
+npm run verify -- -Suite client,unit
+npm run verify -- -Suite live
+```
+
+The suites, in order: `structure`, `tokens`, `typecheck`, `client`, `unit`, `backend`, `android` and `live`. The default is every suite except `live`, which needs the web preview at `http://127.0.0.1:3000` and the local services; the complete default run takes about an hour, most of it the backend. Each suite runs the command below, and its output goes to its own log in `.local\verify\<date-time>\`, beside `summary.md` and `summary.json`. The summary gives each suite's result, its test counts and time, and the commit with the number of uncommitted changes. Because other sessions share the working tree, it also lists any files that changed while the checks ran, since those results may mix two states. The command exits with 1 when a suite fails or cannot start (for example when Docker or the preview is not running), and changes nothing in the repository. It sets `FORCE_COLOR=0`, finds the Playwright Chromium when `COMMUNITY_CHROMIUM_PATH` is not set, uses Android Studio's runtime for Gradle, and runs the Android tests with `--rerun` so that none are skipped as up to date.
+
+The commands it runs, which also work on their own:
+
+```powershell
+npm run test:structure; npm run check:structure                                                    # structure
+npm run test:tokens; npm run check:tokens                                                          # tokens
+npm --prefix web run typecheck                                                                     # typecheck
+npm --prefix web run test:client                                                                   # client
+npm --prefix web run test:unit                                                                     # unit
+docker compose -f infra/compose.yaml --profile test run --rm tests pytest -q -p no:cacheprovider   # backend
+.\android\gradlew.bat -p android :app:testDebugUnitTest --offline --console=plain --rerun          # android
+npm --prefix web run test:e2e                                                                      # live
 ```
 
 Backend tests require the guarded `community_test` database. The current shared fixture creates a unique `test_<random>` schema per test process, migrates/truncates only inside that schema and removes it on teardown. Preserve this concurrent-work improvement; never point fixtures at development or real-user data. Do not use `docker compose down -v` to apply migrations.
@@ -125,7 +140,7 @@ The membership checkpoint has 92 passing JVM checks, including two real local-so
 
 Eleven `SpaceScreenTest` cases also passed with guest networking disabled. They cover the eight earlier Space/invitation cases plus member removal, self-leave and enlarged membership review. Large-text cases verify an actual 320 dp window and measure the separate dialog's font scale at 2.0, including scrollable details and both actions. The rule changes the system setting before activity launch and restores it in `finally`; a composition-only override had left the dialog at 1.0. The clipboard test verifies the current-account payload through a Compose test double, not real OS clipboard integration. A separate real native membership journey passed; see the [membership checkpoint](../BUILD_STATUS.md#family-membership-checkpoint).
 
-The VS Code **Run Task** entry **Community Platform: verify offline Space screens** rebuilds and installs both APKs, enables guest airplane mode, disables/verifies Wi-Fi and mobile data, sets 640x1280 pixels at 320 dpi, and runs only that class. It requires the expected `community_membership_20260923` AVD on `emulator-5582`, a read-only/no-snapshot-save runtime and completed boot. It passes the explicit disposable-fixture flag, checks eleven passing results with no skips, and independently verifies that the original font setting was restored. The task does not launch a device or establish ownership: use it only for a disposable session you started, never a personal device or another session's emulator.
+The VS Code **Run Task** entry **Community Platform: verify offline Space screens** rebuilds and installs both APKs, enables guest airplane mode, disables Wi-Fi and mobile data (on the API 36 image `svc data disable` leaves the `mobile_data` setting at 1, so the task also sets it to 0) and verifies both, sets 640x1280 pixels at 320 dpi, and runs only that class. It requires the expected `community_membership_20260923` AVD on `emulator-5582`, a read-only/no-snapshot-save runtime and completed boot. It passes the explicit disposable-fixture flag, checks seventeen passing results with no skips, and independently verifies that the original font setting was restored. The task does not launch a device or establish ownership: use it only for a disposable session you started, never a personal device or another session's emulator.
 
 After checking that ports 5582/5583 are unused, launch the fixture in its own terminal and wait for its boot-ready event before running the task:
 

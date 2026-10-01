@@ -8,4 +8,4 @@ The Medicines screen at `/app/care`, for the rules in the [care backend notes](.
 | `care-screen.tsx` | The screen. An unconfirmed save keeps its key so a retry cannot add a second instruction or report. |
 | `care.module.css` | Styles. |
 
-Tests: the care cases in `tests/care-client.test.mjs`. Evidence: [care checkpoint](../../../../docs/BUILD_STATUS.md#care-checkpoint).
+Tests: the care cases in `tests/care-client.test.mjs`, and the screen offline in `tests/unit/care-ui.test.mjs` ([T63](../../../../docs/BUILD_STATUS.md#care-screen-offline-tests-checkpoint)). Evidence: [care checkpoint](../../../../docs/BUILD_STATUS.md#care-checkpoint).

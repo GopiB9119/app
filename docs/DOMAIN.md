@@ -1106,7 +1106,7 @@ Each backend module in `backend/app/modules/` owns its tables. Web features live
 | discovery | None of its own: search inside your Spaces (`GET /v1/search`) reads tasks, events and documents (DEC-015) | Yes | Yes |
 | integrations, realtime, safety | None; reserved folders | No | No |
 
-On 2026-10-01 the code defines 60 tables: 53 through migration `0022`, the 5 agent tables in `0023` and the 2 document tables in `0024`; `0025` (couple Spaces) adds a database rule, not a table. `backend/tests/test_migrations.py` checks that the migrations create exactly the tables the code defines. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
+On 2026-10-01 the code defines 60 tables: 53 through migration `0022`, the 5 agent tables in `0023` and the 2 document tables in `0024`; `0025` (couple Spaces) adds a database rule, not a table, and `0026` (Space admins) widens two rules. `backend/tests/test_migrations.py` checks that the migrations create exactly the tables the code defines. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
 
 ## Domain Invariants
 

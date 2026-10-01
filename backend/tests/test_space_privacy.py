@@ -139,10 +139,13 @@ def test_a_former_member_learns_nothing_except_the_repeat_of_their_own_leave(cli
     leave = {**auth(member), "Idempotency-Key": str(uuid4()), "If-Match": mine["etag"]}
     left = client.post(f"/v1/spaces/{space_id}/leave", headers=leave, json={})
     assert left.status_code == 200, left.text
-    # The exact repeat of the confirmed leave still reports it; any other use of that key looks like a missing Space.
+    # The exact repeat of the confirmed leave still reports it. Their own key keeps the earlier answers for a changed or
+    # missing review (test_membership_departure_retries_return_only_an_attributed_minimal_receipt); a new key does not.
     assert client.post(f"/v1/spaces/{space_id}/leave", headers=leave, json={}).json()["data"] == left.json()["data"]
     unreviewed = {name: value for name, value in leave.items() if name != "If-Match"}
-    for headers in ({**leave, "If-Match": '"changed"'}, unreviewed):
+    assert client.post(f"/v1/spaces/{space_id}/leave", headers={**leave, "If-Match": '"changed"'}, json={}).status_code == 409
+    assert client.post(f"/v1/spaces/{space_id}/leave", headers=unreviewed, json={}).status_code == 428
+    for headers in ({**leave, "Idempotency-Key": str(uuid4())}, {**unreviewed, "Idempotency-Key": str(uuid4())}):
         assert answer(client.post(f"/v1/spaces/{space_id}/leave", headers=headers, json={})) == MISSING
     before = counts(app)
     known = {"transfer_id": transfer["id"], "account_id": owner["user"]["id"]}

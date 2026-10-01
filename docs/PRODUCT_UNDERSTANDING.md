@@ -429,6 +429,7 @@ Waiting for your confirmation.
 | Q18 | Should editing a checklist cancel earlier reminders? | 13 |
 | Q19 | Targets for availability, speed, reminder timeliness and data retention. | 26, 34 |
 | Q20 | Product name. | 1 |
+| Q21 | Which section opens after sign-in? [DEC-014](DECISIONS.md#accepted-decisions) lists Home first but does not say. Both apps still open Profile (the account screen), as before T38; Home is the usual choice. Changing it changes the sign-in step of every live journey. | 30, 31 |
 
 ## 40. Conflicts with the existing repository
 

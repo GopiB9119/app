@@ -7,6 +7,7 @@ import { AlarmClock, Bell, CalendarClock, Check, CheckCheck, LoaderCircle, Refre
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { browserAlertsEnabled, setBrowserAlertsEnabled } from "@/features/realtime/live";
 import { notificationPage, notificationPreferencesSchema, notificationSchema, snoozeChoices, snoozeNotification } from "@/features/scheduling/client";
 import type { Notification, SnoozeIntent, SnoozeMinutes } from "@/features/scheduling/client";
 import { displayInstant, protectedReminderError, ReminderDialog, useReminderAccountGuard } from "@/features/scheduling/reminder-screen";
@@ -104,6 +105,7 @@ function Inbox({ user }: { user: Account }) {
           <p className={styles.disclosure}>Turning reminders off withdraws pending schedules. Turning them back on does not restore those schedules.</p>
           {updatePreferences.isPending && <p role="status">Saving preference...</p>}
           {updatePreferences.isError && <p className="message error" role="alert">{updatePreferences.error.message}</p>}
+          <BrowserAlerts user={user} />
           <QuietHoursSettings user={user} onDenied={setAccessError} />
         </section>
       </div>
@@ -118,6 +120,33 @@ function Inbox({ user }: { user: Account }) {
       setSnoozeIntent(command); snooze.mutate(command);
     }} />}
   </main></Shell>;
+}
+
+function BrowserAlerts({ user }: { user: Account }) {
+  const [supported, setSupported] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [problem, setProblem] = useState("");
+  // Read after mounting: the server render knows neither the browser's permission nor its stored choice.
+  useEffect(() => {
+    setSupported(typeof window.Notification === "function");
+    setEnabled(browserAlertsEnabled(user.id));
+  }, [user.id]);
+  if (!supported) return null;
+  async function change(on: boolean) {
+    setProblem("");
+    if (!on) { setBrowserAlertsEnabled(user.id, false); setEnabled(false); return; }
+    // The switch moves at once and moves back if the browser refuses. Asked only from this switch, never when the page opens.
+    setEnabled(true);
+    const permission = window.Notification.permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    const allowed = permission === "granted" && setBrowserAlertsEnabled(user.id, true);
+    if (!allowed) { setBrowserAlertsEnabled(user.id, false); setProblem("Your browser did not allow alerts. Alerts are off."); }
+    setEnabled(allowed);
+  }
+  return <>
+    <label className={styles.toggle}><input type="checkbox" role="switch" checked={enabled} onChange={event => void change(event.target.checked)} /><span>Browser alerts for new reminders</span></label>
+    <p className={styles.disclosure}>While the app is open in a background tab, your browser shows an alert with the task name when a reminder arrives.</p>
+    {problem && <p className="message error" role="alert">{problem}</p>}
+  </>;
 }
 
 function SnoozeDialog({ item, timezone, intent, pending, error, onClose, onSnooze }: {

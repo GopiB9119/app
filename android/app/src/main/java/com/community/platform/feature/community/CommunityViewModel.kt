@@ -48,9 +48,41 @@ data class CommunityState(
     val blocks: List<BlockDto> = emptyList(),
     val pending: CreateIntent? = null,
     val requiresSignIn: Boolean = false,
+    val ownedLoaded: Boolean = false,
+    val ownedError: String? = null,
+    val followed: List<PageDto> = emptyList(),
+    val followedStatus: ListStatus = ListStatus.LOADING,
+    val followedNextCursor: String? = null,
+    val followedError: String? = null,
+    /** The page as the editor opened it: Save sends this version tag, never one refreshed later. */
+    val editingPage: PageDto? = null,
+    val pageEditFailed: Boolean = false,
+    val pageEditSession: Long = 0,
 ) {
     val busy: Boolean get() = loading || working
+    /** "You do not own a page yet" needs a successful load of the pages you own. */
+    val noOwnedPages: Boolean get() = ownedLoaded && pages.isEmpty()
+    /** "You do not follow any pages" needs a successful load, so a load in progress or a failure never looks empty. */
+    val noFollowedPages: Boolean get() = followedStatus == ListStatus.LOADED && followedError == null && followed.isEmpty()
 }
+
+/** A list that loads on its own: its empty message needs a successful load, and a failed load offers Retry instead. */
+enum class ListStatus { LOADING, LOADED, FAILED }
+
+const val PAGE_EDIT_INVALID = "Enter a name of 1 to 80 characters and a description of up to 500."
+const val PAGE_EDIT_CONFLICT = "This page changed since you opened the editor. Close it and reload before editing again."
+const val PAGE_EDIT_UNCONFIRMED = "The change is not confirmed. Close the editor and reload the page to check it."
+const val PAGE_EDIT_SAVED = "Page saved."
+
+/** The server allows 1,000 characters of report details, counted as code points (Python `len`). */
+const val REPORT_DETAILS_LIMIT = 1000
+
+/** Keeps at most [limit] characters counted as code points, as the server counts them, so a cut never splits a surrogate pair. */
+fun String.takeCodePoints(limit: Int): String =
+    if (codePointCount(0, length) <= limit) this else substring(0, offsetByCodePoints(0, limit))
+
+/** Counts characters as code points, as the server does, so an emoji counts once. */
+fun String.codePointLength(): Int = codePointCount(0, length)
 
 @HiltViewModel
 class CommunityViewModel @Inject constructor(private val repository: CommunityRepository) : ViewModel() {
@@ -67,7 +99,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         if (accountId != null) reload()
     }
 
-    private fun fail(error: Exception, expected: Long) {
+    private fun fail(error: Exception, expected: Long, subject: String? = null) {
         if (generation != expected) return
         val failure = error as? IdentityFailure
         if (failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED") {
@@ -77,7 +109,15 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
             return
         }
         val message = if (error is IOException) "No connection. Nothing new is confirmed." else error.message ?: "Something went wrong."
-        mutableState.update { it.copy(error = message, missing = failure?.status == 404 && (it.destination is Destination.Page || it.destination is Destination.Post)) }
+        mutableState.update {
+            // A 404 about a comment, a listed post or a block does not mean the shown page or post is gone.
+            val gone = failure?.status == 404 && when (val destination = it.destination) {
+                is Destination.Page -> subject == null || subject == it.page?.id
+                is Destination.Post -> subject == null || subject == destination.postId
+                else -> false
+            }
+            it.copy(error = message, missing = gone)
+        }
     }
 
     fun open(destination: Destination, remember: Boolean = true) {
@@ -88,6 +128,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                 accountId = it.accountId, destination = destination, history = if (remember) it.history + it.destination else it.history,
                 query = if (destination == Destination.Discover) it.query else "", topic = if (destination == Destination.Discover) it.topic else null,
                 searchPosts = destination == Destination.Discover && it.searchPosts, pending = it.pending,
+                pages = if (destination is Destination.Page) it.pages.filter(PageDto::canManage) else emptyList(),
             )
         }
         reload()
@@ -119,11 +160,15 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     fun reload(more: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
-        val cursor = if (more) current.nextCursor ?: return else null
+        val cursor = if (more) (if (current.destination == Destination.MyPages) current.followedNextCursor else current.nextCursor) ?: return else null
         val destination = current.destination
         val expected = generation
         loadJob?.cancel()
-        mutableState.update { it.copy(loading = true, error = null, missing = false) }
+        // A first page loads again from scratch; Load more keeps what is already shown.
+        mutableState.update { it.copy(loading = true, error = null, missing = false, ownedLoaded = it.ownedLoaded && more,
+            followedStatus = if (more) it.followedStatus else ListStatus.LOADING,
+            ownedError = if (destination == Destination.MyPages && !more) null else it.ownedError,
+            followedError = if (destination == Destination.MyPages) null else it.followedError) }
         loadJob = viewModelScope.launch {
             try {
                 when (destination) {
@@ -159,11 +204,38 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                             it.copy(post = post, nextCursor = comments.nextCursor, comments = if (more) (it.comments + comments.items).distinctBy(CommentDto::id) else comments.items)
                         }
                     }
-                    Destination.MyPages -> { val pages = repository.myPages(account); apply(expected, destination) { it.copy(pages = pages) } }
+                    Destination.MyPages -> {
+                        if (!more) {
+                            try {
+                                val owned = repository.myPages(account)
+                                apply(expected, destination) { it.copy(pages = owned, ownedLoaded = true) }
+                            } catch (error: CancellationException) { throw error }
+                            catch (error: Exception) {
+                                if (mutableState.value.destination == destination) {
+                                    fail(error, expected)
+                                    apply(expected, destination) { it.copy(ownedError = it.error) }
+                                }
+                            }
+                        }
+                        if (generation != expected || mutableState.value.destination != destination) return@launch
+                        val result = repository.following(account, cursor)
+                        apply(expected, destination) {
+                            it.copy(followed = if (more) (it.followed + result.items).distinctBy(PageDto::id) else result.items,
+                                nextCursor = result.nextCursor, followedNextCursor = result.nextCursor, followedStatus = ListStatus.LOADED, followedError = null)
+                        }
+                    }
                     Destination.Blocked -> { val blocks = repository.blocks(account); apply(expected, destination) { it.copy(blocks = blocks) } }
                 }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { if (mutableState.value.destination == destination) fail(error, expected) }
+            catch (error: Exception) {
+                if (mutableState.value.destination == destination) {
+                    fail(error, expected)
+                    // A failed first page offers Retry; a failed Load more keeps the pages already shown.
+                    if (destination == Destination.MyPages) apply(expected, destination) {
+                        it.copy(followedStatus = if (more) it.followedStatus else ListStatus.FAILED, followedError = it.error)
+                    }
+                }
+            }
             finally { if (generation == expected && mutableState.value.destination == destination) mutableState.update { it.copy(loading = false) } }
         }
     }
@@ -172,7 +244,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         if (generation == expected && mutableState.value.destination == destination) mutableState.update(transform)
     }
 
-    private fun command(onSuccess: String? = null, work: suspend (String) -> Unit) {
+    /** [subject] is the id the command acts on; without one, a 404 is taken to be about the shown page or post. */
+    private fun command(onSuccess: String? = null, subject: String? = null, work: suspend (String) -> Unit) {
         val current = mutableState.value
         val account = current.accountId ?: return
         if (current.working) return
@@ -183,7 +256,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                 work(account)
                 if (generation == expected && onSuccess != null) mutableState.update { it.copy(notice = onSuccess) }
             } catch (error: CancellationException) { throw error }
-            catch (error: Exception) { fail(error, expected) }
+            catch (error: Exception) { fail(error, expected, subject) }
             finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
         }
     }
@@ -197,13 +270,25 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     }
 
     fun follow(page: PageDto) = command { replacePage(repository.follow(it, page.id, !page.following)) }
-    fun like(post: PostDto) = command { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
-    fun save(post: PostDto) = command { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
+    /** Unfollows a page listed under "Pages you follow", then reloads the list from the server. */
+    fun unfollow(page: PageDto) {
+        val expected = generation
+        val destination = mutableState.value.destination
+        command(subject = page.id) { account ->
+            val saved = repository.follow(account, page.id, false)
+            apply(expected, destination) { it.copy(followed = it.followed.filterNot { item -> item.id == saved.id }) }
+            if (generation == expected && mutableState.value.destination == destination) reloadAfterCommand()
+        }
+    }
+
+    fun retryFollowing() = reload(more = mutableState.value.followedStatus == ListStatus.LOADED && mutableState.value.followedNextCursor != null)
+    fun like(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
+    fun save(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
 
     fun createPage(handle: String, name: String, topic: String, description: String): Boolean {
         val account = mutableState.value.accountId ?: return false
         val clean = handle.trim().lowercase()
-        if (!clean.matches(HANDLE_PATTERN) || topic !in TOPICS || name.trim().isEmpty() || name.trim().codePointCount(0, name.trim().length) > 80 || description.trim().length > 500) {
+        if (!clean.matches(HANDLE_PATTERN) || topic !in TOPICS || name.trim().isEmpty() || name.trim().codePointCount(0, name.trim().length) > 80 || description.trim().codePointCount(0, description.trim().length) > 500) {
             mutableState.update { it.copy(error = "Check the handle (3 to 30 lowercase letters, digits or single hyphens), name and description.") }
             return false
         }
@@ -273,7 +358,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
 
     private fun reloadAfterCommand() = reload()
 
-    fun publish(post: PostDto) = command("Published. Anyone can see this post now.") { replacePost(repository.publish(it, post)); reloadAfterCommand() }
+    fun publish(post: PostDto) = command("Published. Anyone can see this post now.", subject = post.id) { replacePost(repository.publish(it, post)); reloadAfterCommand() }
     fun startEdit(post: PostDto) = mutableState.update { if (it.working || !post.canManage) it else it.copy(editingPostId = post.id, error = null, notice = null) }
     fun cancelEdit() = mutableState.update { if (it.working) it else it.copy(editingPostId = null) }
 
@@ -287,7 +372,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         }
         val newTitle = heading.ifEmpty { null }
         if (newTitle == post.title && text == post.body) { cancelEdit(); return true }
-        command("Changes saved.") { account ->
+        command("Changes saved.", subject = post.id) { account ->
             val saved = repository.updatePost(account, post, newTitle, text)
             mutableState.update { state ->
                 state.copy(
@@ -298,15 +383,68 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         }
         return true
     }
-    fun deletePost(post: PostDto) = command("Post deleted.") { account ->
+
+    /** Opens the editor on the shown page as it is now. Save sends this version's tag, never one refreshed later (T39). */
+    fun startPageEdit(page: PageDto) = mutableState.update {
+        if (it.working || it.accountId == null || it.destination !is Destination.Page || it.editingPage != null || !page.canManage || page.etag == null || page.id != it.page?.id) it
+        else it.copy(editingPage = page, pageEditFailed = false, pageEditSession = it.pageEditSession + 1, error = null, notice = null)
+    }
+    fun cancelPageEdit() {
+        val current = mutableState.value
+        if (current.working || current.editingPage == null) return
+        mutableState.update { it.copy(editingPage = null, pageEditFailed = false, error = null) }
+        if (current.pageEditFailed) reload()
+    }
+
+    /** Sends only the fields that differ from the version the editor opened with, against that version, and keeps the editor open until the server confirms. */
+    fun editPage(name: String, description: String, topic: String): Boolean {
+        val current = mutableState.value
+        val opened = current.editingPage ?: return false
+        if (current.working || current.accountId == null || current.destination !is Destination.Page) return false
+        val title = name.replace(Regex("[\\s\\p{Z}\\u0085\\u001C-\\u001F]+"), " ").trim()
+        val text = description.replace("\r\n", "\n").trim()
+        if (title.isEmpty() || title.codePointLength() > 80 || text.codePointLength() > 500 || topic !in TOPICS) {
+            mutableState.update { it.copy(error = PAGE_EDIT_INVALID) }
+            return false
+        }
+        val changes = buildMap {
+            if (title != opened.name) put("name", title)
+            if (text != opened.description) put("description", text)
+            if (topic != opened.topic) put("topic", topic)
+        }
+        if (changes.isEmpty()) { cancelPageEdit(); return true }
+        val expected = generation
+        val destination = current.destination
+        command(PAGE_EDIT_SAVED, subject = opened.id) { account ->
+            val saved = try { repository.updatePage(account, opened, changes) }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                apply(expected, destination) { it.copy(pageEditFailed = true) }
+                val failure = error as? IdentityFailure
+                // As on the web: reloading alone cannot help, because this editor keeps the version it opened with.
+                throw when {
+                    failure?.status == 412 -> IdentityFailure(failure.code, PAGE_EDIT_CONFLICT, failure.status)
+                    error is IOException || failure?.status == 408 || failure?.status in 500..599 -> IdentityFailure("PAGE_EDIT_UNCONFIRMED", PAGE_EDIT_UNCONFIRMED, failure?.status ?: 0)
+                    else -> error
+                }
+            }
+            apply(expected, destination) { state -> state.copy(page = if (state.page?.id == saved.id) saved else state.page,
+                pages = if (state.pages.any { it.id == saved.id }) state.pages.map { if (it.id == saved.id) saved else it } else state.pages + saved,
+                editingPage = null, pageEditFailed = false) }
+            // The listed posts carry the page's name, so they reload too, as the web does after a save.
+            if (generation == expected && mutableState.value.destination == destination) reloadAfterCommand()
+        }
+        return true
+    }
+    fun deletePost(post: PostDto) = command("Post deleted.", subject = post.id) { account ->
         repository.deletePost(account, post)
         if (mutableState.value.destination is Destination.Post) { mutableState.update { it.copy(working = false) }; back() } else reloadAfterCommand()
     }
-    fun endComment(comment: CommentDto) = command { repository.endComment(it, comment); reloadAfterCommand() }
-    fun report(targetType: String, targetId: String, reason: String, details: String) = command("Report received. It is stored for review; the person reported is not told who sent it.") {
-        repository.report(it, targetType, targetId, reason, details.trim().take(1000))
+    fun endComment(comment: CommentDto) = command(subject = comment.id) { repository.endComment(it, comment); reloadAfterCommand() }
+    fun report(targetType: String, targetId: String, reason: String, details: String) = command("Report received. It is stored for review; the person reported is not told who sent it.", subject = targetId) {
+        repository.report(it, targetType, targetId, reason, details.trim().takeCodePoints(REPORT_DETAILS_LIMIT))
     }
-    fun blockPage(page: PageDto) = command("Page blocked. Its posts are hidden from you.") { repository.block(it, "page", page.id); reloadAfterCommand() }
-    fun blockAuthor(comment: CommentDto) = command("Person blocked. Their comments are hidden from you.") { repository.block(it, "comment_author", comment.id); reloadAfterCommand() }
-    fun unblock(block: BlockDto) = command("Unblocked.") { repository.unblock(it, block.id); reloadAfterCommand() }
+    fun blockPage(page: PageDto) = command("Page blocked. Its posts are hidden from you.", subject = page.id) { repository.block(it, "page", page.id); reloadAfterCommand() }
+    fun blockAuthor(comment: CommentDto) = command("Person blocked. Their comments are hidden from you.", subject = comment.id) { repository.block(it, "comment_author", comment.id); reloadAfterCommand() }
+    fun unblock(block: BlockDto) = command("Unblocked.", subject = block.id) { repository.unblock(it, block.id); reloadAfterCommand() }
 }

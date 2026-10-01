@@ -40,6 +40,181 @@ class SpaceViewModelTest {
 
     private suspend fun idle(value: SpaceViewModel) = withTimeout(5000) { value.state.first { !it.busy } }
 
+    @Test fun roleActionsRequireOwnerAndExactRosterReview(): Unit = runBlocking {
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.proposeRole(fixture.ownerMember, "admin")
+        value.proposeRole(fixture.otherMember.copy(etag = "\"not-reviewed\""), "admin")
+        value.proposeRole(fixture.otherMember, "owner")
+        value.proposeRole(fixture.otherMember, "member")
+        assertNull(value.state.value.confirmation)
+        value.proposeRole(fixture.otherMember, "admin")
+        val command = value.state.value.confirmation as SpaceCommand.ChangeRole
+        assertEquals(fixture.otherMember, command.member)
+        assertEquals(fixture.otherMember.etag, command.etag)
+        assertTrue(fixture.api.roleCommands.isEmpty())
+        value.cancelConfirmation(); value.confirm()
+        assertTrue(fixture.api.roleCommands.isEmpty())
+        for (role in listOf("admin", "member")) {
+            fixture.api.space = fixture.space.copy(role = role)
+            fixture.api.roster = listOf(fixture.ownerMember.copy(role = role), fixture.otherMember,
+                fixture.ownerMember.copy(accountId = fixture.invitationId))
+            value.refresh(); idle(value)
+            value.proposeRole(fixture.otherMember, "admin")
+            value.offerOwnership(fixture.otherMember)
+            assertNull(value.state.value.confirmation)
+        }
+    }
+
+    @Test fun roleActionsAreLimitedToFamilyAndGroupSpaces(): Unit = runBlocking {
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        for (type in listOf("couple", "solo", "family", "group")) {
+            fixture.api.space = fixture.space.copy(spaceType = type)
+            value.refresh(); idle(value)
+            value.proposeRole(fixture.otherMember, "admin")
+            if (type in setOf("family", "group")) assertTrue(value.state.value.confirmation is SpaceCommand.ChangeRole)
+            else assertNull(value.state.value.confirmation)
+            value.cancelConfirmation()
+        }
+        assertTrue(fixture.api.roleCommands.isEmpty())
+    }
+
+    @Test fun adminCanRemoveOnlyOrdinaryMembersAndCanLeaveSelf(): Unit = runBlocking {
+        val own = fixture.ownerMember.copy(role = "admin")
+        val owner = fixture.ownerMember.copy(accountId = fixture.invitationId)
+        val peer = fixture.otherMember.copy(accountId = fixture.spaceId, role = "admin")
+        fixture.api.space = fixture.space.copy(role = "admin")
+        fixture.api.roster = listOf(own, owner, peer, fixture.otherMember)
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        for (member in listOf(own, owner, peer)) {
+            value.proposeMembership(member, MembershipAction.REMOVE)
+            assertNull(value.state.value.confirmation)
+        }
+        value.proposeMembership(own, MembershipAction.LEAVE)
+        assertEquals(fixture.accountId, (value.state.value.confirmation as SpaceCommand.EndMembership).intent.targetId)
+        value.cancelConfirmation()
+        value.proposeMembership(fixture.otherMember, MembershipAction.REMOVE)
+        assertTrue(fixture.api.membershipCommands.isEmpty())
+        value.confirm(); idle(value)
+        assertEquals(fixture.recipientId, fixture.api.membershipCommands.single().targetId)
+        assertEquals(listOf(own, owner, peer), value.state.value.members)
+    }
+
+    @Test fun ownerCanRemoveAnAdminAndOfferThemOwnership(): Unit = runBlocking {
+        val admin = fixture.otherMember.copy(role = "admin")
+        fixture.api.roster = listOf(fixture.ownerMember, admin)
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.offerOwnership(admin)
+        assertTrue(value.state.value.confirmation is SpaceCommand.OfferOwnership)
+        value.cancelConfirmation()
+        value.proposeMembership(admin, MembershipAction.REMOVE)
+        assertTrue(value.state.value.confirmation is SpaceCommand.EndMembership)
+        value.confirm(); idle(value)
+        assertEquals("Member removed.", value.state.value.notice)
+    }
+
+    @Test fun adminCanLoadInviteAndRevokeWaitingInvitations(): Unit = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "admin")
+        val value = ready()
+        fixture.api.invitation = fixture.invitation
+        fixture.api.pagination = PaginationDto("next-sent", true)
+        value.open(fixture.spaceId); idle(value)
+        assertEquals(listOf(fixture.invitation), value.state.value.sent)
+        assertEquals("next-sent", value.state.value.sentCursor)
+        fixture.api.pagination = PaginationDto(null, false)
+        value.moreSent(); idle(value)
+        assertNull(value.state.value.sentCursor)
+        value.recipient(fixture.recipientId); value.invite(); idle(value)
+        assertEquals(listOf(fixture.recipientId), fixture.api.recipients)
+        assertEquals("member", value.state.value.sent.single().role)
+        value.propose(SpaceCommand.Revoke(fixture.accountId, value.state.value.sent.single()))
+        assertTrue(fixture.api.actions.isEmpty())
+        value.confirm(); idle(value)
+        assertEquals("revoked", value.state.value.sent.single().status)
+        assertEquals("Invitation revoked.", value.state.value.notice)
+    }
+
+    @Test fun uncertainRoleChangeRetainsExactIntentUntilExplicitRetry(): Unit = runBlocking {
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.proposeRole(fixture.otherMember, "admin")
+        assertTrue(fixture.api.roleCommands.isEmpty())
+        fixture.api.failure = 503
+        value.confirm(); idle(value)
+        val original = value.state.value.pending as SpaceCommand.ChangeRole
+        assertNull(value.state.value.notice)
+        value.proposeRole(fixture.ownerMember, "member"); value.refresh(); value.showMembers(); value.closePanel()
+        value.recipient(fixture.recipientId); value.invite(); value.confirm()
+        assertEquals(original, value.state.value.pending)
+        assertEquals(1, fixture.api.roleCommands.size)
+        fixture.api.failure = 0
+        value.retry(); idle(value)
+        assertEquals(fixture.api.roleCommands.first(), fixture.api.roleCommands.last())
+        assertEquals(2, fixture.api.roleCommands.size)
+        assertEquals(SpaceRepositoryTest.RoleRequest(fixture.spaceId, fixture.recipientId, original.requestKey, original.etag, ChangeSpaceMemberRoleDto("admin")), fixture.api.roleCommands.last())
+        assertNull(value.state.value.pending)
+        assertEquals("Sam is now an admin.", value.state.value.notice)
+        assertEquals("admin", value.state.value.members.single { it.accountId == fixture.recipientId }.role)
+        assertEquals("2", value.state.value.spaces.single().version)
+    }
+
+    @Test fun successfulDemotionShowsMemberNoticeAndReloadsRosterAndSpaces(): Unit = runBlocking {
+        val admin = fixture.otherMember.copy(role = "admin")
+        fixture.api.roster = listOf(fixture.ownerMember, admin)
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.proposeRole(admin, "member"); value.confirm(); idle(value)
+        assertEquals("Sam is now a member.", value.state.value.notice)
+        assertEquals("member", value.state.value.members.single { it.accountId == fixture.recipientId }.role)
+        assertEquals("2", value.state.value.spaces.single().version)
+        assertEquals("2", value.state.value.selectedSpace!!.version)
+        assertNull(value.state.value.pending)
+    }
+
+    @Test fun staleRoleChangeClearsRosterAndRequiresFreshConfirmation(): Unit = runBlocking {
+        val value = ready()
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.proposeRole(fixture.otherMember, "admin")
+        val original = value.state.value.confirmation as SpaceCommand.ChangeRole
+        fixture.api.failure = 412
+        value.confirm(); idle(value)
+        assertNull(value.state.value.pending)
+        assertNull(value.state.value.confirmation)
+        assertTrue(value.state.value.members.isEmpty())
+        assertEquals("Synthetic failure", value.state.value.error)
+        value.retry(); value.proposeRole(fixture.otherMember, "admin")
+        assertNull(value.state.value.confirmation)
+        assertEquals(1, fixture.api.roleCommands.size)
+        fixture.api.failure = 0
+        value.showMembers(); idle(value); value.proposeRole(fixture.otherMember, "admin")
+        assertTrue((value.state.value.confirmation as SpaceCommand.ChangeRole).requestKey != original.requestKey)
+    }
+
+    @Test fun confirmedRoleChangeIsNotRetriedWhenRosterReloadFails(): Unit = runBlocking {
+        var changed = false
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun changeMemberRole(authorization: String, spaceId: String, accountId: String, key: String, etag: String, body: ChangeSpaceMemberRoleDto): Response<EnvelopeDto<SpaceMemberDto>> {
+                val result = fixture.api.changeMemberRole(authorization, spaceId, accountId, key, etag, body)
+                changed = true
+                return result
+            }
+            override suspend fun members(authorization: String, spaceId: String): Response<EnvelopeDto<List<SpaceMemberDto>>> =
+                if (changed) Response.error(503, """{"error":{"code":"TEMPORARY_FAILURE","message":"Roster unavailable."}}""".toResponseBody()) else fixture.api.members(authorization, spaceId)
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        value.proposeRole(fixture.otherMember, "admin"); value.confirm(); idle(value)
+        assertNull(value.state.value.pending)
+        assertTrue(value.state.value.members.isEmpty())
+        assertEquals("Sam is now an admin.", value.state.value.notice)
+        assertEquals("Roster unavailable.", value.state.value.error)
+        value.retry()
+        assertEquals(1, fixture.api.roleCommands.size)
+    }
+
     @Test fun soloCreationLocksTypeAcrossRetryAndCannotOpenFamilyActions() = runBlocking {
         val value = ready()
         value.startCreate(); value.creationType("solo"); value.name("My planning")

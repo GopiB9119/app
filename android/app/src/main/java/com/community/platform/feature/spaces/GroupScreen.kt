@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 
 @Composable
@@ -83,28 +84,31 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
                     state.error?.let { item("error") { GroupMessage(it, true) } }
                     state.notice?.let { item("notice") { GroupMessage(it, false) } }
                     if (state.managing) {
+                        val managed = state.managedSpace
                         val settings = state.settings
-                        if (settings != null) {
+                        if (managed != null && managed.role in setOf("owner", "admin")) {
                             item("access") {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(settings.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-                                    Text(stringResource(if (settings.visibility == "public") R.string.groups_public_now else R.string.groups_private_now))
-                                    if (!state.confirmingVisibility) {
-                                        OutlinedButton(onClick = viewModel::proposeVisibility, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp).testTag("group-visibility")) {
-                                            Text(stringResource(if (settings.visibility == "public") R.string.groups_make_private else R.string.groups_make_public))
+                                Column(verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3)) {
+                                    Text(settings?.name ?: managed.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                                    if (managed.role == "owner" && settings != null) {
+                                        Text(stringResource(if (settings.visibility == "public") R.string.groups_public_now else R.string.groups_private_now))
+                                        if (!state.confirmingVisibility) {
+                                            OutlinedButton(onClick = viewModel::proposeVisibility, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("group-visibility")) {
+                                                Text(stringResource(if (settings.visibility == "public") R.string.groups_make_private else R.string.groups_make_public))
+                                            }
+                                        } else {
+                                            Text(stringResource(if (settings.visibility == "public") R.string.groups_confirm_private else R.string.groups_confirm_public))
+                                            if (state.pendingVisibility != null && !state.busy) Text(stringResource(R.string.groups_unconfirmed))
+                                            FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                                                TextButton(onClick = viewModel::keepVisibility, enabled = !state.locked, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) { Text(stringResource(R.string.cancel)) }
+                                                Button(onClick = viewModel::confirmVisibility, enabled = !state.busy, shape = shape, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("group-visibility-confirm")) { Text(stringResource(R.string.confirm)) }
+                                            }
                                         }
-                                    } else {
-                                        Text(stringResource(if (settings.visibility == "public") R.string.groups_confirm_private else R.string.groups_confirm_public))
-                                        if (state.pendingVisibility != null && !state.busy) Text(stringResource(R.string.groups_unconfirmed))
-                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            TextButton(onClick = viewModel::keepVisibility, enabled = !state.locked, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) }
-                                            Button(onClick = viewModel::confirmVisibility, enabled = !state.busy, shape = shape, modifier = Modifier.heightIn(min = 48.dp).testTag("group-visibility-confirm")) { Text(stringResource(R.string.confirm)) }
-                                        }
+                                        HorizontalDivider()
                                     }
-                                    HorizontalDivider()
                                     Text(stringResource(R.string.groups_requests_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-                                    if (settings.visibility == "private") Text(stringResource(R.string.groups_requests_private))
-                                    else if (state.reviews.isEmpty() && !state.busy) Text(stringResource(R.string.groups_requests_none))
+                                    if (managed.role == "owner" && settings?.visibility == "private") Text(stringResource(R.string.groups_requests_private))
+                                    else if (state.reviews.isEmpty() && !state.busy && state.error == null) Text(stringResource(R.string.groups_requests_none))
                                 }
                             }
                             items(state.reviews, key = { "review-${it.id}" }) { review ->
@@ -137,6 +141,7 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
                                     Text(stringResource(R.string.groups_member_count, entry.memberCount), style = MaterialTheme.typography.labelLarge)
                                     when {
                                         entry.viewerRole == "owner" -> Text(stringResource(R.string.groups_owner), color = MaterialTheme.colorScheme.primary)
+                                        entry.viewerRole == "admin" -> Text(stringResource(R.string.groups_admin), color = MaterialTheme.colorScheme.primary)
                                         entry.viewerRole == "member" -> Text(stringResource(R.string.groups_member), color = MaterialTheme.colorScheme.primary)
                                         entry.pendingRequestId != null -> FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Text(stringResource(R.string.groups_requested), color = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.CenterVertically))

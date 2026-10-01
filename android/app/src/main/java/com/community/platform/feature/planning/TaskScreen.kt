@@ -82,6 +82,8 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
+private val unit = DesignTokens.SpaceUnit
+
 data class TaskActions(
     val refresh: () -> Unit,
     val selectSpace: (String) -> Unit,
@@ -143,11 +145,11 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
     BackHandler(onBack = back)
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = unit * 2, vertical = unit * 2), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = back, enabled = !state.busy) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(if (state.editor != null || state.detail != null) R.string.tasks_back else R.string.tasks_account))
                 }
-                Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                Column(Modifier.weight(1f).padding(horizontal = unit)) {
                     Text(stringResource(if (state.selectedSpace?.spaceType == "solo") R.string.solo_tasks else R.string.family_tasks), style = MaterialTheme.typography.titleLarge)
                     Text(state.selectedSpace?.name ?: stringResource(R.string.local_environment), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -159,24 +161,24 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.widthIn(max = 760.dp).fillMaxSize().testTag("task-workspace"),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(unit * 4),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(unit * 5),
                 ) {
                     if (state.error != null) item("error") {
                         TaskMessage(state.error, true)
                         if (state.conflict) TextButton(onClick = { localConfirmation = LocalConfirmation.RELOAD }, enabled = !state.busy) {
-                            Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.tasks_reload_latest))
+                            Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_reload_latest))
                         } else if (state.pendingCommand == null && state.editor == null) {
                             TextButton(onClick = actions.refresh, enabled = !state.busy) { Text(stringResource(R.string.tasks_retry_loading)) }
                         }
                     }
                     if (state.notice != null) item("notice") { TaskMessage(state.notice, false) }
                     if (state.pendingCommand != null && !state.busy) item("unconfirmed") {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                             Text(stringResource(R.string.tasks_save_unconfirmed), style = MaterialTheme.typography.titleMedium)
                             Text(stringResource(R.string.tasks_may_be_saved), style = MaterialTheme.typography.bodyMedium)
                             OutlinedButton(onClick = actions.retry, shape = RoundedCornerShape(DesignTokens.ControlRadius)) {
-                                Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.tasks_retry_save))
+                                Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_retry_save))
                             }
                         }
                     }
@@ -191,9 +193,9 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                             item("due-date") { TaskDateField(editor.fields.dueDate, enabled) { actions.updateFields(editor.fields.copy(dueDate = it), false) } }
                             item("assignee") { TaskAssigneeField(editor, state.assignees, enabled) { actions.updateFields(editor.fields.copy(assigneeId = it), true) } }
                             item("editor-actions") {
-                                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 3), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                     Button(onClick = actions.save, enabled = enabled && !state.conflict && (editor.original == null || editor.dirty), shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("task-save")) {
-                                        Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.tasks_save))
+                                        Icon(Icons.Default.Check, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_save))
                                     }
                                     OutlinedButton(onClick = back, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) { Text(stringResource(R.string.cancel)) }
                                 }
@@ -201,18 +203,18 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                         }
                         detail != null -> {
                             item("detail") { TaskDetail(detail, state, actions, onRemind) }
-                            if (onChecklist != null) item("checklist") { OutlinedButton(onClick = { onChecklist(detail) }, enabled = !state.navigationLocked, modifier = Modifier.fillMaxWidth().testTag("task-open-checklist")) { Icon(Icons.Default.Check, null); Text(stringResource(R.string.checklist_title), Modifier.padding(start = 8.dp)) } }
+                            if (onChecklist != null) item("checklist") { OutlinedButton(onClick = { onChecklist(detail) }, enabled = !state.navigationLocked, modifier = Modifier.fillMaxWidth().testTag("task-open-checklist")) { Icon(Icons.Default.Check, null); Text(stringResource(R.string.checklist_title), Modifier.padding(start = unit * 2)) } }
                         }
                         else -> {
                             item("controls") {
-                                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(unit * 4)) {
                                     OutlinedButton(onClick = { choosingSpace = true }, enabled = !state.busy && state.spaces.isNotEmpty(), shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("task-space")) {
                                         Text(state.selectedSpace?.name ?: stringResource(R.string.tasks_choose_space), Modifier.weight(1f)); Icon(Icons.Default.ArrowDropDown, null)
                                     }
-                                    if (state.selectedSpace != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (state.selectedSpace != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 3), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                         TaskFilter(state.statusFilter, !state.busy, actions.filter)
                                         Button(onClick = actions.create, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) {
-                                            Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.tasks_new))
+                                            Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_new))
                                         }
                                     }
                                 }
@@ -223,7 +225,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                             if (state.nextCursor != null) item("load-more") { OutlinedButton(onClick = actions.loadMore, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.tasks_load_more)) } }
                         }
                     }
-                    item("bottom-space") { Spacer(Modifier.height(16.dp)) }
+                    item("bottom-space") { Spacer(Modifier.height(unit * 4)) }
                 }
             }
         }
@@ -240,7 +242,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
     }
     state.confirmation?.let { confirmation ->
         AlertDialog(onDismissRequest = actions.cancelStatus, title = { Text(stringResource(R.string.tasks_confirm_status, stringResource(statusLabel(confirmation.status)))) }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                 Text(confirmation.record.task.title, style = MaterialTheme.typography.titleMedium)
                 confirmation.record.task.assignee?.let { Text(stringResource(R.string.tasks_assigned_to, it.displayName)) }
             }
@@ -259,15 +261,15 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
 
 @Composable
 private fun TaskRow(record: TaskRecord, enabled: Boolean, open: (TaskRecord) -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button) { open(record) }.padding(vertical = 8.dp).testTag("task-row-${record.task.id}"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button) { open(record) }.padding(vertical = unit * 2).testTag("task-row-${record.task.id}"), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(unit * 3)) {
             Text(record.task.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
         }
         Text(stringResource(statusLabel(record.task.status)), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         Text(assigneeLabel(record.task), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         record.task.dueDate?.let { Text(stringResource(R.string.tasks_due_value, formatDate(it)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        HorizontalDivider(Modifier.padding(top = 8.dp))
+        HorizontalDivider(Modifier.padding(top = unit * 2))
     }
 }
 
@@ -276,7 +278,7 @@ private fun TaskRow(record: TaskRecord, enabled: Boolean, open: (TaskRecord) -> 
 private fun TaskDetail(record: TaskRecord, state: TaskWorkspaceState, actions: TaskActions, onRemind: ((TaskRecord) -> Unit)?) {
     val task = record.task
     val enabled = !state.busy && state.pendingCommand == null && !state.conflict
-    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 5)) {
         Text(task.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Text(stringResource(statusLabel(task.status)), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         if (task.description.isNotEmpty()) SelectionContainer { Text(task.description, style = MaterialTheme.typography.bodyLarge) }
@@ -287,15 +289,15 @@ private fun TaskDetail(record: TaskRecord, state: TaskWorkspaceState, actions: T
             Text(stringResource(R.string.tasks_completed_at, task.completedAt), style = MaterialTheme.typography.bodySmall)
             task.completedByAccountId?.let { Text(stringResource(R.string.tasks_completed_by, it), style = MaterialTheme.typography.bodySmall) }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (onRemind != null && task.status in setOf("open", "in_progress")) OutlinedButton(onClick = { onRemind(record) }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Icon(Icons.Default.Notifications, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.reminders_me)) }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 3), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+            if (onRemind != null && task.status in setOf("open", "in_progress")) OutlinedButton(onClick = { onRemind(record) }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Icon(Icons.Default.Notifications, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.reminders_me)) }
             if (task.permissions.canEdit) OutlinedButton(onClick = { actions.edit(record) }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius)) {
-                Icon(Icons.Default.Edit, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.tasks_edit))
+                Icon(Icons.Default.Edit, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_edit))
             }
             task.permissions.allowedStatuses.forEach { status ->
                 OutlinedButton(onClick = { actions.proposeStatus(record, status) }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) {
                     Icon(if (status == "cancelled") Icons.Default.Close else Icons.Default.Check, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp)); Text(stringResource(statusAction(status)))
+                    Spacer(Modifier.width(unit * 2)); Text(stringResource(statusAction(status)))
                 }
             }
         }
@@ -321,11 +323,11 @@ private fun TaskFilter(selected: String?, enabled: Boolean, onSelected: (String?
 @Composable
 private fun TaskDateField(value: String?, enabled: Boolean, onSelected: (String?) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
         Text(stringResource(R.string.task_due_date), style = MaterialTheme.typography.labelLarge)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = DesignTokens.MinimumTarget).testTag("task-due-date"), shape = RoundedCornerShape(DesignTokens.ControlRadius)) {
-                Icon(Icons.Default.DateRange, null, Modifier.size(19.dp)); Spacer(Modifier.width(10.dp)); Text(value?.let(::formatDate) ?: stringResource(R.string.tasks_no_due_date), Modifier.weight(1f))
+                Icon(Icons.Default.DateRange, null, Modifier.size(19.dp)); Spacer(Modifier.width(unit * 3)); Text(value?.let(::formatDate) ?: stringResource(R.string.tasks_no_due_date), Modifier.weight(1f))
             }
             if (value != null) IconButton(onClick = { onSelected(null) }, enabled = enabled) { Icon(Icons.Default.Close, stringResource(R.string.tasks_clear_due_date)) }
         }
@@ -344,7 +346,7 @@ private fun TaskAssigneeField(editor: TaskEditor, assignees: List<TaskAssigneeDt
     val unavailable = editor.original?.task?.assigneeUnavailable == true && !editor.changeAssignee
     val selected = assignees.firstOrNull { it.accountId == editor.fields.assigneeId }?.displayName
     val label = if (unavailable) stringResource(R.string.tasks_assignee_unavailable) else selected ?: stringResource(R.string.tasks_unassigned)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
         Text(stringResource(R.string.task_assignee), style = MaterialTheme.typography.labelLarge)
         OutlinedButton(onClick = { expanded = true }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("task-assignee")) { Text(label, Modifier.weight(1f)); Icon(Icons.Default.ArrowDropDown, null) }
     }
@@ -363,7 +365,7 @@ private fun TaskAssigneeField(editor: TaskEditor, assignees: List<TaskAssigneeDt
 @Composable
 private fun TaskMessage(message: String, error: Boolean) {
     Surface(color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) {
-        Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+        Text(message, Modifier.padding(unit * 3), style = MaterialTheme.typography.bodyMedium)
     }
 }
 

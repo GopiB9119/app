@@ -31,7 +31,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
+import java.io.IOException
 import java.time.Instant
+import java.util.Collections
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CareTest {
@@ -95,6 +97,25 @@ class CareTest {
         override suspend fun day(authorization: String, date: String): Response<EnvelopeDto<CareDayDto>> {
             dates += date
             return if (listFailure != 0) failed(listFailure) else ok(day.copy(localDate = date, occurrences = day.occurrences.map { it.copy(localDate = date) }))
+        }
+    }
+
+    /** Hands each command to the fake server, then loses the server's answer while [lost] is set, as a dropped connection would. */
+    inner class LossyApi : CareApi by api {
+        var lost = false
+        val sent: MutableList<List<Any>> = Collections.synchronizedList(mutableListOf())
+        private fun <Value> deliver(answer: Response<Value>): Response<Value> = if (lost) throw IOException("Synthetic lost answer") else answer
+        override suspend fun create(authorization: String, key: String, body: CreateCareInstructionDto): Response<EnvelopeDto<CareInstructionDto>> {
+            sent += listOf(authorization, key, body)
+            return deliver(api.create(authorization, key, body))
+        }
+        override suspend fun stop(authorization: String, instructionId: String, key: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<CareInstructionDto>> {
+            sent += listOf(authorization, instructionId, key, etag, body)
+            return deliver(api.stop(authorization, instructionId, key, etag, body))
+        }
+        override suspend fun report(authorization: String, instructionId: String, key: String, etag: String, body: ReportDoseDto): Response<EnvelopeDto<CareOccurrenceDto>> {
+            sent += listOf(authorization, instructionId, key, etag, body)
+            return deliver(api.report(authorization, instructionId, key, etag, body))
         }
     }
 
@@ -345,5 +366,109 @@ class CareTest {
         assertEquals("\"i1\"", requests[4].header("If-Match"))
         assertEquals("{}", bodies[4])
         assertTrue(requests.none { it.url.queryParameter("account_id") != null })
+    }
+
+    @Test fun failedOrLostCreateIsNeverShownAsSavedAndRetriesTheSameKeyAndBody() = runBlocking {
+        val lossy = LossyApi()
+        val current = ready(CareRepository(lossy, fixture.accounts))
+        current.showMedicines(false); idle(current)
+        val listed = current.state.value.instructions
+        current.startAdd(); current.draft { complete }
+        fun notSaved() {
+            val state = current.state.value
+            assertEquals("Not confirmed. Retry sends the same medicine; it cannot be saved twice.", state.error)
+            assertNull(state.notice)
+            assertEquals(CareView.ADD, state.view)
+            assertEquals(complete, state.draft)
+            assertEquals(listed, state.instructions)
+            assertEquals(lossy.sent.first()[1], state.pendingCreate?.key)
+        }
+        api.createFailure = 503
+        current.save(); idle(current)
+        notSaved()
+        api.createFailure = 0; lossy.lost = true
+        current.retryCreate(); idle(current)
+        notSaved()
+        lossy.lost = false
+        current.retryCreate(); idle(current)
+        assertEquals(List(3) { lossy.sent.first() }, lossy.sent)
+        assertEquals(listOf("Bearer ${fixture.token}", careBody(complete)), lossy.sent.first().let { listOf(it[0], it[2]) })
+        val state = current.state.value
+        assertEquals("Synthetic tablet saved. It appears in your day plan from 2026-09-20.", state.notice)
+        assertNull(state.error)
+        assertNull(state.pendingCreate)
+        assertEquals(CareView.MEDICINES, state.view)
+    }
+
+    @Test fun failedOrLostStopIsNeverShownAsStoppedAndRetriesTheSameKeyAndBody() = runBlocking {
+        val lossy = LossyApi()
+        val current = ready(CareRepository(lossy, fixture.accounts))
+        current.showMedicines(false); idle(current)
+        fun notStopped() {
+            val state = current.state.value
+            assertEquals("The stop is not confirmed. Choose Stop tracking again to retry.", state.error)
+            assertNull(state.notice)
+            assertEquals(listOf(instruction), state.instructions)
+            assertEquals(instructionId to lossy.sent.first()[2], state.pendingStop)
+        }
+        api.stopFailure = 503
+        current.askStop(instruction); current.stop(); idle(current)
+        notStopped()
+        api.stopFailure = 0; api.active = emptyList(); lossy.lost = true
+        current.askStop(instruction); current.stop(); idle(current)
+        notStopped()
+        lossy.lost = false
+        current.askStop(instruction); current.stop(); idle(current)
+        assertEquals(List(3) { lossy.sent.first() }, lossy.sent)
+        assertEquals(listOf("Bearer ${fixture.token}", instructionId, "\"i1\"", emptyMap<String, String>()), lossy.sent.first().let { listOf(it[0], it[1], it[3], it[4]) })
+        val state = current.state.value
+        assertEquals("Stopped tracking Synthetic tablet. Notes you made are kept.", state.notice)
+        assertNull(state.error)
+        assertNull(state.pendingStop)
+        assertTrue(state.instructions.isEmpty())
+    }
+
+    @Test fun refusedStopIsNeverShownAsStoppedAndReleasesItsKey() = runBlocking {
+        val current = ready()
+        current.showMedicines(false); idle(current)
+        api.stopFailure = 412
+        current.askStop(instruction); current.stop(); idle(current)
+        val state = current.state.value
+        assertEquals("Synthetic SYNTHETIC", state.error)
+        assertNull(state.notice)
+        assertNull(state.pendingStop)
+        assertEquals(listOf(instruction), state.instructions)
+        assertEquals(listOf("active", "active"), api.statuses)
+        api.stopFailure = 0
+        current.askStop(instruction); current.stop(); idle(current)
+        assertEquals(2, api.stops.size)
+        assertNotEquals(api.stops[0].first, api.stops[1].first)
+        assertEquals("Stopped tracking Synthetic tablet. Notes you made are kept.", current.state.value.notice)
+    }
+
+    @Test fun failedOrLostDoseNoteIsNeverShownAsNotedAndRetriesTheSameKeyAndBody() = runBlocking {
+        val lossy = LossyApi()
+        val current = ready(CareRepository(lossy, fixture.accounts))
+        fun notNoted() {
+            val state = current.state.value
+            assertEquals("Your note is not confirmed. Choose it again to retry; it cannot be saved twice.", state.error)
+            assertNull(state.notice)
+            assertEquals(day.occurrences, state.day?.occurrences)
+            assertEquals(lossy.sent.first()[2], state.pendingReport?.key)
+        }
+        api.reportFailure = 503
+        current.report(dose, "taken"); idle(current)
+        notNoted()
+        api.reportFailure = 0; lossy.lost = true
+        current.report(dose, "taken"); idle(current)
+        notNoted()
+        lossy.lost = false
+        current.report(dose, "taken"); idle(current)
+        assertEquals(List(3) { lossy.sent.first() }, lossy.sent)
+        assertEquals(listOf("Bearer ${fixture.token}", instructionId, "\"o1\"", ReportDoseDto("2026-09-25", "08:00", "taken")), lossy.sent.first().let { listOf(it[0], it[1], it[3], it[4]) })
+        val state = current.state.value
+        assertEquals("taken", state.day!!.occurrences.first().report?.outcome)
+        assertNull(state.error)
+        assertNull(state.pendingReport)
     }
 }

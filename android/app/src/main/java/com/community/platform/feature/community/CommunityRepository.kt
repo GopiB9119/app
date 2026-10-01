@@ -77,7 +77,9 @@ interface CommunityApi {
     @GET("v1/me/saved-posts") suspend fun saved(@Header("Authorization") authorization: String, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<PostDto>>>
     @GET("v1/discover/pages") suspend fun discover(@Header("Authorization") authorization: String, @Query("q") query: String?, @Query("topic") topic: String?, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<PageDto>>>
     @GET("v1/me/pages") suspend fun myPages(@Header("Authorization") authorization: String): Response<EnvelopeDto<List<PageDto>>>
+    @GET("v1/me/following") suspend fun following(@Header("Authorization") authorization: String, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<PageDto>>>
     @GET("v1/pages/{ref}") suspend fun page(@Header("Authorization") authorization: String, @Path("ref") reference: String): Response<EnvelopeDto<PageDto>>
+    @PATCH("v1/pages/{id}") suspend fun updatePage(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<PageDto>>
     @GET("v1/pages/{ref}/posts") suspend fun pagePosts(@Header("Authorization") authorization: String, @Path("ref") reference: String, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<PostDto>>>
     @GET("v1/pages/{id}/drafts") suspend fun drafts(@Header("Authorization") authorization: String, @Path("id") pageId: String): Response<EnvelopeDto<List<PostDto>>>
     @POST("v1/pages") suspend fun createPage(@Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Body body: CreatePageDto): Response<EnvelopeDto<PageDto>>
@@ -143,6 +145,8 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     private fun <Value> paged(response: Response<EnvelopeDto<List<Value>>>, cursor: String?, id: (Value) -> String, check: (Value) -> Value): CommunityPage<Value> {
         val items = accounts.result(response)
         val pagination = response.body()?.pagination ?: invalid("The list is incomplete.")
+        // A next cursor equal to the one sent would return the same page again, as on the web.
+        if (cursor != null && pagination.nextCursor == cursor) invalid("The list is incomplete.")
         validate {
             require(items.size <= 100 && items.map(id).distinct().size == items.size)
             require(pagination.hasMore == (pagination.nextCursor != null))
@@ -170,6 +174,9 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     suspend fun myPages(accountId: String): List<PageDto> = accounts.authorized(accountId) {
         accounts.result(api.myPages(it)).map(::page).also { pages -> if (pages.size > 5 || pages.any { page -> !page.canManage }) invalid() }
     }
+    suspend fun following(accountId: String, cursor: String?) = accounts.authorized(accountId) {
+        paged(api.following(it, cursor), cursor, PageDto::id) { item -> page(item).also { page -> if (!page.following) invalid() } }
+    }
     suspend fun page(accountId: String, reference: String): PageDto = accounts.authorized(accountId) {
         page(accounts.result(api.page(it, reference))).also { page -> if (page.id != reference && page.handle != reference.lowercase()) invalid() }
     }
@@ -188,6 +195,14 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     suspend fun follow(accountId: String, pageId: String, follow: Boolean): PageDto = accounts.authorized(accountId) {
         page(accounts.result(api.follow(it, pageId, if (follow) "follow" else "unfollow", emptyMap()))).also { page ->
             if (page.id != pageId || page.following != follow) invalid("The follow change could not be confirmed.")
+        }
+    }
+    /** Sends only the changed fields, against the version tag of the page as the editor opened it. */
+    suspend fun updatePage(accountId: String, opened: PageDto, changes: Map<String, String>): PageDto = accounts.authorized(accountId) {
+        if (!opened.canManage || opened.etag == null || changes.isEmpty()) invalid()
+        require(changes.isNotEmpty() && setOf("name", "description", "topic").containsAll(changes.keys) && (changes["topic"] ?: TOPICS.first()) in TOPICS)
+        page(accounts.result(api.updatePage(it, opened.id, opened.etag ?: invalid(), changes))).also { result ->
+            if (result.id != opened.id || result.handle != opened.handle || !result.canManage) invalid("The page change could not be confirmed.")
         }
     }
     suspend fun react(accountId: String, postId: String, action: String): PostDto = accounts.authorized(accountId) {

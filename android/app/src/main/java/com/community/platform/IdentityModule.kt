@@ -13,6 +13,7 @@ import com.community.platform.feature.messaging.MessagingApi
 import com.community.platform.feature.planning.TaskApi
 import com.community.platform.feature.planning.CalendarApi
 import com.community.platform.feature.planning.ChecklistApi
+import com.community.platform.feature.realtime.LiveClient
 import com.community.platform.feature.scheduling.ReminderApi
 import com.community.platform.feature.spaces.SpaceApi
 import com.community.platform.feature.spaces.SpaceSettingsApi
@@ -38,6 +39,17 @@ object IdentityModule {
 
     @Provides @Singleton fun gson(): Gson = Gson()
     @Provides @Singleton fun store(implementation: KeystoreSessionStore): SessionStore = implementation
+    // The live stream stays open for up to 30 minutes with a keep-alive every 15 seconds, so it has no
+    // response-size cap and no call deadline; three missed keep-alives end it.
+    @Provides @Singleton @LiveClient fun liveHttp(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
     @Provides @Singleton fun http(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)

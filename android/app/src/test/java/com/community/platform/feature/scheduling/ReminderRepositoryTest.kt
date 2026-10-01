@@ -10,10 +10,12 @@ import com.community.platform.feature.identity.PaginationDto
 import com.community.platform.feature.identity.UserDto
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import okhttp3.Headers.Companion.headersOf
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import org.junit.Assert.assertEquals
@@ -22,6 +24,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.Response
+import java.io.IOException
 import java.util.UUID
 
 class ReminderRepositoryTest {
@@ -302,6 +305,93 @@ class ReminderRepositoryTest {
         assertEquals("{}", payload)
     }
 
+    @Test fun actualRetrofitSeriesCreationSendsOnlyTheReviewedTokenAndKey() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val client = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            requests.add(chain.request())
+            okhttp3.Response.Builder().request(chain.request()).code(201).message("Synthetic").protocol(Protocol.HTTP_1_1)
+                .header("ETag", fixture.series.etag)
+                .body(Gson().toJson(EnvelopeDto(fixture.series, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val repository = ReminderRepository(IdentityModule.reminders(client, Gson()), fixture.accounts)
+        val intent = SeriesCreateIntent(fixture.accountId, UUID.randomUUID().toString(), fixture.seriesPreview.previewToken, fixture.rule)
+        assertEquals(fixture.series, repository.saveSeries(intent))
+        val request = requests.single()
+        val buffer = Buffer(); request.body!!.writeTo(buffer)
+        val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
+        assertEquals("POST", request.method)
+        assertEquals("/v1/reminder-series", request.url.encodedPath)
+        assertNull(request.url.query)
+        assertEquals(setOf("preview_token"), body.keySet())
+        assertEquals(intent.previewToken, body["preview_token"].asString)
+        assertEquals(listOf(intent.requestKey), request.headers.values("Idempotency-Key"))
+        assertNull(request.header("If-Match"))
+        assertEquals("Bearer synthetic-session-token-with-more-than-32-characters", request.header("Authorization"))
+    }
+
+    @Test fun actualRetrofitSnoozeSendsOnlyTheOfferedMinutesAndKey() = runBlocking {
+        fixture.offerSnooze()
+        val item = fixture.api.notificationValue
+        val snoozed = item.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T06:42:00Z")
+        val requests = mutableListOf<Request>()
+        val client = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            requests.add(chain.request())
+            okhttp3.Response.Builder().request(chain.request()).code(200).message("Synthetic").protocol(Protocol.HTTP_1_1)
+                .body(Gson().toJson(EnvelopeDto(snoozed, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val repository = ReminderRepository(IdentityModule.reminders(client, Gson()), fixture.accounts)
+        val intent = SnoozeIntent(fixture.accountId, item, 10, UUID.randomUUID().toString())
+        assertEquals(snoozed, repository.snooze(intent))
+        val request = requests.single()
+        val buffer = Buffer(); request.body!!.writeTo(buffer)
+        val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
+        assertEquals("POST", request.method)
+        assertEquals("/v1/notifications/${item.id}/snooze", request.url.encodedPath)
+        assertNull(request.url.query)
+        assertEquals(setOf("minutes"), body.keySet())
+        assertEquals(10, body["minutes"].asInt)
+        assertEquals(listOf(intent.requestKey), request.headers.values("Idempotency-Key"))
+        assertNull(request.header("If-Match"))
+        assertEquals("Bearer synthetic-session-token-with-more-than-32-characters", request.header("Authorization"))
+    }
+
+    @Test fun actualRetrofitResumeSkipAndCancelUseReviewedSeriesPreconditions() = runBlocking {
+        val paused = fixture.series.copy(status = "paused", reason = "by_person", nextOccurrence = null)
+        val skipped = fixture.series.copy(nextOccurrence = fixture.series.nextOccurrence!!.copy(
+            reminderId = fixture.otherId, localDate = "2026-11-02", scheduledAt = "2026-11-02T02:30:00Z"))
+        val cancelled = fixture.series.copy(status = "cancelled", nextOccurrence = null)
+        var answer = fixture.series
+        val requests = mutableListOf<Request>()
+        val client = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            requests.add(chain.request())
+            okhttp3.Response.Builder().request(chain.request()).code(200).message("Synthetic").protocol(Protocol.HTTP_1_1)
+                .header("ETag", answer.etag)
+                .body(Gson().toJson(EnvelopeDto(answer, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val repository = ReminderRepository(IdentityModule.reminders(client, Gson()), fixture.accounts)
+        for ((operation, original, result) in listOf(
+            Triple(SeriesOperation.RESUME, paused, fixture.series),
+            Triple(SeriesOperation.SKIP, fixture.series, skipped),
+            Triple(SeriesOperation.CANCEL, fixture.series, cancelled),
+            Triple(SeriesOperation.CANCEL, paused, cancelled),
+        )) {
+            answer = result.copy(version = "2", etag = "\"series-2\"")
+            val intent = SeriesCommandIntent(fixture.accountId, original, operation, UUID.randomUUID().toString())
+            val calls = requests.size
+            assertEquals(answer, repository.commandSeries(intent))
+            assertEquals(calls + 1, requests.size)
+            val request = requests.last()
+            val buffer = Buffer(); request.body!!.writeTo(buffer)
+            assertEquals("POST", request.method)
+            assertEquals("/v1/reminder-series/${original.id}/${operation.wireValue}", request.url.encodedPath)
+            assertNull(request.url.query)
+            assertEquals("{}", buffer.readUtf8())
+            assertEquals(listOf(original.etag), request.headers.values("If-Match"))
+            assertEquals(listOf(intent.requestKey), request.headers.values("Idempotency-Key"))
+            assertEquals("Bearer synthetic-session-token-with-more-than-32-characters", request.header("Authorization"))
+        }
+    }
+
     class Fixture {
         val accountId = "62f3da14-12e9-4575-9541-caf8b98e2dfd"
         val taskId = "c2302436-0dd7-4d99-a7c3-ead390fd08eb"
@@ -352,6 +442,9 @@ class ReminderRepositoryTest {
         }
     }
 
+    data class SeriesCommandCall(val key: String, val etag: String, val identifier: String, val operation: String, val body: Map<String, String>)
+    data class SnoozeCall(val key: String, val identifier: String, val body: SnoozeDto)
+
     class FakeApi(var previewValue: ReminderPreviewDto, var reminderValue: ReminderDto, var notificationValue: InboxNotificationDto) : ReminderApi {
         var failure = 0
         var cancelValue: ReminderDto? = null
@@ -378,12 +471,23 @@ class ReminderRepositoryTest {
         val seriesKeys = mutableListOf<String>()
         val seriesTokens = mutableListOf<String>()
         val seriesCommands = mutableListOf<String>()
+        val seriesCalls = mutableListOf<SeriesCommandCall>()
         var snoozeValue: InboxNotificationDto? = null
         val snoozes = mutableListOf<String>()
+        val snoozeCalls = mutableListOf<SnoozeCall>()
+        var commandEntered: CompletableDeferred<Unit>? = null
+        var commandGate: CompletableDeferred<Unit>? = null
+        var loseCommandAnswer = false
         private fun <Value> response(value: Value, page: Boolean = false, count: Int? = null, cursor: String? = null): Response<EnvelopeDto<Value>> {
             calls += 1
             if (failure != 0) return Response.error(failure, """{"error":{"code":"SYNTHETIC","message":"Synthetic failure"}}""".toResponseBody("application/json".toMediaType()))
             return Response.success(EnvelopeDto(value, null, if (page) PaginationDto(cursor, cursor != null) else null, count), headersOf("ETag", "\"preferences-$preferenceVersion\""))
+        }
+        private suspend fun <Value> deliverCommand(answer: Response<EnvelopeDto<Value>>): Response<EnvelopeDto<Value>> {
+            commandEntered?.complete(Unit)
+            commandGate?.await()
+            if (loseCommandAnswer && answer.isSuccessful) throw IOException("Synthetic lost answer after the command was applied")
+            return answer
         }
         override suspend fun preview(authorization: String, body: PreviewReminderDto) = response(previewValue)
         override suspend fun create(authorization: String, key: String, body: SaveReminderDto): Response<EnvelopeDto<ReminderDto>> { keys.add(key); tokens.add(body.previewToken); return response(reminderValue) }
@@ -415,18 +519,31 @@ class ReminderRepositoryTest {
         override suspend fun series(authorization: String, taskId: String?, cursor: String?, limit: Int) = response(seriesItems, true)
         override suspend fun commandSeries(authorization: String, key: String, etag: String, identifier: String, operation: String, body: Map<String, String>): Response<EnvelopeDto<ReminderSeriesDto>> {
             seriesCommands.add("$operation|$key|$etag|$identifier")
+            seriesCalls.add(SeriesCommandCall(key, etag, identifier, operation, body.toMap()))
             val current = requireNotNull(seriesValue)
             val next = seriesResult ?: when (operation) {
                 "pause" -> current.copy(status = "paused", reason = "by_person", nextOccurrence = null)
-                "cancel" -> current.copy(status = "cancelled", nextOccurrence = null)
+                "cancel" -> current.copy(status = "cancelled", reason = null, nextOccurrence = null)
                 "skip" -> current.copy(nextOccurrence = current.nextOccurrence?.copy(localDate = "2026-11-02", scheduledAt = "2026-11-02T02:30:00Z"))
                 else -> current.copy(status = "active", reason = null)
+            }.copy(version = "2", etag = "\"series-2\"")
+            val answer = response(next)
+            if (answer.isSuccessful) {
+                seriesValue = next
+                seriesItems = seriesItems.map { if (it.id == identifier) next else it }
             }
-            return response(next.copy(version = "2", etag = "\"series-2\""))
+            return deliverCommand(answer)
         }
         override suspend fun snooze(authorization: String, key: String, identifier: String, body: SnoozeDto): Response<EnvelopeDto<InboxNotificationDto>> {
             snoozes.add("$key|${body.minutes}")
-            return response(snoozeValue ?: notificationValue.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T06:42:00Z"))
+            snoozeCalls.add(SnoozeCall(key, identifier, body))
+            val next = snoozeValue ?: notificationValue.copy(readAt = "2026-11-01T06:32:00Z", canSnooze = false, snoozedUntil = "2026-11-01T06:42:00Z")
+            val answer = response(next)
+            if (answer.isSuccessful) {
+                if (notificationValue.readAt == null && next.readAt != null) unread = unread?.let { (it - 1).coerceAtLeast(0) }
+                notificationValue = next
+            }
+            return deliverCommand(answer)
         }
     }
 }

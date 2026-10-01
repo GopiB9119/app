@@ -3,20 +3,24 @@ package com.community.platform.feature.messaging
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.community.platform.feature.identity.IdentityFailure
+import com.community.platform.feature.realtime.LiveEvent
+import com.community.platform.feature.realtime.LiveSignals
 import com.community.platform.feature.spaces.SpaceDto
 import com.community.platform.feature.spaces.SpaceMemberDto
 import com.community.platform.feature.spaces.SpaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
 import javax.inject.Inject
@@ -69,12 +73,15 @@ data class MessagingState(
 }
 
 const val MESSAGE_POLL_MILLISECONDS = 5000L
+/** While the live stream is open it reports changes, so polling only backs it up (the list every third poll). */
+const val LIVE_MESSAGE_POLL_MILLISECONDS = 30_000L
 private const val MAX_PENDING_SENDS = 20
 
 @HiltViewModel
 class MessagingViewModel @Inject constructor(
     private val repository: MessagingRepository,
     private val spaces: SpaceRepository,
+    private val live: LiveSignals = LiveSignals.None,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(MessagingState())
     val state = mutableState.asStateFlow()
@@ -87,6 +94,8 @@ class MessagingViewModel @Inject constructor(
     private var visible = false
     private var entryOpened = false
     private var markedThrough = 0L
+    private var hintPollChat = -1L
+    private var hintRefresh = -1L
 
     private fun accountScope() = CoroutineScope(viewModelScope.coroutineContext + accountJob)
     private fun chatScope() = CoroutineScope(viewModelScope.coroutineContext + chatJob)
@@ -104,6 +113,7 @@ class MessagingViewModel @Inject constructor(
         if (accountId != null) {
             refreshList()
             loadSpaces()
+            listen()
             if (visible) startPolling()
         }
     }
@@ -119,12 +129,64 @@ class MessagingViewModel @Inject constructor(
         pollLoop = accountScope().launch {
             var tick = 0
             while (isActive && generation == expected) {
-                delay(MESSAGE_POLL_MILLISECONDS)
+                // A change in the live connection starts the wait again with the other interval.
+                val connected = live.connected.value
+                val interval = if (connected) LIVE_MESSAGE_POLL_MILLISECONDS else MESSAGE_POLL_MILLISECONDS
+                if (withTimeoutOrNull(interval) { live.connected.first { it != connected } } != null) { tick = 0; continue }
                 tick += 1
                 val chat = mutableState.value.chat
                 if (chat != null) { if (!chat.denied) poll(first = false) }
                 else if (tick % 3 == 0) refreshList(quiet = true)
             }
+        }
+    }
+
+    /** Live hints carry IDs only: a hint about the open chat polls it now, and any conversation change re-reads the list. */
+    private fun listen() {
+        val expected = generation
+        accountScope().launch {
+            live.events.collect { event ->
+                // A hidden screen catches up when it resumes.
+                if (generation != expected || !visible) return@collect
+                when (event) {
+                    is LiveEvent.Change -> if (event.kind == "conversation") {
+                        val open = mutableState.value.chat?.conversation?.id
+                        if (open != null && open.equals(event.conversationId, ignoreCase = true)) pollForHint()
+                        refreshForHint()
+                    }
+                    LiveEvent.Ready, LiveEvent.Resync -> { pollForHint(); refreshForHint() }
+                    is LiveEvent.End -> Unit
+                }
+            }
+        }
+    }
+
+    /** Polls the open chat now, or exactly once more after the poll that is running; polls never overlap. */
+    private fun pollForHint() {
+        val chat = mutableState.value.chat ?: return
+        val expectedChat = chatGeneration
+        if (chat.denied || hintPollChat == expectedChat) return
+        hintPollChat = expectedChat
+        chatScope().launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                mutableState.first { state -> state.chat.let { it == null || !it.polling && !it.loading } }
+            } finally {
+                if (hintPollChat == expectedChat) hintPollChat = -1
+            }
+            poll(first = false)
+        }
+    }
+
+    /** Re-reads the conversation list now, or exactly once more after the read that is running. */
+    private fun refreshForHint() {
+        val running = listJob?.takeIf { it.isActive }
+        if (running == null) { refreshList(quiet = true); return }
+        val expected = generation
+        if (hintRefresh == expected) return
+        hintRefresh = expected
+        accountScope().launch {
+            try { running.join() } finally { if (hintRefresh == expected) hintRefresh = -1 }
+            refreshList(quiet = true)
         }
     }
 

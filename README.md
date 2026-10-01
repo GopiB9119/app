@@ -52,6 +52,10 @@ A task due date does not automatically schedule a reminder. Unregistered-recipie
 
 See the [local runbook](docs/runbooks/README.md) for setup, verification and current evidence limits. This is a synthetic local build, not an approved production rollout.
 
+## Checks
+
+`npm run verify` runs every offline check one after another (structure, design tokens, the web type check and tests, the backend and Android JVM tests) and writes each log and one summary to `.local\verify\`; `npm run verify -- -Suite live` runs the live journeys against the local preview. See [Verification Commands](docs/runbooks/README.md#verification-commands).
+
 ## Structure Checks
 
 ```powershell

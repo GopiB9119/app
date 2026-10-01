@@ -43,6 +43,10 @@ from app.modules.planning.api import router as planning_router
 from app.modules.planning.calendar import CalendarService, router as calendar_router
 from app.modules.planning.checklists import ChecklistService
 from app.modules.planning.service import TaskService
+from app.modules.realtime.api import router as live_router
+from app.modules.realtime.hub import LiveHub
+from app.modules.realtime.service import LiveService
+from app.modules.safety.api import router as safety_router
 from app.modules.scheduling.api import request_router as reminder_request_router
 from app.modules.scheduling.api import router as reminder_router
 from app.modules.scheduling.api import series_router as reminder_series_router
@@ -150,10 +154,12 @@ def create_app(settings=None, clock=utcnow):
     engine, sessions = database(settings.database_url)
     keyring = settings.load_keyring()
     security = Security(keyring)
+    live_hub = LiveHub(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(_app):
         yield
+        live_hub.close()
         engine.dispose()
 
     application = FastAPI(
@@ -185,6 +191,8 @@ def create_app(settings=None, clock=utcnow):
     application.state.care = CareService(application.state.identity)
     application.state.alerts = AlertService(application.state.reminders, application.state.events, application.state.care)
     application.state.agents = AgentService(application.state.tasks, application.state.reminders)
+    application.state.live_hub = live_hub
+    application.state.live = LiveService(application.state.identity, live_hub)
     application.state.settings = settings
     application.state.metrics = Metrics()
     application.add_middleware(ContainErrors)
@@ -286,9 +294,11 @@ def create_app(settings=None, clock=utcnow):
     application.include_router(messaging_router)
     application.include_router(community_router)
     application.include_router(community_public_router)
+    application.include_router(safety_router)
     application.include_router(events_router)
     application.include_router(document_router)
     application.include_router(search_router)
     application.include_router(care_router)
     application.include_router(agent_router)
+    application.include_router(live_router)
     return application

@@ -84,7 +84,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                         error.code == "REAUTHENTICATION_REQUIRED" -> it.copy(pending = null, confirmation = null, error = error.message)
                         error.status in setOf(403, 404) -> SpaceWorkspaceState(accountId = it.accountId, tab = it.tab, error = error.message)
                         error.status in 400..499 && error.status != 408 && (it.pending is SpaceCommand.OfferOwnership || it.pending is SpaceCommand.RespondOwnership) -> it.copy(pending = null, confirmation = null, members = emptyList(), ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, error = error.message)
-                        error.status == 412 && it.pending is SpaceCommand.EndMembership -> it.copy(pending = null, confirmation = null, members = emptyList(), error = error.message)
+                        error.status == 412 && (it.pending is SpaceCommand.EndMembership || it.pending is SpaceCommand.ChangeRole) -> it.copy(pending = null, confirmation = null, members = emptyList(), error = error.message)
                         error.status in 400..499 && error.status != 408 -> it.copy(pending = null, confirmation = null, error = error.message)
                         else -> it.copy(error = error.message)
                     }
@@ -112,7 +112,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val selected = repository.read(accountId, spaceId)
         update(expected) { it.copy(selectedSpace = selected, sent = emptyList(), sentCursor = null, members = emptyList(), ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false) }
         if (mutableState.value.showingMembers) loadMembers(accountId, spaceId, expected)
-        if (mutableState.value.selectedSpace?.role == "owner" && selected.spaceType != "solo") {
+        if (mutableState.value.selectedSpace?.role in setOf("owner", "admin") && selected.spaceType != "solo") {
             val sent = repository.sent(accountId, spaceId)
             update(expected) { it.copy(sent = sent.items, sentCursor = sent.nextCursor) }
         }
@@ -142,12 +142,24 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         if (current.navigationLocked || current.members.none { it == member }) return
         val own = current.members.firstOrNull { it.accountId == accountId } ?: return
         val allowed = when (action) {
-            MembershipAction.LEAVE -> member.accountId == accountId && own.role == "member"
-            MembershipAction.REMOVE -> own.role == "owner" && member.role == "member" && member.accountId != accountId
+            MembershipAction.LEAVE -> member.accountId == accountId && own.role in setOf("admin", "member")
+            MembershipAction.REMOVE -> member.accountId != accountId &&
+                ((own.role == "owner" && member.role in setOf("admin", "member")) || (own.role == "admin" && member.role == "member"))
         }
         if (!allowed) return
         val intent = MembershipIntent(accountId, space.id, member.accountId, action, member.etag, UUID.randomUUID().toString())
-        mutableState.update { it.copy(confirmation = SpaceCommand.EndMembership(intent, member, space.name), error = null, notice = null) }
+        mutableState.update { it.copy(confirmation = SpaceCommand.EndMembership(intent, member, space.name, space.copy(role = own.role)), error = null, notice = null) }
+    }
+
+    fun proposeRole(member: SpaceMemberDto, role: String) {
+        val current = mutableState.value
+        val accountId = current.accountId ?: return
+        val selected = current.selectedSpace ?: return
+        val own = current.members.singleOrNull { it.accountId == accountId } ?: return
+        if (current.navigationLocked || selected.role != "owner" || own.role != "owner" || selected.spaceType !in setOf("family", "group")
+            || member.accountId == accountId || member.role !in setOf("admin", "member") || current.members.none { it == member }
+            || role !in setOf("admin", "member") || role == member.role) return
+        mutableState.update { it.copy(confirmation = SpaceCommand.ChangeRole(accountId, selected, member, role, UUID.randomUUID().toString()), error = null, notice = null) }
     }
 
     fun offerOwnership(member: SpaceMemberDto) {
@@ -156,7 +168,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val selected = current.selectedSpace ?: return
         val self = current.members.singleOrNull { it.accountId == accountId } ?: return
         if (current.navigationLocked || !current.ownershipLoaded || selected.role != "owner" || self.role != "owner"
-            || member.role != "member" || member.accountId == accountId || current.members.none { it == member }
+            || member.role !in setOf("admin", "member") || member.accountId == accountId || current.members.none { it == member }
             || current.ownershipOffers.any { it.status == "pending" }) return
         mutableState.update { it.copy(confirmation = SpaceCommand.OfferOwnership(accountId, selected, member, UUID.randomUUID().toString()), error = null, notice = null) }
     }
@@ -209,7 +221,8 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
 
     fun recipient(value: String) {
         val current = mutableState.value
-        if (!current.locked && current.confirmation == null && current.selectedSpace?.role == "owner" && current.selectedSpace.spaceType != "solo") mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
+        val selected = current.selectedSpace ?: return
+        if (!current.locked && current.confirmation == null && selected.role in setOf("owner", "admin") && selected.spaceType != "solo") mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
     }
 
     fun discardDraft() {
@@ -244,7 +257,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val current = mutableState.value
         val accountId = current.accountId ?: return
         val selected = current.selectedSpace ?: return
-        if (current.locked || current.confirmation != null || selected.role != "owner" || selected.spaceType == "solo") return
+        if (current.locked || current.confirmation != null || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo") return
         val input = current.recipientDraft.trim()
         val recipient = try { UUID.fromString(input).toString().also { require(it.equals(input, ignoreCase = true)) } }
         catch (_error: IllegalArgumentException) {
@@ -258,10 +271,11 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     fun propose(command: SpaceCommand) {
         val current = mutableState.value
         if (current.navigationLocked || command.accountId != current.accountId) return
+        val selected = current.selectedSpace
         when (command) {
             is SpaceCommand.Accept -> if (command.invitation.recipientAccountId != current.accountId || command.invitation.status != "pending" || current.invitations.none { it.id == command.invitation.id }) return
             is SpaceCommand.Decline -> if (command.invitation.recipientAccountId != current.accountId || command.invitation.status != "pending" || current.invitations.none { it.id == command.invitation.id }) return
-            is SpaceCommand.Revoke -> if (current.selectedSpace?.role != "owner" || current.selectedSpace.id != command.invitation.spaceId || command.invitation.status != "pending" || current.sent.none { it.id == command.invitation.id }) return
+            is SpaceCommand.Revoke -> if (selected == null || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo" || selected.id != command.invitation.spaceId || command.invitation.status != "pending" || current.sent.none { it.id == command.invitation.id }) return
             else -> return
         }
         mutableState.update { it.copy(confirmation = command, error = null, notice = null) }
@@ -281,6 +295,17 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         action { accountId, expected ->
             if (command.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again before continuing.", 401)
             val result = repository.execute(command)
+            if (result is SpaceCommandResult.MemberRoleSaved) {
+                val change = command as SpaceCommand.ChangeRole
+                val notice = "${result.member.displayName} is now ${if (result.member.role == "admin") "an admin" else "a member"}."
+                update(expected) { it.copy(pending = null, confirmation = null, selectedSpace = null, members = emptyList(), showingMembers = true,
+                    spaces = it.spaces.filterNot { space -> space.id == change.space.id }, sent = emptyList(), sentCursor = null,
+                    ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, notice = notice) }
+                loadSpace(accountId, change.space.id, expected)
+                val page = repository.spaces(accountId)
+                update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor, notice = notice) }
+                return@action
+            }
             if (result is SpaceCommandResult.OwnershipSaved) {
                 val notice = when (result.transfer.status) {
                     "pending" -> "Ownership offer awaiting acceptance."
@@ -300,6 +325,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
             }
             update(expected) { current ->
                 when (result) {
+                    is SpaceCommandResult.MemberRoleSaved -> current
                     is SpaceCommandResult.OwnershipSaved -> current
                     is SpaceCommandResult.SpaceSaved -> current.copy(
                         spaces = listOf(result.space) + current.spaces.filterNot { it.id == result.space.id },
@@ -352,7 +378,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     fun moreSent() {
         val current = mutableState.value
         val selected = current.selectedSpace ?: return
-        if (current.navigationLocked || selected.role != "owner" || current.sentCursor == null) return
+        if (current.navigationLocked || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo" || current.sentCursor == null) return
         action { accountId, expected ->
             val page = repository.sent(accountId, selected.id, current.sentCursor)
             update(expected) { it.copy(sent = (it.sent + page.items).distinctBy(SpaceInvitationDto::id), sentCursor = page.nextCursor) }

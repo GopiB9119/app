@@ -10,6 +10,7 @@ from app.errors import DomainError
 from app.modules.identity.models import OutboxEvent, User
 from app.modules.messaging.models import Conversation, ConversationMessage, ConversationReadState
 from app.modules.messaging.schemas import ConversationCursor, ConversationView, MessageView, ParticipantView
+from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceMembership
 from app.modules.spaces.schemas import Pagination
 
@@ -152,6 +153,23 @@ class MessagingService:
             OutboxEvent(id=identifier, event_type=action, actor_id=actor_id, aggregate_id=space_id, schema_version=1, created_at=now),
         ])
 
+    @staticmethod
+    def audience(database, conversation):
+        """Who can see the conversation now: every current member for Space chat, the two current participants of a direct one."""
+        statement = select(SpaceMembership.account_id).where(
+            SpaceMembership.space_id == conversation.space_id, SpaceMembership.status == "active",
+        )
+        if conversation.kind == "direct":
+            statement = statement.where(or_(
+                and_(SpaceMembership.account_id == conversation.first_account_id, SpaceMembership.admission_id == conversation.first_admission_id),
+                and_(SpaceMembership.account_id == conversation.second_account_id, SpaceMembership.admission_id == conversation.second_admission_id),
+            ))
+        return database.scalars(statement).all()
+
+    def announce(self, database, conversation, reason, accounts=None):
+        recipients = self.audience(database, conversation) if accounts is None else accounts
+        signal(database, "conversation", recipients, conversation_id=conversation.id, space_id=conversation.space_id, reason=reason)
+
     def open(self, token, space_id, body):
         participant_id = str(body.participant_account_id) if body.participant_account_id else None
         with self.sessions.begin() as database:
@@ -200,6 +218,7 @@ class MessagingService:
             database.add(conversation)
             database.flush()
             self.record(database, space.id, caller.id, conversation.id, "conversation.created")
+            self.announce(database, conversation, "opened")
             return self.build(database, self.authorized(database, conversation.id, caller.id), caller.id)
 
     def read(self, token, conversation_id):
@@ -350,6 +369,7 @@ class MessagingService:
                             aggregate_id=conversation.id, schema_version=1, created_at=now),
             ])
             database.flush()
+            self.announce(database, conversation, "message")
             return self.message_view(message, caller, caller.id, base, body=body.body)
 
     def delete(self, token, conversation_id, message_id):
@@ -371,6 +391,7 @@ class MessagingService:
                 message.deleted_at = self.clock()
                 message.body_cipher = None
                 self.record(database, conversation.space_id, caller.id, message.id, "conversation.message_deleted")
+                self.announce(database, conversation, "deleted")
             return self.message_view(message, caller, caller.id, base)
 
     def mark_read(self, token, conversation_id, body):
@@ -398,4 +419,6 @@ class MessagingService:
                 },
             )
             database.execute(statement)
+            # Only the reader's own other devices change: nobody else is shown how far someone has read.
+            self.announce(database, conversation, "read", accounts=[caller.id])
             return self.build(database, self.authorized(database, conversation_id, caller.id), caller.id)

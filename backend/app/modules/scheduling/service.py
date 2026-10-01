@@ -10,6 +10,7 @@ from app.errors import DomainError
 from app.modules.identity.models import OutboxEvent, User
 from app.modules.notifications.models import InAppNotification, NotificationPreference
 from app.modules.planning.models import Task, TaskAccess
+from app.modules.realtime.hub import signal
 from app.modules.scheduling.models import Reminder, ReminderEvent, ReminderSeries
 from app.modules.scheduling.schemas import PreviewClaims, PreviewOption, ReminderCursor, ReminderPreview, ReminderRecipient, ReminderView
 from app.modules.spaces.models import Space, SpaceMembership
@@ -313,6 +314,7 @@ class ReminderService:
                 reminder.reason = "dispatch_expired"
             else:
                 database.add(InAppNotification(id=str(uuid4()), reminder_id=reminder.id, account_id=owner.id, created_at=now))
+                signal(database, "notifications", [owner.id], reason="delivered")
                 reminder.status = "available"
                 reminder.reason = None
             reminder.next_attempt_at = None
