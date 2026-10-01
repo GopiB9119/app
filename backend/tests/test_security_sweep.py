@@ -12,7 +12,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.db import Base
+from app.modules.events.models import SpaceEvent, SpaceEventResponse
+from app.modules.messaging.models import ConversationMessage, ConversationReadState
+from tests.test_events import create as create_event
 from tests.test_identity import PASSWORD, account, auth, begin, verify
+from tests.test_messaging import expire_while_waiting, family, open_chat, send
+from tests.test_spaces import create_space
 
 
 def counts(app):
@@ -158,3 +163,60 @@ def test_secrets_never_appear_in_any_stored_row(client, app):
     words = set(re.split(r"[^0-9A-Za-z]+", text))
     for code in (proof["code"], recovery["code"]):
         assert code not in words
+
+
+# Each write below waits for a row lock while the session expires; it must then save nothing (the T04 rule, on the sibling writes).
+def test_message_delete_saves_nothing_when_the_session_expires_while_waiting_for_a_lock(client, app):
+    owner, member, space_id = family(client, app)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    message = send(client, member, chat["id"], "Keep this").json()["data"]
+    late = expire_while_waiting(app, "conversations", chat["id"], lambda: client.post(
+        f"/v1/conversations/{chat['id']}/messages/{message['id']}/delete", headers=auth(member), json={}))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.get(ConversationMessage, message["id"]).deleted_at is None
+
+
+def test_mark_read_saves_nothing_when_the_session_expires_while_waiting_for_a_lock(client, app):
+    owner, member, space_id = family(client, app)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    send(client, member, chat["id"], "Unread")
+    reader = ConversationReadState.account_id == owner["user"]["id"]
+    with app.state.sessions() as database:
+        before = database.scalar(select(ConversationReadState.read_sequence).where(reader))
+    late = expire_while_waiting(app, "users", owner["user"]["id"], lambda: client.post(
+        f"/v1/conversations/{chat['id']}/read", headers=auth(owner), json={"through_position": "1"}))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.scalar(select(ConversationReadState.read_sequence).where(reader)) == before
+
+
+def test_event_creation_saves_nothing_when_the_session_expires_while_waiting_for_a_lock(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    late = expire_while_waiting(app, "spaces", space_id, lambda: create_event(client, owner, space_id))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceEvent)) == 0
+
+
+def test_event_cancellation_saves_nothing_when_the_session_expires_while_waiting_for_a_lock(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    event = create_event(client, owner, space_id).json()["data"]
+    late = expire_while_waiting(app, "space_events", event["id"], lambda: client.post(
+        f"/v1/events/{event['id']}/cancel", headers={**auth(owner), "If-Match": event["etag"]}, json={}))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.scalar(select(SpaceEvent.status).where(SpaceEvent.id == event["id"])) == "scheduled"
+
+
+def test_event_answer_saves_nothing_when_the_session_expires_while_waiting_for_a_lock(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+    event = create_event(client, owner, space_id).json()["data"]
+    late = expire_while_waiting(app, "space_events", event["id"], lambda: client.post(
+        f"/v1/events/{event['id']}/attendance", headers=auth(owner), json={"response": "going"}))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceEventResponse)) == 0

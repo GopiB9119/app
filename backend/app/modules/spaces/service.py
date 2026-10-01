@@ -24,6 +24,7 @@ from app.modules.spaces.schemas import (
 
 MAX_ACCOUNT_SPACES = 50
 MAX_FAMILY_MEMBERS = 50
+MAX_COUPLE_MEMBERS = 2
 MAX_SPACE_INVITATIONS = 200
 OWNERSHIP_OFFER_LIFETIME = timedelta(minutes=15)
 OWNERSHIP_AUTH_MAX_AGE = timedelta(minutes=15)
@@ -401,6 +402,23 @@ class SpaceService:
             ),
         ])
 
+    def check_couple_invitation(self, database, space_id, now):
+        # Called under the Space lock, so two owners' requests cannot both take the partner's place.
+        members = database.scalar(select(func.count()).select_from(SpaceMembership).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.status == "active",
+        ))
+        if members >= MAX_COUPLE_MEMBERS:
+            raise DomainError(409, "COUPLE_FULL", "This couple Space already has two people.")
+        waiting = database.scalar(select(func.count()).select_from(SpaceInvitation).where(
+            SpaceInvitation.space_id == space_id, SpaceInvitation.status == "pending",
+            SpaceInvitation.expires_at > now,
+        ))
+        if waiting:
+            raise DomainError(
+                409, "COUPLE_INVITATION_PENDING",
+                "Your partner's invitation is still waiting. Cancel it before inviting someone else.",
+            )
+
     def invite(self, token, space_id, body, key):
         recipient_id = str(body.recipient_account_id)
         with self.sessions.begin() as database:
@@ -439,6 +457,8 @@ class SpaceService:
                 pending.status = "expired"
                 pending.resolved_at = now
                 database.flush()
+            if space.space_type == "couple":
+                self.check_couple_invitation(database, space.id, now)
             count = database.scalar(
                 select(func.count()).select_from(SpaceInvitation)
                 .where(SpaceInvitation.space_id == space.id)
@@ -558,6 +578,8 @@ class SpaceService:
                 )
                 if count >= MAX_FAMILY_MEMBERS:
                     raise DomainError(409, "FAMILY_FULL", "The local family member limit was reached.")
+                if space.space_type == "couple" and count >= MAX_COUPLE_MEMBERS:
+                    raise DomainError(409, "COUPLE_FULL", "This couple Space already has two people.")
                 self.check_account_capacity(database, caller.id)
                 if membership is None:
                     membership = SpaceMembership(space_id=space.id, account_id=caller.id)

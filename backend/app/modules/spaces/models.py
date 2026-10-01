@@ -22,7 +22,7 @@ class Space(Base):
     __table_args__ = (
         UniqueConstraint("created_by_id", "creation_key", name="uq_space_creation_intent"),
         CheckConstraint("length(btrim(name)) BETWEEN 1 AND 80", name="ck_space_name"),
-        CheckConstraint("space_type IN ('family', 'solo', 'group')", name="ck_space_type"),
+        CheckConstraint("space_type IN ('family', 'solo', 'group', 'couple')", name="ck_space_type"),
         # Only group Spaces may ever be public.
         CheckConstraint("visibility = 'private' OR (visibility = 'public' AND space_type = 'group')", name="ck_space_visibility"),
         CheckConstraint("length(description) <= 280", name="ck_space_description"),

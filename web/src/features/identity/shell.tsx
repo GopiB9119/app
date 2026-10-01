@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Bell, CalendarDays, Compass, House, Layers2, MessageSquare, Pill, Search, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Bell, Bot, CalendarDays, Compass, House, Layers2, MessageSquare, Pill, Search, ShieldCheck } from "lucide-react";
 
 export function Shell({ children, account = false }: { children: React.ReactNode; account?: boolean }) {
   return <div className="application">
@@ -16,6 +16,7 @@ export function Shell({ children, account = false }: { children: React.ReactNode
       {account && <Link className="icon-button" href="/app/calendar" aria-label="Calendar" title="Calendar"><CalendarDays size={20} aria-hidden /></Link>}
       {account && <Link className="icon-button" href="/app/care" aria-label="Medicines" title="Medicines"><Pill size={20} aria-hidden /></Link>}
       {account && <Link className="icon-button" href="/app/notifications" aria-label="Notification inbox" title="Notification inbox"><Bell size={20} aria-hidden /></Link>}
+      {account && <Link className="text-button" href="/app/agent"><Bot size={18} aria-hidden />Agent</Link>}
       <a className="inbox-link" href="http://127.0.0.1:8025" target="_blank" rel="noreferrer">Test inbox <ArrowUpRight size={16} aria-hidden /></a>
     </header>
     {children}

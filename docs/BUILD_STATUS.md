@@ -809,7 +809,7 @@ Builds [T49 and T52](TASKS.md#defects-that-break-approved-requirements), found b
 
 **Boundary.**
 - **Space operations:** the sweep proves that no operation on a Space succeeds for a non-member. It does not yet prove that a private Space looks the same as a missing one on every route; T42 does that after T22.
-- **Lock-expiry checks:** the checks for deleting and reading messages, and for creating, cancelling and answering events, are still to add.
+- **Lock-expiry checks:** five later tests cover deleting and reading messages, and creating, cancelling and answering events: each waits for a row lock while its session expires and must save nothing. **5 passed** on the existing re-check in `signed_in_write`. No injected-defect run was made, because that would mean briefly breaking the shared identity service that other sessions' tests load. T04 showed the same pattern failing without the re-check.
 
 ## Remaining Gates
 

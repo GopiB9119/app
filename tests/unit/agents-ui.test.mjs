@@ -202,6 +202,7 @@ test('a request shows the exact change first, and Approve sends the reviewed ver
   const context = await browser.newContext({ timezoneId: 'UTC' });
   try {
     const { page, outbound, errors } = await fixture(context);
+    assert.equal(await page.getByRole('link', { name: 'Agent', exact: true }).getAttribute('href'), '/app/agent');
     await page.getByText('No requests in this Space yet. Only you can see your requests.', { exact: true }).waitFor();
     assert.equal(await request(page).evaluate(field => document.getElementById(field.getAttribute('aria-describedby')).textContent),
       'For example: add a task to buy milk tomorrow, or remind me to call the bank at 6 pm.');

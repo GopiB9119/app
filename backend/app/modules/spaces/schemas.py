@@ -19,7 +19,7 @@ def clean_text(value: str | None) -> str | None:
 
 class CreateSpace(Input):
     name: str = Field(min_length=1, max_length=80)
-    space_type: Literal["family", "solo", "group"]
+    space_type: Literal["family", "solo", "group", "couple"]
     visibility: Literal["private", "public"] = "private"
     description: str = Field(default="", max_length=280)
 
@@ -66,7 +66,7 @@ class SpaceView(BaseModel):
     id: str
     name: str
     description: str
-    space_type: Literal["family", "solo", "group"]
+    space_type: Literal["family", "solo", "group", "couple"]
     visibility: Literal["private", "public"]
     status: Literal["active"]
     role: Literal["owner", "member"]
