@@ -351,6 +351,13 @@ class ArchiveReminders(BaseModel):
     backups: list[ArchiveReminderBackup] = Field(default_factory=list)
 
 
+class ArchiveOmission(BaseModel):
+    section: str
+    included: int
+    total: int
+    kept: Literal["newest", "oldest"]
+
+
 class ExportArchive(BaseModel):
     format: Literal["community-platform-account-export"] = "community-platform-account-export"
     version: Literal[1] = 1
@@ -359,6 +366,7 @@ class ExportArchive(BaseModel):
     generated_at: datetime
     categories: list[ExportCategory]
     notice: str
+    omitted: list[ArchiveOmission] = Field(default_factory=list)
     profile: ArchiveProfile | None = None
     security: ArchiveSecurity | None = None
     spaces: ArchiveSpaces | None = None

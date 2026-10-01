@@ -84,6 +84,7 @@ async function fixture(context, options = {}) {
     }
     const state = window.messagingFixture = {
       calls: [], conversations, messages, failSends: options.failSends ?? 0, failReads: options.failReads ?? 0,
+      served: new Set(), reads: [],
     };
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-messaging', ...extra }), { status: 200 });
     const paged = (data, extra = {}) => reply(data, { pagination: { next_cursor: null, has_more: false }, ...extra });
@@ -103,7 +104,20 @@ async function fixture(context, options = {}) {
       const conversation = match && state.conversations.find(item => item.id === match[1]);
       if (match && !conversation) return failed(404, 'NOT_FOUND', 'Conversation not found.');
       if (conversation && !match[2] && method === 'GET') return reply(conversation);
-      if (conversation && match[2] === '/messages' && method === 'GET') return paged(state.messages[conversation.id]);
+      if (conversation && match[2] === '/messages' && method === 'GET') {
+        // The newest page, or the page before or after a position, as the API returns them.
+        const all = state.messages[conversation.id];
+        const limit = Number(url.searchParams.get('limit') ?? 30);
+        const after = url.searchParams.get('after');
+        const before = url.searchParams.get('before');
+        const range = after !== null ? all.filter(item => Number(item.position) > Number(after))
+          : before !== null ? all.filter(item => Number(item.position) < Number(before)) : all;
+        const page = after !== null ? range.slice(0, limit) : range.slice(Math.max(0, range.length - limit));
+        const more = range.length > limit;
+        for (const item of page) state.served.add(Number(item.position));
+        const cursor = more ? (after !== null ? page[page.length - 1].position : page[0].position) : null;
+        return paged(page, { pagination: { next_cursor: cursor, has_more: more } });
+      }
       if (conversation && match[2] === '/messages' && method === 'POST') {
         if (state.failSends > 0) { state.failSends -= 1; throw new TypeError('Synthetic connection loss before the server'); }
         const key = headers['idempotency-key'];
@@ -121,6 +135,9 @@ async function fixture(context, options = {}) {
       }
       if (conversation && match[2] === '/read' && method === 'POST') {
         if (state.failReads > 0) { state.failReads -= 1; throw new TypeError('Synthetic lost read receipt'); }
+        const through = Number(body.through_position);
+        const unseen = state.messages[conversation.id].filter(item => Number(item.position) <= through && !state.served.has(Number(item.position))).length;
+        state.reads.push({ through, unseen });
         conversation.read_position = body.through_position;
         conversation.unread_count = Number(conversation.last_position) - Number(body.through_position);
         return reply(conversation);
@@ -189,6 +206,39 @@ test('offline chat retries a read receipt that failed', async () => {
     assert.deepEqual(observed.reads.slice(0, 2), [{ through_position: '2' }, { through_position: '2' }]);
     assert.equal(observed.conversation.read_position, '2');
     assert.equal(observed.conversation.unread_count, 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline chat shows every message after a long absence and marks read only what it fetched', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors, pane } = await fixture(context, { unread: true });
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    await pane.getByText('Bring the plates', { exact: true }).waitFor();
+    // 400 messages arrive between two polls: more than the newest page plus ten pages of thirty.
+    await page.evaluate(({ chat, otherId }) => {
+      const state = window.messagingFixture;
+      const conversation = state.conversations.find(item => item.id === chat);
+      for (let index = 1; index <= 400; index += 1) {
+        const position = String(Number(conversation.last_position) + 1);
+        state.messages[chat].push({
+          id: crypto.randomUUID(), conversation_id: chat, position, sender_account_id: otherId, sender_name: 'Sam Rivera',
+          mine: false, client_message_id: null, status: 'sent', body: `Update ${index}`, created_at: '2026-09-19T11:00:00Z', deleted_at: null,
+        });
+        Object.assign(conversation, { last_position: position, last_message_at: '2026-09-19T11:00:00Z' });
+      }
+      conversation.unread_count = Number(conversation.last_position) - Number(conversation.read_position);
+    }, { chat: familyChatId, otherId });
+
+    await pane.getByText('Update 400', { exact: true }).waitFor({ timeout: 30000 });
+    await page.waitForFunction(chat => window.messagingFixture.conversations.find(item => item.id === chat).read_position === '402', familyChatId, { timeout: 15000 });
+    const shown = await pane.locator('li p').allInnerTexts();
+    const missing = Array.from({ length: 400 }, (_value, index) => `Update ${index + 1}`).filter(text => !shown.includes(text));
+    assert.deepEqual(missing, [], 'Every message that arrived must be shown.');
+    const reads = await page.evaluate(() => window.messagingFixture.reads);
+    assert.ok(reads.length >= 2);
+    assert.deepEqual(reads.filter(read => read.unseen > 0), [], 'A read receipt must not cover messages that were never fetched.');
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

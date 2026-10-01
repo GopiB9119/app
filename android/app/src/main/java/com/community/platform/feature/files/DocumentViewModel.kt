@@ -186,6 +186,9 @@ class DocumentViewModel @Inject constructor(private val repository: DocumentRepo
                     mutableState.update { it.copy(pending = null) }
                 }
                 fail(error, expected, DocumentIssue.ADD_UNCERTAIN)
+                if (generation == expected && (error as? IdentityFailure)?.status == 404) {
+                    mutableState.update { it.copy(documents = emptyList(), selected = null, nextCursor = null, chosen = null, choiceKey = null, unavailable = true) }
+                }
             } finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
         }
     }
@@ -208,7 +211,9 @@ class DocumentViewModel @Inject constructor(private val repository: DocumentRepo
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 fail(error, expected)
-                if (generation == expected && (error as? IdentityFailure)?.status == 404) mutableState.update { it.copy(issue = DocumentIssue.UNAVAILABLE) }
+                if (generation == expected && (error as? IdentityFailure)?.status == 404) mutableState.update {
+                    it.copy(issue = DocumentIssue.UNAVAILABLE, documents = it.documents.filterNot { item -> item.id == documentId })
+                }
             } finally { if (generation == expected) mutableState.update { it.copy(loading = false) } }
         }
     }
@@ -258,6 +263,9 @@ class DocumentViewModel @Inject constructor(private val repository: DocumentRepo
                     mutableState.update { it.copy(pendingDelete = null) }
                 }
                 fail(error, expected, DocumentIssue.DELETE_UNCERTAIN)
+                if (generation == expected && (error as? IdentityFailure)?.status == 404) mutableState.update {
+                    it.copy(selected = null, documents = it.documents.filterNot { item -> item.id == intent.documentId }, issue = DocumentIssue.UNAVAILABLE)
+                }
             } finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
         }
     }

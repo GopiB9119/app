@@ -199,3 +199,42 @@ test('Post search sends one normalized query and keeps the public list checks', 
   await assert.rejects(communityClient(list([post({ status: 'draft', published_at: null, can_manage: true, etag: '"d"' })])).searchPosts(accountId, 'walk'), { status: 502 });
   await assert.rejects(communityClient(list([post(), post()])).searchPosts(undefined, 'walk'), { status: 502 });
 });
+
+test('Schemas count characters as the server does, so the longest valid text in emoji is accepted', () => {
+  const client = communityClient();
+  const leaf = '\u{1F33F}';
+  assert.equal(client.pageSchema.safeParse(page({ name: leaf.repeat(80), description: leaf.repeat(500) })).success, true);
+  assert.equal(client.postSchema.safeParse(post({ title: leaf.repeat(120), body: leaf.repeat(5000) })).success, true);
+  assert.equal(client.commentSchema.safeParse(comment({ author_name: leaf.repeat(80), body: leaf.repeat(2000) })).success, true);
+  assert.equal(client.pageSchema.safeParse(page({ name: leaf.repeat(81) })).success, false);
+  assert.equal(client.pageSchema.safeParse(page({ description: leaf.repeat(501) })).success, false);
+  assert.equal(client.postSchema.safeParse(post({ title: leaf.repeat(121) })).success, false);
+  assert.equal(client.postSchema.safeParse(post({ body: leaf.repeat(5001) })).success, false);
+  assert.equal(client.commentSchema.safeParse(comment({ body: leaf.repeat(2001) })).success, false);
+});
+
+test('BFF accepts the longest valid post however its JSON is encoded, and keeps the small limit elsewhere', async () => {
+  async function send(method, route, body) {
+    const calls = [];
+    const handlers = loadSource('app/api/[...path]/route.ts', async url => {
+      calls.push(String(url));
+      return Response.json({ data: String(url).endsWith('/v1/me') ? { id: accountId } : {} });
+    });
+    const request = new NextRequest(`${origin}/api/${route}`, {
+      method, body,
+      headers: { Cookie: 'cp_session=synthetic-session', Origin: origin, 'X-Account-ID': accountId, 'Content-Type': 'application/json', 'Idempotency-Key': key, 'If-Match': '"v1"' },
+    });
+    const response = await handlers[method](request, { params: Promise.resolve({ path: route.split('/') }) });
+    return { status: response.status, forwarded: calls.filter(url => !url.endsWith('/v1/me')).length };
+  }
+  const leaf = '\u{1F33F}';
+  const raw = JSON.stringify({ title: leaf.repeat(120), body: leaf.repeat(5000) });
+  const escaped = raw.replace(/[\u007f-\uffff]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  assert.ok(Buffer.byteLength(raw) > 16384 && Buffer.byteLength(escaped) > 60000);
+  for (const body of [raw, escaped]) {
+    assert.deepEqual(await send('POST', `pages/${pageId}/posts`, body), { status: 200, forwarded: 1 });
+    assert.deepEqual(await send('PATCH', `posts/${postId}`, body), { status: 200, forwarded: 1 });
+  }
+  assert.deepEqual(await send('POST', `pages/${pageId}/posts`, `{"body":"${'x'.repeat(70000)}"}`), { status: 413, forwarded: 0 });
+  assert.deepEqual(await send('POST', `posts/${postId}/comments`, raw), { status: 413, forwarded: 0 });
+});

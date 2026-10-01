@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import timedelta
 from uuid import uuid4
@@ -419,3 +420,29 @@ def test_openapi_declares_public_reads_and_authenticated_writes(client):
     for path in schema["paths"]:
         templates.setdefault(re.sub(r"\{[^}]+\}", "{}", path), set()).add(path)
     assert [paths for paths in templates.values() if len(paths) > 1] == []
+
+
+def test_posts_up_to_the_character_limit_fit_whatever_the_characters_and_encoding(client, app):
+    owner = account(client, app)
+    page = create_page(client, owner).json()["data"]
+    headers = {**auth(owner), "Content-Type": "application/json"}
+    # 5,000 four-byte characters: 20 KB of JSON as browsers send it, and 60 KB when every character is escaped.
+    payload = {"title": "\U0001F33F" * 120, "body": "\U0001F33F" * 5000}
+    for encoded in (json.dumps(payload, ensure_ascii=False).encode(), json.dumps(payload).encode()):
+        assert len(encoded) > 16384
+        created = client.post(f"/v1/pages/{page['id']}/posts", headers={**headers, "Idempotency-Key": str(uuid4())}, content=encoded)
+        assert created.status_code == 201, created.text
+        post = created.json()["data"]
+        assert len(post["body"]) == 5000 and len(post["title"]) == 120
+    edited = client.patch(f"/v1/posts/{post['id']}", headers={**headers, "If-Match": post["etag"]},
+                          content=json.dumps({"body": "<" * 5000}).replace("<", "\\u003c").encode())
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["data"]["body"] == "<" * 5000
+    longer = client.post(f"/v1/pages/{page['id']}/posts", headers={**headers, "Idempotency-Key": str(uuid4())},
+                         content=json.dumps({"body": "\U0001F33F" * 5001}, ensure_ascii=False).encode())
+    assert longer.status_code == 422
+    oversized = client.post(f"/v1/pages/{page['id']}/posts", headers={**headers, "Idempotency-Key": str(uuid4())},
+                            content=b'{"body":"' + b"x" * 70000 + b'"}')
+    assert oversized.status_code == 413
+    other = client.post("/v1/pages", headers={**headers, "Idempotency-Key": str(uuid4())}, content=b'{"handle":"' + b"x" * 20000 + b'"}')
+    assert other.status_code == 413

@@ -306,6 +306,30 @@ class DocumentTest {
         assertNull(current.state.value.viewingId)
     }
 
+    @Test fun missingSpaceOnAddClearsOldDocumentsAndReleasesTheChoice() = runBlocking {
+        val current = ready()
+        current.choose(ChosenDocument("notes.md", content.toByteArray().size, content))
+        api.createFailure = 404
+        current.add(); idle(current)
+        assertTrue(current.state.value.documents.isEmpty())
+        assertNull(current.state.value.chosen)
+        assertNull(current.state.value.pending)
+        assertTrue(current.state.value.unavailable)
+        current.choose(ChosenDocument("other.md", content.toByteArray().size, content))
+        assertNull(current.state.value.chosen)
+    }
+
+    @Test fun deleteNotFoundRemovesCachedTextInsteadOfShowingAReadableDocument() = runBlocking {
+        val current = ready()
+        current.open(documentId); idle(current)
+        api.deleteFailure = 404
+        current.askDelete(); current.delete(); idle(current)
+        assertNull(current.state.value.selected)
+        assertTrue(current.state.value.documents.isEmpty())
+        assertNull(current.state.value.pendingDelete)
+        assertEquals(DocumentIssue.UNAVAILABLE, current.state.value.issue)
+    }
+
     @Test fun accountChangeDiscardsLateCreateWithoutShowingPrivateData() = runBlocking {
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
         val delayed = object : DocumentApi by api {

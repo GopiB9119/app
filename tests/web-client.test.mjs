@@ -881,3 +881,37 @@ test('Reminder preview retains distinct ordered daylight-saving choices', () => 
   assert.equal(client.reminderPreviewSchema.safeParse({ ...preview, options: [first, { ...second, preview_token: first.preview_token }] }).success, false);
   assert.equal(client.reminderPreviewSchema.safeParse({ ...preview, options: [first, { ...first, scheduled_at: '2026-11-01T01:30:00-04:00', preview_token: second.preview_token }] }).success, false);
 });
+test('Proxy stops reading a body without Content-Length once it passes the limit', async () => {
+  const calls = [];
+  const handlers = loadSource('app/api/[...path]/route.ts', async url => {
+    calls.push(String(url));
+    return Response.json({ data: String(url).endsWith('/v1/me') ? { id: accountId } : {} });
+  });
+  let pulled = 0;
+  const body = new ReadableStream({ pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(4096).fill(32)); if (pulled === 100) controller.close(); } });
+  const request = new NextRequest(`${origin}/api/spaces`, {
+    method: 'POST', body, duplex: 'half',
+    headers: { Cookie: 'cp_session=synthetic-session', Origin: origin, 'X-Account-ID': accountId, 'Content-Type': 'application/json', 'Idempotency-Key': invitationId },
+  });
+  const response = await handlers.POST(request, { params: Promise.resolve({ path: ['spaces'] }) });
+  assert.equal(response.status, 413);
+  assert.ok(pulled <= 6, `read ${pulled} chunks of 4 KiB for a 16 KiB limit`);
+  assert.deepEqual(calls.filter(url => !url.endsWith('/v1/me')), []);
+});
+
+test('Proxy refuses a body that does not arrive in time', { timeout: 5000 }, async () => {
+  const calls = [];
+  const quick = { timeout: () => { const controller = new AbortController(); setTimeout(() => controller.abort(), 50); return controller.signal; } };
+  const handlers = loadSource('app/api/[...path]/route.ts', async url => {
+    calls.push(String(url));
+    return Response.json({ data: String(url).endsWith('/v1/me') ? { id: accountId } : {} });
+  }, {}, { AbortSignal: quick });
+  const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"name":')); } });
+  const request = new NextRequest(`${origin}/api/spaces`, {
+    method: 'POST', body, duplex: 'half',
+    headers: { Cookie: 'cp_session=synthetic-session', Origin: origin, 'X-Account-ID': accountId, 'Content-Type': 'application/json', 'Idempotency-Key': invitationId },
+  });
+  const response = await handlers.POST(request, { params: Promise.resolve({ path: ['spaces'] }) });
+  assert.equal(response.status, 408);
+  assert.deepEqual(calls.filter(url => !url.endsWith('/v1/me')), []);
+});

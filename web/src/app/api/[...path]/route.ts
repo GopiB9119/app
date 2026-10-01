@@ -52,6 +52,30 @@ function browserAddress(request: NextRequest) {
   return address && isIP(address) ? address : null;
 }
 
+// Reads a request body only up to its limit and within a deadline, so a body without Content-Length cannot hold memory
+// or the connection without bound.
+async function readBody(request: NextRequest, limit: number, milliseconds: number): Promise<{ text: string } | { refused: 408 | 413 }> {
+  const reader = request.body?.getReader();
+  if (!reader) return { text: "" };
+  const deadline = AbortSignal.timeout(milliseconds);
+  const stop = () => { void reader.cancel().catch(() => undefined); };
+  deadline.addEventListener("abort", stop, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (deadline.aborted) return { refused: 408 };
+      if (done) return { text: Buffer.concat(chunks).toString("utf8") };
+      size += value.byteLength;
+      if (size > limit) { stop(); return { refused: 413 }; }
+      chunks.push(value);
+    }
+  } finally {
+    deadline.removeEventListener("abort", stop);
+  }
+}
+
 async function forward(request: NextRequest, context: { params: Promise<{ path: string[] }> }, traceparent: string) {
   const route = (await context.params).path.join("/");
   const mutating = !["GET", "HEAD"].includes(request.method);
@@ -111,8 +135,10 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   if (spaceSettings && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Space settings do not accept query parameters.");
   if ((spaceMembers || removeMember || leaveSpace) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Membership commands do not accept query parameters.");
   if ((ownershipOffer || ownershipResponse) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Ownership commands do not accept query parameters.");
-  // Only adding a document may carry a large body: 512 KB of text can grow when JSON escapes it.
-  const bodyLimit = documentAdd ? 2200000 : 16384;
+  // Only adding a document may carry a large body: 512 KB of text can grow when JSON escapes it. A post's 5,000
+  // characters and title fit in 64 KiB even when every character is escaped (up to 12 bytes each).
+  const postWrite = (request.method === "POST" && /^pages\/[^/]+\/posts$/.test(route)) || (request.method === "PATCH" && new RegExp(`^posts/${uuidPart}$`).test(route));
+  const bodyLimit = documentAdd ? 2200000 : postWrite ? 65536 : 16384;
   if (Number(request.headers.get("content-length") ?? 0) > bodyLimit) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
   const sessionToken = request.cookies.get(sessionName)?.value;
   const anonymous = publicCommunity && (!sessionToken || !request.headers.get("x-account-id"));
@@ -133,8 +159,11 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     let body: Record<string, unknown> | undefined;
     if (mutating) {
       if (!request.headers.get("content-type")?.startsWith("application/json")) return failure(415, "VALIDATION_ERROR", "A JSON request is required.");
-      const text = await request.text();
-      if (Buffer.byteLength(text) > bodyLimit) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
+      const read = await readBody(request, bodyLimit, documentAdd ? 60000 : 15000);
+      if ("refused" in read) {
+        return read.refused === 413 ? failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.") : failure(408, "REQUEST_TIMEOUT", "The request took too long to arrive.");
+      }
+      const text = read.text;
       try { body = JSON.parse(text); } catch { return failure(422, "VALIDATION_ERROR", "Request is not valid JSON."); }
       if (!body || typeof body !== "object" || Array.isArray(body)) return failure(422, "VALIDATION_ERROR", "Request must be an object.");
       if (["auth/register", "auth/recover", "auth/verify-email", "auth/reset-password"].includes(route)) {

@@ -2,8 +2,9 @@ import json
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from app.modules.identity.exports import HISTORY_LIMIT
 from app.modules.identity.models import AccountExport, SecurityEvent
 
 from .test_identity import PASSWORD, account, auth
@@ -66,6 +67,7 @@ def test_archive_holds_only_the_requesters_own_and_visible_data(client, app):
     assert response.status_code == 200, response.text
     archive = response.json()["data"]
     assert archive["account_id"] == member["user"]["id"]
+    assert archive["omitted"] == []
     assert archive["profile"]["email"] == "export-member@example.test"
     assert [task["id"] for task in archive["tasks"]] == [shared["id"]]
     text = json.dumps(archive)
@@ -143,3 +145,24 @@ def test_cancelled_export_is_never_built_or_downloaded(client, app):
     assert app.state.exports.process_one() == {"result": "idle"}
     unavailable = download(client, person, export_id)
     assert unavailable.status_code == 409 and unavailable.json()["error"]["code"] == "EXPORT_UNAVAILABLE"
+
+
+def test_a_history_longer_than_the_limit_says_what_was_left_out(client, app):
+    person = account(client, app)
+    account_id = person["user"]["id"]
+    oldest = str(uuid4())
+    with app.state.sessions.begin() as database:
+        for index in range(HISTORY_LIMIT + 1):
+            database.add(SecurityEvent(
+                id=oldest if index == 0 else str(uuid4()), account_id=account_id, action="session.created",
+                target_id=str(uuid4()), created_at=app.state.clock() - timedelta(days=30, seconds=HISTORY_LIMIT + 1 - index),
+            ))
+    export_id = ready_export(client, app, person, ["security"])
+    # Requesting the export records one more event before the build; downloading records one after it.
+    with app.state.sessions() as database:
+        total = database.scalar(select(func.count()).select_from(SecurityEvent).where(SecurityEvent.account_id == account_id))
+    archive = download(client, person, export_id).json()["data"]
+    events = [event["id"] for event in archive["security"]["events"]]
+    assert len(events) == HISTORY_LIMIT and oldest not in events
+    assert archive["omitted"] == [{"section": "security.events", "included": HISTORY_LIMIT, "total": total, "kept": "newest"}]
+    assert "at most 1,000 entries" in archive["notice"]

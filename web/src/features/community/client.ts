@@ -17,18 +17,20 @@ export const reasonLabels: Record<ReportReason, string> = {
 };
 export const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]$/;
 const etag = z.string().min(3).max(200);
+// The server counts characters (code points), not UTF-16 units, so an emoji counts once.
+const chars = (min: number, max: number) => z.string().refine(value => { const length = [...value].length; return length >= min && length <= max; });
 
 export const pageSchema = z.object({
-  id: uuid, handle: z.string().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/), name: z.string().min(1).max(80),
-  description: z.string().max(500), topic: z.enum(TOPICS), follower_count: z.number().int().nonnegative(),
+  id: uuid, handle: z.string().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/), name: chars(1, 80),
+  description: chars(0, 500), topic: z.enum(TOPICS), follower_count: z.number().int().nonnegative(),
   created_at: timestamp, updated_at: timestamp, following: z.boolean(), blocked: z.boolean(), can_manage: z.boolean(),
   etag: etag.nullable(),
 }).refine(value => value.can_manage === (value.etag !== null) && !(value.following && value.blocked));
 export type PublicPage = z.infer<typeof pageSchema>;
 
 export const postSchema = z.object({
-  id: uuid, page_id: uuid, page_handle: z.string().min(3).max(30), page_name: z.string().min(1).max(80),
-  title: z.string().min(1).max(120).nullable(), body: z.string().min(1).max(10000), status: z.enum(["draft", "published"]),
+  id: uuid, page_id: uuid, page_handle: z.string().min(3).max(30), page_name: chars(1, 80),
+  title: chars(1, 120).nullable(), body: chars(1, 5000), status: z.enum(["draft", "published"]),
   like_count: z.number().int().nonnegative(), comment_count: z.number().int().nonnegative(),
   created_at: timestamp, published_at: timestamp.nullable(), edited_at: timestamp.nullable(),
   liked: z.boolean(), saved: z.boolean(), can_manage: z.boolean(), etag: etag.nullable(),
@@ -38,8 +40,8 @@ export const postSchema = z.object({
 export type PublicPost = z.infer<typeof postSchema>;
 
 export const commentSchema = z.object({
-  id: uuid, post_id: uuid, parent_id: uuid.nullable(), author_name: z.string().min(1).max(80),
-  body: z.string().min(1).max(4000).nullable(), status: z.enum(["visible", "deleted", "removed"]),
+  id: uuid, post_id: uuid, parent_id: uuid.nullable(), author_name: chars(1, 80),
+  body: chars(1, 2000).nullable(), status: z.enum(["visible", "deleted", "removed"]),
   created_at: timestamp, mine: z.boolean(), can_remove: z.boolean(),
 }).refine(value => (value.status === "visible") === (value.body !== null) && (!value.can_remove || value.status === "visible") && value.parent_id !== value.id);
 export type PostComment = z.infer<typeof commentSchema>;
@@ -49,7 +51,7 @@ export const reportSchema = z.object({
   status: z.enum(["received", "reviewing", "closed"]), created_at: timestamp,
 });
 export const blockSchema = z.object({
-  id: uuid, target_type: z.enum(["page", "account"]), page_id: uuid.nullable(), label: z.string().min(1).max(80), created_at: timestamp,
+  id: uuid, target_type: z.enum(["page", "account"]), page_id: uuid.nullable(), label: chars(1, 80), created_at: timestamp,
 }).refine(value => (value.target_type === "page") === (value.page_id !== null));
 export type Block = z.infer<typeof blockSchema>;
 export type ReportTarget = { type: "page" | "post" | "comment"; id: string; label: string };

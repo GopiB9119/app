@@ -246,15 +246,20 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
       const [view, latest] = await Promise.all([readConversation(user.id, conversationId, signal), messagePage(user.id, conversationId, { signal })]);
       const known = itemsRef.current.length ? Number(itemsRef.current[itemsRef.current.length - 1].position) : null;
       let incoming = latest.data;
-      // More messages than one page may have arrived since the previous poll; fetch the gap forward.
+      // More messages than one page may have arrived since the previous poll; fetch the gap forward. Until the gap is
+      // closed, only messages that follow on without a hole are shown, so none is skipped or marked read unseen.
       if (known !== null && latest.data.length && Number(latest.data[0].position) > known + 1) {
+        const gap: Message[] = [];
         let after = String(known);
-        for (let page = 0; page < 10; page += 1) {
-          const gap = await messagePage(user.id, conversationId, { after, signal });
-          incoming = [...incoming, ...gap.data];
-          if (!gap.pagination.has_more || !gap.pagination.next_cursor) break;
-          after = gap.pagination.next_cursor;
+        let closed = false;
+        for (let page = 0; page < 10 && !closed; page += 1) {
+          const next = await messagePage(user.id, conversationId, { after, signal });
+          gap.push(...next.data);
+          const joined = gap.length > 0 && Number(gap[gap.length - 1].position) >= Number(latest.data[0].position) - 1;
+          if (joined || !next.pagination.has_more || !next.pagination.next_cursor) closed = true;
+          else after = next.pagination.next_cursor;
         }
+        incoming = closed ? [...gap, ...latest.data] : gap;
       }
       setConversation(view);
       absorb(incoming);
@@ -284,8 +289,15 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    void poll(controller.signal, true);
-    const timer = window.setInterval(() => { if (active && document.visibilityState === "visible") void poll(controller.signal, false); }, POLL_MILLISECONDS);
+    // One poll at a time, so a slow response cannot overwrite a newer one.
+    let running = false;
+    const run = (first: boolean) => {
+      if (running) return;
+      running = true;
+      void poll(controller.signal, first).finally(() => { running = false; });
+    };
+    run(true);
+    const timer = window.setInterval(() => { if (active && document.visibilityState === "visible") run(false); }, POLL_MILLISECONDS);
     return () => { active = false; window.clearInterval(timer); controller.abort(); };
   }, [poll]);
 

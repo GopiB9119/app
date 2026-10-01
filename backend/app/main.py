@@ -59,8 +59,13 @@ from app.modules.platform.work import render as render_work
 from app.telemetry import Metrics, emit, method_name, trace_context
 
 BODY_LIMIT = 16384
-# Only adding a document carries a whole file: up to 512 KB of text, which JSON escaping can enlarge.
-LARGE_BODIES = (("POST", re.compile(r"/v1/spaces/[0-9a-fA-F-]{36}/documents"), 2_200_000),)
+# Only adding a document carries a whole file: up to 512 KB of text, which JSON escaping can enlarge. A post's 5,000
+# characters and 120-character title fit in 64 KiB even when a client escapes every character (up to 12 bytes each).
+LARGE_BODIES = (
+    ("POST", re.compile(r"/v1/spaces/[0-9a-fA-F-]{36}/documents"), 2_200_000),
+    ("POST", re.compile(r"/v1/pages/[^/]+/posts"), 65_536),
+    ("PATCH", re.compile(r"/v1/posts/[0-9a-fA-F-]{36}"), 65_536),
+)
 
 
 def body_limit(scope):

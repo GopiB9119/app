@@ -36,8 +36,8 @@ def clean_text(value: str, limit: int, multiline: bool, empty: bool = False) -> 
 
 class CreatePage(Input):
     handle: str = Field(min_length=3, max_length=30)
-    name: str = Field(min_length=1, max_length=160)
-    description: str = Field(default="", max_length=1000)
+    name: str = Field(min_length=1, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
+    description: str = Field(default="", max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
     topic: Topic
 
     @field_validator("handle")
@@ -62,8 +62,8 @@ class CreatePage(Input):
 
 
 class UpdatePage(Input):
-    name: str | None = Field(default=None, max_length=160)
-    description: str | None = Field(default=None, max_length=1000)
+    name: str | None = Field(default=None, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
+    description: str | None = Field(default=None, max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
     topic: Topic | None = None
 
     @field_validator("name")
@@ -86,8 +86,8 @@ class UpdatePage(Input):
 
 
 class CreatePost(Input):
-    title: str | None = Field(default=None, max_length=240)
-    body: str = Field(min_length=1, max_length=10000)
+    title: str | None = Field(default=None, max_length=240, description="Up to 120 characters on one line; empty means no title.")
+    body: str = Field(min_length=1, max_length=10000, description="1 to 5,000 characters, after line endings are normalized and surrounding spaces removed.")
 
     @field_validator("title")
     @classmethod
@@ -101,8 +101,8 @@ class CreatePost(Input):
 
 
 class UpdatePost(Input):
-    title: str | None = Field(default=None, max_length=240)
-    body: str | None = Field(default=None, max_length=10000)
+    title: str | None = Field(default=None, max_length=240, description="Up to 120 characters on one line; empty means no title.")
+    body: str | None = Field(default=None, max_length=10000, description="1 to 5,000 characters, after line endings are normalized and surrounding spaces removed.")
 
     @field_validator("title")
     @classmethod
@@ -128,7 +128,7 @@ class EmptyAction(Input):
 
 
 class CreateComment(Input):
-    body: str = Field(min_length=1, max_length=4000)
+    body: str = Field(min_length=1, max_length=4000, description="1 to 2,000 characters, after line endings are normalized and surrounding spaces removed.")
     parent_id: UUID | None = None
 
     @field_validator("body")
@@ -141,7 +141,7 @@ class CreateReport(Input):
     target_type: Literal["page", "post", "comment"]
     target_id: UUID
     reason: ReportReason
-    details: str = Field(default="", max_length=2000)
+    details: str = Field(default="", max_length=2000, description="Up to 1,000 characters.")
 
     @field_validator("details")
     @classmethod

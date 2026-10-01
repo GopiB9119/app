@@ -543,7 +543,7 @@ Builds [T11](TASKS.md#approved-requirements-not-built-yet) (R12) on the backend.
 | Complete backend | Run started 09:07 at migration `0022`: 403 tests, **402 passed, 1 failed** in 3,335 s, with other sessions' emulator and builds holding the machine at 100% CPU (`backend/.local/t11-backend-20261001.txt`). The failure was `test_separate_worker_process_recovers_persisted_due_work_without_duplicate`: its separate worker process did not finish within the test's 20 s limit. Run alone at 37% CPU, it passed in 12.9 s. That run collected an earlier version of the rotation command and its tests. They changed afterwards, and are covered by the 6 passes above. |
 | Development data | Read-only `status` and `verify` against the shared development key file and database, with no key material printed. The single-key file opened all 443 stored values: 202 account emails, 218 challenge emails, 9 care instructions and 14 messages. None were unreadable. Nothing was rotated. After another session restarted the shared API and reminder worker at 09:47, the API started on this code with the same key file and answered `/health/ready` with 200. |
 
-Boundary: no rotation was performed on the development key, because each step needs a restart of the API and workers that other sessions share. There is no live reload. The restore drill still checks only identity data; restoring a backup made before a rotation needs its retired key brought back with `restore`. There is no KMS, and the lookup key is never rotated.
+Boundary: no rotation was performed on the development key, because each step needs a restart of the API and workers that other sessions share. There is no live reload. The restore drill checked only identity data until T44 ([checkpoint](#reminder-fairness-and-restore-coverage-checkpoint)); restoring a backup made before a rotation needs its retired key brought back with `restore`. There is no KMS, and the lookup key is never rotated.
 
 ## Background Work Metrics Checkpoint
 
@@ -582,6 +582,31 @@ Builds [T33](TASKS.md#approved-requirements-not-built-yet) under [DEC-012](DECIS
 | Found and fixed while checking | Unreadable answers could keep a request open forever, each adding to its history; parallel approvals could pass the 50-note limit; parallel retries of one request could fail on the database's uniqueness check instead of returning the saved request; and a memory answer recorded every memory as evidence while showing only 10. |
 
 Not done: migration `0023` is not applied to the development database (it is at `0022`), and the shared API was not restarted, because another session's in-progress documents migration `0024` builds on `0023` and the API now also loads that unfinished code. The generated [OpenAPI](../packages/openapi/openapi.json) is not regenerated for the same reason. The web screen for the agent is written and checked but not linked ([T34](TASKS.md#approved-requirements-not-built-yet)); Android is not started ([T35](TASKS.md#approved-requirements-not-built-yet)); both wait for the owner's review of DEC-012.
+
+## Reminder Fairness And Restore Coverage Checkpoint
+
+Fixes two audit defects ([T43 and T44](TASKS.md#defects-that-break-approved-requirements)); neither needs a decision.
+
+- **T43, reminders (R9):** each pass of the reminder worker took the 20 oldest due reminders in the same order. A reminder whose account was locked answered "busy" and stayed first, so 20 of them could stop every other account's reminders for as long as the locks lasted. Now a locked account's reminder does not use a place in the pass: the account is skipped for the rest of that pass, so its own reminders keep their order, and the pass reads further due reminders oldest first, at most 5 pages of the batch size. Nothing about a reminder changes, and the lock order is the same.
+- **T44, restore (R12):** restore verification decrypted only the three identity columns, so a restore with unreadable chat messages, care instructions or export archives was reported as good. It now checks every encrypted column with the key rotation's own list and ciphers (messages use their derived key), so a column encrypted later is checked automatically, and a keyring file with several keys is accepted.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| T43 tests | New `tests/test_reminder_dispatch_fairness.py`: an account with the three oldest due reminders is held locked while a pass with a batch of 2 runs. With the fix: `{"busy": 1, "available": 1}`, the other account's reminder is delivered, and after the lock ends the locked account's three arrive oldest first over two passes. The same test with the old pass restored by a local test-only plugin fails with `{'busy': 2}` (`backend/.local/t43-defects-20261001.txt`). With every reminder delivery, repeating reminder, alert and work metric test: **118 passed** in 830 s. |
+| T44 tests | New test in `tests/test_restore_drill.py` with a care instruction, a chat message and a finished export: all six encrypted columns are checked and readable, and a message re-encrypted with another key is reported as 0 of 1 readable. With the key rotation tests: **12 passed**. With the old three-column check restored by a local plugin, only the new test fails (`backend/.local/t44-tests-20261001.txt`). |
+| Restore drill | `scripts/restore-drill.ps1` at migration `0022`: **PASS**, 54 tables and 6,015 rows matched; with the recorded key 320 account emails and lookups, 337 challenge addresses, 20 chat messages and 15 care instructions opened, and a fresh control key opened none; recovery 21.2 s; the disposable project was removed (`.local/restore-drill/20261001T075945Z`). The local data had no export archives or pending mail payloads at the time, so those two columns had 0 rows there; the test above covers an archive. |
+
+Not done: the shared reminder worker has run since before this change and loads code only when it starts, so T43 takes effect at its next restart. It was not restarted here, because a restart also loads other sessions' unfinished files.
+
+## Export Omissions Checkpoint
+
+Fixes [T45](TASKS.md#defects-that-break-approved-requirements) (R12, audit B09). Each of the nine histories in a personal data export (sessions, security events, invitations, ownership transfers, reminders, reminder requests, notifications, repeating reminders and backup contacts) stopped at 1,000 rows without saying so. The bound stays, so a long history cannot push an archive past its 5 MB limit and make the whole export fail; each list keeps its order. When a history holds more, the archive's new `omitted` list names it with the number included, its total and which end was kept (the newest for sessions and security events, the oldest for the others), and the notice says each history holds at most 1,000 entries. The total is counted in the same snapshot the archive is built from.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | New test in `tests/test_exports.py`: an account with 1,004 security events gets the newest 1,000, without the oldest, and `omitted` reads `security.events`, 1,000 of 1,004, newest kept. An ordinary archive has an empty `omitted`. With the identity tests: **30 passed**. With silent cutting restored by a local test-only plugin, only the new test fails (`backend/.local/t45-tests-20261001.txt`). |
+
+Not changed: whether to finish exports with a worker and screens is the owner's decision on P11; exports still have no client and no configured worker. The archive's new `omitted` field is not yet in the generated [OpenAPI](../packages/openapi/openapi.json), which waits for the same reason as the agent operations ([checkpoint](#agent-backend-checkpoint)).
 
 ## Design Tokens Single Source Checkpoint
 
@@ -662,6 +687,46 @@ Builds [T39, T40 and T51](TASKS.md#defects-that-break-approved-requirements), fo
 **Boundary.**
 - **Release app not run on a device.** The only emulator belongs to another session and holds an app with the same application ID. A release build also cannot reach the local API: its host is `api.community.invalid`, and plain HTTP is allowed only in debug builds (audit A9).
 - **Full live suite not run,** because `solo:` and `space settings:` fail while T22 is in progress.
+
+## Web Reliability And Text Limits Checkpoint
+
+Builds [T41, T46, T47 and T48](TASKS.md#defects-that-break-approved-requirements), found by the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#4-confirmed-defects-in-the-built-code).
+
+- **T41, web chat catch-up (R5).**
+  - **The defect:** polling stops while the tab is hidden. If more than 330 messages arrived meanwhile, the catch-up stopped after 10 pages, showed the newest page and marked everything read, so the messages in between were never shown.
+  - **The fix:** the catch-up now shows only messages that follow on without a hole. It fetches the rest on the next polls, and marks read only what it fetched.
+  - **Also fixed:**
+    - polls no longer overlap;
+    - once a message is deleted, a late copy from an earlier poll cannot bring its text back.
+- **T46, text limits (R4).**
+  - **The defects:**
+    - **Proxy and API:** both refused bodies over 16 KiB, but a valid post of 5,000 characters can take 20 KB as browsers send it, up to 30 KB as Android's Gson escapes it, and up to 61 KB when every character is escaped.
+    - **Web schemas:** the web checked returned text in UTF-16 units, while the server counts characters. So a 61-emoji title was saved but shown as not confirmed, and an 80-emoji page name could not load.
+  - **The fix:**
+    - post create and update accept up to 64 KiB at the proxy and the API; every other body keeps 16 KiB;
+    - the community response schemas count characters as the server does;
+    - the API description states the effective limit of each community text field next to its looser pre-normalisation guard.
+  - **OpenAPI regenerated:** `packages/openapi/openapi.json` was regenerated with `python3 -m app.cli export-openapi`. It now lists 159 operations on 132 paths. The 15 new operations are the agent (T33) and the documents and search (DEC-015) routes that other sessions are building; they come from regenerating, not from this change.
+- **T47, proxy request bodies (R12).**
+  - **The defect:** a body without `Content-Length` was read completely before its size was checked, with no time limit.
+  - **The fix:** the proxy now reads at most the route's limit, plus one chunk, then answers 413. A body that does not arrive within 15 s (60 s for a document) gets 408, and nothing is forwarded in either case.
+- **T48, unconfirmed new events (R9).**
+  - **The defect:** changing Space, or opening another event, while a new event was being saved or its save was unconfirmed, dropped the form and its retry key. Creating the event again could then make a duplicate.
+  - **The fix:** both now ask first, naming the duplicate risk. If you stay, Retry still sends the original key.
+  - **Changed behaviour** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): those two actions show a confirmation in that state only.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| New tests, failing before each fix | Web chat: `offline chat shows every message after a long absence…` showed missing messages before the fix. Client: `A deleted message stays deleted…` showed `sent` before the fix. Events: `an unconfirmed new event keeps its retry…` showed no confirmation before the fix. Proxy: `stops reading a body without Content-Length…` read 100 chunks of 4 KiB before the fix, and `refuses a body that does not arrive in time` hung until the 5 s test limit. Community: the schema test rejected a valid 80-emoji page name, the proxy test answered 413 to a valid post, and the backend test `test_posts_up_to_the_character_limit…` answered 413. **All pass after the fixes.** |
+| Web client tests | `npm --prefix web run test:client`: **105 passed**, 0 failed. |
+| Web component tests | The offline chat, community and events files: **8 passed** (`messaging-ui` 3, `community-ui` 3, `events-ui` 2). The whole `test:unit` run: 39 of 42. The 3 failures are in `tests/unit/documents-ui.test.mjs`, the documents work another session is still building (DEC-015). The same 3 tests also fail in a separate worktree at commit `8bfa746`, which has none of these changes. |
+| Typecheck | Passed. |
+| Backend | `tests/test_community.py` in the test container: **18 passed**. |
+| Live journeys | `messages:`, `community:`, `post search:` and `events:` against http://127.0.0.1:3000 and the shared API: **4 passed**. |
+
+**Boundary.**
+- **Live API not restarted.** The shared API in Compose runs the code from its last start, so the larger post limit takes effect there at its next restart. Until then, a post over 16 KiB sent through the live stack is still refused by the API.
+- **Android post editor not changed:** it already counts characters.
 
 ## Remaining Gates
 

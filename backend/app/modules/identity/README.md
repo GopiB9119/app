@@ -4,7 +4,7 @@ Built for local synthetic use: registration with email verification, sign-in and
 
 Other modules reuse this module's session check (`IdentityService.authenticate`), the protected-field encryption in `security.py` and the shared outbox table.
 
-`exports.py` adds five personal data export operations under `/v1/me/exports`. They have no web or Android client and no configured worker. Their behaviour is covered by `backend/tests/test_exports.py` ([checkpoint](../../../../docs/BUILD_STATUS.md#personal-data-export-verification-checkpoint)).
+`exports.py` adds five personal data export operations under `/v1/me/exports`. They have no web or Android client and no configured worker. Each history in an archive holds at most 1,000 entries, and the archive's `omitted` list names any that held more, with its total ([checkpoint](../../../../docs/BUILD_STATUS.md#export-omissions-checkpoint)). Their behaviour is covered by `backend/tests/test_exports.py` ([checkpoint](../../../../docs/BUILD_STATUS.md#personal-data-export-verification-checkpoint)).
 
 Sign-in limits count each browser's network separately when the web app runs behind a trusted reverse proxy: set `COMMUNITY_PROXY_KEY` here and the same value plus `COMMUNITY_TRUSTED_PROXY_HOPS` on the web app ([T10](../../../../docs/TASKS.md#approved-requirements-not-built-yet)). The encryption key can be replaced in stages without signing anyone out ([T11](../../../../docs/TASKS.md#approved-requirements-not-built-yet); [procedure](../platform/README.md#encryption-key-rotation)); the lookup key used for email lookups and stored digests is never rotated. Evidence: [account checkpoint](../../../../docs/BUILD_STATUS.md#account-checkpoint-evidence).
 

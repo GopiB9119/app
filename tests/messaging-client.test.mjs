@@ -202,3 +202,12 @@ test('Composer rules and message merging match the server contract', () => {
   assert.equal(merged.map(item => item.position).join(','), '1,2,3');
   assert.equal(merged[0].status, 'deleted');
 });
+
+test('A deleted message stays deleted when an older copy of it arrives late', () => {
+  const client = messagingClient();
+  const deleted = message({ status: 'deleted', body: null, deleted_at: '2026-09-19T10:02:00Z' });
+  const merged = client.mergeMessages([deleted], [message()]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].status, 'deleted');
+  assert.equal(merged[0].body, null);
+});

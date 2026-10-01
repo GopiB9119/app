@@ -1,6 +1,8 @@
 -keepattributes Signature,RuntimeVisibleAnnotations,AnnotationDefault
 # Gson reads and writes every transfer object by field name, in every feature.
 -keep class com.community.platform.feature.**.*Dto { *; }
+-keep class com.community.platform.feature.files.*Dto { *; }
+-keep class com.community.platform.feature.discovery.*Dto { *; }
 # The stored session keeps its field names, so a later build can still read it.
 -keepclassmembers class com.community.platform.feature.identity.Credentials { <fields>; }
 

@@ -11,6 +11,7 @@ from app.modules.identity.schemas import (
     ArchiveInvitation,
     ArchiveMembership,
     ArchiveNotification,
+    ArchiveOmission,
     ArchiveOwnershipTransfer,
     ArchiveProfile,
     ArchiveQuietHours,
@@ -45,7 +46,8 @@ LIVE = ("queued", "building", "ready")
 SECTIONS = ("profile", "security", "spaces", "tasks", "reminders")
 NOTICE = (
     "Selected account data this account could access when the export was built. Family names, tasks and "
-    "reminders come only from families you belonged to at that time. The downloaded file is not encrypted."
+    "reminders come only from families you belonged to at that time. Each history holds at most 1,000 entries; "
+    "\"omitted\" names any history that held more, with its total. The downloaded file is not encrypted."
 )
 UNAVAILABLE = {
     "queued": (409, "EXPORT_NOT_READY", "This export is still being prepared."),
@@ -290,38 +292,47 @@ class ExportService:
             "tasks": task_ids,
         }
         sections = {}
+        omitted = []
         if "profile" in selected:
             sections["profile"] = ArchiveProfile(
                 id=user.id, email=self.security.open(user.email_cipher), display_name=user.display_name,
                 timezone=user.timezone, status=user.status, created_at=user.created_at, verified_at=user.verified_at,
             )
         if "security" in selected:
-            sections["security"] = self.security_history(database, user.id)
+            sections["security"] = self.security_history(database, user.id, omitted)
         if "spaces" in selected:
-            sections["spaces"] = self.spaces_history(database, user.id, memberships, now)
+            sections["spaces"] = self.spaces_history(database, user.id, memberships, now, omitted)
         if "tasks" in selected:
             sections["tasks"] = [self.task(database, task, member, user.id) for task, member in visible]
         if "reminders" in selected:
-            sections["reminders"] = self.reminder_history(database, user.id, task_ids, now)
+            sections["reminders"] = self.reminder_history(database, user.id, task_ids, now, omitted)
         archive = ExportArchive(
             export_id=export.id, account_id=user.id, generated_at=now, categories=export.categories, notice=NOTICE,
-            **sections,
+            omitted=omitted, **sections,
         )
         return archive, included
 
-    def security_history(self, database, account_id):
-        sessions = database.scalars(
+    @staticmethod
+    def history(database, statement, section, kept, omitted):
+        rows = database.scalars(statement.limit(HISTORY_LIMIT + 1)).all()
+        if len(rows) <= HISTORY_LIMIT:
+            return rows
+        # The build reads one snapshot, so the total matches the rows that were cut.
+        total = database.scalar(select(func.count()).select_from(statement.order_by(None).subquery()))
+        omitted.append(ArchiveOmission(section=section, included=HISTORY_LIMIT, total=total, kept=kept))
+        return rows[:HISTORY_LIMIT]
+
+    def security_history(self, database, account_id, omitted):
+        sessions = self.history(database, (
             select(AccountSession)
             .where(AccountSession.account_id == account_id)
             .order_by(AccountSession.created_at.desc(), AccountSession.id)
-            .limit(HISTORY_LIMIT)
-        ).all()
-        events = database.scalars(
+        ), "security.sessions", "newest", omitted)
+        events = self.history(database, (
             select(SecurityEvent)
             .where(SecurityEvent.account_id == account_id)
             .order_by(SecurityEvent.created_at.desc(), SecurityEvent.id)
-            .limit(HISTORY_LIMIT)
-        ).all()
+        ), "security.events", "newest", omitted)
         return ArchiveSecurity(
             sessions=[
                 ArchiveSession(
@@ -336,19 +347,17 @@ class ExportService:
             ],
         )
 
-    def spaces_history(self, database, account_id, memberships, now):
-        invitations = database.scalars(
+    def spaces_history(self, database, account_id, memberships, now, omitted):
+        invitations = self.history(database, (
             select(SpaceInvitation)
             .where(or_(SpaceInvitation.recipient_id == account_id, SpaceInvitation.inviter_id == account_id))
             .order_by(SpaceInvitation.created_at, SpaceInvitation.id)
-            .limit(HISTORY_LIMIT)
-        ).all()
-        transfers = database.scalars(
+        ), "spaces.invitations", "oldest", omitted)
+        transfers = self.history(database, (
             select(OwnershipTransfer)
             .where(or_(OwnershipTransfer.from_account_id == account_id, OwnershipTransfer.to_account_id == account_id))
             .order_by(OwnershipTransfer.created_at, OwnershipTransfer.id)
-            .limit(HISTORY_LIMIT)
-        ).all()
+        ), "spaces.ownership_transfers", "oldest", omitted)
         rows = []
         for membership, space in memberships:
             current = membership.status == "active" and space.status == "active"
@@ -390,48 +399,43 @@ class ExportService:
             completed_at=view.completed_at, created_at=view.created_at, updated_at=view.updated_at,
         )
 
-    def reminder_history(self, database, account_id, task_ids, now):
+    def reminder_history(self, database, account_id, task_ids, now, omitted):
         preference = database.get(NotificationPreference, account_id)
         setting = database.get(AlertSetting, account_id)
         reminders, requests, notifications, series, backups = [], [], [], [], []
         if task_ids:
-            backups = database.scalars(
+            backups = self.history(database, (
                 select(ReminderBackup)
                 .where(
                     ReminderBackup.task_id.in_(task_ids),
                     or_(ReminderBackup.owner_account_id == account_id, ReminderBackup.contact_account_id == account_id),
                 )
                 .order_by(ReminderBackup.created_at, ReminderBackup.id)
-                .limit(HISTORY_LIMIT)
-            ).all()
-            series = database.scalars(
+            ), "reminders.backups", "oldest", omitted)
+            series = self.history(database, (
                 select(ReminderSeries)
                 .where(ReminderSeries.account_id == account_id, ReminderSeries.task_id.in_(task_ids))
                 .order_by(ReminderSeries.created_at, ReminderSeries.id)
-                .limit(HISTORY_LIMIT)
-            ).all()
-            reminders = database.scalars(
+            ), "reminders.series", "oldest", omitted)
+            reminders = self.history(database, (
                 select(Reminder)
                 .where(Reminder.account_id == account_id, Reminder.task_id.in_(task_ids))
                 .order_by(Reminder.created_at, Reminder.id)
-                .limit(HISTORY_LIMIT)
-            ).all()
-            requests = database.scalars(
+            ), "reminders.reminders", "oldest", omitted)
+            requests = self.history(database, (
                 select(ReminderRequest)
                 .where(
                     ReminderRequest.task_id.in_(task_ids),
                     or_(ReminderRequest.requested_by_id == account_id, ReminderRequest.recipient_account_id == account_id),
                 )
                 .order_by(ReminderRequest.created_at, ReminderRequest.id)
-                .limit(HISTORY_LIMIT)
-            ).all()
-            notifications = database.scalars(
+            ), "reminders.requests", "oldest", omitted)
+            notifications = self.history(database, (
                 select(InAppNotification)
                 .join(Reminder, and_(Reminder.id == InAppNotification.reminder_id, Reminder.account_id == InAppNotification.account_id))
                 .where(InAppNotification.account_id == account_id, Reminder.task_id.in_(task_ids))
                 .order_by(InAppNotification.created_at, InAppNotification.id)
-                .limit(HISTORY_LIMIT)
-            ).all()
+            ), "reminders.notifications", "oldest", omitted)
         return ArchiveReminders(
             in_app_reminders_enabled=preference.in_app_reminders_enabled if preference else True,
             reminders=[

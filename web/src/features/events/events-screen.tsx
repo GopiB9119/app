@@ -41,6 +41,8 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   const [when, setWhen] = useState<When>("upcoming");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // True while a new event is being saved or its save is unconfirmed: leaving the form then loses its retry key.
+  const [held, setHeld] = useState(false);
   const spaces = useQuery({
     queryKey: ["spaces", user.id],
     queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }),
@@ -63,7 +65,8 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   }, [problem, queryClient]);
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["events", user.id, spaceId] }); };
   const events = list.data?.pages.flatMap(page => page.data) ?? [];
-  const chooseSpace = (value: string) => { setChosenSpace(value); setSelectedId(null); setCreating(false); };
+  const mayLeave = () => !held || window.confirm("This event may already be saved. Leaving the form loses its Retry, and creating it again could make a duplicate. Leave anyway?");
+  const chooseSpace = (value: string) => { if (!mayLeave()) return; setChosenSpace(value); setSelectedId(null); setCreating(false); };
 
   return <Shell account>
     <main className={styles.main}>
@@ -82,7 +85,7 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
           {(["upcoming", "past"] as const).map(value => <button key={value} className={styles.tab} aria-pressed={when === value} onClick={() => { setWhen(value); setSelectedId(null); }}>{value === "upcoming" ? "Upcoming" : "Past"}</button>)}
         </div>
       </div>}
-      {creating && spaceId && <EventEditor user={user} spaceId={spaceId} zone={zone} onClose={() => { setCreating(false); refresh(); }} onSaved={event => { setCreating(false); setWhen("upcoming"); setSelectedId(event.id); refresh(); }} />}
+      {creating && spaceId && <EventEditor user={user} spaceId={spaceId} zone={zone} onHold={setHeld} onClose={() => { setCreating(false); refresh(); }} onSaved={event => { setCreating(false); setWhen("upcoming"); setSelectedId(event.id); refresh(); }} />}
       {selectedId && <EventPanel key={selectedId} user={user} eventId={selectedId} zone={zone} onClose={() => setSelectedId(null)} onChanged={refresh} />}
       {spaceId && <section aria-labelledby="event-list-title">
         <h2 id="event-list-title" className={styles.listTitle}>{when === "upcoming" ? "Upcoming events" : "Past events"}</h2>
@@ -92,7 +95,7 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
         <ul className={styles.list}>{events.map(event => {
           const whenText = formatWhen(event, zone);
           return <li key={event.id} className={styles.card}>
-            <button className={styles.cardButton} aria-pressed={selectedId === event.id} onClick={() => { setSelectedId(event.id); setCreating(false); }}>
+            <button className={styles.cardButton} aria-pressed={selectedId === event.id} onClick={() => { if (creating && !mayLeave()) return; setSelectedId(event.id); setCreating(false); }}>
               <span className={styles.cardTitle}>{event.title}</span>
               {event.status === "cancelled" && <span className={styles.badge}>Cancelled</span>}
             </button>
@@ -198,9 +201,9 @@ function EventAlertChoice({ user, eventId }: { user: Account; eventId: string })
   </div>;
 }
 
-function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, onReload }: {
+function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, onReload, onHold }: {
   user: Account; spaceId: string; zone: string; existing?: SpaceEvent;
-  onClose: () => void; onSaved: (event: SpaceEvent) => void; onReload?: () => void;
+  onClose: () => void; onSaved: (event: SpaceEvent) => void; onReload?: () => void; onHold?: (held: boolean) => void;
 }) {
   // An edit is saved against the version the form was filled from, so a newer version is refused instead of overwritten.
   const [existing] = useState(shown);
@@ -231,6 +234,9 @@ function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, o
   const unknown = save.isError && isUnknown(save.error);
   const changed = save.error && "code" in save.error && save.error.code === "EVENT_CHANGED";
   const pendingSame = Boolean(intent && unknown && !existing);
+  const holding = save.isPending || pendingSame;
+  useEffect(() => { onHold?.(holding); }, [holding, onHold]);
+  useEffect(() => () => onHold?.(false), [onHold]);
   return <form className={styles.panel} onSubmit={submit} aria-labelledby={`${formId}-title`} noValidate>
     <div className={styles.panelHeader}>
       <h2 id={`${formId}-title`}>{existing ? "Edit event" : "New event"}</h2>

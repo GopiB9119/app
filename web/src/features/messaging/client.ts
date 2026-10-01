@@ -138,6 +138,7 @@ export async function markRead(accountId: string, conversationId: string, throug
 
 export function mergeMessages(current: Message[], incoming: Message[]) {
   const byId = new Map(current.map(item => [item.id, item]));
-  for (const item of incoming) byId.set(item.id, item);
+  // Deletion is final: an older copy that arrives late, such as from a poll that started before the deletion, cannot bring a message back.
+  for (const item of incoming) if (byId.get(item.id)?.status !== "deleted" || item.status === "deleted") byId.set(item.id, item);
   return [...byId.values()].sort((left, right) => Number(left.position) - Number(right.position));
 }

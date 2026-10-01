@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
@@ -80,6 +81,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 import java.time.Instant
 import java.time.ZoneId
@@ -115,7 +117,7 @@ data class SpaceActions(
 )
 
 @Composable
-fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onSessionLost: () -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null) {
+fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onSessionLost: () -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null, onOpenDocuments: ((SpaceDto) -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
@@ -127,14 +129,14 @@ fun SpaceRoute(viewModel: SpaceViewModel, accountId: String, timezone: String, o
         viewModel::showMembers, viewModel::proposeMembership,
         viewModel::offerOwnership, viewModel::respondOwnership, viewModel::moreOwnershipOffers, viewModel::creationType,
         viewModel::visibility, viewModel::description,
-    ), timezone, onBack, onOpenTasks, onOpenSettings, onOpenChat, onOpenEvents, onFindGroups, onOpenGroupAccess)
+    ), timezone, onBack, onOpenTasks, onOpenSettings, onOpenChat, onOpenEvents, onFindGroups, onOpenGroupAccess, onOpenDocuments)
 }
 
 private enum class ExitReview { DISCARD, UNCONFIRMED }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null) {
+fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: String, onBack: () -> Unit, onOpenTasks: (SpaceDto) -> Unit, onOpenSettings: ((SpaceDto) -> Unit)? = null, onOpenChat: ((SpaceDto) -> Unit)? = null, onOpenEvents: ((SpaceDto) -> Unit)? = null, onFindGroups: (() -> Unit)? = null, onOpenGroupAccess: ((SpaceDto) -> Unit)? = null, onOpenDocuments: ((SpaceDto) -> Unit)? = null) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(state.accountId) { mutableStateOf(false) }
     var exitReview by remember { mutableStateOf<ExitReview?>(null) }
@@ -247,6 +249,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                     Button(onClick = { onOpenTasks(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-tasks")) { Icon(Icons.AutoMirrored.Filled.List, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_open_tasks)) }
                                     if (onOpenChat != null) OutlinedButton(onClick = { onOpenChat(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-chat")) { Icon(Icons.Default.Email, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.messages_open_chat)) }
                                     if (onOpenEvents != null) OutlinedButton(onClick = { onOpenEvents(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-events")) { Icon(Icons.Default.DateRange, null, Modifier.size(19.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.events_open)) }
+                                    if (onOpenDocuments != null) OutlinedButton(onClick = { onOpenDocuments(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("space-open-documents")) { Icon(Icons.Default.Create, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.documents_title)) }
                                     HorizontalDivider()
                                 }
                             }
