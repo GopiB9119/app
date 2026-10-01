@@ -451,6 +451,8 @@ The follow-up to Part A lists 102 entries in nine areas, checked against the rep
 
 The text's nine open decisions: R3 and R4 already answer two. Private Spaces exist beside public communities (R3), and comments and reactions belong to the public side (R4) and are built; whether a public community can be restricted is C12. Q9 covers languages and regions, and Q22 and Q23 now also ask how news arrives and when ads start. Four are new: who may create a public community (Q25), the default feed (Q26), which moderation may be automated (Q27) and the volumes to plan for (Q28).
 
+Since this inventory: page rules and pinned posts were built on 2026-10-01 under the provisional [DEC-025](DECISIONS.md#accepted-decisions) ([T83](TASKS.md#community-management)), so "rules and pinned announcements" and "pinning" above are now built for page owners. Moderators, handing over a page, and archiving and deleting a page are T84 and T85.
+
 ## 39. Open questions
 
 | ID | Question | Sections |

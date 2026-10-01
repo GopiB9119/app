@@ -473,6 +473,35 @@ class SpaceViewModelTest {
         assertTrue(fixture.api.keys.isEmpty())
     }
 
+    @Test fun aRefreshDuringAnUnansweredRoleChangeIsNotSentSoItCannotBringBackTheOldRole(): Unit = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var listReads = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun spaces(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceDto>>> {
+                listReads += 1
+                return fixture.api.spaces(authorization, cursor, limit)
+            }
+            override suspend fun changeMemberRole(authorization: String, spaceId: String, accountId: String, key: String, etag: String, body: ChangeSpaceMemberRoleDto): Response<EnvelopeDto<SpaceMemberDto>> {
+                entered.complete(Unit); release.await()
+                return fixture.api.changeMemberRole(authorization, spaceId, accountId, key, etag, body)
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)
+        val reads = listReads
+        value.proposeRole(fixture.otherMember, "admin")
+        value.confirm()
+        withTimeout(5000) { entered.await() }
+        // T82: the screen sends one request at a time, so nothing started now can answer after the change.
+        value.refresh(); value.showMembers()
+        assertEquals(reads, listReads)
+        release.complete(Unit); idle(value)
+        assertEquals("admin", value.state.value.members.single { it.accountId == fixture.recipientId }.role)
+        assertEquals("Sam is now an admin.", value.state.value.notice)
+        assertEquals(reads + 1, listReads)
+    }
+
     @Test fun revokedSelectionIsClearedBeforeAnUnrelatedInboxOutage() = runBlocking {
         var revoked = false
         val api = object : SpaceApi by fixture.api {

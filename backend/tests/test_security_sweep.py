@@ -8,11 +8,14 @@ from datetime import timedelta
 from uuid import uuid4
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.db import Base
+from app.errors import DomainError
 from app.modules.events.models import SpaceEvent, SpaceEventResponse
+from app.modules.identity.models import AccountSession
 from app.modules.messaging.models import ConversationMessage, ConversationReadState
 from tests.test_events import create as create_event
 from tests.test_identity import PASSWORD, account, auth, begin, verify
@@ -224,3 +227,17 @@ def test_event_answer_saves_nothing_when_the_session_expires_while_waiting_for_a
     assert late.status_code == 401, late.text
     with app.state.sessions() as database:
         assert database.scalar(select(func.count()).select_from(SpaceEventResponse)) == 0
+
+def test_checking_a_session_again_sees_a_revocation_made_meanwhile(client, app):
+    # Requests check the session again after waiting, in the same database session; a revocation committed
+    # meanwhile must be seen, not hidden by the copy of the session loaded before the wait.
+    person = account(client, app)
+    with app.state.sessions() as database:
+        # Kept, as callers keep it: an unreferenced copy would simply be read again.
+        first = app.state.identity.authenticate(database, person["session_token"])
+        with app.state.sessions.begin() as other:
+            other.execute(update(AccountSession).where(AccountSession.account_id == person["user"]["id"]).values(revoked_at=app.state.clock()))
+        with pytest.raises(DomainError) as refused:
+            app.state.identity.authenticate(database, person["session_token"])
+        assert first[1].account_id == person["user"]["id"]
+    assert refused.value.status == 401

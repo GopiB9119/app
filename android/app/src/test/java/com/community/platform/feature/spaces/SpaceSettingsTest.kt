@@ -116,6 +116,36 @@ class SpaceSettingsTest {
         assertEquals("", current.state.value.name)
     }
 
+    @Test fun aRefreshDuringAnUnansweredSaveIsNotSentSoItCannotBringBackTheOldName() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var reads = 0
+        val delayed = object : SpaceSettingsApi by api {
+            override suspend fun read(authorization: String, spaceId: String): Response<EnvelopeDto<SpaceSettingsDto>> {
+                reads += 1
+                return api.read(authorization, spaceId)
+            }
+            override suspend fun save(authorization: String, spaceId: String, etag: String, key: String, body: EditSpaceSettingsDto): Response<EnvelopeDto<SpaceSettingsDto>> {
+                entered.complete(Unit); release.await()
+                return api.save(authorization, spaceId, etag, key, body)
+            }
+        }
+        val current = SpaceSettingsViewModel(SpaceSettingsRepository(delayed, fixture.accounts))
+        model = current
+        current.bind(fixture.accountId, fixture.spaceId); idle(current)
+        val before = reads
+        current.name("Morgan household")
+        value = original.copy(name = "Morgan household", version = "2", etag = "\"${"b".repeat(64)}\"")
+        current.save()
+        withTimeout(5000) { entered.await() }
+        // T82: the screen sends one request at a time, so nothing started now can answer after the save.
+        current.refresh(); current.reload()
+        assertEquals(before, reads)
+        release.complete(Unit); idle(current)
+        assertEquals("Morgan household", current.state.value.basis!!.name)
+        assertEquals(before, reads)
+    }
+
     @Test fun settingsAccountSwitchRejectsLateRead() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()

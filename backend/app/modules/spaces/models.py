@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -29,6 +30,8 @@ class Space(Base):
         CheckConstraint("status IN ('active', 'archived')", name="ck_space_status"),
         CheckConstraint("version > 0", name="ck_space_version"),
         CheckConstraint("admission_sequence > 0", name="ck_space_admission_sequence"),
+        # Only family and group Spaces can let every member invite (DEC-026).
+        CheckConstraint("NOT member_invites OR space_type IN ('family', 'group')", name="ck_space_member_invites"),
         Index("ix_space_public_directory", "created_at", "id", postgresql_where=text("visibility = 'public' AND status = 'active'")),
     )
 
@@ -37,6 +40,7 @@ class Space(Base):
     description: Mapped[str] = mapped_column(String(280), default="", server_default="")
     space_type: Mapped[str] = mapped_column(String(16), default="family")
     visibility: Mapped[str] = mapped_column(String(16), default="private")
+    member_invites: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     status: Mapped[str] = mapped_column(String(16), default="active")
     version: Mapped[int] = mapped_column(Integer, default=1)
     # Counts admissions; each membership keeps its own number, and history boundaries compare numbers, not times.

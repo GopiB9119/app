@@ -35,6 +35,8 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object IdentityModule {
     private val COMMUNITY_POST_LISTS = Regex("/v1/(feed|discover/posts|me/saved-posts|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/[a-f0-9-]{36}/comments)")
+    // Twenty pages, each with up to 2,000 characters of rules (T83), can exceed the default 64 KiB.
+    private val COMMUNITY_PAGE_LISTS = Regex("/v1/(discover/pages|me/following)")
     private val COMMUNITY_DRAFTS = Regex("/v1/pages/[a-f0-9-]{36}/drafts")
 
     @Provides @Singleton fun gson(): Gson = Gson()
@@ -73,8 +75,9 @@ object IdentityModule {
                 // A care day can list 60 medicines with up to six times each.
                 path.startsWith("/v1/care/") -> 524288L
                 // Community limits are code points (up to 4 UTF-8 bytes): 20 posts of 5000 or 50 comments of 2000
-                // stay under 512 KiB, 50 drafts under 1.5 MiB and 500 blocks under 256 KiB.
+                // stay under 512 KiB, as do 20 pages with 2,000 characters of rules; 50 drafts under 1.5 MiB and 500 blocks under 256 KiB.
                 request.method == "GET" && COMMUNITY_POST_LISTS.matches(path) -> 524288L
+                request.method == "GET" && COMMUNITY_PAGE_LISTS.matches(path) -> 524288L
                 request.method == "GET" && COMMUNITY_DRAFTS.matches(path) -> 1572864L
                 request.method == "GET" && path == "/v1/me/blocks" -> 262144L
                 // Ten agent requests with their questions, approvals, plans and history; up to 51 saved memories.

@@ -47,7 +47,9 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
 
   const save = useMutation({
     mutationFn: () => api("me/profile", userSchema, { method: "PATCH", body: draft, accountId: user.id, headers: { "If-Match": draftVersion ?? "" } }),
-    onSuccess: result => {
+    onSuccess: async result => {
+      // A read that started before the save would otherwise land afterwards and show the old profile again.
+      await queryClient.cancelQueries({ queryKey: ["me"] });
       queryClient.setQueryData(["me"], result);
       setDraft({ display_name: result.data.display_name, timezone: result.data.timezone });
       setDraftVersion(result.etag); setNotice("Profile saved."); setError("");
@@ -68,6 +70,7 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
   async function reloadProfile() {
     try {
       const result = await api("me", userSchema);
+      await queryClient.cancelQueries({ queryKey: ["me"] });
       queryClient.setQueryData(["me"], result);
       setDraft({ display_name: result.data.display_name, timezone: result.data.timezone });
       setDraftVersion(result.etag); setError(""); setNotice("");

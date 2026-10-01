@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.spaces.schemas import (
+    ChangeInvitePolicy,
     ChangeMemberRole,
     ChangeSpaceVisibility,
     CreateJoinRequest,
@@ -176,6 +177,15 @@ def revoke_invitation(request: Request, space_id: UUID, invitation_id: UUID, bod
 def change_visibility(request: Request, space_id: UUID, body: ChangeSpaceVisibility,
                       idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
     return envelope(request, request.app.state.space_directory.change_visibility(
+        token(request), str(space_id), body, str(idempotency_key), if_match,
+    ))
+
+
+@router.post("/{space_id}/invite-policy", response_model=Envelope[SpaceSettingsView],
+             responses={412: {"model": ErrorEnvelope}, 428: {"model": ErrorEnvelope}})
+def change_invite_policy(request: Request, space_id: UUID, body: ChangeInvitePolicy,
+                         idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.spaces.change_invite_policy(
         token(request), str(space_id), body, str(idempotency_key), if_match,
     ))
 

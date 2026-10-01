@@ -673,8 +673,9 @@ class CommunityTest {
             val body = if (method == "GET") null else "{}".toRequestBody("application/json".toMediaType())
             return http.newCall(Request.Builder().url("https://offline.invalid$path").method(method, body).build()).execute().use { it.body!!.bytes().size }
         }
+        // Page lists joined the larger limit with T83: twenty pages with 2,000 characters of rules each can exceed 64 KiB.
         for (path in listOf("/v1/feed", "/v1/discover/posts", "/v1/me/saved-posts", "/v1/pages/river-walkers/posts", "/v1/pages/$pageId/posts", "/v1/posts/$postId/comments",
-            "/v1/pages/river-walkers/pinned-posts", "/v1/pages/$pageId/pinned-posts")) {
+            "/v1/pages/river-walkers/pinned-posts", "/v1/pages/$pageId/pinned-posts", "/v1/discover/pages", "/v1/me/following")) {
             assertEquals(524288, request(path, 524288))
             assertThrows(java.io.IOException::class.java) { request(path, 524289) }
         }
@@ -682,7 +683,7 @@ class CommunityTest {
         assertThrows(java.io.IOException::class.java) { request("/v1/pages/$pageId/drafts", 1572865) }
         assertEquals(262144, request("/v1/me/blocks", 262144))
         assertThrows(java.io.IOException::class.java) { request("/v1/me/blocks", 262145) }
-        for (path in listOf("/v1/posts/$postId", "/v1/pages/river-walkers", "/v1/discover/pages", "/v1/me/pages", "/v1/pages/river-walkers/drafts")) {
+        for (path in listOf("/v1/posts/$postId", "/v1/pages/river-walkers", "/v1/me/pages", "/v1/pages/river-walkers/drafts")) {
             assertThrows(java.io.IOException::class.java) { request(path, 65537) }
         }
         assertThrows(java.io.IOException::class.java) { request("/v1/posts/$postId/comments", 65537, "POST") }
@@ -1947,5 +1948,31 @@ class CommunityTest {
         assertNull(repository.page(Gson().fromJson(olderPage, PageDto::class.java)).rules)
         val olderPost = JsonParser.parseString(Gson().toJson(post)).asJsonObject.apply { remove("pinned") }
         assertFalse(repository.post(Gson().fromJson(olderPost, PostDto::class.java)).pinned)
+    }
+
+    @Test fun pageListsWithTheLongestRulesDecodeThroughTheirResponseLimits() = runBlocking {
+        val rules = "\uD83D\uDE00".repeat(PAGE_RULES_LIMIT)
+        fun largest(count: Int, following: Boolean) = List(count) { index ->
+            followedPage(index).copy(handle = "walkers-$index".padEnd(30, 'x'), name = "\uD83D\uDE00".repeat(80), description = "\uD83D\uDE00".repeat(500), rules = rules, following = following)
+        }
+        var json = ""
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            okhttp3.Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(json.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = CommunityRepository(IdentityModule.community(http, Gson()), fixture.accounts)
+        // Twenty followed or found pages with the longest names, descriptions and rules, all emoji, are larger than 64 KiB.
+        val followed = largest(20, following = true)
+        json = Gson().toJson(EnvelopeDto(followed, null, PaginationDto(null, false)))
+        assertTrue(json.toByteArray().size in 65537..524288)
+        assertEquals(followed, wire.following(fixture.accountId, null).items)
+        val found = largest(20, following = false)
+        json = Gson().toJson(EnvelopeDto(found, null, PaginationDto(null, false)))
+        assertEquals(found, wire.discover(fixture.accountId, "walkers", null, null).items)
+        // The five pages a person may own still fit the default 64 KiB.
+        val owned = largest(5, following = false).map { it.copy(canManage = true, etag = "\"p1\"") }
+        json = Gson().toJson(EnvelopeDto(owned, null))
+        assertTrue(json.toByteArray().size <= 65536)
+        assertEquals(owned, wire.myPages(fixture.accountId))
     }
 }

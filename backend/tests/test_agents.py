@@ -1,12 +1,15 @@
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
 
 from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun
+from app.modules.agents.service import PERSON_LOCK
+from app.modules.identity.models import AccountSession
 from app.modules.planning.models import Task
 from app.modules.scheduling.models import Reminder
 from tests.test_identity import account, auth
@@ -338,3 +341,66 @@ def test_the_memory_answer_lists_ten_and_counts_the_rest(client, app):
     assert listed["answer"].endswith("\n…and 2 more in Memories.")
     assert listed["answer"].count("\nNote: ") == 10
     assert [item["kind"] for item in listed["evidence"]] == ["memory"] * 10
+
+
+def while_the_person_waits(app, person, request, during):
+    """Hold the person's agent lock, let `request` queue behind it, run `during`, then release the lock."""
+    with ThreadPoolExecutor(max_workers=1) as pool, app.state.engine.connect() as holder:
+        held = holder.begin()
+        holder.execute(text("SELECT pg_advisory_xact_lock(:kind, hashtext(:account))"), {"kind": PERSON_LOCK, "account": person["user"]["id"]})
+        holder_pid = holder.scalar(text("SELECT pg_backend_pid()"))
+        pending = pool.submit(request)
+        deadline = time.monotonic() + 30
+        with app.state.engine.connect() as watcher:
+            while not watcher.scalar(
+                text("SELECT count(*) FROM pg_locks WHERE NOT granted AND :holder = ANY(pg_blocking_pids(pid))"), {"holder": holder_pid},
+            ):
+                assert not pending.done(), f"The request finished without waiting for the person's lock: {pending.result().text}"
+                assert time.monotonic() < deadline, "The request never waited for the person's lock."
+                time.sleep(0.05)
+        during()
+        held.commit()
+        return pending.result(timeout=30)
+
+
+def test_a_member_removed_while_their_agent_request_waits_gets_no_history(client, app):
+    owner = account(client, app)
+    member = account(client, app, "sam@example.test")
+    space_id = create_space(client, owner).json()["data"]["id"]
+    admit(client, owner, space_id, member)
+    ask(client, member, space_id, "list my tasks")
+    roster = client.get(f"/v1/spaces/{space_id}/members", headers=auth(owner)).json()["data"]
+    entry = next(item for item in roster if item["account_id"] == member["user"]["id"])
+
+    def remove():
+        removed = client.post(f"/v1/spaces/{space_id}/members/{member['user']['id']}/remove", json={},
+                              headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": entry["etag"]})
+        assert removed.status_code == 200, removed.text
+
+    listed = while_the_person_waits(app, member, lambda: client.get(f"/v1/agent-runs?space_id={space_id}", headers=auth(member)), remove)
+    assert listed.status_code == 404, listed.text
+
+
+def test_an_agent_request_made_with_a_session_revoked_while_it_waits_changes_nothing(client, app):
+    person, space_id = solo(client, app)
+    notes(app, person, 1)
+    memory = client.get("/v1/agent-memories", headers=auth(person)).json()["data"][0]
+    runs_before = counts(app)
+
+    def revoke():
+        with app.state.sessions.begin() as database:
+            database.execute(update(AccountSession).where(AccountSession.account_id == person["user"]["id"]).values(revoked_at=app.state.clock()))
+
+    created = while_the_person_waits(app, person, lambda: client.post(
+        "/v1/agent-runs", headers={**auth(person), "Idempotency-Key": str(uuid4())},
+        json={"space_id": space_id, "message": "add a task to water the plants"},
+    ), revoke)
+    assert created.status_code == 401, created.text
+    with app.state.sessions.begin() as database:
+        database.execute(update(AccountSession).where(AccountSession.account_id == person["user"]["id"]).values(revoked_at=None))
+    deleted = while_the_person_waits(app, person, lambda: client.delete(f"/v1/agent-memories/{memory['id']}", headers=auth(person)), revoke)
+    assert deleted.status_code == 401, deleted.text
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(AgentRun)) == 0
+        assert database.get(AgentMemory, memory["id"]) is not None
+    assert counts(app) == runs_before

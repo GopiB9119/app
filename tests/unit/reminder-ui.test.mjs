@@ -64,7 +64,7 @@ async function fixture(context, options = {}) {
       local_time: reminder.local_time, timezone: reminder.timezone, scheduled_at: reminder.scheduled_at, dispatch_expires_at: reminder.expires_at,
       expires_at: '2026-09-22T10:00:00Z', created_at: '2026-09-19T10:00:00Z', resolved_at: null, status: 'pending', source_changed: false, reminder_id: null, version: '1', channel: 'in_app' };
     const state = window.reminderFixture = { calls: [], reminders: options.seed ? [reminder] : [], notifications: options.inbox ? [notification] : [], requests: options.requestInbox || options.requestSent ? [proposal] : [],
-      preferences: true, generation: 1, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap, timezoneFailures: options.timezoneFailures ?? 0 };
+      preferences: true, generation: 1, holdNextPreferences: false, held: null, heldSettled: false, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap, timezoneFailures: options.timezoneFailures ?? 0 };
     const receipts = new Map();
     const response = (data, extra = {}, headers = {}) => new Response(JSON.stringify({ data, request_id: 'offline-reminder', ...extra }), { status: 200, headers });
     const failure = (status, code, message) => new Response(JSON.stringify({ error: { code, message, details: {} }, request_id: 'offline-reminder' }), { status });
@@ -117,6 +117,14 @@ async function fixture(context, options = {}) {
           if (headers['if-match'] !== `"preferences-${state.generation}"`) return failure(412, 'PRECONDITION_FAILED', 'Preferences changed.');
           state.preferences = body.in_app_reminders_enabled;
           state.generation += 1;
+        } else if (state.holdNextPreferences) {
+          // A held read answers with the setting as it was when the read began, once released; aborting it rejects it.
+          state.holdNextPreferences = false;
+          const before = { value: state.preferences, generation: state.generation };
+          return new Promise((resolve, reject) => {
+            state.held = { release: () => { state.heldSettled = true; resolve(response({ in_app_reminders_enabled: before.value, version: String(before.generation) }, {}, { ETag: `"preferences-${before.generation}"` })); } };
+            config.signal?.addEventListener('abort', () => { state.heldSettled = true; reject(new DOMException('Aborted', 'AbortError')); });
+          });
         }
         return response({ in_app_reminders_enabled: state.preferences, version: String(state.generation) }, {}, { ETag: `"preferences-${state.generation}"` });
       }
@@ -436,6 +444,35 @@ test('offline repeating reminder change says when the timezone list did not load
     await problem.waitFor({ state: 'detached' });
     assert.deepEqual(await dialog.locator('select[name="series_timezone"] option').allTextContents(), ['America/New York', 'Asia/Kolkata', 'UTC']);
     assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.route.startsWith('/api/reminder-series') && call.method !== 'GET').length), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+// A read that began before a save must not undo it when its older answer arrives afterwards (T87).
+test('offline inbox preference save is not undone by an older read that answers after it', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { inbox: true });
+    const reminders = page.getByRole('checkbox', { name: 'In-app task reminders', exact: true });
+    await reminders.waitFor();
+    assert.equal(await reminders.isChecked(), true);
+    await page.evaluate(() => { window.reminderFixture.holdNextPreferences = true; });
+    // Returning to the window refetches the setting; that read is held.
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForFunction(() => window.reminderFixture.held !== null);
+    // The switch shows the saved value, so it changes only when the save answers; click and wait for that.
+    await reminders.click();
+    await page.waitForFunction(() => window.reminderFixture.preferences === false && !document.body.textContent.includes('Saving preference...'));
+    await page.getByRole('checkbox', { name: 'In-app task reminders', exact: true, checked: false }).waitFor();
+    await page.evaluate(() => window.reminderFixture.held.release());
+    await page.waitForFunction(() => window.reminderFixture.heldSettled);
+    const reverted = await page.waitForFunction(() => document.querySelector('input[type="checkbox"]:not([role="switch"])')?.checked === true, null, { timeout: 1500 }).then(() => true, () => false);
+    assert.equal(reverted, false, 'The older read must not switch the saved setting back.');
+    // The next change uses the saved version, so it is not refused as changed.
+    await reminders.click();
+    await page.waitForFunction(() => window.reminderFixture.preferences === true);
+    await page.getByRole('checkbox', { name: 'In-app task reminders', exact: true, checked: true }).waitFor();
+    const saves = await page.evaluate(() => window.reminderFixture.calls.filter(call => call.route === '/api/me/notification-preferences' && call.method === 'PATCH').map(call => call.headers['if-match']));
+    assert.deepEqual(saves, ['"preferences-1"', '"preferences-2"']);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

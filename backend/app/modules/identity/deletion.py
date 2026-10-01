@@ -3,7 +3,8 @@ import secrets
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
+from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import AccountExport, AccountSession, OutboxEvent, User
@@ -58,10 +59,12 @@ ERASE = (
     ("comment_counts", "UPDATE public_posts p SET comment_count = GREATEST(p.comment_count - c.n, 0) FROM (SELECT post_id, count(*) AS n FROM public_post_comments WHERE author_id = :a AND status = 'visible' GROUP BY post_id) c WHERE p.id = c.post_id"),
     ("comments", "UPDATE public_post_comments SET status = 'deleted', body = NULL, ended_at = COALESCE(ended_at, :now) WHERE author_id = :a AND status = 'visible'"),
     ("posts", "UPDATE public_posts SET status = 'deleted', title = NULL, body = NULL, deleted_at = COALESCE(deleted_at, :now), updated_at = :now WHERE (author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)) AND status <> 'deleted'"),
-    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', description = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
+    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
     ("reports", "UPDATE content_reports SET details = '' WHERE reporter_id = :a"),
     ("moderator", "DELETE FROM platform_moderators WHERE account_id = :a"),
     ("appeal_notes", "UPDATE moderation_appeals SET note = '' WHERE account_id = :a"),
+    ("resolution_notes", "UPDATE moderation_appeals SET resolution_note = '' WHERE resolved_by = :a AND resolution_note IS NOT NULL"),
+    ("decision_notes", "UPDATE moderation_decisions SET moderator_note = '' WHERE decided_by = :a"),
     # Private Spaces: their own messages and answers go; shared tasks stop being assigned to them.
     ("messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL WHERE sender_id = :a AND deleted_at IS NULL"),
     ("read_states", "DELETE FROM conversation_read_states WHERE account_id = :a"),
@@ -125,11 +128,12 @@ class AccountDeletionService:
                 .where(AccountSession.account_id == user.id, AccountSession.revoked_at.is_(None))
                 .values(revoked_at=now)
             )
+            # Every session has ended, so exports end the way the export sweep ends them when their session does.
             database.execute(
                 update(AccountExport)
                 .where(AccountExport.account_id == user.id, AccountExport.status.in_(("queued", "building", "ready")))
-                .values(status="cancelled", reason="account_deleted", archive_cipher=None, included_access=None,
-                        lease_token=None, lease_expires_at=None)
+                .values(status="cancelled", reason="session_ended", completed_at=func.coalesce(AccountExport.completed_at, now),
+                        archive_cipher=None, included_access=None, lease_token=None, lease_expires_at=None)
             )
             self.identity.record(database, user.id, "account.deletion_requested", user.id)
             return {"status": user.status, "purge_after": user.purge_after}
@@ -153,13 +157,14 @@ class AccountDeletionService:
     @staticmethod
     def owned_shared_spaces(database, account_id):
         """Active Spaces this account owns that still have another current member: they need a new owner first."""
-        others = select(SpaceMembership.account_id).where(
-            SpaceMembership.space_id == Space.id, SpaceMembership.account_id != account_id, SpaceMembership.status == "active",
+        others = aliased(SpaceMembership)
+        someone_else = select(others.account_id).where(
+            others.space_id == Space.id, others.account_id != account_id, others.status == "active",
         ).exists()
         return database.execute(
             select(Space.id, Space.name).join(SpaceMembership, SpaceMembership.space_id == Space.id).where(
                 SpaceMembership.account_id == account_id, SpaceMembership.status == "active", SpaceMembership.role == "owner",
-                Space.status == "active", others,
+                Space.status == "active", someone_else,
             ).order_by(Space.name, Space.id)
         ).all()
 

@@ -49,6 +49,12 @@ class SpaceDirectoryService:
             and_(AccountBlock.blocker_id == owner_id, AccountBlock.target_id == account_id),
         ))
 
+    @staticmethod
+    def owner_of(database, space_id):
+        return database.scalar(select(SpaceMembership.account_id).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.role == "owner", SpaceMembership.status == "active",
+        ))
+
     def public_groups(self, viewer_id):
         owner = aliased(SpaceMembership)
         return (
@@ -286,11 +292,14 @@ class SpaceDirectoryService:
         with self.sessions() as database:
             caller, _session = self.identity.authenticate(database, token)
             self.spaces.require_manager(database, space_id, caller.id)
+            owner_id = self.owner_of(database, space_id)
             rows = database.execute(
                 select(SpaceJoinRequest, User).join(User, User.id == SpaceJoinRequest.account_id).where(
                     SpaceJoinRequest.space_id == space_id, SpaceJoinRequest.status == "pending",
                     SpaceJoinRequest.expires_at > self.clock(), User.status == "active",
+                    # A block with the owner keeps a person out whoever reviews, as in the directory; so does one with the reviewer.
                     ~self.blocked_between(SpaceJoinRequest.account_id, caller.id),
+                    ~self.blocked_between(SpaceJoinRequest.account_id, owner_id),
                 ).order_by(SpaceJoinRequest.created_at, SpaceJoinRequest.id).limit(MAX_PENDING_PER_SPACE)
             ).all()
             return [JoinRequestReview(
@@ -330,7 +339,10 @@ class SpaceDirectoryService:
                 raise DomainError(410, "JOIN_REQUEST_EXPIRED", "This request has expired.")
             requester = accounts.get(request.account_id)
             if action == "approve":
-                blocked = database.scalar(select(self.blocked_between(request.account_id, caller.id)))
+                owner_id = self.owner_of(database, space.id)
+                blocked = database.scalar(select(or_(
+                    self.blocked_between(request.account_id, caller.id), self.blocked_between(request.account_id, owner_id),
+                )))
                 if requester is None or requester.status != "active" or blocked:
                     raise DomainError(409, "JOIN_REQUEST_UNAVAILABLE", "This person cannot join right now.")
                 membership = database.get(SpaceMembership, (space.id, request.account_id))

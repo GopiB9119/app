@@ -266,7 +266,9 @@ class IdentityService:
         )
         if lock:
             statement = statement.with_for_update(of=User)
-        row = database.execute(statement).first()
+        # Always the current rows: requests check the session again after waiting, in the same database session, and a
+        # copy loaded before the wait would hide a revocation or deactivation committed meanwhile.
+        row = database.execute(statement.execution_options(populate_existing=True)).first()
         if row is None:
             raise authentication_required()
         user, session = row

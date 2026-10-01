@@ -2,6 +2,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
+from app.modules.community.models import AccountBlock
 from app.modules.identity.models import OutboxEvent
 from app.modules.spaces.models import SpaceAuditEvent, SpaceMembership
 from tests.test_identity import account, auth
@@ -117,7 +118,9 @@ def test_an_invitation_lapses_when_its_sender_stops_being_an_admin(client, app):
     assert change_role(client, owner, space_id, member["user"]["id"], "member", view["etag"]).status_code == 200
     assert client.get("/v1/invitations", headers=auth(guest)).json()["data"] == []
     late = client.post(f"/v1/invitations/{sent.json()['data']['id']}/accept", headers=auth(guest), json={})
-    assert late.status_code == 404
+    # The demotion ended the invitation (T91, DEC-018), so it is closed, as after a handover of ownership.
+    assert late.status_code == 409, late.text
+    assert late.json()["error"]["code"] == "INVITATION_CLOSED"
     with app.state.sessions() as database:
         assert database.get(SpaceMembership, (space_id, guest["user"]["id"])) is None
     assert invite_account(client, member, space_id, guest["user"]["id"]).status_code == 404
@@ -213,3 +216,58 @@ def test_a_former_owner_gets_the_original_answer_for_their_own_role_change(clien
     assert left.status_code == 200, left.text
     gone = change_role(client, owner, space_id, target, "admin", reviewed["etag"], key)
     assert gone.status_code == 404 and gone.json()["error"]["message"] == "Space not found."
+
+
+def test_an_admin_cannot_let_in_someone_the_owner_blocked(client, app):
+    owner = account(client, app)
+    admin = account(client, app, "group-admin@example.test")
+    person = account(client, app, "blocked-asker@example.test")
+    space_id = group(client, owner).json()["data"]["id"]
+    admit(client, owner, space_id, admin)
+    promote(client, owner, space_id, admin)
+    asked = ask(client, person, space_id)
+    assert asked.status_code == 201, asked.text
+    # The owner blocks the person after they asked; a block with the owner keeps them out (DEC-011), whoever reviews.
+    with app.state.sessions.begin() as database:
+        database.add(AccountBlock(id=str(uuid4()), blocker_id=owner["user"]["id"], target_type="account",
+                                  target_id=person["user"]["id"], created_at=app.state.clock()))
+    assert pending_for(client, admin, space_id).json()["data"] == []
+    approved = review(client, admin, space_id, asked.json()["data"]["id"], "approve")
+    assert approved.status_code == 409, approved.text
+    assert approved.json()["error"]["code"] == "JOIN_REQUEST_UNAVAILABLE"
+    with app.state.sessions() as database:
+        assert database.get(SpaceMembership, (space_id, person["user"]["id"])) is None
+
+
+def test_an_invitation_stays_ended_when_its_sender_becomes_an_admin_again(client, app):
+    owner, member, space_id, _invitation, _reviewed = membership_fixture(client, app)
+    guest = account(client, app, "returning-guest@example.test")
+    view = promote(client, owner, space_id, member)
+    sent = invite_account(client, member, space_id, guest["user"]["id"])
+    assert sent.status_code == 201, sent.text
+    assert change_role(client, owner, space_id, member["user"]["id"], "member", view["etag"]).status_code == 200
+    promote(client, owner, space_id, member)
+    # DEC-018: the invitation was valid only while its sender was an admin, so it does not come back with the role.
+    late = client.post(f"/v1/invitations/{sent.json()['data']['id']}/accept", headers=auth(guest), json={})
+    assert late.status_code == 409, late.text
+    assert late.json()["error"]["code"] == "INVITATION_CLOSED"
+    with app.state.sessions() as database:
+        assert database.get(SpaceMembership, (space_id, guest["user"]["id"])) is None
+    # Nothing still pending stands in the way of a new invitation.
+    assert invite_account(client, owner, space_id, guest["user"]["id"]).status_code == 201
+
+
+def test_an_admin_who_leaves_or_is_removed_ends_their_invitations(client, app):
+    owner, member, space_id, _invitation, _reviewed = membership_fixture(client, app)
+    guest = account(client, app, "left-behind-guest@example.test")
+    promote(client, owner, space_id, member)
+    sent = invite_account(client, member, space_id, guest["user"]["id"])
+    assert sent.status_code == 201, sent.text
+    reviewed = roster_entry(client, owner, space_id, member["user"]["id"])
+    assert remove(client, owner, space_id, member, reviewed["etag"]).status_code == 200
+    admit(client, owner, space_id, member)
+    promote(client, owner, space_id, member)
+    late = client.post(f"/v1/invitations/{sent.json()['data']['id']}/accept", headers=auth(guest), json={})
+    assert late.status_code == 409, late.text
+    with app.state.sessions() as database:
+        assert database.get(SpaceMembership, (space_id, guest["user"]["id"])) is None

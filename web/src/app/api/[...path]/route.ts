@@ -13,14 +13,17 @@ const cookieOptions = {
   secure: process.env.COMMUNITY_SECURE_COOKIES === "true",
   path: "/",
 };
-const publicPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password", "timezones"]);
-const signInPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password"]);
+const publicPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password", "auth/cancel-deletion", "timezones"]);
+const signInPaths = new Set(["auth/register", "auth/verify-email", "auth/login", "auth/recover", "auth/reset-password", "auth/cancel-deletion"]);
+// Answers to these carry a new session, which becomes the cookie and never reaches the page.
+const sessionStarts = ["auth/login", "auth/verify-email", "auth/cancel-deletion"];
 const proxyKey = process.env.COMMUNITY_PROXY_KEY;
 const trustedHops = Number(process.env.COMMUNITY_TRUSTED_PROXY_HOPS ?? "0");
 const allowed = new Set([
   "POST auth/register", "POST auth/verify-email", "POST auth/login", "POST auth/recover",
-  "POST auth/reset-password", "POST auth/logout", "GET me", "PATCH me/profile",
+  "POST auth/reset-password", "POST auth/logout", "POST auth/cancel-deletion", "GET me", "PATCH me/profile",
   "GET me/sessions", "POST me/sessions/revoke-others", "GET me/security-events", "GET timezones",
+  "POST me/deletion", "GET me/exports", "POST me/exports",
   "GET live",
   "POST spaces", "GET spaces", "GET invitations",
   "POST tasks", "GET tasks", "GET tasks/assignees", "GET calendar",
@@ -90,6 +93,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     return response;
   }
   const sessionDelete = request.method === "DELETE" && /^me\/sessions\/[a-f0-9-]{36}$/.test(route);
+  const exportResource = new RegExp(`^(GET|DELETE) me/exports/${uuidPart}$|^GET me/exports/${uuidPart}/archive$`).test(`${request.method} ${route}`);
   const spaceRead = request.method === "GET" && /^spaces\/[a-f0-9-]{36}$/.test(route);
   const spaceSettings = ["GET", "PATCH"].includes(request.method) && /^spaces\/[a-f0-9-]{36}\/settings$/.test(route);
   const spaceMembers = request.method === "GET" && /^spaces\/[a-f0-9-]{36}\/members$/.test(route);
@@ -122,7 +126,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));
   const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
   const documents = documentCommand || documentRead;
-  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !sessionDelete && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !sessionDelete && !exportResource && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
   if (route === "live" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Live updates do not accept query parameters.");
   if (agents && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Agent commands do not accept query parameters.");
   if (documentCommand && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Document commands do not accept query parameters.");
@@ -192,7 +196,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
         if (!initiatingContext) return failure(400, "CHALLENGE_INVALID", "Start a new verification request.");
         body.context_secret = initiatingContext;
       }
-      if (["auth/login", "auth/verify-email"].includes(route)) {
+      if (sessionStarts.includes(route)) {
         body.platform = "web";
         body.device_name = "Web browser";
       }
@@ -278,7 +282,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     const payload = await upstream.json();
     let newToken: string | undefined;
     let expires: Date | undefined;
-    if (upstream.ok && ["auth/login", "auth/verify-email"].includes(route)) {
+    if (upstream.ok && sessionStarts.includes(route)) {
       newToken = payload.data.session_token;
       expires = new Date(payload.data.expires_at);
       delete payload.data.session_token;
@@ -293,6 +297,8 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       response.cookies.delete(contextName);
     }
     if ((route === "auth/logout" && upstream.ok) || (!publicPaths.has(route) && upstream.status === 401)) response.cookies.delete(sessionName);
+    // Asking to delete the account ends every session, this one included.
+    if (route === "me/deletion" && upstream.ok) response.cookies.delete(sessionName);
     if (route === "auth/reset-password" && upstream.ok) {
       response.cookies.delete(sessionName);
       response.cookies.delete(contextName);

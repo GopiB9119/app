@@ -62,12 +62,18 @@ class ChangeSpaceVisibility(Input):
     visibility: Literal["private", "public"]
 
 
+class ChangeInvitePolicy(Input):
+    member_invites: bool
+
+
 class SpaceView(BaseModel):
     id: str
     name: str
     description: str
     space_type: Literal["family", "solo", "group", "couple"]
     visibility: Literal["private", "public"]
+    # DEC-026: whether every member, not only the owner and admins, may invite people.
+    member_invites: bool
     status: Literal["active"]
     role: Literal["owner", "admin", "member"]
     version: str

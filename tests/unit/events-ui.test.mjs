@@ -71,7 +71,7 @@ async function fixture(context, options = {}) {
       schedule_changed_at: null, cancelled_at: null, going: 0, maybe: 0, not_going: 0, my_response: null, my_response_outdated: false,
       can_manage: true, can_respond: true, etag: '"event-1"',
     };
-    const state = window.eventsFixture = { calls: [], servedDetail: null, event, events: [event], byKey: {}, loseCreates: options.loseCreates ?? 0 };
+    const state = window.eventsFixture = { calls: [], servedDetail: null, event, events: [event], byKey: {}, loseCreates: options.loseCreates ?? 0, holdNextDetail: false, held: null, heldSettled: false };
     const spaces = [[spaceId, 'Morgan family'], [clubId, 'Garden club']].map(([id, name]) => ({
       id, name, description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: created,
     }));
@@ -106,6 +106,15 @@ async function fixture(context, options = {}) {
       const detail = url.pathname.match(/^\/api\/events\/([^/]+)(\/alert)?$/);
       const found = detail && state.events.find(item => item.id === detail[1]);
       if (found && !detail[2] && method === 'GET') {
+        if (state.holdNextDetail) {
+          // A held read answers with the event as it was when the read began, once released; aborting it rejects it.
+          state.holdNextDetail = false;
+          const before = { ...found, attendees: [] };
+          return new Promise((resolve, reject) => {
+            state.held = { release: () => { state.heldSettled = true; resolve(reply(before)); } };
+            config.signal?.addEventListener('abort', () => { state.heldSettled = true; reject(new DOMException('Aborted', 'AbortError')); });
+          });
+        }
         state.servedDetail = found.etag;
         return reply({ ...found, attendees: [] });
       }
@@ -183,6 +192,36 @@ test('an unconfirmed new event keeps its retry: leaving asks first, and Retry cr
     assert.equal(creates[1].headers['idempotency-key'], creates[0].headers['idempotency-key'], 'Retry must reuse the original key.');
     const stored = await page.evaluate(() => window.eventsFixture.events.filter(item => item.title === 'Seed swap').length);
     assert.equal(stored, 1);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+// A read that began before a save must not undo it when its older answer arrives afterwards (T87).
+test('event detail: a save is not undone by an older read that answers after it', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit event', exact: true }).waitFor();
+    await page.evaluate(() => { window.eventsFixture.holdNextDetail = true; });
+    // Returning to the window refetches the event; that read is held.
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForFunction(() => window.eventsFixture.held !== null);
+    await page.getByRole('button', { name: 'Edit event', exact: true }).click();
+    const editor = page.getByRole('form', { name: 'Edit event' });
+    await editor.getByRole('textbox', { name: 'Title' }).fill('Picnic and games');
+    await editor.getByRole('button', { name: 'Save changes' }).click();
+    await page.getByRole('heading', { level: 2, name: 'Picnic and games', exact: true }).waitFor();
+    await page.evaluate(() => window.eventsFixture.held.release());
+    await page.waitForFunction(() => window.eventsFixture.heldSettled);
+    const reverted = await page.waitForFunction(() => [...document.querySelectorAll('h2')].some(element => element.textContent === 'Picnic'), null, { timeout: 1500 }).then(() => true, () => false);
+    assert.equal(reverted, false, 'The older read must not replace the saved event.');
+    // Editing again starts from the saved version, so the next change is not refused.
+    await page.getByRole('button', { name: 'Edit event', exact: true }).click();
+    await editor.getByRole('textbox', { name: 'Title' }).fill('Picnic, games and music');
+    await editor.getByRole('button', { name: 'Save changes' }).click();
+    await page.getByRole('heading', { level: 2, name: 'Picnic, games and music', exact: true }).waitFor();
+    const saves = await page.evaluate(() => window.eventsFixture.calls.filter(call => call.method === 'PATCH').map(call => call.headers['if-match']));
+    assert.deepEqual(saves, ['"event-1"', '"event-2"']);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

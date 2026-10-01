@@ -63,6 +63,28 @@ services:
       db:
         condition: service_healthy
     command: ["python3", "-m", "app.reminder_worker"]
+  export-worker:
+    build: ../backend
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community:local-development-only@db:5432/community
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python3", "-m", "app.export_worker"]
+  account-deletion-worker:
+    build: ../backend
+    environment:
+      COMMUNITY_ENVIRONMENT: development
+      COMMUNITY_DATABASE_URL: postgresql+psycopg://community:local-development-only@db:5432/community
+    volumes:
+      - ../backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python3", "-m", "app.deletion_worker"]
   test-db:
     image: postgres:17-alpine
     profiles: ["test"]

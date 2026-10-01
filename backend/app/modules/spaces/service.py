@@ -32,6 +32,8 @@ MAX_OWNERSHIP_OFFERS = 100
 # DEC-018: admins help the owner with membership; roles are changed only by the owner.
 MANAGERS = ("owner", "admin")
 ROLE_SPACE_TYPES = ("family", "group")
+# DEC-026: a member who may invite keeps at most this many invitations waiting in one Space.
+MAX_MEMBER_WAITING_INVITATIONS = 10
 
 
 class SpaceService:
@@ -61,6 +63,7 @@ class SpaceService:
             description=space.description,
             space_type=space.space_type,
             visibility=space.visibility,
+            member_invites=space.member_invites,
             status=space.status,
             role=membership.role,
             version=str(space.version),
@@ -153,6 +156,53 @@ class SpaceService:
                 actor_admission_id=member.admission_id, request_key=key, request_digest=digest))
             return self.settings_view(space, member)
 
+    def change_invite_policy(self, token, identifier, body, key, expected):
+        """The owner lets every member of a family or group invite people, or only the owner and admins (DEC-026)."""
+        with self.sessions.begin() as database:
+            caller, _accounts = self.lock_accounts(database, token, [])
+            space = self.lock_space(database, identifier)
+            self.require_owner(database, identifier, caller.id, lock=True)
+            member = database.get(SpaceMembership, (identifier, caller.id))
+            self.identity.authenticate(database, token, lock=True)
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current Space settings first.")
+            digest = self.security.digest("space.invite_policy.command", str(body.member_invites), expected)
+            receipt = database.scalar(select(SpaceSettingsCommand).where(
+                SpaceSettingsCommand.space_id == identifier, SpaceSettingsCommand.actor_id == caller.id,
+                SpaceSettingsCommand.request_key == key,
+            ))
+            if receipt is not None:
+                if receipt.actor_admission_id != member.admission_id:
+                    raise DomainError(404, "NOT_FOUND", "Space settings not found.")
+                if receipt.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Review the changed invitation setting.")
+                return self.settings_view(space, member)
+            if expected != self.settings_view(space, member).etag:
+                raise DomainError(412, "SPACE_CHANGED", "This Space changed. Reload and review it again.")
+            if space.space_type not in ROLE_SPACE_TYPES:
+                raise DomainError(409, "INVITE_POLICY_UNAVAILABLE", "Only family and group Spaces can let members invite.")
+            if body.member_invites == space.member_invites:
+                raise DomainError(409, "NO_CHANGES", "This Space already has this setting.")
+            count = database.scalar(select(func.count()).select_from(SpaceSettingsCommand).where(SpaceSettingsCommand.space_id == identifier))
+            if count >= 500:
+                raise DomainError(409, "SETTINGS_LIMIT_REACHED", "The local Space settings limit was reached.")
+            # Members' waiting invitations are not changed: they admit only while this setting is on (see may_invite).
+            space.member_invites = body.member_invites
+            space.version += 1
+            action = "space.member_invites_on" if body.member_invites else "space.member_invites_off"
+            event_id = str(uuid4())
+            now = self.clock()
+            database.add_all([
+                SpaceAuditEvent(id=event_id, space_id=identifier, actor_id=caller.id, target_id=identifier,
+                                action=action, created_at=now),
+                OutboxEvent(id=event_id, event_type=action, actor_id=caller.id,
+                            aggregate_id=identifier, schema_version=1, created_at=now),
+            ])
+            database.flush()
+            database.add(SpaceSettingsCommand(id=event_id, space_id=identifier, actor_id=caller.id,
+                actor_admission_id=member.admission_id, request_key=key, request_digest=digest))
+            return self.settings_view(space, member)
+
     def membership_etag(self, membership):
         value = ":".join((membership.space_id, membership.account_id, membership.admission_id, membership.role, membership.status))
         return '"' + self.security.digest("space.membership", value) + '"'
@@ -224,6 +274,7 @@ class SpaceService:
             if expected != self.membership_etag(target):
                 raise DomainError(412, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")
             target.status = "removed"
+            self.end_invitations_from(database, space.id, target.account_id, caller.id)
             space.version += 1
             identifier = str(uuid4())
             event_type = "space.member_left" if action == "leave" else "space.member_removed"
@@ -288,6 +339,8 @@ class SpaceService:
             if target.role == role:
                 raise DomainError(409, "NO_CHANGES", "This person already has that role.")
             target.role = role
+            if role == "member":
+                self.end_invitations_from(database, space.id, target.account_id, caller.id)
             space.version += 1
             identifier = str(uuid4())
             event_type = "space.member_made_admin" if role == "admin" else "space.admin_made_member"
@@ -464,6 +517,28 @@ class SpaceService:
         if database.scalar(statement) is None:
             raise DomainError(404, "NOT_FOUND", "Space not found.")
 
+    @staticmethod
+    def may_invite(database, space, account_id, lock=False):
+        """The owner or an admin, or any member while the Space lets members invite (DEC-026).
+
+        Pass the Space row read under its lock, so the setting cannot change underneath.
+        """
+        roles = MANAGERS
+        if space.member_invites and space.space_type in ROLE_SPACE_TYPES:
+            roles = (*MANAGERS, "member")
+        statement = select(SpaceMembership).where(
+            SpaceMembership.space_id == space.id,
+            SpaceMembership.account_id == account_id,
+            SpaceMembership.role.in_(roles),
+            SpaceMembership.status == "active",
+        )
+        if lock:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        membership = database.scalar(statement)
+        if membership is None:
+            raise DomainError(404, "NOT_FOUND", "Space not found.")
+        return membership
+
     def invitation_view(self, invitation, space, inviter):
         status = invitation.status
         if status == "pending" and invitation.expires_at <= self.clock():
@@ -478,6 +553,18 @@ class SpaceService:
             created_at=invitation.created_at,
             expires_at=invitation.expires_at,
         )
+
+    def end_invitations_from(self, database, space_id, inviter_id, actor_id):
+        """An invitation is valid only while its sender is the owner or an admin (DEC-018). When they stop being one, their
+        waiting invitations end, as on a handover of ownership, so a later return to the role cannot revive them."""
+        invitations = database.scalars(select(SpaceInvitation).where(
+            SpaceInvitation.space_id == space_id, SpaceInvitation.inviter_id == inviter_id,
+            SpaceInvitation.status == "pending",
+        ).with_for_update()).all()
+        for invitation in invitations:
+            invitation.status = "revoked"
+            invitation.resolved_at = self.clock()
+            self.record_invitation(database, invitation, actor_id, "space.invitation_revoked")
 
     def record_invitation(self, database, invitation, actor_id, action):
         identifier = str(uuid4())
@@ -515,7 +602,7 @@ class SpaceService:
         with self.sessions.begin() as database:
             caller, accounts = self.lock_accounts(database, token, [recipient_id])
             space = self.lock_space(database, space_id)
-            self.require_manager(database, space.id, caller.id, lock=True)
+            inviter = self.may_invite(database, space, caller.id, lock=True)
             self.identity.authenticate(database, token, lock=True)
             if space.space_type == "solo":
                 raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Spaces cannot invite another person.")
@@ -550,6 +637,16 @@ class SpaceService:
                 database.flush()
             if space.space_type == "couple":
                 self.check_couple_invitation(database, space.id, now)
+            if inviter.role not in MANAGERS:
+                waiting = database.scalar(select(func.count()).select_from(SpaceInvitation).where(
+                    SpaceInvitation.space_id == space.id, SpaceInvitation.inviter_id == caller.id,
+                    SpaceInvitation.status == "pending", SpaceInvitation.expires_at > now,
+                ))
+                if waiting >= MAX_MEMBER_WAITING_INVITATIONS:
+                    raise DomainError(
+                        409, "INVITATION_LIMIT_REACHED",
+                        f"You can have up to {MAX_MEMBER_WAITING_INVITATIONS} waiting invitations in this Space.",
+                    )
             count = database.scalar(
                 select(func.count()).select_from(SpaceInvitation)
                 .where(SpaceInvitation.space_id == space.id)
@@ -576,8 +673,14 @@ class SpaceService:
             )
             kind = "space_invitations" if space_id else "invitation_inbox"
             if space_id:
-                self.require_manager(database, space_id, caller.id)
+                space = database.get(Space, space_id)
+                if space is None:
+                    raise DomainError(404, "NOT_FOUND", "Space not found.")
+                membership = self.may_invite(database, space, caller.id)
                 statement = statement.where(SpaceInvitation.space_id == space_id)
+                if membership.role not in MANAGERS:
+                    # A member who may invite sees only the invitations they sent (DEC-026).
+                    statement = statement.where(SpaceInvitation.inviter_id == caller.id)
             else:
                 statement = statement.join(SpaceMembership, and_(
                     SpaceMembership.space_id == Space.id,
@@ -587,7 +690,13 @@ class SpaceService:
                     SpaceInvitation.status == "pending",
                     SpaceInvitation.expires_at > self.clock(),
                     User.status == "active",
-                    SpaceMembership.role.in_(MANAGERS),
+                    or_(
+                        SpaceMembership.role.in_(MANAGERS),
+                        and_(
+                            SpaceMembership.role == "member", Space.member_invites.is_(True),
+                            Space.space_type.in_(ROLE_SPACE_TYPES),
+                        ),
+                    ),
                     SpaceMembership.status == "active",
                 )
             if cursor:
@@ -636,17 +745,21 @@ class SpaceService:
                 statement.with_for_update().execution_options(populate_existing=True)
             )
             if action == "revoke":
-                try:
-                    self.require_manager(database, space.id, caller.id, lock=True)
-                except DomainError:
+                # The owner and admins withdraw any invitation; a member only the ones they sent (DEC-026).
+                member = database.scalar(select(SpaceMembership).where(
+                    SpaceMembership.space_id == space.id, SpaceMembership.account_id == caller.id,
+                    SpaceMembership.status == "active",
+                ).with_for_update().execution_options(populate_existing=True))
+                if member is None or (member.role not in MANAGERS and invitation.inviter_id != caller.id):
                     # Someone who knows an invitation but no longer owns its Space learns nothing new (T42).
-                    raise DomainError(404, "NOT_FOUND", "Invitation not found.") from None
+                    raise DomainError(404, "NOT_FOUND", "Invitation not found.")
             if action == "accept" and invitation.status == "pending":
                 inviter = accounts[invitation.inviter_id]
                 if inviter.status != "active" or inviter.verified_at is None:
                     raise DomainError(409, "INVITATION_UNAVAILABLE", "This invitation is unavailable.")
-                # The invitation holds only while the person who sent it is still the owner or an admin.
-                self.require_manager(database, space.id, inviter.id, lock=True)
+                # The invitation holds only while the person who sent it may still invite: the owner, an admin,
+                # or a member while the Space lets members invite.
+                self.may_invite(database, space, inviter.id, lock=True)
             self.identity.authenticate(database, token, lock=True)
             membership = database.get(SpaceMembership, (space.id, caller.id))
             if action == "accept" and invitation.status == "accepted":

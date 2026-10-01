@@ -8,6 +8,7 @@ import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.identity.PaginationDto
 import com.community.platform.feature.identity.UserDto
 import com.google.gson.Gson
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -142,6 +143,28 @@ class GroupRepositoryTest {
         assertEquals("a" + emoji.repeat(279), value.state.value.note)
     }
 
+    @Test fun aRefreshDuringAnUnansweredDecisionIsNotSentSoItCannotBringBackTheRequest(): Unit = runBlocking {
+        val first = JoinReviewDto(requestId, "4d7dff75-e4b8-4686-b779-744cdb8d09fb", "Sam", "", request.createdAt, request.expiresAt)
+        api.reviews = listOf(first)
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        val reads = api.pendingReads
+        val release = CompletableDeferred<Unit>()
+        api.hold = release
+        api.request = request.copy(status = "approved", resolvedAt = "2026-09-19T11:00:00Z")
+        value.decide(first, approve = true)
+        withTimeout(5000) { api.holding.await() }
+        api.reviews = emptyList()
+        // T82: the screen sends one request at a time, so nothing started now can answer after the decision.
+        value.refresh()
+        assertEquals(reads, api.pendingReads)
+        release.complete(Unit)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        assertEquals("Sam joined the group.", value.state.value.notice)
+        assertTrue(value.state.value.reviews.isEmpty())
+    }
+
     @Test fun ownerGroupAccessRetainsVisibilityControls(): Unit = runBlocking {
         val value = GroupViewModel(repository).also { model = it }
         value.bind(accountId, spaceId)
@@ -231,6 +254,8 @@ class GroupRepositoryTest {
         val notes = mutableListOf<CreateJoinRequestDto>()
         val etags = mutableListOf<String>()
         var failure = 0
+        var hold: CompletableDeferred<Unit>? = null
+        val holding = CompletableDeferred<Unit>()
 
         private fun <Value> result(value: Value, paged: Boolean = false): Response<EnvelopeDto<Value>> {
             if (failure != 0) return Response.error(failure, """{"error":{"code":"SYNTHETIC","message":"Synthetic failure"}}""".toResponseBody("application/json".toMediaType()))
@@ -242,7 +267,10 @@ class GroupRepositoryTest {
         override suspend fun cancel(authorization: String, requestId: String, body: Map<String, String>) = result(request)
         override suspend fun mine(authorization: String) = result(listOf(request))
         override suspend fun pending(authorization: String, spaceId: String) = result(reviews).also { pendingReads += 1 }
-        override suspend fun approve(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request).also { decisions.add(requestId to true) }
+        override suspend fun approve(authorization: String, spaceId: String, requestId: String, body: Map<String, String>): Response<EnvelopeDto<JoinRequestDto>> {
+            hold?.let { holding.complete(Unit); it.await() }
+            return result(request).also { decisions.add(requestId to true) }
+        }
         override suspend fun decline(authorization: String, spaceId: String, requestId: String, body: Map<String, String>) = result(request).also { decisions.add(requestId to false) }
         override suspend fun space(authorization: String, spaceId: String) = result(space)
         override suspend fun settings(authorization: String, spaceId: String) = result(settings).also { settingsReads += 1 }

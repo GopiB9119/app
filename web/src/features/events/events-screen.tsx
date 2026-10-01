@@ -116,9 +116,14 @@ function EventPanel({ user, eventId, zone, onClose, onChanged }: { user: Account
   const [editing, setEditing] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const detail = useQuery({ queryKey: ["event", user.id, eventId], queryFn: ({ signal }) => readEvent(user.id, eventId, signal) });
-  const store = (event: SpaceEvent) => { queryClient.setQueryData(["event", user.id, eventId], event); onChanged(); };
+  // A read that started before the change would otherwise land afterwards and show the old event again.
+  const store = async (event: SpaceEvent) => {
+    await queryClient.cancelQueries({ queryKey: ["event", user.id, eventId] });
+    queryClient.setQueryData(["event", user.id, eventId], event);
+    onChanged();
+  };
   const respond = useMutation({ mutationFn: (response: EventResponse) => respondToEvent(user.id, eventId, response), onSuccess: store });
-  const cancel = useMutation({ mutationFn: (event: SpaceEvent) => cancelEvent(user.id, event), onSuccess: event => { setConfirmCancel(false); store(event); } });
+  const cancel = useMutation({ mutationFn: (event: SpaceEvent) => cancelEvent(user.id, event), onSuccess: event => { setConfirmCancel(false); return store(event); } });
   useEffect(() => {
     const problem = detail.error ?? respond.error ?? cancel.error;
     if (sessionLost(problem)) { queryClient.clear(); window.location.replace("/login"); }
@@ -134,7 +139,7 @@ function EventPanel({ user, eventId, zone, onClose, onChanged }: { user: Account
   if (editing) {
     return <EventEditor user={user} spaceId={event.space_id} zone={zone} existing={event}
       onClose={() => setEditing(false)} onReload={() => { setEditing(false); void detail.refetch(); }}
-      onSaved={saved => { setEditing(false); store(saved); }} />;
+      onSaved={saved => { setEditing(false); void store(saved); }} />;
   }
   return <section className={styles.panel} aria-labelledby={titleId}>
     <div className={styles.panelHeader}>

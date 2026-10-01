@@ -233,6 +233,8 @@ class AgentService:
         with self.sessions.begin() as database:
             user, session, member = self.context(database, token, space_id)
             self.hold(database, user.id)
+            # Waiting for the person's lock can outlast their session or their membership, so both are checked again.
+            user, session, member = self.context(database, token, space_id)
             existing = database.scalar(select(AgentRun).where(
                 AgentRun.account_id == user.id, AgentRun.request_key == key,
             ).with_for_update())
@@ -664,6 +666,8 @@ class AgentService:
         with self.sessions.begin() as database:
             user, _session, member = self.context(database, token, space_id)
             self.hold(database, user.id)
+            # Waiting for the person's lock can outlast their session or their membership, so both are checked again.
+            user, _session, member = self.context(database, token, space_id)
             statement = select(AgentRun).where(
                 AgentRun.account_id == user.id, AgentRun.space_id == space_id, AgentRun.admission_id == member.admission_id,
             )
@@ -703,6 +707,8 @@ class AgentService:
         with self.sessions.begin() as database:
             user, _session = self.identity.authenticate(database, token)
             self.hold(database, user.id)
+            # Waiting for the person's lock can outlast their session, so it is checked again.
+            user, _session = self.identity.authenticate(database, token)
             memory = database.scalar(select(AgentMemory).where(
                 AgentMemory.id == str(memory_id), AgentMemory.account_id == user.id,
             ).with_for_update())

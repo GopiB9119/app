@@ -20,7 +20,7 @@ export type Account = z.infer<typeof userSchema>;
 export type DeviceSession = z.infer<typeof sessionSchema>;
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); }
+  constructor(public status: number, public code: string, message: string, public details: Record<string, string> = {}) { super(message); }
 }
 
 export async function api<Schema extends z.ZodTypeAny>(
@@ -40,7 +40,10 @@ export async function api<Schema extends z.ZodTypeAny>(
   }
   const result = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, result?.error?.code ?? "SERVICE_UNAVAILABLE", result?.error?.message ?? "The service is unavailable.");
+    const details = result?.error?.details;
+    const prototype = details && typeof details === "object" ? Object.getPrototypeOf(details) : null;
+    throw new ApiError(response.status, result?.error?.code ?? "SERVICE_UNAVAILABLE", result?.error?.message ?? "The service is unavailable.",
+      details && typeof details === "object" && !Array.isArray(details) && (prototype === null || Object.getPrototypeOf(prototype) === null) && Object.values(details).every(value => typeof value === "string") ? details : {});
   }
   const parsed = schema.safeParse(result?.data);
   if (!parsed.success) throw new ApiError(502, "INVALID_RESPONSE", "The service returned an unexpected response.");

@@ -1,0 +1,75 @@
+.main {
+  min-width: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.main h1 { font-size: 2rem; }
+.main h2, .dialog h2 { font-size: 1.1875rem; }
+.main button, .main a, .dialog button, .dialog a {
+  min-height: var(--target-minimum);
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.wrap { flex-wrap: wrap; }
+
+.section {
+  padding-block: calc(var(--space-unit) * 6);
+  border-bottom: 1px solid var(--color-border);
+}
+.intro { max-width: 70ch; margin-block: calc(var(--space-unit) * 4); }
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4);
+  min-inline-size: 0;
+  margin: 0 0 calc(var(--space-unit) * 4);
+  padding: 0;
+  border: 0;
+}
+.choice {
+  flex-direction: row;
+  align-items: center;
+  gap: calc(var(--space-unit) * 2);
+  min-height: var(--target-minimum);
+  font-size: 1rem;
+  font-weight: 400;
+}
+.choice input {
+  flex-shrink: 0;
+  width: calc(var(--space-unit) * 5);
+  min-width: calc(var(--space-unit) * 5);
+  height: calc(var(--space-unit) * 5);
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--color-primary);
+}
+.listHeading { margin-block: calc(var(--space-unit) * 6) calc(var(--space-unit) * 3); font-size: 1.0625rem; }
+.downloads { padding: 0; margin: 0; list-style: none; }
+.item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space-unit) * 4);
+  padding-block: calc(var(--space-unit) * 4);
+  border-top: 1px solid var(--color-border);
+}
+.itemBody { flex: 1 1 16rem; min-width: 0; }
+.itemBody time { display: block; }
+.itemBody time, .itemBody p { color: var(--color-muted); }
+.itemActions { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); max-width: 100%; }
+.problem { flex-direction: column; align-items: flex-start; gap: calc(var(--space-unit) * 3); overflow-wrap: anywhere; }
+.dialog {
+  width: min(calc(100% - var(--space-unit) * 8), 32rem);
+  max-width: calc(100% - var(--space-unit) * 8);
+  max-height: calc(100dvh - var(--space-unit) * 8);
+  padding: calc(var(--space-unit) * 5);
+  font-size: 1rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.dialog :global(.dialog-heading) h2 { min-width: 0; }
+.passwordField { margin-block: calc(var(--space-unit) * 5); font-size: 1rem; }
+.spacesList { margin: 0; padding-inline-start: calc(var(--space-unit) * 5); }
+.status { display: grid; justify-items: start; gap: calc(var(--space-unit) * 4); padding-block: calc(var(--space-unit) * 6); }

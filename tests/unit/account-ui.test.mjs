@@ -57,13 +57,37 @@ async function fixture(context, timezoneFailures) {
   await page.setContent('<html><head><title>Offline account settings</title></head><body><div id="root"></div></body></html>');
   await page.addStyleTag({ content: css });
   await page.evaluate(({ accountId, timezoneFailures }) => {
-    const state = window.accountFixture = { calls: [], timezoneFailures };
-    const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-account', ...extra }), { status: 200 });
+    const state = window.accountFixture = {
+      calls: [], timezoneFailures,
+      profile: { id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'Europe/Berlin', email_verified: true, version: 1 },
+      // A held profile read answers with the profile as it was when the read began, once released; aborting it rejects it.
+      holdNextMe: false, held: null, heldSettled: false,
+    };
+    const reply = (data, extra = {}, headers = {}) => new Response(JSON.stringify({ data, request_id: 'offline-account', ...extra }), { status: 200, headers });
+    const profileReply = profile => reply(profile, {}, { ETag: `"profile-${profile.version}"` });
     window.fetch = async (input, config = {}) => {
       const url = new URL(String(input), 'https://offline.invalid');
       const method = config.method ?? 'GET';
-      state.calls.push({ route: url.pathname, method });
-      if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'Europe/Berlin', email_verified: true, version: 1 });
+      state.calls.push({ route: url.pathname, method, headers: Object.fromEntries(new Headers(config.headers)) });
+      if (url.pathname === '/api/live') {
+        // The live connection stays open without hints, and closes when the page aborts it.
+        return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (url.pathname === '/api/me' && method === 'GET') {
+        if (!state.holdNextMe) return profileReply(state.profile);
+        state.holdNextMe = false;
+        const before = structuredClone(state.profile);
+        return new Promise((resolve, reject) => {
+          const settle = () => { state.heldSettled = true; };
+          state.held = { release: () => { settle(); resolve(profileReply(before)); } };
+          config.signal?.addEventListener('abort', () => { settle(); reject(new DOMException('Aborted', 'AbortError')); });
+        });
+      }
+      if (url.pathname === '/api/me/profile' && method === 'PATCH') {
+        if (new Headers(config.headers).get('If-Match') !== `"profile-${state.profile.version}"`) return new Response(JSON.stringify({ error: { code: 'PRECONDITION_FAILED', message: 'The profile changed.', details: {} }, request_id: 'offline-account' }), { status: 412 });
+        Object.assign(state.profile, JSON.parse(config.body), { version: state.profile.version + 1 });
+        return profileReply(state.profile);
+      }
       if (url.pathname === '/api/me/sessions' || url.pathname === '/api/me/security-events') return reply([]);
       if (url.pathname === '/api/notifications') return reply([], { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
       if (url.pathname === '/api/timezones') {
@@ -93,6 +117,31 @@ test('account timezone says when the list did not load, and Retry loads it witho
     assert.deepEqual(await zones.allTextContents(), ['Asia/Kolkata', 'Europe/Berlin', 'UTC']);
     assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'Europe/Berlin');
     assert.equal(await page.evaluate(() => window.accountFixture.calls.filter(call => call.method !== 'GET').length), 0, 'Retry must not submit the profile form.');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// A read that began before a save must not undo it when its older answer arrives afterwards (T87).
+test('account profile: a save is not undone by an older read that answers after it', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, 0);
+    const name = page.getByLabel('Display name', { exact: true });
+    await name.waitFor();
+    await page.evaluate(() => { window.accountFixture.holdNextMe = true; });
+    // Returning to the window refetches the profile; that read is held.
+    await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForFunction(() => window.accountFixture.held !== null);
+    await name.fill('Alex Updated');
+    await page.getByRole('button', { name: 'Save changes' }).click();
+    await page.getByRole('status').filter({ hasText: 'Profile saved.' }).waitFor();
+    await page.evaluate(() => window.accountFixture.held.release());
+    await page.waitForFunction(() => window.accountFixture.heldSettled);
+    const reverted = await page.waitForFunction(() => document.querySelector('.person-row strong')?.textContent === 'Alex Morgan', null, { timeout: 1500 }).then(() => true, () => false);
+    assert.equal(reverted, false, 'The older read must not replace the saved profile.');
+    assert.equal(await page.locator('.person-row strong').textContent(), 'Alex Updated');
+    assert.equal(await page.getByRole('button', { name: 'Discard' }).count(), 0, 'A saved profile must not show unsaved changes.');
+    assert.equal((await page.evaluate(() => window.accountFixture.calls.filter(call => call.method === 'PATCH'))).length, 1);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

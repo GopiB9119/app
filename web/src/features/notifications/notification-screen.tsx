@@ -35,7 +35,12 @@ function Inbox({ user }: { user: Account }) {
   const preferences = useQuery({ queryKey: ["notificationPreferences", user.id], queryFn: ({ signal }) => api("me/notification-preferences", notificationPreferencesSchema, { accountId: user.id, signal }) });
   const updatePreferences = useMutation({
     mutationFn: (command: { value: boolean; etag: string }) => api("me/notification-preferences", notificationPreferencesSchema, { method: "PATCH", accountId: user.id, headers: { "If-Match": command.etag }, body: { in_app_reminders_enabled: command.value } }),
-    onSuccess: async result => { client.setQueryData(["notificationPreferences", user.id], result); await client.invalidateQueries({ queryKey: ["reminders", user.id] }); },
+    onSuccess: async result => {
+      // A read that started before the save would otherwise land afterwards and switch the setting back.
+      await client.cancelQueries({ queryKey: ["notificationPreferences", user.id] });
+      client.setQueryData(["notificationPreferences", user.id], result);
+      await client.invalidateQueries({ queryKey: ["reminders", user.id] });
+    },
     onError: error => { if (protectedReminderError(error)) setAccessError(error); preferences.refetch(); },
   });
   const read = useMutation({
