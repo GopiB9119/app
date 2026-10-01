@@ -65,6 +65,7 @@ class UpdatePage(Input):
     name: str | None = Field(default=None, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
     description: str | None = Field(default=None, max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
     topic: Topic | None = None
+    rules: str | None = Field(default=None, max_length=4000, description="Up to 2,000 characters, after line endings are normalized and surrounding spaces removed; empty removes the rules.")
 
     @field_validator("name")
     @classmethod
@@ -75,6 +76,11 @@ class UpdatePage(Input):
     @classmethod
     def valid_description(cls, value: str | None) -> str | None:
         return None if value is None else clean_text(value, 500, multiline=True, empty=True)
+
+    @field_validator("rules")
+    @classmethod
+    def valid_rules(cls, value: str | None) -> str | None:
+        return None if value is None else clean_text(value, 2000, multiline=True, empty=True)
 
     @model_validator(mode="after")
     def one_change(self):
@@ -175,6 +181,7 @@ class PageView(ModeratedView):
     handle: str
     name: str
     description: str
+    rules: str
     topic: Topic
     follower_count: int = Field(ge=0)
     created_at: AwareDatetime
@@ -200,6 +207,7 @@ class PostView(ModeratedView):
     edited_at: AwareDatetime | None
     liked: bool
     saved: bool
+    pinned: bool
     can_manage: bool
     etag: str | None
 

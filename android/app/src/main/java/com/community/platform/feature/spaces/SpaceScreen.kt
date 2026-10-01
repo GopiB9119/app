@@ -83,6 +83,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.community.platform.DesignTokens
 import com.community.platform.R
+import com.community.platform.feature.community.takeCodePoints
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -227,7 +228,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                             if (state.creationType == "group") {
                                 item("create-description") {
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        OutlinedTextField(value = state.descriptionDraft, onValueChange = { actions.description(it.take(280)) }, label = { Text(stringResource(R.string.spaces_description_optional)) }, enabled = !state.locked, minLines = 2, maxLines = 6, modifier = Modifier.fillMaxWidth().testTag("space-description"))
+                                        OutlinedTextField(value = state.descriptionDraft, onValueChange = { actions.description(it.takeCodePoints(280)) }, label = { Text(stringResource(R.string.spaces_description_optional)) }, enabled = !state.locked, minLines = 2, maxLines = 6, modifier = Modifier.fillMaxWidth().testTag("space-description"))
                                         Text("${state.descriptionDraft.length}/280", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.End))
                                     }
                                 }

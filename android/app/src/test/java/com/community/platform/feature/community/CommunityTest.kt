@@ -107,6 +107,11 @@ class CommunityTest {
             actions += action
             return ok(post.copy(liked = action == "like", likeCount = if (action == "like") 1 else 0, saved = action == "save"))
         }
+        override suspend fun pinnedPosts(authorization: String, reference: String) = ok(emptyList<PostDto>())
+        override suspend fun pin(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
+            actions += action
+            return ok(post.copy(pinned = action == "pin"))
+        }
         override suspend fun comments(authorization: String, postId: String, cursor: String?, limit: Int) = ok(listOf(comment), list())
         override suspend fun comment(authorization: String, postId: String, key: String, body: CreateCommentDto): Response<EnvelopeDto<CommentDto>> {
             comments += body
@@ -254,7 +259,7 @@ class CommunityTest {
         fun change(fields: Map<String, String>) {
             version += 1
             current = current.copy(name = fields["name"] ?: current.name, description = fields["description"] ?: current.description,
-                topic = fields["topic"] ?: current.topic, updatedAt = "2026-09-19T10:0$version:00Z", etag = "\"p$version\"")
+                topic = fields["topic"] ?: current.topic, rules = fields["rules"] ?: current.rules, updatedAt = "2026-09-19T10:0$version:00Z", etag = "\"p$version\"")
         }
         override suspend fun page(authorization: String, reference: String): Response<EnvelopeDto<PageDto>> {
             gate?.let { entered.complete(Unit); it.await() }
@@ -668,7 +673,8 @@ class CommunityTest {
             val body = if (method == "GET") null else "{}".toRequestBody("application/json".toMediaType())
             return http.newCall(Request.Builder().url("https://offline.invalid$path").method(method, body).build()).execute().use { it.body!!.bytes().size }
         }
-        for (path in listOf("/v1/feed", "/v1/discover/posts", "/v1/me/saved-posts", "/v1/pages/river-walkers/posts", "/v1/pages/$pageId/posts", "/v1/posts/$postId/comments")) {
+        for (path in listOf("/v1/feed", "/v1/discover/posts", "/v1/me/saved-posts", "/v1/pages/river-walkers/posts", "/v1/pages/$pageId/posts", "/v1/posts/$postId/comments",
+            "/v1/pages/river-walkers/pinned-posts", "/v1/pages/$pageId/pinned-posts")) {
             assertEquals(524288, request(path, 524288))
             assertThrows(java.io.IOException::class.java) { request(path, 524289) }
         }
@@ -1779,5 +1785,167 @@ class CommunityTest {
             assertEquals(limit, capped.codePointLength())
             assertEquals(0L, capped.codePoints().filter { it in 0xD800..0xDFFF }.count())
         }
+    }
+
+    /** A server for a page the person owns with two published posts. It keeps which are pinned, latest pin first, refuses a pin over its limit, and can lose an answer after applying a change. */
+    inner class PinApi : CommunityApi by api {
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        val posts = listOf(post.copy(canManage = true, etag = "\"v1\""), post.copy(id = draftId, title = "Sunday walk", canManage = true, etag = "\"v1\""))
+        var order = listOf<String>()
+        val calls: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        val bodies: MutableList<Map<String, String>> = Collections.synchronizedList(mutableListOf())
+        var limit = MAX_PINNED_POSTS
+        var lost = false
+        private fun shown(item: PostDto) = item.copy(pinned = item.id in order)
+        override suspend fun page(authorization: String, reference: String): Response<EnvelopeDto<PageDto>> = ok(owned)
+        override suspend fun pagePosts(authorization: String, reference: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PostDto>>> =
+            ok(posts.map(::shown), PaginationDto(null, false))
+        override suspend fun pinnedPosts(authorization: String, reference: String): Response<EnvelopeDto<List<PostDto>>> {
+            calls += "GET /v1/pages/$reference/pinned-posts"
+            return ok(order.map { id -> shown(posts.first { it.id == id }) })
+        }
+        override suspend fun pin(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
+            calls += "POST /v1/posts/$postId/$action"; bodies += body
+            val target = posts.firstOrNull { it.id == postId } ?: return failed(404, "NOT_FOUND")
+            if (action == "pin" && postId !in order) {
+                if (order.size >= limit) return failed(409, "PIN_LIMIT_REACHED")
+                order = listOf(postId) + order
+            }
+            if (action == "unpin") order = order - postId
+            if (lost) throw IOException("Synthetic lost answer")
+            return ok(shown(target))
+        }
+    }
+
+    @Test fun pinnedPostsComeFromTheServerAndAPinShowsOnlyOnceItIsConfirmed() = runBlocking {
+        val server = PinApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        assertTrue(current.state.value.pinned.isEmpty())
+        assertEquals(listOf("GET /v1/pages/$pageId/pinned-posts"), server.calls)
+        current.pin(current.state.value.posts.first { it.id == postId }); idle(current)
+        current.state.value.let { state ->
+            assertEquals(listOf(postId), state.pinned.map(PostDto::id))
+            assertTrue(state.pinned.single().pinned)
+            // The date-ordered list still holds the pinned post, as the server sends it; the screen shows it once.
+            assertEquals(listOf(postId, draftId), state.posts.map(PostDto::id))
+            assertNull(state.error)
+        }
+        current.pin(current.state.value.posts.first { it.id == draftId }); idle(current)
+        assertEquals(listOf(draftId, postId), current.state.value.pinned.map(PostDto::id))
+        current.pin(current.state.value.pinned.first { it.id == postId }); idle(current)
+        assertEquals(listOf(draftId), current.state.value.pinned.map(PostDto::id))
+        assertFalse(current.state.value.posts.first { it.id == postId }.pinned)
+        assertEquals(listOf("pin", "pin", "unpin"), server.calls.filter { it.startsWith("POST") }.map { it.substringAfterLast('/') })
+        assertEquals(List(3) { emptyMap<String, String>() }, server.bodies)
+    }
+
+    @Test fun aRefusedOrLostPinNeverShowsAsPinned() = runBlocking {
+        val server = PinApi(); server.limit = 0
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        val shown = current.state.value.posts.first { it.id == postId }
+        current.pin(shown); idle(current)
+        current.state.value.let { state ->
+            assertEquals("Synthetic PIN_LIMIT_REACHED", state.error)
+            assertFalse(state.missing)
+            assertTrue(state.pinned.isEmpty())
+            assertFalse(state.posts.first { it.id == postId }.pinned)
+        }
+        server.limit = MAX_PINNED_POSTS; server.lost = true
+        current.pin(shown); idle(current)
+        current.state.value.let { state ->
+            assertEquals("No connection. Nothing new is confirmed.", state.error)
+            assertTrue(state.pinned.isEmpty())
+            assertFalse(state.posts.first { it.id == postId }.pinned)
+        }
+        // The server applied the pin whose answer was lost; reloading shows it.
+        current.reload(); idle(current)
+        assertEquals(listOf(postId), current.state.value.pinned.map(PostDto::id))
+        // Only a published post the person manages can be pinned.
+        val sent = server.calls.size
+        current.pin(post); current.pin(shown.copy(status = "draft", publishedAt = null))
+        assertEquals(sent, server.calls.size)
+    }
+
+    @Test fun pinnedListsAreCheckedAndPinCommandsGoToTheirRoutesWithTheSession() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val bodies = mutableListOf<String>()
+        var reply: Any = EnvelopeDto(listOf<PostDto>(), null)
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val request = chain.request(); requests += request
+            val buffer = Buffer(); request.body?.writeTo(buffer); bodies += buffer.readUtf8()
+            okhttp3.Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(reply).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = CommunityRepository(IdentityModule.community(http, Gson()), fixture.accounts)
+        val pinned = post.copy(pinned = true)
+        val several = List(4) { index -> pinned.copy(id = java.util.UUID.nameUUIDFromBytes("pinned-$index".toByteArray()).toString()) }
+        reply = EnvelopeDto(several.take(MAX_PINNED_POSTS), null)
+        assertEquals(several.take(MAX_PINNED_POSTS), wire.pinnedPosts(fixture.accountId, pageId))
+        assertEquals("GET", requests[0].method)
+        assertEquals("/v1/pages/$pageId/pinned-posts", requests[0].url.encodedPath)
+        assertNull(requests[0].url.encodedQuery)
+        assertEquals("Bearer ${fixture.token}", requests[0].header("Authorization"))
+        // More than three, a repeat, a post that is not pinned, another page's post or a draft is refused.
+        for (bad in listOf(several, listOf(pinned, pinned), listOf(post), listOf(pinned.copy(pageId = otherPageId)), listOf(pinned.copy(status = "draft", publishedAt = null, canManage = true, etag = "\"d\"")))) {
+            reply = EnvelopeDto(bad, null)
+            assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.pinnedPosts(fixture.accountId, pageId) } }.code)
+        }
+        reply = EnvelopeDto(pinned, null)
+        assertEquals(pinned, wire.pin(fixture.accountId, postId, true))
+        reply = EnvelopeDto(post, null)
+        assertEquals(post, wire.pin(fixture.accountId, postId, false))
+        val commands = requests.drop(6)
+        assertEquals(listOf("/v1/posts/$postId/pin", "/v1/posts/$postId/unpin"), commands.map { it.url.encodedPath })
+        assertTrue(commands.all { it.method == "POST" && it.header("Authorization") == "Bearer ${fixture.token}" && it.header("Idempotency-Key") == null })
+        assertEquals(listOf("{}", "{}"), bodies.drop(6))
+        // An answer that does not show the requested state, or names another post, is not taken as done.
+        reply = EnvelopeDto(post, null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.pin(fixture.accountId, postId, true) } }.code)
+        reply = EnvelopeDto(pinned.copy(id = draftId), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.pin(fixture.accountId, postId, true) } }.code)
+    }
+
+    @Test fun pageRulesAreEditedAgainstTheOpenedVersionAndCountCharactersLikeTheServer() = runBlocking {
+        val server = PageEditApi()
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        current.startPageEdit(current.state.value.page!!)
+        val longest = "\uD83D\uDE00".repeat(PAGE_RULES_LIMIT)
+        assertFalse(current.editPage("River Walkers", "Weekend walks", "hobbies", "$longest\uD83D\uDE00"))
+        assertEquals("Use rules of up to 2,000 characters.", current.state.value.error)
+        assertTrue(server.edits.isEmpty())
+        // Line endings and surrounding spaces are tidied as the server tidies them, and only the changed rules are sent.
+        assertTrue(current.editPage("River Walkers", "Weekend walks", "hobbies", "  Be kind.\r\nNo selling.  ")); idle(current)
+        assertEquals(listOf("\"p1\"" to mapOf("rules" to "Be kind.\nNo selling.")), server.edits)
+        assertEquals("Be kind.\nNo selling.", current.state.value.page!!.rules)
+        assertEquals("Page saved.", current.state.value.notice)
+        // The same rules again, or no rules given, send nothing.
+        current.startPageEdit(current.state.value.page!!)
+        assertTrue(current.editPage("River Walkers", "Weekend walks", "hobbies", "Be kind.\nNo selling.\n"))
+        current.startPageEdit(current.state.value.page!!)
+        assertTrue(current.editPage("River Walkers", "Weekend walks", "hobbies"))
+        assertEquals(1, server.edits.size)
+        // The longest rules the server allows are sent, and an empty text removes them.
+        current.startPageEdit(current.state.value.page!!)
+        assertTrue(current.editPage("River Walkers", "Weekend walks", "hobbies", longest)); idle(current)
+        current.startPageEdit(current.state.value.page!!)
+        assertTrue(current.editPage("River Walkers", "Weekend walks", "hobbies", "   ")); idle(current)
+        assertEquals(listOf("\"p2\"" to mapOf("rules" to longest), "\"p3\"" to mapOf("rules" to "")), server.edits.drop(1))
+        assertEquals("", current.state.value.page!!.rules)
+    }
+
+    @Test fun rulesAndPinsAreCheckedLikeOtherPublicFacts() {
+        val longest = "\uD83D\uDE00".repeat(PAGE_RULES_LIMIT)
+        assertEquals(page.copy(rules = longest), repository.page(page.copy(rules = longest)))
+        assertThrows(IdentityFailure::class.java) { repository.page(page.copy(rules = "$longest\uD83D\uDE00")) }
+        assertEquals(post.copy(pinned = true), repository.post(post.copy(pinned = true)))
+        assertThrows(IdentityFailure::class.java) { repository.post(post.copy(status = "draft", publishedAt = null, canManage = true, etag = "\"d\"", pinned = true)) }
+        // An answer without rules or pins reads as a page without rules and a post that is not pinned.
+        val olderPage = JsonParser.parseString(Gson().toJson(page)).asJsonObject.apply { remove("rules") }
+        assertNull(repository.page(Gson().fromJson(olderPage, PageDto::class.java)).rules)
+        val olderPost = JsonParser.parseString(Gson().toJson(post)).asJsonObject.apply { remove("pinned") }
+        assertFalse(repository.post(Gson().fromJson(olderPost, PostDto::class.java)).pinned)
     }
 }

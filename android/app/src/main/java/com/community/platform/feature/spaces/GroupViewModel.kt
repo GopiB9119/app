@@ -2,6 +2,7 @@ package com.community.platform.feature.spaces
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.community.platform.feature.community.takeCodePoints
 import com.community.platform.feature.identity.IdentityFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -137,7 +138,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
         mutableState.update { it.copy(asking = entry, note = "", error = null, notice = null) }
     }
 
-    fun note(value: String) { if (!mutableState.value.locked) mutableState.update { it.copy(note = value.take(280)) } }
+    fun note(value: String) { if (!mutableState.value.locked) mutableState.update { it.copy(note = value.takeCodePoints(280)) } }
 
     fun cancelAsk() { if (!mutableState.value.locked) mutableState.update { it.copy(asking = null, note = "") } }
 

@@ -1,10 +1,17 @@
 import { z } from "zod";
 import { ApiError, api } from "@/features/identity/client";
 
+// The server counts characters (code points), not UTF-16 units, so an emoji counts once.
+export const characters = (value: string) => [...value].length;
+const chars = (min: number, max: number) => z.string().refine(value => { const length = characters(value); return length >= min && length <= max; });
+export function lengthProblem(value: string, limit: number) {
+  return characters(value.trim()) > limit ? `Use up to ${limit} characters.` : null;
+}
+
 const spaceShape = z.object({
   id: z.string().uuid(),
-  name: z.string().min(1).max(80),
-  description: z.string().max(280).default(""),
+  name: chars(1, 80),
+  description: chars(0, 280).default(""),
   space_type: z.enum(["family", "solo", "group", "couple"]),
   visibility: z.enum(["private", "public"]),
   status: z.literal("active"),
@@ -53,7 +60,7 @@ export async function changeVisibility(intent: VisibilityIntent) {
 }
 
 export const directoryEntrySchema = z.object({
-  id: z.string().uuid(), name: z.string().min(1).max(80), description: z.string().max(280),
+  id: z.string().uuid(), name: chars(1, 80), description: chars(0, 280),
   member_count: z.number().int().min(1).max(50), viewer_role: z.enum(["owner", "admin", "member"]).nullable(),
   pending_request_id: z.string().uuid().nullable(), can_request: z.boolean(),
 }).refine(entry => !(entry.viewer_role && (entry.pending_request_id || entry.can_request)) && !(entry.pending_request_id && entry.can_request));
@@ -72,7 +79,7 @@ export async function findGroups(accountId: string, query: string, cursor: strin
 
 const joinStatuses = ["pending", "approved", "declined", "cancelled", "closed", "expired"] as const;
 export const joinRequestSchema = z.object({
-  id: z.string().uuid(), space_id: z.string().uuid(), space_name: z.string().min(1).max(80), note: z.string().max(280),
+  id: z.string().uuid(), space_id: z.string().uuid(), space_name: chars(1, 80), note: chars(0, 280),
   status: z.enum(joinStatuses), created_at: z.string().datetime({ offset: true }), expires_at: z.string().datetime({ offset: true }),
   resolved_at: z.string().datetime({ offset: true }).nullable(),
 }).refine(request => Date.parse(request.created_at) < Date.parse(request.expires_at)
@@ -84,7 +91,7 @@ export const joinStatusLabels: Record<JoinRequest["status"], string> = {
   closed: "Closed: the group became private", expired: "Expired",
 };
 export const joinReviewSchema = z.object({
-  id: z.string().uuid(), account_id: z.string().uuid(), display_name: z.string().min(1).max(80), note: z.string().max(280),
+  id: z.string().uuid(), account_id: z.string().uuid(), display_name: chars(1, 80), note: chars(0, 280),
   created_at: z.string().datetime({ offset: true }), expires_at: z.string().datetime({ offset: true }),
 });
 export type JoinReview = z.infer<typeof joinReviewSchema>;
@@ -125,7 +132,7 @@ export async function decideJoinRequest(accountId: string, spaceId: string, revi
 }
 
 export const memberSchema = z.object({
-  account_id: z.string().uuid(), display_name: z.string().min(1).max(80),
+  account_id: z.string().uuid(), display_name: chars(1, 80),
   role: z.enum(["owner", "admin", "member"]), joined_at: z.string().datetime({ offset: true }),
   etag: z.string().min(3).max(140).regex(/^"[^"\r\n]+"$/),
 });
@@ -167,8 +174,8 @@ export const recipientSchema = z.string().trim().uuid("Enter a valid account ID.
 export const invitationSchema = z.object({
   id: z.string().uuid(),
   space_id: z.string().uuid(),
-  space_name: z.string().min(1).max(80),
-  inviter_name: z.string().min(1).max(80),
+  space_name: chars(1, 80),
+  inviter_name: chars(1, 80),
   recipient_account_id: z.string().uuid(),
   role: z.literal("member"),
   status: z.enum(["pending", "accepted", "declined", "revoked", "expired"]),
@@ -189,9 +196,9 @@ export async function invitationPage(path: string, accountId: string, cursor: st
 }
 
 export const ownershipTransferSchema = z.object({
-  id: z.string().uuid(), space_id: z.string().uuid(), space_name: z.string().min(1).max(80),
-  from_account_id: z.string().uuid(), from_name: z.string().min(1).max(80),
-  to_account_id: z.string().uuid(), to_name: z.string().min(1).max(80),
+  id: z.string().uuid(), space_id: z.string().uuid(), space_name: chars(1, 80),
+  from_account_id: z.string().uuid(), from_name: chars(1, 80),
+  to_account_id: z.string().uuid(), to_name: chars(1, 80),
   status: z.enum(["pending", "accepted", "declined", "cancelled", "expired", "invalidated"]),
   created_at: z.string().datetime({ offset: true }), expires_at: z.string().datetime({ offset: true }),
   resolved_at: z.string().datetime({ offset: true }).nullable(), version: z.string().regex(/^[1-9][0-9]*$/),

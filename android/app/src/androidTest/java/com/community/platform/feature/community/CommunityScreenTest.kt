@@ -176,7 +176,7 @@ class CommunityScreenTest {
         var closes = 0
         val actions = CommunityActions(
             startPageEdit = { state = state.copy(editingPage = it, pageEditSession = state.pageEditSession + 1) },
-            editPage = { name, description, topic -> edits += Triple(name, description, topic); true },
+            editPage = { name, description, topic, _ -> edits += Triple(name, description, topic); true },
             cancelPageEdit = { closes += 1; state = state.copy(editingPage = null) },
         )
         compose.setContent {
@@ -207,6 +207,46 @@ class CommunityScreenTest {
         compose.onNodeWithText("Close editor").performScrollTo().assertIsDisplayed().performClick()
         assertEquals(1, closes)
         compose.onAllNodesWithTag("page-editor").assertCountEquals(0)
+    }
+
+    @Test fun largeTextNarrowRulesAndPinnedPostShowOnceAboveTheDateList() {
+        val pinned = post.copy(canManage = true, etag = "\"v1\"", pinned = true)
+        val owned = page.copy(canManage = true, etag = "\"p1\"", rules = "Be kind.\nNo selling.")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = owned, posts = listOf(pinned), pinned = listOf(pinned)))
+        val pins = mutableListOf<PostDto>()
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                Box(Modifier.width(320.dp).fillMaxHeight()) { CommunityTheme { CommunityScreen(state, CommunityActions(pin = { pins += it }), "UTC", {}) } }
+            }
+        }
+        reveal("page-rules")
+        compose.onNodeWithText("Be kind.\nNo selling.").assertIsDisplayed()
+        reveal("pinned-heading")
+        compose.onNodeWithTag("pinned-heading").assertIsDisplayed()
+        // The pinned post is also in the date list from the server, but it shows only once, in its own section.
+        reveal("page-no-posts")
+        compose.onNodeWithText("No other posts.").assertIsDisplayed()
+        val parent = compose.onNodeWithTag("community-content").fetchSemanticsNode().boundsInRoot
+        for (tag in listOf("page-rules", "pinned-heading", "pinned-$postId", "pin-$postId")) {
+            reveal(tag)
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(tag, !bounds.isEmpty && bounds.left >= parent.left && bounds.right <= parent.right)
+        }
+        reveal("pinned-heading")
+        capture("community-rules-pinned-large-text.png")
+        reveal("pin-$postId")
+        compose.onNodeWithTag("pin-$postId").assertTextContains("Unpin").performClick()
+        assertEquals(listOf(pinned), pins)
+
+        // Once unpinned, the post is back in the date list and offers Pin to top.
+        val unpinned = pinned.copy(pinned = false)
+        state = state.copy(posts = listOf(unpinned), pinned = emptyList())
+        compose.onAllNodesWithTag("pinned-heading").assertCountEquals(0)
+        reveal("pin-$postId")
+        compose.onNodeWithTag("pin-$postId").assertTextContains("Pin to top").performClick()
+        assertEquals(listOf(pinned, unpinned), pins)
     }
 
     private fun capture(name: String) {

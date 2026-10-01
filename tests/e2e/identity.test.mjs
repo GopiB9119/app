@@ -1624,6 +1624,36 @@ test('community: page creation retry, private drafts, publication, follow feed, 
 
     await ownerPage.goto(`${base}/pages/${handle}`);
     await ownerPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+
+    // Page rules and a pinned post (T83): the owner saves rules and pins the post, a signed-out visitor sees both, and unpinning returns the post to the date list.
+    await ownerPage.getByRole('button', { name: 'Edit page', exact: true }).click();
+    const pageEditor = ownerPage.getByRole('form', { name: 'Edit page', exact: true });
+    await pageEditor.getByLabel('Rules (optional)', { exact: true }).fill('Be kind.\nNo selling.');
+    await pageEditor.getByRole('button', { name: 'Save page', exact: true }).click();
+    await pageEditor.waitFor({ state: 'detached' });
+    await ownerPage.getByRole('region', { name: 'Rules', exact: true }).getByText('Be kind.\nNo selling.', { exact: true }).waitFor();
+    const ownerPosts = ownerPage.getByRole('region', { name: 'Posts', exact: true });
+    await ownerPosts.getByRole('article', { name: 'Saturday walk', exact: true }).getByRole('button', { name: 'Pin to top', exact: true }).click();
+    const ownerPinned = ownerPage.getByRole('region', { name: 'Pinned', exact: true });
+    await ownerPinned.getByRole('article', { name: 'Saturday walk', exact: true }).getByText('Pinned', { exact: true }).waitFor();
+    await ownerPosts.getByText('No other posts.', { exact: true }).waitFor();
+    await visitorPage.goto(`${base}/pages/${handle}`);
+    await visitorPage.getByRole('region', { name: 'Rules', exact: true }).getByText('Be kind.\nNo selling.', { exact: true }).waitFor();
+    await visitorPage.getByRole('region', { name: 'Pinned', exact: true }).getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+    const pinnedList = (await (await visitorContext.request.get(`${base}/api/pages/${handle}/pinned-posts`)).json()).data;
+    assert.deepEqual(pinnedList.map(item => [item.id, item.pinned]), [[postId, true]]);
+    for (const width of [320, 390]) {
+      await visitorPage.setViewportSize({ width, height: 900 });
+      assert.equal(await visitorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `visitor width ${width}`);
+    }
+    await visitorPage.screenshot({ path: path.join(root, '.local/screenshots/community-rules-pinned-live-mobile.png'), fullPage: true });
+    await ownerPinned.getByRole('button', { name: 'Unpin', exact: true }).click();
+    await ownerPinned.waitFor({ state: 'detached' });
+    await ownerPosts.getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+    await visitorPage.reload();
+    await visitorPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Saturday walk', exact: true }).waitFor();
+    assert.equal(await visitorPage.getByRole('region', { name: 'Pinned', exact: true }).count(), 0);
+
     for (const width of [320, 390, 768]) {
       await ownerPage.setViewportSize({ width, height: 900 });
       assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `owner width ${width}`);

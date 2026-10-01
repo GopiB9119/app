@@ -16,7 +16,7 @@
 .title { font-size: 20px; margin: 0; overflow-wrap: anywhere; }
 .body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); }
-.actions button, .actions a { min-height: 40px; }
+.actions button, .actions a { min-height: var(--target-minimum); }
 .toggled { color: var(--color-primary); font-weight: 650; }
 .meta { color: var(--color-muted); font-size: 14px; }
 .badge { display: inline-flex; align-items: center; gap: var(--space-unit); padding: 0 calc(var(--space-unit) * 2); border-radius: var(--radius-control); background: var(--color-primary-surface); color: var(--color-primary); font-size: 13px; font-weight: 600; }

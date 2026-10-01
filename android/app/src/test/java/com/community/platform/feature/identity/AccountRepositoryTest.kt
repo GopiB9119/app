@@ -72,6 +72,15 @@ class AccountRepositoryTest {
         assertNull(store.value)
     }
 
+    @Test fun aRefusedRequestStillSignsOutTheSessionItUsed() = runBlocking {
+        store.save(Credentials(token, user.id))
+        val error = assertThrows(IdentityFailure::class.java) {
+            runBlocking { repository.authorized(user.id) { throw IdentityFailure("AUTHENTICATION_REQUIRED", "Sign in to continue.", 401) } }
+        }
+        assertEquals(401, error.status)
+        assertNull(store.value)
+    }
+
     @Test fun cancelledLoginCannotSaveACredential() = runBlocking {
         fake.cancelLogin = true
         assertThrows(CancellationException::class.java) { runBlocking { repository.login(user.email, "secret") } }

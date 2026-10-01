@@ -8,7 +8,7 @@ import { ArrowLeft, Check, Globe, LoaderCircle, RefreshCw, Search, Send, UndoDot
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { askToJoin, cancelJoinRequest, findGroups, joinStatusLabels, myJoinRequests } from "./client";
+import { askToJoin, cancelJoinRequest, characters, findGroups, joinStatusLabels, lengthProblem, myJoinRequests } from "./client";
 import type { DirectoryEntry, JoinIntent } from "./client";
 import styles from "./spaces.module.css";
 
@@ -75,9 +75,10 @@ function FindGroups({ user }: { user: Account }) {
 
   const entries = groups.data?.pages.flatMap(page => page.data) ?? [];
   const busy = ask.isPending || withdraw.isPending;
+  const noteProblem = lengthProblem(note, NOTE_LIMIT);
   function send(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!asking || busy) return;
+    if (!asking || busy || (!intent && noteProblem !== null)) return;
     const pending = intent ?? { accountId: user.id, spaceId: asking.id, note: note.trim(), key: crypto.randomUUID() };
     setIntent(pending); setNotice(""); ask.mutate(pending);
   }
@@ -115,12 +116,13 @@ function FindGroups({ user }: { user: Account }) {
             {!entry.viewer_role && !entry.pending_request_id && !entry.can_request && <span>Not accepting your request right now</span>}
           </div>
           {asking?.id === entry.id ? <form className={styles.noteForm} onSubmit={send}>
-            <label>Note to the owner (optional)<textarea className={styles.textArea} name="join_note" maxLength={NOTE_LIMIT} value={intent?.note ?? note} disabled={intent !== null} onChange={event => { setNote(event.target.value); ask.reset(); }} placeholder="Say who you are and why you would like to join." /></label>
-            <span className={styles.counter}>{(intent?.note ?? note).length}/{NOTE_LIMIT}</span>
+            <label>Note to the owner (optional)<textarea className={styles.textArea} name="join_note" maxLength={NOTE_LIMIT * 2} value={intent?.note ?? note} disabled={intent !== null} onChange={event => { setNote(event.target.value); ask.reset(); }} placeholder="Say who you are and why you would like to join." /></label>
+            <span className={styles.counter}>{characters(intent?.note ?? note)}/{NOTE_LIMIT}</span>
+            {!intent && noteProblem && <span className="field-error">{noteProblem}</span>}
             {intent && !ask.isPending && ask.isError && <p role="status">The request was not confirmed. Retrying sends exactly the same request.</p>}
             <div className={styles.groupActions}>
               <button type="button" className="secondary-button" disabled={ask.isPending} onClick={() => { setAsking(null); setIntent(null); setNote(""); ask.reset(); }}>Cancel</button>
-              <button type="submit" className="primary-button" disabled={ask.isPending}>
+              <button type="submit" className="primary-button" disabled={ask.isPending || (!intent && noteProblem !== null)}>
                 {ask.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Send size={17} aria-hidden />}{intent && !ask.isPending ? "Retry request" : "Send request"}
               </button>
             </div>

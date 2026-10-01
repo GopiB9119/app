@@ -131,6 +131,17 @@ class GroupRepositoryTest {
         assertEquals(0, api.settingsReads)
     }
 
+    @Test fun joinNoteKeepsWholeCharactersUpToTheServerLimit(): Unit = runBlocking {
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId, spaceId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        val emoji = "\uD83D\uDE00"
+        value.note(emoji.repeat(281))
+        assertEquals(emoji.repeat(280), value.state.value.note)
+        value.note("a" + emoji.repeat(280))
+        assertEquals("a" + emoji.repeat(279), value.state.value.note)
+    }
+
     @Test fun ownerGroupAccessRetainsVisibilityControls(): Unit = runBlocking {
         val value = GroupViewModel(repository).also { model = it }
         value.bind(accountId, spaceId)

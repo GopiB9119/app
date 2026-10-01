@@ -238,3 +238,82 @@ test('BFF accepts the longest valid post however its JSON is encoded, and keeps 
   assert.deepEqual(await send('POST', `pages/${pageId}/posts`, `{"body":"${'x'.repeat(70000)}"}`), { status: 413, forwarded: 0 });
   assert.deepEqual(await send('POST', `posts/${postId}/comments`, raw), { status: 413, forwarded: 0 });
 });
+
+test('BFF forwards pin commands with the session and the pinned list signed out, and nothing else', async () => {
+  for (const route of [`posts/${postId}/pin`, `posts/${postId}/unpin`]) {
+    const proxy = bff();
+    assert.equal((await proxy.request('POST', route)).status, 200, route);
+    assert.equal(proxy.calls.at(-1).url, `https://backend.example.test/v1/${route}`);
+    assert.equal(proxy.calls.at(-1).options.headers.Authorization, 'Bearer synthetic-session');
+  }
+  const anonymous = bff();
+  assert.equal((await anonymous.request('GET', 'pages/river-walkers/pinned-posts', { 'X-Account-ID': undefined }, { session: false })).status, 200);
+  assert.equal(anonymous.calls.length, 1);
+  assert.equal(anonymous.calls[0].url, 'https://backend.example.test/v1/pages/river-walkers/pinned-posts');
+  assert.equal(anonymous.calls[0].options.headers.Authorization, undefined);
+  for (const [method, route] of [['GET', `posts/${postId}/pin`], ['POST', `pages/${pageId}/pinned-posts`], ['POST', `pages/${pageId}/pin`], ['DELETE', `posts/${postId}/pin`]]) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);
+    assert.equal(proxy.calls.length, 0);
+  }
+  assert.equal((await bff().request('GET', `pages/${pageId}/pinned-posts?limit=3`)).status, 400);
+  assert.equal((await bff().request('POST', `posts/${postId}/pin?as=${otherId}`)).status, 400);
+  assert.equal((await bff().request('POST', `posts/${postId}/unpin`, {}, { session: false })).status, 401);
+});
+
+test('Rules and pins: schemas keep older answers readable, pinned lists are checked and pin commands confirmed', async () => {
+  const client = communityClient();
+  const leaf = '\u{1F33F}';
+  assert.equal(client.pageSchema.parse(page()).rules, '', 'A page from a server without rules reads as having none.');
+  assert.equal(client.postSchema.parse(post()).pinned, false, 'A post from a server without pins reads as not pinned.');
+  assert.equal(client.pageSchema.safeParse(page({ rules: leaf.repeat(2000) })).success, true);
+  assert.equal(client.pageSchema.safeParse(page({ rules: leaf.repeat(2001) })).success, false);
+  assert.equal(client.postSchema.safeParse(post({ pinned: true })).success, true);
+  assert.equal(client.postSchema.safeParse(post({ status: 'draft', published_at: null, can_manage: true, etag: '"d1"', pinned: true })).success, false);
+
+  const shown = page();
+  const pinned = (id, overrides = {}) => post({ id, pinned: true, ...overrides });
+  const four = ['01', '02', '03', '04'].map(end => pinned(`0d1f3c52-7a3e-4b6f-9c11-2f5e8d7a4b${end}`));
+  const list = data => async () => Response.json({ data });
+  assert.equal((await communityClient(list(four.slice(0, 3))).pinnedPosts(shown)).length, 3);
+  await assert.rejects(communityClient(list(four)).pinnedPosts(shown), { status: 502 });
+  await assert.rejects(communityClient(list([pinned(postId), pinned(postId)])).pinnedPosts(shown), { status: 502 });
+  await assert.rejects(communityClient(list([post()])).pinnedPosts(shown), { status: 502 });
+  await assert.rejects(communityClient(list([pinned(postId, { page_id: otherId, page_handle: 'other-page' })])).pinnedPosts(shown), { status: 502 });
+
+  const calls = [];
+  const answering = flag => communityClient(async (url, options) => {
+    calls.push({ url: String(url), options });
+    return Response.json({ data: post({ pinned: flag, can_manage: true, etag: '"p2"' }) });
+  });
+  assert.equal((await answering(true).pinPost(accountId, postId, true)).pinned, true);
+  assert.equal((await answering(false).pinPost(accountId, postId, false)).pinned, false);
+  assert.deepEqual(calls.map(call => [call.url, call.options.method, call.options.body]), [
+    [`/api/posts/${postId}/pin`, 'POST', '{}'], [`/api/posts/${postId}/unpin`, 'POST', '{}'],
+  ]);
+  await assert.rejects(answering(false).pinPost(accountId, postId, true), { status: 502 });
+  await assert.rejects(answering(true).pinPost(accountId, postId, false), { status: 502 });
+});
+
+test('BFF accepts the longest page rules, name and description however their JSON is encoded', async () => {
+  async function send(body) {
+    const calls = [];
+    const handlers = loadSource('app/api/[...path]/route.ts', async url => {
+      calls.push(String(url));
+      return Response.json({ data: String(url).endsWith('/v1/me') ? { id: accountId } : {} });
+    });
+    const request = new NextRequest(`${origin}/api/pages/${pageId}`, {
+      method: 'PATCH', body,
+      headers: { Cookie: 'cp_session=synthetic-session', Origin: origin, 'X-Account-ID': accountId, 'Content-Type': 'application/json', 'If-Match': '"v1"' },
+    });
+    const response = await handlers.PATCH(request, { params: Promise.resolve({ path: ['pages', pageId] }) });
+    return { status: response.status, forwarded: calls.filter(url => !url.endsWith('/v1/me')).length };
+  }
+  const leaf = '\u{1F33F}';
+  const raw = JSON.stringify({ name: leaf.repeat(80), description: leaf.repeat(500), rules: leaf.repeat(2000) });
+  const escaped = raw.replace(/[\u007f-\uffff]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  assert.ok(Buffer.byteLength(escaped) > 16384);
+  assert.deepEqual(await send(raw), { status: 200, forwarded: 1 });
+  assert.deepEqual(await send(escaped), { status: 200, forwarded: 1 });
+  assert.deepEqual(await send(`{"rules":"${'x'.repeat(70000)}"}`), { status: 413, forwarded: 0 });
+});

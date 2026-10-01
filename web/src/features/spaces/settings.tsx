@@ -4,7 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, LoaderCircle, LockKeyhole, RefreshCw, Save, X } from "lucide-react";
 import { ApiError } from "@/features/identity/client";
-import { changeVisibility, readSpaceSettings, saveSpaceSettings } from "./client";
+import { changeVisibility, characters, lengthProblem, readSpaceSettings, saveSpaceSettings } from "./client";
 import type { SpaceSettings, SpaceSettingsIntent, VisibilityIntent } from "./client";
 import styles from "./spaces.module.css";
 
@@ -67,6 +67,8 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
     if (result.data && !result.isError) { setBasis(result.data); setName(result.data.name); setDescription(result.data.description); setConflict(false); }
   }
   const target = basis?.visibility === "public" ? "private" : "public";
+  const nameProblem = lengthProblem(name, 80);
+  const descriptionProblem = lengthProblem(description, 280);
   return <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={heading} onCancel={event => { event.preventDefault(); close(); }}>
     <div className="dialog-heading"><h2 id={heading}>Space settings</h2><button className="icon-button" aria-label="Close Space settings" title="Close Space settings" disabled={locked && !denied} onClick={close}><X size={18} aria-hidden /></button></div>
     {problem && <p className="message error" role="alert">{problem.message}</p>}
@@ -77,15 +79,17 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
       <dl className={styles.reviewFacts}><dt>Current name</dt><dd>{basis.name}</dd><dt>Visibility</dt><dd>{basis.visibility === "public" ? "Public: anyone signed in can find it and ask to join" : "Private: only people you invite"}</dd><dt>Space ID</dt><dd className={styles.accountCode}>{spaceId}</dd></dl>
       <form className={styles.form} onSubmit={event => {
         event.preventDefault();
-        if (save.isPending || conflict || review.isFetching || !name.trim()) return;
+        if (save.isPending || conflict || review.isFetching || !name.trim() || (!intent && (nameProblem !== null || descriptionProblem !== null))) return;
         const command = intent ?? { accountId, spaceId, name: name.trim(), description: description.trim() === basis.description ? undefined : description.trim(), etag: basis.etag, key: crypto.randomUUID() };
         setIntent(command); setNotice(""); save.mutate(command);
       }}>
-        <label>Space name<input name="settings_name" autoComplete="off" required maxLength={80} value={name} disabled={locked || review.isFetching} onChange={event => { setName(event.target.value); setNotice(""); }} /></label>
-        <label>Description{basis.visibility === "public" ? " (shown in Find groups)" : " (only members see it)"}<textarea className={styles.textArea} name="settings_description" maxLength={280} value={description} disabled={locked || review.isFetching} onChange={event => { setDescription(event.target.value); setNotice(""); }} /></label>
-        <span className={styles.counter}>{description.length}/280</span>
+        <label>Space name<input name="settings_name" autoComplete="off" required maxLength={160} value={name} disabled={locked || review.isFetching} onChange={event => { setName(event.target.value); setNotice(""); }} /></label>
+        {nameProblem && <span className="field-error">{nameProblem}</span>}
+        <label>Description{basis.visibility === "public" ? " (shown in Find groups)" : " (only members see it)"}<textarea className={styles.textArea} name="settings_description" maxLength={560} value={description} disabled={locked || review.isFetching} onChange={event => { setDescription(event.target.value); setNotice(""); }} /></label>
+        <span className={styles.counter}>{characters(description)}/280</span>
+        {descriptionProblem && <span className="field-error">{descriptionProblem}</span>}
         {intent && !save.isPending && <p role="status">The result is unconfirmed. Retrying uses the original {intent.description === undefined ? "name" : "name, description"} and review.</p>}
-        <button className="primary-button" type="submit" disabled={save.isPending || visibility.isPending || review.isFetching || conflict || !name.trim() || (!intent && name.trim() === basis.name && description.trim() === basis.description)}>
+        <button className="primary-button" type="submit" disabled={save.isPending || visibility.isPending || review.isFetching || conflict || !name.trim() || (!intent && (nameProblem !== null || descriptionProblem !== null)) || (!intent && name.trim() === basis.name && description.trim() === basis.description)}>
           {save.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Save size={17} aria-hidden />}{intent && !save.isPending ? (intent.description === undefined ? "Retry original name" : "Retry original changes") : description.trim() === basis.description ? "Save name" : "Save changes"}
         </button>
       </form>

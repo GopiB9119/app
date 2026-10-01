@@ -40,6 +40,7 @@ MAX_REPORTS_PER_DAY = 30
 MAX_BLOCKS = 500
 MAX_FOLLOWS = 1000
 MAX_SAVED = 1000
+MAX_PINNED_POSTS = 3
 CURSOR_MINUTES = 15
 
 
@@ -154,6 +155,10 @@ class CommunityService:
         return author_id == viewer.id or (isinstance(target, PublicPost) and page is not None and page.owner_id == viewer.id)
 
     @staticmethod
+    def is_pinned(post):
+        return post.status == "published" and post.pinned_at is not None
+
+    @staticmethod
     def moderation_mark(database, target, viewer, page=None):
         from app.modules.safety.models import ModerationDecision
 
@@ -169,7 +174,7 @@ class CommunityService:
         if viewer is not None and blocked is None:
             blocked = page.id in self.blocked(database, viewer, "page")
         return PageView(
-            id=page.id, handle=page.handle, name=page.name, description=page.description, topic=page.topic,
+            id=page.id, handle=page.handle, name=page.name, description=page.description, rules=page.rules, topic=page.topic,
             follower_count=page.follower_count, created_at=page.created_at, updated_at=page.updated_at,
             following=bool(following), blocked=bool(blocked), can_manage=manager,
             etag=self.page_etag(page) if manager else None,
@@ -202,7 +207,7 @@ class CommunityService:
                 body=post.body, status=post.status, like_count=post.like_count,
                 comment_count=post.comment_count - hidden_counts.get(post.id, 0),
                 created_at=post.created_at, published_at=post.published_at, edited_at=post.edited_at,
-                liked=post.id in liked, saved=post.id in saved, can_manage=manager,
+                liked=post.id in liked, saved=post.id in saved, pinned=self.is_pinned(post), can_manage=manager,
                 etag=self.post_etag(post) if manager else None,
                 moderation=self.moderation_mark(database, post, viewer, page),
             ))
@@ -418,12 +423,52 @@ class CommunityService:
                 post.status = "deleted"
                 post.title = None
                 post.body = None
+                post.pinned_at = None
                 post.deleted_at = now
                 post.updated_at = now
                 post.version += 1
                 database.flush()
                 self.record(database, user.id, page.id, post.id, "public.post_deleted")
             return PostOutcome(id=post.id, status="deleted")
+
+    def pin_post(self, token, post_id, pinned):
+        with self.identity.signed_in_write(token) as (database, user):
+            page_id = database.scalar(select(PublicPost.page_id).where(PublicPost.id == post_id))
+            if page_id is None:
+                raise not_found("Post")
+            # The page is locked before the post, so parallel pins on one page count each other.
+            self.find_page(database, page_id, lock=True, viewer=user)
+            post, page = self.managed_post(database, user, post_id)
+            if pinned and not self.is_pinned(post):
+                if post.status != "published":
+                    raise DomainError(409, "NOT_PUBLISHED", "Publish the post before pinning it.")
+                if post.moderation_hidden_at is not None:
+                    raise DomainError(409, "POST_HIDDEN", "A moderator hid this post, so it cannot be pinned.")
+                count = database.scalar(select(func.count()).select_from(PublicPost).where(
+                    PublicPost.page_id == page.id, PublicPost.status == "published", PublicPost.pinned_at.is_not(None),
+                ))
+                if count >= MAX_PINNED_POSTS:
+                    raise DomainError(409, "PIN_LIMIT_REACHED", f"A page can pin up to {MAX_PINNED_POSTS} posts. Unpin one first.")
+                post.pinned_at = self.clock()
+                database.flush()
+                self.record(database, user.id, page.id, post.id, "public.post_pinned")
+            elif not pinned and post.pinned_at is not None:
+                post.pinned_at = None
+                database.flush()
+                self.record(database, user.id, page.id, post.id, "public.post_unpinned")
+            return self.post_views(database, [(post, page)], user)[0]
+
+    def pinned_posts(self, token, reference):
+        with self.sessions() as database:
+            viewer = self.viewer(database, token)
+            page = self.find_page(database, reference, viewer=viewer)
+            if page.owner_id != (viewer.id if viewer else None) and page.id in self.blocked(database, viewer, "page"):
+                return []
+            rows = database.execute(select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id).where(
+                PublicPost.page_id == page.id, PublicPost.status == "published", PublicPost.pinned_at.is_not(None),
+                self.moderation_visible(PublicPost, viewer),
+            ).order_by(PublicPost.pinned_at.desc(), PublicPost.id.desc()).limit(MAX_PINNED_POSTS)).all()
+            return self.post_views(database, rows, viewer)
 
     def read_post(self, token, post_id):
         with self.sessions() as database:

@@ -72,9 +72,9 @@ export function Failure({ error, retry }: { error: unknown; retry: () => void })
   </div>;
 }
 
-export function PostCard({ post, account, onChange, onReport, linkTitle = true, children }: {
+export function PostCard({ post, account, onChange, onReport, linkTitle = true, pinnedMark = false, children }: {
   post: PublicPost; account: Account | null; onChange: (post: PublicPost) => void; onReport?: (target: ReportTarget) => void;
-  linkTitle?: boolean; children?: React.ReactNode;
+  linkTitle?: boolean; pinnedMark?: boolean; children?: React.ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -96,6 +96,7 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
       <span>@{post.page_handle}</span>
       <time dateTime={when}>{time.format(new Date(when))}</time>
       {post.edited_at && <span>Edited</span>}
+      {pinnedMark && post.pinned && <span className={styles.badge}>Pinned</span>}
       {post.status === "draft" && <span className={`${styles.badge} ${styles.draftBadge}`}>Draft, only you can see it</span>}
     </div>
     {post.title && (linkTitle && post.status === "published"

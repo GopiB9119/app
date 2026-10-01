@@ -21,6 +21,7 @@ class PublicPage(Base):
         CheckConstraint(f"topic IN ({listed(TOPICS)})", name="ck_public_page_topic"),
         CheckConstraint("handle ~ '^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$'", name="ck_public_page_handle"),
         CheckConstraint("follower_count >= 0 AND version >= 1", name="ck_public_page_counts"),
+        CheckConstraint("char_length(rules) <= 2000", name="ck_public_page_rules"),
         UniqueConstraint("handle", name="uq_public_page_handle"),
         UniqueConstraint("owner_id", "creation_key", name="uq_public_page_creation"),
         Index("ix_public_page_owner", "owner_id"),
@@ -31,6 +32,7 @@ class PublicPage(Base):
     handle: Mapped[str] = mapped_column(String(30))
     name: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(Text)
+    rules: Mapped[str] = mapped_column(Text, default="", server_default="")
     topic: Mapped[str] = mapped_column(String(20))
     owner_id: Mapped[str] = mapped_column(ForeignKey(User.id))
     status: Mapped[str] = mapped_column(String(16))
@@ -68,6 +70,7 @@ class PublicPost(Base):
         UniqueConstraint("page_id", "author_id", "creation_key", name="uq_public_post_creation"),
         Index("ix_public_post_published", "status", "published_at", "id"),
         Index("ix_public_post_page", "page_id", "status", "published_at", "id"),
+        Index("ix_public_post_pinned", "page_id", "pinned_at", postgresql_where=text("pinned_at IS NOT NULL")),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -86,6 +89,8 @@ class PublicPost(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Only published posts count as pinned; a stale time on another state is ignored, never shown.
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     moderation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     moderation_decision_id: Mapped[str | None] = mapped_column(
         ForeignKey("moderation_decisions.id", name="fk_public_posts_moderation_decision"),

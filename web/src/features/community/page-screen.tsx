@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Flag, LoaderCircle, Pencil, Send, Trash2, UserCheck, UserPlus } from "lucide-react";
+import { Ban, Flag, LoaderCircle, Pencil, Pin, PinOff, Send, Trash2, UserCheck, UserPlus } from "lucide-react";
 
 import type { Account } from "@/features/identity/client";
 import { ApiError } from "@/features/identity/client";
 import {
-  TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, pagePosts, publishPost, readPage,
+  TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, pagePosts, pinPost, pinnedPosts, publishPost, readPage,
   textProblem, topicLabels, unblock, updatePage, updatePost,
 } from "./client";
 import type { CreateIntent, PublicPage, PublicPost, ReportTarget, Topic } from "./client";
@@ -37,6 +37,11 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
     initialPageParam: null as string | null, getNextPageParam: last => last.next,
     enabled: Boolean(current && !current.blocked), networkMode: "always",
   });
+  const pinned = useQuery({
+    queryKey: ["pinned-posts", current?.id, viewer?.id ?? null],
+    queryFn: ({ signal }) => pinnedPosts(current!, viewer?.id, signal),
+    enabled: Boolean(current && !current.blocked), networkMode: "always",
+  });
   const draftList = useQuery({
     queryKey: ["page-drafts", current?.id, viewer?.id ?? null],
     queryFn: ({ signal }) => drafts(viewer!.id, current!.id, signal),
@@ -46,12 +51,13 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
     queryKey: ["blocks", viewer?.id ?? null], queryFn: ({ signal }) => myBlocks(viewer!.id, signal),
     enabled: Boolean(viewer && current?.blocked), networkMode: "always",
   });
-  const problem = page.error ?? posts.error ?? draftList.error ?? blocks.error;
+  const problem = page.error ?? posts.error ?? pinned.error ?? draftList.error ?? blocks.error;
   useEffect(() => { if (sessionLost(problem)) window.location.reload(); }, [problem]);
   function refresh() {
     setUpdates({});
     void queryClient.invalidateQueries({ queryKey: ["public-page", reference] });
     void queryClient.invalidateQueries({ queryKey: ["page-posts"] });
+    void queryClient.invalidateQueries({ queryKey: ["pinned-posts"] });
     void queryClient.invalidateQueries({ queryKey: ["page-drafts"] });
     void queryClient.invalidateQueries({ queryKey: ["blocks"] });
   }
@@ -76,6 +82,9 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
   }
   const blockId = blocks.data?.find(item => item.page_id === current.id)?.id;
   const items = posts.data?.pages.flatMap(item => item.items) ?? [];
+  // Pinned posts also come in the date-ordered list; they show only once, at the top, while the pinned list loads.
+  const pinnedIds = new Set(pinned.data?.map(item => item.id) ?? []);
+  const shown = items.filter(item => !pinnedIds.has(item.id));
   return <CommunityFrame account={viewer} current={current.can_manage ? "pages" : null}>
     <header className={styles.pageHeader}>
       <h1>{current.name}</h1>
@@ -106,6 +115,10 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
       {!viewer && <p className={styles.meta}>Sign in to follow this page, like, save or comment.</p>}
       {current.can_manage && !editing && <div className={styles.actions}><button className="secondary-button" onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />Edit page</button></div>}
     </header>
+    {current.rules && <section className={styles.stack} aria-labelledby="rules-heading">
+      <h2 id="rules-heading">Rules</h2>
+      <p className={styles.body}>{current.rules}</p>
+    </section>}
     {error && <div className="message error" role="alert">{error}</div>}
     {current.can_manage && viewer && editing && <PageEditor account={viewer} page={current} onDone={() => { setEditing(false); refresh(); }} />}
     {current.can_manage && viewer && <Composer account={viewer} page={current} onCreated={refresh} />}
@@ -118,13 +131,23 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         <PostManager account={viewer} post={post} onChanged={refresh} />
       </PostCard>)}
     </section>}
+    {!current.blocked && pinned.isError && !sessionLost(pinned.error) && <Failure error={pinned.error} retry={() => pinned.refetch()} />}
+    {!current.blocked && pinned.data && pinned.data.length > 0 && <section className={styles.stack} aria-labelledby="pinned-heading">
+      <h2 id="pinned-heading">Pinned</h2>
+      {pinned.data.map(item => {
+        const post = updates[item.id] ?? item;
+        return <PostCard key={post.id} post={post} account={viewer} pinnedMark onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
+          {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
+        </PostCard>;
+      })}
+    </section>}
     <section className={styles.stack} aria-labelledby="posts-heading">
       <h2 id="posts-heading">Posts</h2>
       {current.blocked && <p className={styles.notice}>You blocked this page. Its posts are hidden from you.</p>}
       {posts.isPending && !current.blocked && <p role="status" aria-busy="true">Loading posts...</p>}
       {posts.isError && !sessionLost(posts.error) && <Failure error={posts.error} retry={() => posts.refetch()} />}
-      {!current.blocked && !posts.isPending && !posts.isError && items.length === 0 && <p className={styles.empty}>No published posts yet.</p>}
-      {items.map(item => {
+      {!current.blocked && !posts.isPending && !posts.isError && shown.length === 0 && !posts.hasNextPage && <p className={styles.empty}>{items.length === 0 ? "No published posts yet." : "No other posts."}</p>}
+      {shown.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
           {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
@@ -141,16 +164,18 @@ function PageEditor({ account, page: shown, onDone }: { account: Account; page: 
   const [page] = useState(shown);
   const [name, setName] = useState(page.name);
   const [description, setDescription] = useState(page.description);
+  const [rules, setRules] = useState(page.rules);
   const [topic, setTopic] = useState<Topic>(page.topic);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const invalid = textProblem(name, 80) ?? textProblem(description, 500, false);
+  const invalid = textProblem(name, 80) ?? textProblem(description, 500, false) ?? textProblem(rules, 2000, false);
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (invalid || busy) return;
-    const changes: Partial<Pick<PublicPage, "name" | "description" | "topic">> = {};
+    const changes: Partial<Pick<PublicPage, "name" | "description" | "topic" | "rules">> = {};
     if (name.trim() !== page.name) changes.name = name.trim();
     if (description.trim() !== page.description) changes.description = description.trim();
+    if (rules.replace(/\r\n/g, "\n").trim() !== page.rules) changes.rules = rules.replace(/\r\n/g, "\n").trim();
     if (topic !== page.topic) changes.topic = topic;
     if (Object.keys(changes).length === 0) { onDone(); return; }
     setBusy(true);
@@ -169,6 +194,8 @@ function PageEditor({ account, page: shown, onDone }: { account: Account; page: 
       {TOPICS.map(item => <option key={item} value={item}>{topicLabels[item]}</option>)}
     </select></label>
     <label>Description<textarea value={description} maxLength={1000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
+    <label>Rules (optional)<textarea value={rules} maxLength={4000} aria-describedby="page-rules-hint" onChange={event => setRules(event.target.value)} disabled={busy} /></label>
+    <p id="page-rules-hint" className={styles.meta}>Rules are shown on your page to everyone, up to 2,000 characters.</p>
     {invalid && <span className="field-error">{invalid}</span>}
     {error && <div className="message error" role="alert">{error}</div>}
     <div className={styles.actions}>
@@ -255,6 +282,9 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
     {mode === "idle" && <div className={styles.actions}>
       <button className="text-button" onClick={edit}><Pencil size={16} aria-hidden />Edit</button>
       {post.status === "draft" && <button className="text-button" onClick={() => setMode("publish")}><Send size={16} aria-hidden />Publish</button>}
+      {post.status === "published" && <button className="text-button" disabled={busy} onClick={() => void run(() => pinPost(account.id, post.id, !post.pinned))}>
+        {post.pinned ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />}{post.pinned ? "Unpin" : "Pin to top"}
+      </button>}
       <button className="text-button" onClick={() => setMode("delete")}><Trash2 size={16} aria-hidden />Delete</button>
     </div>}
     {mode === "edit" && <form className={styles.form} aria-label={`Edit ${label}`} onSubmit={event => {

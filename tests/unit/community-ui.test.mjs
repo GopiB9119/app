@@ -86,7 +86,17 @@ async function fixture(context) {
       if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       if (url.pathname === '/api/pages/garden-club' && method === 'GET') return reply(state.page);
       if (url.pathname === `/api/pages/${pageId}/posts` && method === 'GET') return reply([state.post], { pagination: { next_cursor: null, has_more: false } });
+      if (url.pathname === `/api/pages/${pageId}/pinned-posts` && method === 'GET') return reply(state.post.pinned ? [state.post] : []);
       if (url.pathname === `/api/pages/${pageId}/drafts` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/posts/${postId}/pin` && method === 'POST') {
+        if (state.pinLimit) return failed(409, 'PIN_LIMIT_REACHED', 'A page can pin up to 3 posts. Unpin one first.');
+        state.post.pinned = true;
+        return reply(state.post);
+      }
+      if (url.pathname === `/api/posts/${postId}/unpin` && method === 'POST') {
+        state.post.pinned = false;
+        return reply(state.post);
+      }
       if (url.pathname === `/api/pages/${pageId}` && method === 'PATCH') {
         if (headers['if-match'] !== state.page.etag) return failed(412, 'CONTENT_CHANGED', 'This page changed since you reviewed it. Reload to continue.');
         Object.assign(state.page, body, { etag: next(state.page.etag) });
@@ -185,6 +195,71 @@ test('post editor saves against the version it opened with, so a change made whi
     const stored = await page.evaluate(() => window.communityFixture.post);
     assert.equal(stored.body, 'Seeds arrive on Friday.', 'The newer text must not be reverted.');
     assert.equal(stored.title, 'Spring plants');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('page rules are saved against the reviewed version and then shown to everyone on the page', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    assert.equal(await page.getByRole('region', { name: 'Rules', exact: true }).count(), 0, 'A page without rules shows no Rules section.');
+    await page.getByRole('button', { name: 'Edit page', exact: true }).click();
+    const editor = page.getByRole('form', { name: 'Edit page' });
+    const rules = editor.getByRole('textbox', { name: 'Rules (optional)' });
+    assert.equal(await rules.getAttribute('aria-describedby'), 'page-rules-hint');
+    await rules.fill('x'.repeat(2001));
+    await editor.getByText('Use up to 2000 characters.', { exact: true }).waitFor();
+    assert.equal(await editor.getByRole('button', { name: 'Save page' }).isDisabled(), true);
+    await rules.fill('  Be kind.\nNo selling.  ');
+    await editor.getByRole('button', { name: 'Save page' }).click();
+
+    const sent = await saves(page);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].headers['if-match'], '"page-1"');
+    assert.deepEqual(sent[0].body, { rules: 'Be kind.\nNo selling.' }, 'Only the changed rules are sent, trimmed.');
+    await editor.waitFor({ state: 'detached' });
+    const shown = page.getByRole('region', { name: 'Rules', exact: true });
+    await shown.getByText('Be kind.\nNo selling.', { exact: true }).waitFor();
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('a pinned post shows once, marked, above the date list, and unpinning returns it there', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    const pinned = page.getByRole('region', { name: 'Pinned', exact: true });
+    const posts = page.getByRole('region', { name: 'Posts', exact: true });
+    assert.equal(await pinned.count(), 0);
+    await posts.getByRole('button', { name: 'Pin to top', exact: true }).click();
+    await pinned.getByText('Seeds are in.', { exact: true }).waitFor();
+    await pinned.getByRole('article', { name: 'Spring plants', exact: true }).getByText('Pinned', { exact: true }).waitFor();
+    await posts.getByText('No other posts.', { exact: true }).waitFor();
+    assert.equal(await page.getByText('Seeds are in.', { exact: true }).count(), 1, 'A pinned post is shown once.');
+
+    await changeElsewhereAndRefocus(page, () => { window.communityFixture.page.rules = `Be kind. ${'Share-what-you-grow-'.repeat(12)}`; }, 'Rules');
+    await page.evaluate(() => document.fonts.ready);
+    const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+    // Action rows share one style, so every button and link in them is checked, not only the new ones.
+    const shortTargets = () => page.evaluate(() => [...document.querySelectorAll('[class*="actions"] button, [class*="actions"] a')]
+      .filter(element => element.getClientRects().length > 0 && element.getBoundingClientRect().height < 44)
+      .map(element => element.textContent.trim()));
+    assert.equal(await fits(), true, 'rules and the pinned post at 320px');
+    assert.deepEqual(await shortTargets(), [], 'action buttons and links are at least 44px tall');
+    const normalSize = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+    await page.evaluate(size => { document.documentElement.style.fontSize = `${size * 2}px`; }, normalSize);
+    assert.equal(await fits(), true, 'rules and the pinned post at 320px and 200% text');
+    assert.deepEqual(await shortTargets(), [], 'action buttons and links are at least 44px tall at 200% text');
+
+    await pinned.getByRole('button', { name: 'Unpin', exact: true }).click();
+    await pinned.waitFor({ state: 'detached' });
+    await posts.getByText('Seeds are in.', { exact: true }).waitFor();
+    await page.evaluate(() => { window.communityFixture.pinLimit = true; });
+    await posts.getByRole('button', { name: 'Pin to top', exact: true }).click();
+    await posts.getByRole('alert').filter({ hasText: 'A page can pin up to 3 posts. Unpin one first.' }).waitFor();
+    const commands = await page.evaluate(() => window.communityFixture.calls.filter(call => call.method === 'POST').map(call => [call.route, call.body]));
+    assert.deepEqual(commands, [[`/api/posts/${postId}/pin`, {}], [`/api/posts/${postId}/unpin`, {}], [`/api/posts/${postId}/pin`, {}]]);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

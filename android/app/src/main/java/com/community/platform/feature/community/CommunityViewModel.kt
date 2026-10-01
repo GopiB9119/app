@@ -42,6 +42,8 @@ data class CommunityState(
     val searchPosts: Boolean = false,
     val page: PageDto? = null,
     val drafts: List<PostDto> = emptyList(),
+    /** The shown page's pinned posts, latest pin first. They also come in [posts], the date-ordered list; the screen shows each once. */
+    val pinned: List<PostDto> = emptyList(),
     val post: PostDto? = null,
     val editingPostId: String? = null,
     /** The post as it was when Edit was chosen: Save sends its version tag and only the fields that differ from it, never a version refreshed since. */
@@ -72,6 +74,7 @@ data class CommunityState(
 enum class ListStatus { LOADING, LOADED, FAILED }
 
 const val PAGE_EDIT_INVALID = "Use a name of 1 to 80 characters and a description of up to 500."
+const val PAGE_RULES_INVALID = "Use rules of up to 2,000 characters."
 const val PAGE_EDIT_CONFLICT = "This page changed since you opened the editor. Close it and reload before editing again."
 const val PAGE_EDIT_SAVED = "Page saved."
 
@@ -192,9 +195,10 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                         val page = if (more) current.page ?: return@launch else repository.page(account, destination.reference)
                         val posts = if (page.blocked) CommunityPage(emptyList(), null) else repository.pagePosts(account, page.id, cursor)
                         val drafts = if (page.canManage && !more) repository.drafts(account, page.id) else current.drafts
+                        val pinned = when { page.blocked -> emptyList(); more -> current.pinned; else -> repository.pinnedPosts(account, page.id) }
                         val blocks = if (page.blocked) repository.blocks(account) else emptyList()
                         apply(expected, destination) {
-                            it.copy(page = page, drafts = drafts, blocks = blocks, nextCursor = posts.nextCursor,
+                            it.copy(page = page, drafts = drafts, pinned = pinned, blocks = blocks, nextCursor = posts.nextCursor,
                                 posts = if (more) (it.posts + posts.items).distinctBy(PostDto::id) else posts.items)
                         }
                     }
@@ -265,7 +269,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     }
 
     private fun replacePost(post: PostDto) = mutableState.update { state ->
-        state.copy(posts = state.posts.map { if (it.id == post.id) post else it }, post = if (state.post?.id == post.id) post else state.post)
+        state.copy(posts = state.posts.map { if (it.id == post.id) post else it }, pinned = state.pinned.map { if (it.id == post.id) post else it },
+            post = if (state.post?.id == post.id) post else state.post)
     }
 
     private fun replacePage(page: PageDto) = mutableState.update { state ->
@@ -287,6 +292,11 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     fun retryFollowing() = reload(more = mutableState.value.followedStatus == ListStatus.LOADED && mutableState.value.followedNextCursor != null)
     fun like(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
     fun save(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
+    /** Pins a published post to the top of the shown page, or unpins it, then reloads the page so the pinned list is the server's. */
+    fun pin(post: PostDto) {
+        if (!post.canManage || post.status != "published") return
+        command(subject = post.id) { replacePost(repository.pin(it, post.id, !post.pinned)); reloadAfterCommand() }
+    }
 
     fun createPage(handle: String, name: String, topic: String, description: String): Boolean {
         val account = mutableState.value.accountId ?: return false
@@ -384,6 +394,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
             mutableState.update { state ->
                 state.copy(
                     posts = state.posts.map { if (it.id == saved.id) saved else it }, drafts = state.drafts.map { if (it.id == saved.id) saved else it },
+                    pinned = state.pinned.map { if (it.id == saved.id) saved else it },
                     post = if (state.post?.id == saved.id) saved else state.post, editingPostId = null, editingPost = null,
                 )
             }
@@ -403,21 +414,30 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         if (current.pageEditFailed) reload()
     }
 
-    /** Sends only the fields that differ from the version the editor opened with, against that version, and keeps the editor open until the server confirms. */
-    fun editPage(name: String, description: String, topic: String): Boolean {
+    /**
+     * Sends only the fields that differ from the version the editor opened with, against that version, and keeps the editor open until the server confirms.
+     * [rules] null leaves the rules as they are; an empty text removes them.
+     */
+    fun editPage(name: String, description: String, topic: String, rules: String? = null): Boolean {
         val current = mutableState.value
         val opened = current.editingPage ?: return false
         if (current.working || current.accountId == null || current.destination !is Destination.Page) return false
         val title = name.replace(Regex("[\\s\\p{Z}\\u0085\\u001C-\\u001F]+"), " ").trim()
         val text = description.replace("\r\n", "\n").trim()
+        val ruleText = rules?.replace("\r\n", "\n")?.trim()
         if (title.isEmpty() || title.codePointLength() > 80 || text.codePointLength() > 500 || topic !in TOPICS) {
             mutableState.update { it.copy(error = PAGE_EDIT_INVALID) }
+            return false
+        }
+        if ((ruleText?.codePointLength() ?: 0) > PAGE_RULES_LIMIT) {
+            mutableState.update { it.copy(error = PAGE_RULES_INVALID) }
             return false
         }
         val changes = buildMap {
             if (title != opened.name) put("name", title)
             if (text != opened.description) put("description", text)
             if (topic != opened.topic) put("topic", topic)
+            if (ruleText != null && ruleText != opened.rules.orEmpty()) put("rules", ruleText)
         }
         if (changes.isEmpty()) { cancelPageEdit(); return true }
         val expected = generation

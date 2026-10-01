@@ -22,11 +22,18 @@ val TOPICS = listOf("community", "education", "health", "local", "family", "even
 val REPORT_REASONS = listOf("spam", "harassment", "hate", "violence", "sexual", "misinformation", "self_harm", "privacy", "other")
 val HANDLE_PATTERN = Regex("[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]")
 
+/** A page shows at most three pinned posts (DEC-025). */
+const val MAX_PINNED_POSTS = 3
+
+/** The server counts the 2,000 characters of page rules as code points (Python `len`). */
+const val PAGE_RULES_LIMIT = 2000
+
+/** [rules] is null only from a server that does not send rules; the screens treat that as no rules. */
 data class PageDto(
     val id: String, val handle: String, val name: String, val description: String, val topic: String,
     @SerializedName("follower_count") val followerCount: Int, @SerializedName("created_at") val createdAt: String,
     @SerializedName("updated_at") val updatedAt: String, val following: Boolean, val blocked: Boolean,
-    @SerializedName("can_manage") val canManage: Boolean, val etag: String?,
+    @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val rules: String? = null,
 )
 
 data class PostDto(
@@ -35,7 +42,7 @@ data class PostDto(
     @SerializedName("like_count") val likeCount: Int, @SerializedName("comment_count") val commentCount: Int,
     @SerializedName("created_at") val createdAt: String, @SerializedName("published_at") val publishedAt: String?,
     @SerializedName("edited_at") val editedAt: String?, val liked: Boolean, val saved: Boolean,
-    @SerializedName("can_manage") val canManage: Boolean, val etag: String?,
+    @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val pinned: Boolean = false,
 )
 
 data class CommentDto(
@@ -81,6 +88,7 @@ interface CommunityApi {
     @GET("v1/pages/{ref}") suspend fun page(@Header("Authorization") authorization: String, @Path("ref") reference: String): Response<EnvelopeDto<PageDto>>
     @PATCH("v1/pages/{id}") suspend fun updatePage(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<PageDto>>
     @GET("v1/pages/{ref}/posts") suspend fun pagePosts(@Header("Authorization") authorization: String, @Path("ref") reference: String, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 20): Response<EnvelopeDto<List<PostDto>>>
+    @GET("v1/pages/{ref}/pinned-posts") suspend fun pinnedPosts(@Header("Authorization") authorization: String, @Path("ref") reference: String): Response<EnvelopeDto<List<PostDto>>>
     @GET("v1/pages/{id}/drafts") suspend fun drafts(@Header("Authorization") authorization: String, @Path("id") pageId: String): Response<EnvelopeDto<List<PostDto>>>
     @POST("v1/pages") suspend fun createPage(@Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Body body: CreatePageDto): Response<EnvelopeDto<PageDto>>
     @POST("v1/pages/{id}/{action}") suspend fun follow(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PageDto>>
@@ -90,6 +98,7 @@ interface CommunityApi {
     @POST("v1/posts/{id}/publish") suspend fun publish(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
     @POST("v1/posts/{id}/delete") suspend fun deletePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<OutcomeDto>>
     @POST("v1/posts/{id}/{action}") suspend fun react(@Header("Authorization") authorization: String, @Path("id") postId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
+    @POST("v1/posts/{id}/{action}") suspend fun pin(@Header("Authorization") authorization: String, @Path("id") postId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
     @GET("v1/posts/{id}/comments") suspend fun comments(@Header("Authorization") authorization: String, @Path("id") postId: String, @Query("cursor") cursor: String?, @Query("limit") limit: Int = 50): Response<EnvelopeDto<List<CommentDto>>>
     @POST("v1/posts/{id}/comments") suspend fun comment(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("Idempotency-Key") key: String, @Body body: CreateCommentDto): Response<EnvelopeDto<CommentDto>>
     @POST("v1/comments/{id}/delete") suspend fun endComment(@Header("Authorization") authorization: String, @Path("id") commentId: String, @Body body: Map<String, String>): Response<EnvelopeDto<CommentDto>>
@@ -115,7 +124,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     fun page(value: PageDto): PageDto = validate {
         identifier(value.id)
         require(value.handle.matches(Regex("[a-z0-9][a-z0-9-]{1,28}[a-z0-9]")) && value.topic in TOPICS && value.followerCount >= 0)
-        text(value.name, 80); text(value.description, 500, empty = true)
+        text(value.name, 80); text(value.description, 500, empty = true); value.rules?.let { text(it, PAGE_RULES_LIMIT, empty = true) }
         require(value.canManage == (value.etag != null) && !(value.following && value.blocked))
         Instant.parse(value.createdAt); Instant.parse(value.updatedAt)
         value
@@ -127,6 +136,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         require(value.status == "draft" || value.status == "published")
         require((value.status == "published") == (value.publishedAt != null) && (value.editedAt == null || value.status == "published"))
         require(value.canManage == (value.etag != null) && (value.status == "published" || value.canManage))
+        require(!value.pinned || value.status == "published")
         require(value.likeCount >= 0 && value.commentCount >= 0)
         Instant.parse(value.createdAt); value.publishedAt?.let(Instant::parse); value.editedAt?.let(Instant::parse)
         value
@@ -183,6 +193,18 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     suspend fun pagePosts(accountId: String, pageId: String, cursor: String?) = accounts.authorized(accountId) {
         paged(api.pagePosts(it, pageId, cursor), cursor, PostDto::id) { item -> published(item).also { post -> if (post.pageId != pageId) invalid() } }
     }
+    /** The page's pinned posts, latest pin first. Each also stays in the page's date-ordered list. */
+    suspend fun pinnedPosts(accountId: String, pageId: String): List<PostDto> = accounts.authorized(accountId) {
+        accounts.result(api.pinnedPosts(it, pageId)).map(::published).also { posts ->
+            if (posts.size > MAX_PINNED_POSTS || posts.map(PostDto::id).distinct().size != posts.size || posts.any { post -> !post.pinned || post.pageId != pageId }) invalid()
+        }
+    }
+    /** Pins a published post to the top of its page, or unpins it; shown as done only when the server confirms it. */
+    suspend fun pin(accountId: String, postId: String, pin: Boolean): PostDto = accounts.authorized(accountId) {
+        post(accounts.result(api.pin(it, postId, if (pin) "pin" else "unpin", emptyMap()))).also { post ->
+            if (post.id != postId || post.pinned != pin) invalid("The change could not be confirmed.")
+        }
+    }
     suspend fun drafts(accountId: String, pageId: String): List<PostDto> = accounts.authorized(accountId) {
         accounts.result(api.drafts(it, pageId)).map(::post).also { posts -> if (posts.any { post -> post.status != "draft" || post.pageId != pageId }) invalid() }
     }
@@ -200,7 +222,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     /** Sends only the changed fields, against the version tag of the page as the editor opened it. */
     suspend fun updatePage(accountId: String, opened: PageDto, changes: Map<String, String>): PageDto = accounts.authorized(accountId) {
         if (!opened.canManage || opened.etag == null || changes.isEmpty()) invalid()
-        require(changes.isNotEmpty() && setOf("name", "description", "topic").containsAll(changes.keys) && (changes["topic"] ?: TOPICS.first()) in TOPICS)
+        require(changes.isNotEmpty() && setOf("name", "description", "topic", "rules").containsAll(changes.keys) && (changes["topic"] ?: TOPICS.first()) in TOPICS)
         page(accounts.result(api.updatePage(it, opened.id, opened.etag ?: invalid(), changes))).also { result ->
             if (result.id != opened.id || result.handle != opened.handle || !result.canManage) invalid("The page change could not be confirmed.")
         }

@@ -513,22 +513,22 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Public communities exist (R3). **CONFLICTING** whether a public community is a Page or a Space (D1; conflict C1). DEC-011 keeps Pages as the public content model; a public group Space is findable but its content stays members-only. |
 | Owner | Module `community`; the page owner. |
 | Scope | Public. |
-| Lifecycle | Built: created as `active` and edited by its owner. No route archives, transfers or deletes a page; those rules are **TBD** (U-10; C2-D02 and C2-D06, both PROPOSED). |
+| Lifecycle | Built: created as `active` and edited by its owner, including its rules since T83 ([DEC-025](DECISIONS.md#accepted-decisions), provisional). No route archives, transfers or deletes a page. DEC-025 decides them provisionally (handing over to a moderator, archive, delete with 7 days to restore) as T84 and T85, not built yet; until then they are **TBD** (U-10; C2-D02 and C2-D06, both PROPOSED). |
 | States | Built: `status IN ('active','archived')`; only `active` is reachable. |
 | Relationships | Owner (a User); Posts; Follows; the Blocks and Reports that target it. |
 | Permissions | Built: any signed-in account creates up to 5 pages; only the owner edits; anyone, signed out too, reads active pages, except people who blocked the page. Page roles are **PROPOSED** (C2-D01 PROPOSED). |
 | Privacy classification | Public (C11-C01). Built: public responses do not include account IDs. |
 | Events | `public.page_created`, `public.page_updated`. |
-| Commands | Create; edit. |
-| Queries | Read a page; list my pages; discover pages by name, handle, description and topic. |
-| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed). |
+| Commands | Create; edit (name, description, topic and rules). |
+| Queries | Read a page, with its rules; list my pages; discover pages by name, handle, description and topic. |
+| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match; a body of up to 64 KiB since T83, as for posts), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed). |
 | Persistence | `public_pages`. |
 | Retention | Built: kept. **TBD** (U-10). |
 | Audit requirements | Built: `community_audit_events` plus outbox. |
 | Agent access | **TBD** (D4). **PROPOSED** a page agent answers only from approved public page material (Chapter 2 contract). |
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
-| Validation rules | Built: handle 3–30 lowercase letters, digits and inner hyphens, unique and not reserved; name 1–80 characters on one line; description up to 500 characters; topic one of `community`, `education`, `health`, `local`, `family`, `events`, `hobbies`, `support`, `news`, `other`. |
+| Validation rules | Built: handle 3–30 lowercase letters, digits and inner hyphens, unique and not reserved; name 1–80 characters on one line; description up to 500 characters; rules up to 2,000 characters on several lines, public and empty by default (T83); topic one of `community`, `education`, `health`, `local`, `family`, `events`, `hobbies`, `support`, `news`, `other`. |
 | Invariants | Built: handles are unique; `follower_count >= 0`; `version >= 1`; one creation per owner and request key. |
 | Failure modes | Built: 409 HANDLE_TAKEN, 409 PAGE_LIMIT_REACHED, 403 PAGE_MANAGER_REQUIRED, 412 CONTENT_CHANGED. Since 2026-10-01 a change that waits for a lock checks the session again before saving (T04). |
 | Dependencies | User; D1. |
@@ -541,15 +541,15 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Posts are part of the public side (R4). |
 | Owner | Module `community`; written by the page owner. |
 | Scope | Public once published; drafts are private to the page owner. |
-| Lifecycle | Built: draft, then published, then deleted; drafts can also be deleted; published posts can be edited (`edited_at`). Review before publication and revision history are **TBD** (U-10; C2-D04 PROPOSED; C2-D05 OPEN). |
+| Lifecycle | Built: draft, then published, then deleted; drafts can also be deleted; published posts can be edited (`edited_at`). Since T83 the page owner can pin a published post to the top of its page (`pinned_at`) and unpin it; pinning changes neither the post nor its version tag, and deleting a post unpins it. Review before publication and revision history are **TBD** (U-10; C2-D04 PROPOSED; C2-D05 OPEN). |
 | States | Built: `draft, published, deleted`. |
 | Relationships | Page; author; Comments; Reactions and Saves; Reports. |
-| Permissions | Built: the page owner drafts, edits, publishes and deletes; anyone, signed out too, reads published posts, except from pages they blocked. |
+| Permissions | Built: the page owner drafts, edits, publishes, deletes, pins and unpins; anyone, signed out too, reads published posts, except from pages they blocked. |
 | Privacy classification | Drafts Private (C11-C03); published posts Public (C11-C01). |
-| Events | `public.post_drafted`, `public.post_published`, `public.post_edited`, `public.post_deleted`. |
-| Commands | Draft; edit; publish; delete. |
-| Queries | Read a post; a page's published posts; the page owner's drafts; Latest; search of published posts by their words (`q` on Latest); the Following feed; Saved. |
-| APIs | `POST /v1/pages/{page_ref}/posts` (Idempotency-Key), `GET /v1/pages/{page_id}/drafts`, `PATCH /v1/posts/{post_id}` (If-Match), `POST /v1/posts/{post_id}/publish` (If-Match), `POST /v1/posts/{post_id}/delete` (If-Match), `GET /v1/posts/{post_id}`, `GET /v1/pages/{page_ref}/posts`, `GET /v1/discover/posts`, `GET /v1/feed`, `GET /v1/me/saved-posts`. |
+| Events | `public.post_drafted`, `public.post_published`, `public.post_edited`, `public.post_deleted`, `public.post_pinned`, `public.post_unpinned`. |
+| Commands | Draft; edit; publish; delete; pin; unpin. |
+| Queries | Read a post; a page's published posts, pinned ones included; a page's pinned posts (at most 3, latest pin first); the page owner's drafts; Latest; search of published posts by their words (`q` on Latest); the Following feed; Saved. |
+| APIs | `POST /v1/pages/{page_ref}/posts` (Idempotency-Key), `GET /v1/pages/{page_id}/drafts`, `PATCH /v1/posts/{post_id}` (If-Match), `POST /v1/posts/{post_id}/publish` (If-Match), `POST /v1/posts/{post_id}/delete` (If-Match), `POST /v1/posts/{post_id}/pin`, `POST /v1/posts/{post_id}/unpin`, `GET /v1/posts/{post_id}`, `GET /v1/pages/{page_ref}/posts`, `GET /v1/pages/{page_ref}/pinned-posts` (signed out allowed), `GET /v1/discover/posts`, `GET /v1/feed`, `GET /v1/me/saved-posts`. |
 | Persistence | `public_posts`. |
 | Retention | Built: a deleted post keeps a tombstone with its title and body removed; nothing is hard-deleted. **TBD** (U-10). |
 | Audit requirements | Built: `community_audit_events` plus outbox. |
@@ -557,8 +557,8 @@ Permission rules as built:
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
 | Validation rules | Built: optional title up to 120 characters on one line; body 1–5,000 characters; at most 50 drafts and 2,000 posts per page. Images and video are **PROPOSED** (C2-D10 PROPOSED) and not built. |
-| Invariants | Built: drafts and published posts have a body and no deletion time; deleted posts have neither title nor body; counts are never negative. |
-| Failure modes | Built: 409 DRAFT_LIMIT_REACHED, 409 POST_LIMIT_REACHED, 412 CONTENT_CHANGED, 428 PRECONDITION_REQUIRED. The Android limit that refused valid pages of posts larger than 64 KiB was fixed on 2026-10-01 (T06). |
+| Invariants | Built: drafts and published posts have a body and no deletion time; deleted posts have neither title nor body; counts are never negative; only a published post counts as pinned, and a page has at most 3 pinned posts, counted under a lock on the page. |
+| Failure modes | Built: 409 DRAFT_LIMIT_REACHED, 409 POST_LIMIT_REACHED, 409 NOT_PUBLISHED, 409 POST_HIDDEN (a moderator hid it), 409 PIN_LIMIT_REACHED, 412 CONTENT_CHANGED, 428 PRECONDITION_REQUIRED. The Android limit that refused valid pages of posts larger than 64 KiB was fixed on 2026-10-01 (T06). |
 | Dependencies | Page. |
 
 ### 17. Comment

@@ -102,6 +102,16 @@ def delete_post(request: Request, post_id: UUID, body: EmptyAction, if_match: st
     return envelope(request, service(request).delete_post(token(request), str(post_id), if_match))
 
 
+@router.post("/posts/{post_id}/pin", response_model=Envelope[PostView])
+def pin_post(request: Request, post_id: UUID, body: EmptyAction):
+    return envelope(request, service(request).pin_post(token(request), str(post_id), True))
+
+
+@router.post("/posts/{post_id}/unpin", response_model=Envelope[PostView])
+def unpin_post(request: Request, post_id: UUID, body: EmptyAction):
+    return envelope(request, service(request).pin_post(token(request), str(post_id), False))
+
+
 @router.post("/posts/{post_id}/like", response_model=Envelope[PostView])
 def like(request: Request, post_id: UUID, body: EmptyAction):
     return envelope(request, service(request).like(token(request), str(post_id), True))
@@ -170,6 +180,11 @@ def read_page(request: Request, page_ref: PageReference):
 @public_router.get("/pages/{page_ref}/posts", response_model=PostList, openapi_extra=optional_session)
 def page_posts(request: Request, page_ref: PageReference, limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)):
     return listed(request, *service(request).page_posts(token(request), page_ref, limit, cursor))
+
+
+@public_router.get("/pages/{page_ref}/pinned-posts", response_model=Envelope[list[PostView]], openapi_extra=optional_session)
+def pinned_posts(request: Request, page_ref: PageReference):
+    return envelope(request, service(request).pinned_posts(token(request), page_ref))
 
 
 @public_router.get("/posts/{post_id}", response_model=Envelope[PostView], openapi_extra=optional_session)

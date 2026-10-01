@@ -81,8 +81,9 @@ data class CommunityActions(
     val searchFor: (Boolean) -> Unit = {},
     val startEdit: (PostDto) -> Unit = {}, val cancelEdit: () -> Unit = {}, val editPost: (PostDto, String, String) -> Boolean = { _, _, _ -> false },
     val unfollow: (PageDto) -> Unit = {}, val startPageEdit: (PageDto) -> Unit = {}, val cancelPageEdit: () -> Unit = {},
-    val editPage: (String, String, String) -> Boolean = { _, _, _ -> false },
+    val editPage: (String, String, String, String?) -> Boolean = { _, _, _, _ -> false },
     val retryFollowing: () -> Unit = reload,
+    val pin: (PostDto) -> Unit = {},
 )
 
 private data class Confirmation(val title: String, val text: String, val confirm: String, val action: () -> Unit)
@@ -99,7 +100,7 @@ fun CommunityRoute(viewModel: CommunityViewModel, accountId: String, timezone: S
         viewModel::report, viewModel::blockPage, viewModel::blockAuthor, viewModel::unblock, viewModel::searchFor,
         viewModel::startEdit, viewModel::cancelEdit, viewModel::editPost,
         viewModel::unfollow, viewModel::startPageEdit, viewModel::cancelPageEdit, viewModel::editPage,
-        viewModel::retryFollowing,
+        viewModel::retryFollowing, viewModel::pin,
     ), timezone, onBack)
 }
 
@@ -189,6 +190,7 @@ private fun DateTimeFormatter.show(value: String?) = value?.let { try { format(I
 @Composable
 private fun pageMessage(value: String): String = when (value) {
     PAGE_EDIT_INVALID -> stringResource(R.string.community_page_edit_invalid)
+    PAGE_RULES_INVALID -> stringResource(R.string.community_page_rules_invalid)
     PAGE_EDIT_CONFLICT -> stringResource(R.string.community_page_edit_conflict)
     PAGE_EDIT_SAVED -> stringResource(R.string.community_page_saved)
     else -> value
@@ -255,10 +257,10 @@ private fun PageItem(page: PageDto, state: CommunityState, actions: CommunityAct
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PostItem(post: PostDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, report: (ReportTarget) -> Unit, open: Boolean = true) {
+private fun PostItem(post: PostDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, report: (ReportTarget) -> Unit, open: Boolean = true, pinnedMark: Boolean = false) {
     Column(Modifier.fillMaxWidth().testTag("post-${post.id}"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("${post.pageName} / @${post.pageHandle}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clickable(role = Role.Button, enabled = !state.working) { actions.open(Destination.Page(post.pageHandle)) })
-        Text(listOfNotNull(time.show(post.publishedAt ?: post.createdAt), post.editedAt?.let { stringResource(R.string.community_edited) }, if (post.status == "draft") stringResource(R.string.community_draft) else null).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
+        Text(listOfNotNull(time.show(post.publishedAt ?: post.createdAt), post.editedAt?.let { stringResource(R.string.community_edited) }, if (pinnedMark && post.pinned) stringResource(R.string.community_pinned) else null, if (post.status == "draft") stringResource(R.string.community_draft) else null).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
         post.title?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
         Text(post.body, style = MaterialTheme.typography.bodyLarge)
         if (post.status == "published") FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -302,6 +304,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
             HorizontalDivider()
         }
     }
+    page.rules?.takeIf { it.isNotEmpty() }?.let { rules ->
+        item("rules") {
+            Column(Modifier.testTag("page-rules"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                Text(stringResource(R.string.community_rules), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                Text(rules)
+            }
+        }
+    }
     if (page.canManage) {
         state.editingPage?.takeIf { it.id == page.id }?.let { opened -> item("page-editor") { PageEditor(opened, state, actions) } }
         item("composer") { Composer(state, actions) }
@@ -314,9 +324,23 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
             }
         }
     }
+    // Pinned posts also come in the date-ordered list; they show only once, in their own section above it.
+    val pinnedIds = state.pinned.map(PostDto::id).toSet()
+    val shown = state.posts.filterNot { it.id in pinnedIds }
+    if (!page.blocked && state.pinned.isNotEmpty()) {
+        item("pinned-heading") { Text(stringResource(R.string.community_pinned), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }.testTag("pinned-heading")) }
+        items(state.pinned, key = { "pinned-${it.id}" }) { post ->
+            Column(Modifier.testTag("pinned-${post.id}")) {
+                PostItem(post, state, actions, time, report, pinnedMark = true)
+                if (post.canManage) { if (state.editingPostId == post.id) PostEditor(post, state, actions) else ManagerActions(post, state, actions, ask) }
+            }
+        }
+    }
     item("posts-heading") { Text(stringResource(R.string.community_posts), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
-    if (!state.loading && !page.blocked && state.posts.isEmpty()) item("no-posts") { Text(stringResource(R.string.community_no_posts)) }
-    items(state.posts, key = { it.id }) { post ->
+    if (!state.loading && !page.blocked && shown.isEmpty() && state.nextCursor == null) item("no-posts") {
+        Text(stringResource(if (state.posts.isEmpty()) R.string.community_no_posts else R.string.community_no_other_posts), modifier = Modifier.testTag("page-no-posts"))
+    }
+    items(shown, key = { it.id }) { post ->
         Column {
             PostItem(post, state, actions, time, report)
             if (post.canManage) { if (state.editingPostId == post.id) PostEditor(post, state, actions) else ManagerActions(post, state, actions, ask) }
@@ -334,6 +358,9 @@ private fun ManagerActions(post: PostDto, state: CommunityState, actions: Commun
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (post.status == "draft") Button(onClick = { ask(Confirmation(publishTitle, publishText, publishTitle) { actions.publish(post) }) }, enabled = !state.working, modifier = Modifier.testTag("publish-${post.id}")) { Text(publishTitle) }
         TextButton(onClick = { actions.startEdit(post) }, enabled = !state.working, modifier = Modifier.testTag("edit-${post.id}")) { Text(stringResource(R.string.community_edit_post)) }
+        if (post.status == "published") TextButton(onClick = { actions.pin(post) }, enabled = !state.working, modifier = Modifier.testTag("pin-${post.id}")) {
+            Text(stringResource(if (post.pinned) R.string.community_unpin else R.string.community_pin))
+        }
         TextButton(onClick = { ask(Confirmation(deleteTitle, deleteText, deleteTitle) { actions.deletePost(post) }) }, enabled = !state.working, modifier = Modifier.testTag("delete-${post.id}")) { Text(deleteTitle) }
     }
 }
@@ -361,6 +388,7 @@ private fun PageEditor(opened: PageDto, state: CommunityState, actions: Communit
     var name by rememberSaveable(opened.id, opened.etag, state.pageEditSession) { mutableStateOf(opened.name) }
     var description by rememberSaveable(opened.id, opened.etag, state.pageEditSession) { mutableStateOf(opened.description) }
     var topic by rememberSaveable(opened.id, opened.etag, state.pageEditSession) { mutableStateOf(opened.topic) }
+    var rules by rememberSaveable(opened.id, opened.etag, state.pageEditSession) { mutableStateOf(opened.rules.orEmpty()) }
     Column(Modifier.testTag("page-editor"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
         Text(stringResource(R.string.community_edit_page), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
         OutlinedTextField(value = name, onValueChange = { name = it.takeCodePoints(160) }, label = { Text(stringResource(R.string.community_edit_name)) }, enabled = !state.working, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("page-edit-name"))
@@ -370,8 +398,10 @@ private fun PageEditor(opened: PageDto, state: CommunityState, actions: Communit
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-edit-topic-$value"), label = { Text(value.replaceFirstChar(Char::uppercase)) }) }
         }
         OutlinedTextField(value = description, onValueChange = { description = it.takeCodePoints(1000) }, label = { Text(stringResource(R.string.community_edit_description)) }, enabled = !state.working, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("page-edit-description"))
+        OutlinedTextField(value = rules, onValueChange = { rules = it.takeCodePoints(4000) }, label = { Text(stringResource(R.string.community_edit_rules)) },
+            supportingText = { Text(stringResource(R.string.community_edit_rules_note)) }, enabled = !state.working, minLines = 3, maxLines = 8, modifier = Modifier.fillMaxWidth().testTag("page-edit-rules"))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
-            Button(onClick = { actions.editPage(name, description, topic) }, enabled = !state.working,
+            Button(onClick = { actions.editPage(name, description, topic, rules) }, enabled = !state.working,
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-edit-save")) { Text(stringResource(R.string.community_save_page)) }
             TextButton(onClick = actions.cancelPageEdit, enabled = !state.working,
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-edit-cancel")) { Text(stringResource(R.string.community_close_editor)) }

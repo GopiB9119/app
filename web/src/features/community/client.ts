@@ -22,7 +22,7 @@ const chars = (min: number, max: number) => z.string().refine(value => { const l
 
 export const pageSchema = z.object({
   id: uuid, handle: z.string().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/), name: chars(1, 80),
-  description: chars(0, 500), topic: z.enum(TOPICS), follower_count: z.number().int().nonnegative(),
+  description: chars(0, 500), rules: chars(0, 2000).default(""), topic: z.enum(TOPICS), follower_count: z.number().int().nonnegative(),
   created_at: timestamp, updated_at: timestamp, following: z.boolean(), blocked: z.boolean(), can_manage: z.boolean(),
   etag: etag.nullable(),
 }).refine(value => value.can_manage === (value.etag !== null) && !(value.following && value.blocked));
@@ -33,10 +33,10 @@ export const postSchema = z.object({
   title: chars(1, 120).nullable(), body: chars(1, 5000), status: z.enum(["draft", "published"]),
   like_count: z.number().int().nonnegative(), comment_count: z.number().int().nonnegative(),
   created_at: timestamp, published_at: timestamp.nullable(), edited_at: timestamp.nullable(),
-  liked: z.boolean(), saved: z.boolean(), can_manage: z.boolean(), etag: etag.nullable(),
+  liked: z.boolean(), saved: z.boolean(), pinned: z.boolean().default(false), can_manage: z.boolean(), etag: etag.nullable(),
 }).refine(value => (value.status === "published") === (value.published_at !== null)
   && value.can_manage === (value.etag !== null) && (value.status === "published" || value.can_manage)
-  && (value.edited_at === null || value.status === "published"));
+  && (value.edited_at === null || value.status === "published") && (!value.pinned || value.status === "published"));
 export type PublicPost = z.infer<typeof postSchema>;
 
 export const commentSchema = z.object({
@@ -113,7 +113,7 @@ export async function createPage(intent: CreateIntent<{ handle: string; name: st
   return result;
 }
 
-export async function updatePage(accountId: string, page: PublicPage, changes: Partial<Pick<PublicPage, "name" | "description" | "topic">>) {
+export async function updatePage(accountId: string, page: PublicPage, changes: Partial<Pick<PublicPage, "name" | "description" | "topic" | "rules">>) {
   if (!page.etag) invalid();
   return checkPage((await api(`pages/${page.id}`, pageSchema, { method: "PATCH", accountId, body: changes, headers: { "If-Match": page.etag } })).data, page.id);
 }
@@ -172,6 +172,20 @@ export async function reactToPost(accountId: string, postId: string, action: "li
   if ((action === "like" && !result.liked) || (action === "unlike" && result.liked) || (action === "save" && !result.saved) || (action === "unsave" && result.saved)) {
     invalid("The change could not be confirmed.");
   }
+  return result;
+}
+
+export const MAX_PINNED_POSTS = 3;
+
+export async function pinnedPosts(page: PublicPage, accountId?: string, signal?: AbortSignal) {
+  const result = unique((await api(`pages/${page.id}/pinned-posts`, z.array(postSchema).max(MAX_PINNED_POSTS), { accountId, signal })).data);
+  if (result.some(item => !item.pinned || item.page_id !== page.id)) invalid();
+  return result;
+}
+
+export async function pinPost(accountId: string, postId: string, pin: boolean) {
+  const result = checkPost((await api(`posts/${postId}/${pin ? "pin" : "unpin"}`, postSchema, { method: "POST", accountId, body: {} })).data, postId);
+  if (result.pinned !== pin) invalid("The change could not be confirmed.");
   return result;
 }
 

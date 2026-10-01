@@ -218,7 +218,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 **Android**
 
 - **A3.** There is no `FLAG_SECURE`; the policy is still open (C8-D05).
-- **A10.** Every API call holds one app-wide lock.
+- **A10.** Every API call holds one app-wide lock. [T82](TASKS.md#defects-that-break-approved-requirements) confirmed it and tried a narrower lock, then reverted it. The lock also keeps a refresh's late answer from overwriting a newer change, such as bringing back a deleted chat message, so each screen must ignore late answers first.
 - **A11.** Navigation is a string-keyed switchboard, and the Retrofit builders are copied between screens.
 - **A12.** Sign-in fields are lost when the screen rotates.
 

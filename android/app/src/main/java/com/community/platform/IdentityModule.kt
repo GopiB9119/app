@@ -34,7 +34,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object IdentityModule {
-    private val COMMUNITY_POST_LISTS = Regex("/v1/(feed|discover/posts|me/saved-posts|pages/[A-Za-z0-9-]{3,36}/posts|posts/[a-f0-9-]{36}/comments)")
+    private val COMMUNITY_POST_LISTS = Regex("/v1/(feed|discover/posts|me/saved-posts|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/[a-f0-9-]{36}/comments)")
     private val COMMUNITY_DRAFTS = Regex("/v1/pages/[a-f0-9-]{36}/drafts")
 
     @Provides @Singleton fun gson(): Gson = Gson()

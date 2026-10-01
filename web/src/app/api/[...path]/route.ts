@@ -30,10 +30,10 @@ const allowed = new Set([
   "GET me/notification-preferences", "PATCH me/notification-preferences",
 ]);
 const uuidPart = "[a-f0-9-]{36}";
-const communityWrite = new RegExp(`^(POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove)$`);
+const communityWrite = new RegExp(`^(POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove)$`);
 const communityRead = new RegExp(`^GET (me/pages|me/following|me/saved-posts|me/blocks|feed|pages/${uuidPart}/drafts)$`);
 // Public pages and posts can be read signed out; a bound session adds the viewer's own follow/like/save/block state.
-const publicRead = new RegExp(`^GET (pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/posts|posts/${uuidPart}|posts/${uuidPart}/comments|discover/pages|discover/posts)$`);
+const publicRead = new RegExp(`^GET (pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/${uuidPart}|posts/${uuidPart}/comments|discover/pages|discover/posts)$`);
 
 function communityParameters(route: string) {
   if (route === "discover/pages") return ["q", "topic", "limit", "cursor"];
@@ -138,8 +138,8 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   if ((spaceMembers || removeMember || leaveSpace) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Membership commands do not accept query parameters.");
   if ((ownershipOffer || ownershipResponse) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Ownership commands do not accept query parameters.");
   // Only adding a document may carry a large body: 512 KB of text can grow when JSON escapes it. A post's 5,000
-  // characters and title fit in 64 KiB even when every character is escaped (up to 12 bytes each).
-  const postWrite = (request.method === "POST" && /^pages\/[^/]+\/posts$/.test(route)) || (request.method === "PATCH" && new RegExp(`^posts/${uuidPart}$`).test(route));
+  // characters and title, and a page's 2,000 characters of rules, fit in 64 KiB even when every character is escaped.
+  const postWrite = (request.method === "POST" && /^pages\/[^/]+\/posts$/.test(route)) || (request.method === "PATCH" && new RegExp(`^(posts|pages)/${uuidPart}$`).test(route));
   const bodyLimit = documentAdd ? 2200000 : postWrite ? 65536 : 16384;
   if (Number(request.headers.get("content-length") ?? 0) > bodyLimit) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
   const sessionToken = request.cookies.get(sessionName)?.value;

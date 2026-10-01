@@ -8,7 +8,7 @@ import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCirc
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { readMembers, spaceSchema, spacesSchema, spaceTypeLabels } from "./client";
+import { characters, lengthProblem, readMembers, spaceSchema, spacesSchema, spaceTypeLabels } from "./client";
 import { AccountIdentifier, InvitationInbox, ManageInvitations } from "./invitations";
 import { ManageJoinRequests } from "./join-requests";
 import { ManageMembers } from "./members";
@@ -117,9 +117,12 @@ function FamilySpaces({ user }: { user: Account }) {
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
   }, [name, description, intent]);
 
+  const nameProblem = lengthProblem(name, 80);
+  const descriptionProblem = spaceType === "group" ? lengthProblem(description, DESCRIPTION_LIMIT) : null;
+
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (create.isPending || !name.trim()) return;
+    if (create.isPending || !name.trim() || (!intent && (nameProblem !== null || descriptionProblem !== null))) return;
     const group = spaceType === "group";
     const pending = intent ?? { key: crypto.randomUUID(), name: name.trim(), spaceType, visibility: group ? visibility : "private", description: group ? description.trim() : "" };
     setIntent(pending);
@@ -181,10 +184,12 @@ function FamilySpaces({ user }: { user: Account }) {
           <div className={styles.sectionHeading}><Plus size={19} aria-hidden /><h2 id="create-space-title">{createTitles[spaceType]}</h2></div>
           <form className={styles.form} onSubmit={submit}>
             <label><span id="space-type-label">Space type</span><select aria-labelledby="space-type-label" value={spaceType} disabled={choosing} onChange={event => { setSpaceType(event.target.value as SpaceType); create.reset(); setNotice(""); }}><option value="family">Family</option><option value="couple">Couple</option><option value="group">Group</option><option value="solo">Solo</option></select></label>
-            <label>{nameLabels[spaceType]}<input name="space_name" autoComplete="off" required minLength={1} maxLength={80} value={name} disabled={choosing} onChange={event => { setName(event.target.value); create.reset(); setNotice(""); }} /></label>
+            <label>{nameLabels[spaceType]}<input name="space_name" autoComplete="off" required minLength={1} maxLength={160} value={name} disabled={choosing} onChange={event => { setName(event.target.value); create.reset(); setNotice(""); }} /></label>
+            {nameProblem && <span className="field-error">{nameProblem}</span>}
             {spaceType === "group" && <>
-              <label>Description (optional)<textarea className={styles.textArea} name="space_description" maxLength={DESCRIPTION_LIMIT} value={description} disabled={choosing} onChange={event => { setDescription(event.target.value); create.reset(); setNotice(""); }} placeholder="What the group is about and who it is for." /></label>
-              <span className={styles.counter}>{description.length}/{DESCRIPTION_LIMIT}</span>
+              <label>Description (optional)<textarea className={styles.textArea} name="space_description" maxLength={DESCRIPTION_LIMIT * 2} value={description} disabled={choosing} onChange={event => { setDescription(event.target.value); create.reset(); setNotice(""); }} placeholder="What the group is about and who it is for." /></label>
+              <span className={styles.counter}>{characters(description)}/{DESCRIPTION_LIMIT}</span>
+              {descriptionProblem && <span className="field-error">{descriptionProblem}</span>}
               <fieldset className={styles.visibilityChoice} disabled={choosing}>
                 <legend>Who can find this group?</legend>
                 <label className={styles.choice}><input type="radio" name="visibility" value="private" checked={visibility === "private"} onChange={() => setVisibility("private")} />
@@ -195,7 +200,7 @@ function FamilySpaces({ user }: { user: Account }) {
             </>}
             {spaceType !== "group" && <div className={styles.formPrivacy}><LockKeyhole size={16} aria-hidden /><span>{privacyNotes[spaceType]}</span></div>}
             {create.isError && <div className="message error" role="alert">{create.error.message}</div>}
-            <button className="primary-button" type="submit" disabled={create.isPending || !name.trim() || accountChanged}>
+            <button className="primary-button" type="submit" disabled={create.isPending || !name.trim() || accountChanged || (!intent && (nameProblem !== null || descriptionProblem !== null))}>
               {create.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Plus size={17} aria-hidden />}
               {create.isPending ? "Creating..." : intent ? "Retry creation" : "Create Space"}
             </button>
