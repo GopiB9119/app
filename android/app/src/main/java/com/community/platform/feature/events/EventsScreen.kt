@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
@@ -169,7 +171,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
     if (state.confirmingCancel && selected != null) AlertDialog(
         onDismissRequest = actions.keep,
         title = { Text(stringResource(R.string.events_cancel_title)) },
-        text = { Text(stringResource(R.string.events_cancel_text, selected.title, selected.spaceName)) },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text(stringResource(R.string.events_cancel_text, selected.title, selected.spaceName)) } },
         confirmButton = { TextButton(onClick = actions.cancel, modifier = Modifier.testTag("event-cancel-confirm")) { Text(stringResource(R.string.events_cancel_confirm)) } },
         dismissButton = { TextButton(onClick = actions.keep) { Text(stringResource(R.string.events_keep)) } },
     )

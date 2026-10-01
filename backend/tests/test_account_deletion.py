@@ -16,6 +16,7 @@ from tests.test_documents import add as add_document
 from tests.test_events import create as create_event, respond
 from tests.test_exports import request_export
 from tests.test_identity import PASSWORD, account, auth
+from tests.test_live_updates import Hints, change
 from tests.test_messaging import admit, open_chat, send
 from tests.test_reminder_delivery_guards import preview_reminder
 from tests.test_spaces import create_space
@@ -164,8 +165,13 @@ def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
     assert all(value in before for value in GONE)
     assert request_deletion(client, alex).status_code == 202
     app.state.clock.now += timedelta(days=7, minutes=1)
+    hints = Hints(app, sam)
+    hints.since_last()
     assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
     assert app.state.account_deletion.purge_due() == {"purged": 0, "blocked": 0}
+    # Sam's open chats read again at once: the Space chat shows the erased message, the direct chat takes no more.
+    by_id = lambda items: sorted(items, key=lambda item: item["conversation_id"])
+    assert by_id(hints.since_last()) == by_id([change(ids["chat"], "member_left"), change(ids["direct"], "member_left")])
 
     after = stored_text(app)
     assert [value for value in GONE if value in after] == []

@@ -180,6 +180,41 @@ class IdentityScreenTest {
         compose.onNodeWithTag("password").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
     }
 
+    @Test fun profileDraftAndItsVersionSurviveRecreationUntilSaved() {
+        val restoration = StateRestorationTester(compose)
+        // Saved twice already in this process, so a new process's count of 0 is lower.
+        var state by mutableStateOf(IdentityState(loading = false, profile = Profile(user, "\"profile-1\""), profileSaved = 2))
+        val changes = mutableListOf<Triple<String, String, String>>()
+        restoration.setContent {
+            CommunityTheme { IdentityScreen(state, actions(save = { name, zone, version -> changes.add(Triple(name, zone, version)) })) }
+        }
+        compose.onNodeWithTag("profile-name").performScrollTo().performTextReplacement("Unsaved draft")
+        compose.onNodeWithTag("timezone").performScrollTo().performClick()
+        compose.onNodeWithText("Asia/Kolkata").performClick()
+
+        // T94: rotating the phone recreates the screen. The draft, and the version it started from, stay, even after a refresh.
+        compose.runOnIdle { state = state.copy(profile = Profile(user.copy(displayName = "Server update", version = 2), "\"profile-2\"")) }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("profile-name").assertTextContains("Unsaved draft")
+        compose.onNodeWithTag("timezone").assertTextContains("Asia/Kolkata")
+
+        // A new process starts a new view model, whose save count is back at 0; the draft still comes back.
+        compose.runOnIdle { state = state.copy(profileSaved = 0) }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("profile-name").assertTextContains("Unsaved draft")
+        compose.onNodeWithText("Save changes").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(Triple("Unsaved draft", "Asia/Kolkata", "\"profile-1\"")), changes) }
+
+        // Once saved, the editor starts from the saved version, also after the screen is recreated.
+        compose.runOnIdle {
+            state = state.copy(profile = Profile(user.copy(displayName = "Unsaved draft", timezone = "Asia/Kolkata", version = 3), "\"profile-3\""), profileSaved = state.profileSaved + 1)
+        }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("profile-name").performScrollTo().performTextReplacement("Second draft")
+        compose.onNodeWithText("Save changes").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(Triple("Second draft", "Asia/Kolkata", "\"profile-3\""), changes.last()) }
+    }
+
     private fun capture(name: String) {
         val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
         val context = InstrumentationRegistry.getInstrumentation().targetContext

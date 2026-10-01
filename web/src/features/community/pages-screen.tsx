@@ -6,7 +6,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { LoaderCircle, Plus, UserMinus } from "lucide-react";
 
 import type { Account } from "@/features/identity/client";
-import { HANDLE_PATTERN, TOPICS, createPage, followPage, followingPages, isUnknown, myPages, textProblem, topicLabels } from "./client";
+import { HANDLE_PATTERN, TOPICS, createPage, followPage, followingPages, isUnknown, myPages, reasonLabels, textProblem, topicLabels } from "./client";
 import type { CreateIntent, Topic } from "./client";
 import { CommunityFrame, Failure, Loading, problemText, sessionLost, useViewer } from "./shared";
 import styles from "./community.module.css";
@@ -49,7 +49,9 @@ function MyPages({ account }: { account: Account }) {
       {owned.data?.length === 0 && <p className={styles.empty}>You do not own a page yet.</p>}
       <ul className={styles.list}>
         {owned.data?.map(page => <li key={page.id} className={styles.row}>
-          <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>@{page.handle} / {topicLabels[page.topic]} / {page.follower_count} followers</span></span>
+          <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>@{page.handle} / {topicLabels[page.topic]} / {page.follower_count} followers</span>
+            {page.moderation && <span className={styles.meta}> Hidden by moderators: {reasonLabels[page.moderation.reason]}. Only you can see it.</span>}
+          </span>
         </li>)}
       </ul>
       {owned.data && owned.data.length < 5 && <CreatePageForm account={account} onCreated={() => queryClient.invalidateQueries({ queryKey: ["my-pages", account.id] })} />}

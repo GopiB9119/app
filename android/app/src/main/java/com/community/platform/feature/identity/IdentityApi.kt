@@ -1,5 +1,6 @@
 package com.community.platform.feature.identity
 
+import com.google.gson.JsonObject
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -24,6 +25,24 @@ interface IdentityApi {
 
     @POST("v1/auth/login")
     suspend fun login(@Body body: LoginDto): Response<EnvelopeDto<AuthDto>>
+
+    @POST("v1/auth/cancel-deletion")
+    suspend fun cancelDeletion(@Body body: LoginDto): Response<EnvelopeDto<AuthDto>>
+
+    @POST("v1/me/deletion")
+    suspend fun deleteAccount(@Header("Authorization") authorization: String, @Body body: DeleteAccountDto): Response<EnvelopeDto<DeletionDto>>
+
+    @GET("v1/me/exports")
+    suspend fun exports(@Header("Authorization") authorization: String): Response<EnvelopeDto<List<AccountExportDto>>>
+
+    @POST("v1/me/exports")
+    suspend fun prepareExport(@Header("Authorization") authorization: String, @Header("Idempotency-Key") key: String, @Body body: CreateExportDto): Response<EnvelopeDto<AccountExportDto>>
+
+    @DELETE("v1/me/exports/{id}")
+    suspend fun cancelExport(@Header("Authorization") authorization: String, @Path("id") identifier: String): Response<EnvelopeDto<AccountExportDto>>
+
+    @GET("v1/me/exports/{id}/archive")
+    suspend fun exportArchive(@Header("Authorization") authorization: String, @Path("id") identifier: String): Response<EnvelopeDto<JsonObject>>
 
     @GET("v1/me")
     suspend fun me(@Header("Authorization") authorization: String): Response<EnvelopeDto<UserDto>>

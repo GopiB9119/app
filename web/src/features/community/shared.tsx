@@ -145,7 +145,7 @@ export function ReportDialog({ account, target, onClose }: { account: Account; t
     <h2 id={heading}>Report {target.type}</h2>
     <p className={styles.meta}>{target.label}</p>
     {done ? <>
-      <p role="status">Report received. It is stored for review; the person you reported is not told who sent it. Moderator review tools are not built yet.</p>
+      <p role="status">Report received. Moderators will review it, and the person you reported is not told who sent it. You can see what happened to it under Safety.</p>
       <div className="dialog-actions"><button className="primary-button" onClick={onClose}>Close</button></div>
     </> : <form onSubmit={submit}>
       <fieldset>

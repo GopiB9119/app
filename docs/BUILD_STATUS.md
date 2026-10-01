@@ -1352,6 +1352,57 @@ They found four problems, none critical or high, and confirmed the rest as sound
 | Before the fixes | All six new tests **failed**. They are in `test_space_roles.py` (a blocked person listed and approved; an invitation revived after promotion, and after removal and return), `test_agents.py` (history returned to a removed member; a run created with a revoked session) and `test_security_sweep.py` (the cached session passed). The first version of the last test kept no reference to the first copy, so the copy was read again and it passed; it now keeps one, as real callers do. |
 | After the fixes | `test_space_roles.py`, `test_space_directory.py`, `test_agents.py`, `test_security_sweep.py`, `test_identity.py`, `test_spaces.py` and `test_couple_spaces.py`: **189 passed**. |
 | Complete backend suite | The first run, at about 00:05, ended with all 538 tests in error after 3 minutes. Two sessions had each written a migration numbered `0030` at the same moment, so Alembic found two newest revisions; one of them was renumbered `0031` shortly after. `npm run verify` now checks for this before starting the backend suite and says which files clash. Run again from 00:25 to 00:53 (`.local\verify\after-security-2`): **519 of 544 passed**. The 25 failures are migration round trips and model comparisons (12 in `test_migrations.py`, 2 in `test_reminder_series.py`, 2 in `test_alerts.py`, 1 in `test_care.py`), 7 page moderator tests and 1 page rules test. The page moderator and page lifecycle work in progress (T84, T85) changed the community models while its migration `0031` was being written, and 15 files changed during the run. No test of the agent, identity, Spaces or security sweep failed. |
+## Repeating Reminder And Snooze Offline Tests Checkpoint
+
+Builds [T92](TASKS.md#defects-that-break-approved-requirements), from section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence): the web had one offline test for repeating reminders, about a timezone list that fails to load. Written by a background agent on GPT-6.1 Sol, then checked by the audit session.
+
+- **New file:** `tests/unit/series-ui.test.mjs`, 29 tests in the same form as the other offline screen tests: the reminder screen and the inbox run in Chromium with simulated answers, and every network request is refused.
+  - **Covered:**
+    - a daily and a weekly series through their review, which lists the task, the recipient, the rule, the first and last day, the timezone, the number of reminders, the first times and "In-app only";
+    - the form's limits: at least one weekday, at most 30 days or 4 weeks apart, and a last day at most 365 days after the first;
+    - when the clock skips the chosen time, "Skip that day" previews again, and the save uses the newer preview;
+    - a save whose answer is lost (no connection, or 503) retried with the same key and preview, with nothing shown as saved;
+    - a refused save (409 or 422) closing the review, with a new key for the next save;
+    - pause, resume, skip and cancel only after confirmation, each sending the version shown, and the notice when no reminder times remain;
+    - a lost command that cannot be dismissed and is retried with the same key, and a refused one (409 or 412) that closes and reloads without claiming success;
+    - snooze: each of the four choices, no Snooze button once a reminder cannot be snoozed again, times at or past the next reminder disabled, a lost answer retried with the same key and minutes, and a refused one;
+    - the form, the review, the list and a confirmation fitting 320 px at 200% text.
+  - **Left out:** changing a series and moving its next time, which belong to the unrecorded alerts work (conflict C10).
+- **Defect found and fixed:** a refused snooze (409 or 422) left the snooze dialog open on the old copy of the reminder, still offering the times worked out from it. It now closes, the reason shows in the inbox, and the inbox reloads, as a refused series change already did (`web/src/features/notifications/notification-screen.tsx`, 2 lines).
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fix | 27 of 29: the two refused-snooze tests failed with "A refused snooze must close the stale review" (`.local/t92/series-before.txt`). |
+| The tests can fail | Eight deliberate breakages, each made inside a throwaway copy of the test file so the shared source was not changed, each made the intended test fail: a new key when retrying a save, a command or a snooze; a refused save kept; Pause sent without confirmation; no `If-Match`; a form row too wide for 320 px; and the snooze fix undone (`.local/t92/mutation-results.json`). |
+| After the fix | `series-ui`, `reminder-ui` and `reminder-controls` together: **50 of 50 passed** when rerun by the audit session (`.local/t92/coordinator-rerun.txt`). The web type check passed at 01:16 with the fix. A later run fails only in `web/src/features/community/client.ts`, which the page moderator work in progress (T84) changed at 01:33. |
+## Android Device Tests For Care, Events, Calendar And Repeating Reminders Checkpoint
+
+Builds [T93](TASKS.md#defects-that-break-approved-requirements), from section 5 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#5-tests-and-evidence): Android had no device tests for chat, care, events, the calendar, checklists, groups, Space settings or repeating reminders. Written by a background agent on Claude Opus 5.5, then checked by the audit session. Chat is left out while the gaps session changes it (T65, T67).
+
+- **New device tests:** 33 in four classes, in the same form as the existing ones. Each screen is built from constructed state with stand-in actions, on a read-only API 36 emulator with the network off, at 640×1280 pixels and density 320 (320 dp wide). No app code was changed to make them testable; one shared helper file, `ScreenChecks.kt`, was added.
+  - `CareScreenTest` (10): the day plan and medicine list states; a dose shown as noted only once confirmed, and a lost note retried; every control disabled while a command is unconfirmed; Stop tracking asks first, and Keep sends nothing; a lost stop leaves the medicine current; an unconfirmed save locks the form; 320 dp at 200% text.
+  - `EventsScreenTest` (7): list, detail and error states; Cancel asks first, and Keep sends nothing; controls disabled while a command is unconfirmed; an unconfirmed create locks the form, and only Retry sends it again; a response shown as chosen only once the server confirms it; only same-day events can be edited here; 320 dp at 200% text.
+  - `CalendarScreenTest` (6): loading, empty, failed and loaded months; entries open their own source; month, timezone and Space change only by an explicit choice; 320 dp at 200% text. It uses task, reminder and planned entries only, because calendar events on Android belong to the unrecorded alerts work (conflict C10).
+  - `ReminderSeriesScreenTest` (10): the series list and the actions each status allows; a series time is not offered the plain cancel; a series is saved only from its review; the clock-change choice; a lost save or command stays locked until the exact retry; skip, pause, resume and cancel ask first and name their effect; snooze needs a choice, and a lost snooze retries only the same choice; 320 dp at 200% text.
+- **Defect found and fixed:** the confirmation dialogs could not scroll, so at 200% text on a 320 dp screen their explanation was cut off before the person confirmed. Stop tracking showed 552 of 675 px of its warning, the series Pause question 65 of 375 px (it ended at "No reminders until you"), and Cancel event 648 of 900 px with a 109-character title. Each dialog's text now scrolls (`CareScreen.kt`, `EventsScreen.kt`, and `ReminderScreen.kt`, whose dialog also asks before cancelling or acknowledging a reminder).
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fix | Care 9 of 10 and series 9 of 10, with the dialog text clipped at 200%; events 7 of 7 with a 66-character title and 6 of 7 with a 109-character one; calendar 6 of 6 (`.local/t93/before-*.txt`, screenshots in `.local/t93/screens-before/`). |
+| The tests can fail | 20 deliberate breakages, made in a source copy and never in the shared tree, each made the intended test fail: a question skipped or Keep sending the command, a lost answer shown as done, controls enabled while unconfirmed, titles cut to one line, the snooze choices not scrollable, and a retry sending a new snooze (`.local/t93/mut-*.txt`). |
+| After the fix | The agent's final build: care 10, events 7, calendar 6, series 10 and the existing `ReminderScreenTest` 12, all passed; the JVM tests of care, events and scheduling passed, 82 of 82. The audit session reran all five classes on its own emulator, 45 of 45, and then, with T94, **52 of 52** on one build of the shared tree (`.local/t94/t93-recheck-*.txt`, `.local/t94/shared-*.txt`). The font scale was back at 1.0 after every class. |
+
+## Android Account Settings Survive Rotation Checkpoint
+
+Builds [T94](TASKS.md#defects-that-break-approved-requirements), audit A12. T50 kept typed sign-in fields across rotation, but the account settings editor still lost an unsaved display name or timezone: it held them only in memory and reset them each time it appeared. Found and fixed by the audit session.
+
+- **Fix** (`AccountBody` in `android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt`): the name, the timezone and the version the editor started from are kept in saved state, and they are replaced only when a save has happened since the editor last looked. A recreated screen keeps the draft and its version, so a save still sends the version the change started from, and the server refuses it if the profile changed meanwhile. A new process counts saves again from 0, so the draft still comes back.
+- **New device test:** `IdentityScreenTest.profileDraftAndItsVersionSurviveRecreationUntilSaved`. It changes the name and timezone, refreshes the profile, recreates the screen twice (the second time as a new process would), saves and checks what was sent; after a save, the next change starts from the saved version.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fix | A source copy with the original screen and the new test: 6 of 7 passed. The new test failed because, after recreation, the name field showed the refreshed "Server update" instead of the draft (`.local/t94/before-IdentityScreenTest.txt`). |
+| After the fix | The same copy with only the fix: **7 of 7**; on one build of the shared tree with T93, 52 of 52 (`.local/t94/after-IdentityScreenTest.txt`, `.local/t94/shared-IdentityScreenTest.txt`). On a read-only API 36 emulator started by the audit session, with the network off at 320 dp and the font scale restored; it was shut down afterwards. The JVM identity tests passed, 23 of 23. |
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

@@ -157,7 +157,8 @@ class MessagingLiveTest {
         assertEquals(reads + 2, api.reads.get())
         scheduler.advanceTimeBy(1_000); settle(current)
         assertEquals(reads + 3, api.reads.get())
-        scheduler.advanceTimeBy(5_000); settle(current)
+        // The next wait starts when that poll has finished, which on virtual time is the end of the previous step.
+        scheduler.advanceTimeBy(5_500); settle(current)
         assertEquals(reads + 4, api.reads.get())
     }
 

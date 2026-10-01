@@ -68,7 +68,7 @@ function Inbox({ user }: { user: Account }) {
     },
     onError: error => {
       if (protectedReminderError(error)) setAccessError(error);
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) { setSnoozeIntent(null); void inbox.refetch(); }
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) { setSnoozing(null); setSnoozeIntent(null); void inbox.refetch(); }
     },
   });
   useEffect(() => {
@@ -91,6 +91,7 @@ function Inbox({ user }: { user: Account }) {
           {inbox.isPending && <p role="status">Loading notifications...</p>}
           {inbox.isError && <p className="message error" role="alert">{inbox.error.message}</p>}
           {read.isError && <p className="message error" role="alert">{read.error.message}</p>}
+          {snooze.isError && !snoozing && <p className="message error" role="alert">{snooze.error.message}</p>}
           {!inbox.isPending && !inbox.isError && rows.length === 0 && <p className={styles.empty}>No notifications yet.</p>}
           {!inbox.isError && <ul className={styles.list}>{rows.map(item => <li key={item.id}>
             <div className={styles.rowHeading}><h3>{item.task_title}</h3><span className={styles.status}>{item.read_at ? "Read" : "Unread"}</span></div>

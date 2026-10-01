@@ -32,6 +32,7 @@ import com.community.platform.feature.community.CommunityRoute
 import com.community.platform.feature.community.CommunityViewModel
 import com.community.platform.feature.community.Destination
 import com.community.platform.feature.community.FeedTab
+import com.community.platform.feature.community.ModerationViewModel
 import com.community.platform.feature.discovery.SearchRoute
 import com.community.platform.feature.discovery.SearchViewModel
 import com.community.platform.feature.events.EventsRoute
@@ -83,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private val checklist: ChecklistViewModel by viewModels()
     private val messaging: MessagingViewModel by viewModels()
     private val community: CommunityViewModel by viewModels()
+    private val moderation: ModerationViewModel by viewModels()
     private val events: EventsViewModel by viewModels()
     private val care: CareViewModel by viewModels()
     private val documents: DocumentViewModel by viewModels()
@@ -99,7 +101,7 @@ class MainActivity : ComponentActivity() {
                 account.profile?.user?.id?.takeIf { process.isAtLeast(Lifecycle.State.STARTED) }
             }.distinctUntilChanged().collect { accountId -> if (accountId == null) live.stop() else live.start(accountId) }
         }
-        setContent { CommunityTheme { AccountWorkspace(viewModel, tasks, reminders, spaces, calendar, spaceSettings, checklist, messaging, community, events, care, groups, documents, search, agent, home) } }
+        setContent { CommunityTheme { AccountWorkspace(viewModel, tasks, reminders, spaces, calendar, spaceSettings, checklist, messaging, community, events, care, groups, documents, search, agent, home, moderation) } }
     }
 
     override fun onDestroy() {
@@ -110,7 +112,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, reminders: ReminderViewModel, spaces: SpaceViewModel, calendar: CalendarViewModel, spaceSettings: SpaceSettingsViewModel, checklist: ChecklistViewModel, messaging: MessagingViewModel, community: CommunityViewModel, events: EventsViewModel, care: CareViewModel, groups: GroupViewModel, documents: DocumentViewModel, search: SearchViewModel, agent: AgentViewModel, home: HomeViewModel) {
+private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, reminders: ReminderViewModel, spaces: SpaceViewModel, calendar: CalendarViewModel, spaceSettings: SpaceSettingsViewModel, checklist: ChecklistViewModel, messaging: MessagingViewModel, community: CommunityViewModel, events: EventsViewModel, care: CareViewModel, groups: GroupViewModel, documents: DocumentViewModel, search: SearchViewModel, agent: AgentViewModel, home: HomeViewModel, moderation: ModerationViewModel) {
     val account by identity.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf("account") }
     var reminderTaskId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -140,7 +142,12 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
     val spacesState = spaces.state.collectAsStateWithLifecycle()
     val messagingState = messaging.state.collectAsStateWithLifecycle()
     val communityState = community.state.collectAsStateWithLifecycle()
-    val bar by remember { derivedStateOf { mainBar(screen, account.profile != null, account.busy, spacesState.value, messagingState.value, communityState.value) } }
+    val moderationState = moderation.state.collectAsStateWithLifecycle()
+    val bar by remember { derivedStateOf {
+        if (screen == "community" && moderationState.value.reviewing) null
+        else mainBar(screen, account.profile != null, account.busy, spacesState.value, messagingState.value,
+            communityState.value.copy(working = communityState.value.working || moderationState.value.working))
+    } }
     LaunchedEffect(accountId, screen, reminderTaskId, reminderSpaceId, taskEntrySpaceId, settingsSpaceId, checklistTaskId, checklistSpaceId, messagesSpaceId, eventsSpaceId, groupSpaceId,
         documentSearchAccountId, documentsSpaceId, documentsSpaceName, documentEntryId, documentFirstLine, documentLastLine, documentsReturnScreen, communityEntry) {
         val searchContext = screen == "search" || screen == "documents" && documentsReturnScreen == "search" ||
@@ -163,6 +170,7 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         calendar.bind(if (screen == "calendar") accountId else null, account.profile?.user?.timezone ?: "UTC")
         messaging.bind(if (screen == "messages") accountId else null, messagesSpaceId)
         community.bind(if (screen == "community") accountId else null)
+        moderation.bind(if (screen == "community") accountId else null)
         if (screen == "community" && accountId != null) communityEntry?.let { entry ->
             // Blocked opens on its own, so back returns to Profile; Discover and a post keep the feed to go back to.
             when {
@@ -225,7 +233,7 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         } else if (screen == "events" && accountId != null && eventsSpaceId != null) {
             EventsRoute(events, accountId, eventsSpaceName, onBack = { screen = eventsReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "community" && accountId != null) {
-            CommunityRoute(community, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
+            CommunityRoute(community, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() }, moderation = moderation)
         } else if (screen == "messages" && accountId != null) {
             MessagingRoute(messaging, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = messagesReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "spaces" && accountId != null) {

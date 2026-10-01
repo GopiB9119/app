@@ -4,7 +4,7 @@ import com.google.gson.annotations.SerializedName
 
 data class EnvelopeDto<Value>(val data: Value?, val error: ErrorDto?, val pagination: PaginationDto? = null, @SerializedName("unread_count") val unreadCount: Int? = null)
 data class PaginationDto(@SerializedName("next_cursor") val nextCursor: String?, @SerializedName("has_more") val hasMore: Boolean)
-data class ErrorDto(val code: String?, val message: String?)
+data class ErrorDto(val code: String?, val message: String?, val details: Map<String, String>? = null)
 data class UserDto(
     val id: String,
     val email: String,
@@ -64,4 +64,4 @@ data class StartIntent(val email: String, val purpose: EntryMode, val contextSec
 data class PendingProof(val intent: StartIntent, val challenge: ChallengeDto)
 enum class EntryMode { LOGIN, REGISTER, RECOVER }
 
-class IdentityFailure(val code: String, override val message: String, val status: Int = 0) : Exception(message)
+class IdentityFailure(val code: String, override val message: String, val status: Int = 0, val details: Map<String, String> = emptyMap()) : Exception(message)

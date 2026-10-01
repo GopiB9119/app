@@ -221,6 +221,12 @@ class AccountRepositoryTest {
             logins += 1
             return ok(AuthDto(token, "session", "2026-09-19T18:00:00Z", user))
         }
+        override suspend fun cancelDeletion(body: LoginDto): Response<EnvelopeDto<AuthDto>> = error("Configure account deletion in the test fixture")
+        override suspend fun deleteAccount(authorization: String, body: DeleteAccountDto): Response<EnvelopeDto<DeletionDto>> = error("Configure account deletion in the test fixture")
+        override suspend fun exports(authorization: String): Response<EnvelopeDto<List<AccountExportDto>>> = error("Configure exports in the test fixture")
+        override suspend fun prepareExport(authorization: String, key: String, body: CreateExportDto): Response<EnvelopeDto<AccountExportDto>> = error("Configure exports in the test fixture")
+        override suspend fun cancelExport(authorization: String, identifier: String): Response<EnvelopeDto<AccountExportDto>> = error("Configure exports in the test fixture")
+        override suspend fun exportArchive(authorization: String, identifier: String): Response<EnvelopeDto<com.google.gson.JsonObject>> = error("Configure exports in the test fixture")
         override suspend fun me(authorization: String): Response<EnvelopeDto<UserDto>> {
             if (meOffline) throw IOException("Synthetic connection loss")
             return if (meFailure != 0) failure(meFailure) else Response.success(EnvelopeDto(user, null), headersOf("ETag", "\"profile-1\""))

@@ -34,6 +34,7 @@ data class PageDto(
     @SerializedName("follower_count") val followerCount: Int, @SerializedName("created_at") val createdAt: String,
     @SerializedName("updated_at") val updatedAt: String, val following: Boolean, val blocked: Boolean,
     @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val rules: String? = null,
+    val moderation: ModerationMarkDto? = null,
 )
 
 data class PostDto(
@@ -43,12 +44,14 @@ data class PostDto(
     @SerializedName("created_at") val createdAt: String, @SerializedName("published_at") val publishedAt: String?,
     @SerializedName("edited_at") val editedAt: String?, val liked: Boolean, val saved: Boolean,
     @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val pinned: Boolean = false,
+    val moderation: ModerationMarkDto? = null,
 )
 
 data class CommentDto(
     val id: String, @SerializedName("post_id") val postId: String, @SerializedName("parent_id") val parentId: String?,
     @SerializedName("author_name") val authorName: String, val body: String?, val status: String,
     @SerializedName("created_at") val createdAt: String, val mine: Boolean, @SerializedName("can_remove") val canRemove: Boolean,
+    val moderation: ModerationMarkDto? = null,
 )
 
 data class BlockDto(
@@ -127,6 +130,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         text(value.name, 80); text(value.description, 500, empty = true); value.rules?.let { text(it, PAGE_RULES_LIMIT, empty = true) }
         require(value.canManage == (value.etag != null) && !(value.following && value.blocked))
         Instant.parse(value.createdAt); Instant.parse(value.updatedAt)
+        value.moderation?.let { require(it.hidden && it.reason in REPORT_REASONS) }
         value
     }
 
@@ -139,6 +143,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         require(!value.pinned || value.status == "published")
         require(value.likeCount >= 0 && value.commentCount >= 0)
         Instant.parse(value.createdAt); value.publishedAt?.let(Instant::parse); value.editedAt?.let(Instant::parse)
+        value.moderation?.let { require(it.hidden && it.reason in REPORT_REASONS) }
         value
     }
 
@@ -149,6 +154,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         require(value.status in setOf("visible", "deleted", "removed") && (value.status == "visible") == (value.body != null))
         require(!value.canRemove || value.status == "visible")
         Instant.parse(value.createdAt)
+        value.moderation?.let { require(it.hidden && it.reason in REPORT_REASONS) }
         value
     }
 

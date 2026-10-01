@@ -3,11 +3,13 @@ import secrets
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import AccountExport, AccountSession, OutboxEvent, User
+from app.modules.messaging.models import Conversation
+from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceMembership
 from app.telemetry import emit
 
@@ -168,6 +170,25 @@ class AccountDeletionService:
             ).order_by(Space.name, Space.id)
         ).all()
 
+    @staticmethod
+    def announce_departure(database, space_id, account_id):
+        """Live hints for the people still in a shared Space: its chat shows the erased messages, and each direct chat
+        with the erased account can no longer take messages. Sent inside the purge, so only a committed purge sends them."""
+        members = database.scalars(select(SpaceMembership.account_id).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.status == "active")).all()
+        rows = database.execute(
+            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id)
+            .where(Conversation.space_id == space_id, or_(
+                Conversation.kind == "space", Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
+            )).order_by(Conversation.id)
+        ).all()
+        for row in rows:
+            if row.kind == "space":
+                accounts = members
+            else:
+                accounts = [row.second_account_id if row.first_account_id == account_id else row.first_account_id]
+            signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="member_left")
+
     def purge_due(self, limit=5):
         """Erases accounts whose grace period has ended, one transaction each, and returns counts only."""
         outcome = {"purged": 0, "blocked": 0}
@@ -217,6 +238,7 @@ class AccountDeletionService:
                     SpaceAuditEvent(id=identifier, space_id=space_id, actor_id=user.id, target_id=user.id, action="space.member_left", created_at=now),
                     OutboxEvent(id=identifier, event_type="space.member_left", actor_id=user.id, aggregate_id=space_id, schema_version=1, created_at=now),
                 ])
+                self.announce_departure(database, space_id, user.id)
             user.display_name = ERASED_NAME
             user.email_cipher = None
             user.password_hash = None

@@ -1,12 +1,14 @@
 package com.community.platform.feature.identity
 
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import retrofit2.Response
+import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,7 +27,7 @@ class AccountRepository @Inject constructor(
             val error = response.errorBody()?.use { body ->
                 try { gson.fromJson(body.string(), EnvelopeDto::class.java)?.error } catch (_error: RuntimeException) { null }
             }
-            throw IdentityFailure(error?.code ?: "REQUEST_FAILED", error?.message ?: "The request could not be completed.", response.code())
+            throw IdentityFailure(error?.code ?: "REQUEST_FAILED", error?.message ?: "The request could not be completed.", response.code(), error?.details.orEmpty())
         }
         return response.body()?.data ?: throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected response.")
     }
@@ -64,6 +66,10 @@ class AccountRepository @Inject constructor(
 
     suspend fun login(email: String, password: String) = withContext(Dispatchers.IO) {
         mutex.withLock { accept(api.login(LoginDto(email, password))) }
+    }
+
+    suspend fun cancelDeletion(email: String, password: String) = withContext(Dispatchers.IO) {
+        mutex.withLock { accept(api.cancelDeletion(LoginDto(email, password))) }
     }
 
     suspend fun reset(pending: PendingProof, code: String, password: String) = withContext(Dispatchers.IO) {
@@ -111,5 +117,38 @@ class AccountRepository @Inject constructor(
         result(api.logout(it))
         store.clear()
     }
+
+    suspend fun signInAgain(accountId: String) = authorized(accountId) {
+        try { result(api.logout(it)) } finally { store.clear() }
+    }
+
+    suspend fun deleteAccount(accountId: String, password: String): DeletionDto = authorized(accountId) {
+        val deletion = result(api.deleteAccount(it, DeleteAccountDto(password)))
+        if (deletion.status != "deletion_requested") throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected response.")
+        Instant.parse(deletion.purgeAfter)
+        store.clear()
+        deletion
+    }
+
+    suspend fun exports(accountId: String): List<AccountExportDto> = authorized(accountId) { result(api.exports(it)) }
+
+    suspend fun prepareExport(accountId: String, categories: List<String>, key: String): AccountExportDto = authorized(accountId) {
+        require(categories.isNotEmpty() && categories.distinct().size == categories.size && accountExportCategories.containsAll(categories))
+        UUID.fromString(key)
+        result(api.prepareExport(it, key, CreateExportDto(categories)))
+    }
+
+    suspend fun cancelExport(accountId: String, identifier: String): AccountExportDto = authorized(accountId) {
+        result(api.cancelExport(it, identifier))
+    }
+
+    suspend fun exportArchive(accountId: String, identifier: String): JsonObject = authorized(accountId) {
+        val archive = result(api.exportArchive(it, identifier))
+        if (archive.get("format")?.asString != "community-platform-account-export" || archive.get("version")?.asInt != 1) {
+            throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected response.")
+        }
+        archive
+    }
+
     suspend fun timezones(): List<String> = withContext(Dispatchers.IO) { result(api.timezones()) }
 }

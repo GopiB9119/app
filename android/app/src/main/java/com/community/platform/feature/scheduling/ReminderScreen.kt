@@ -295,7 +295,7 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
     state.confirmation?.takeUnless { it is ReminderCommand.RespondRequest }?.let { command ->
         val title = when (command) { is ReminderCommand.Cancel -> R.string.reminders_confirm_cancel; is ReminderCommand.Series -> seriesConfirmTitle(command.intent.operation); else -> R.string.reminders_confirm_ack }
         val taskTitle = when (command) { is ReminderCommand.Cancel -> command.reminder.taskTitle; is ReminderCommand.Acknowledge -> command.notification.taskTitle; is ReminderCommand.Series -> command.intent.series.taskTitle; else -> "" }
-        AlertDialog(onDismissRequest = actions.cancel, title = { Text(stringResource(title)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AlertDialog(onDismissRequest = actions.cancel, title = { Text(stringResource(title)) }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(taskTitle)
             if (command is ReminderCommand.Acknowledge) Text(stringResource(R.string.reminders_ack_not_complete))
             if (command is ReminderCommand.Series) {

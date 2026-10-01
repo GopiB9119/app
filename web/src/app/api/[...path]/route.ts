@@ -33,8 +33,8 @@ const allowed = new Set([
   "GET me/notification-preferences", "PATCH me/notification-preferences",
 ]);
 const uuidPart = "[a-f0-9-]{36}";
-const communityWrite = new RegExp(`^(POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove)$`);
-const communityRead = new RegExp(`^GET (me/pages|me/following|me/saved-posts|me/blocks|feed|pages/${uuidPart}/drafts)$`);
+const communityWrite = new RegExp(`^(POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts|archive|restore|delete|moderators)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove|POST pages/${uuidPart}/moderators/${uuidPart}/(accept|decline|withdraw|remove|step-down)|POST pages/${uuidPart}/handover|POST pages/${uuidPart}/handover/${uuidPart}/(accept|decline|cancel))$`);
+const communityRead = new RegExp(`^GET (me/pages|me/following|me/saved-posts|me/blocks|me/moderator-roles|me/handover-offers|feed|pages/${uuidPart}/drafts|pages/${uuidPart}/moderators|pages/${uuidPart}/handover)$`);
 // Public pages and posts can be read signed out; a bound session adds the viewer's own follow/like/save/block state.
 const publicRead = new RegExp(`^GET (pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/${uuidPart}|posts/${uuidPart}/comments|discover/pages|discover/posts)$`);
 
@@ -126,9 +126,12 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));
   const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
   const documents = documentCommand || documentRead;
-  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !sessionDelete && !exportResource && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  // Platform moderation (DEC-024): the service decides who is a moderator; the proxy only limits the routes.
+  const moderation = new RegExp(`^GET me/moderator$|^GET moderation/queue$|^POST moderation/decisions$|^GET moderation/appeals$|^POST moderation/decisions/${uuidPart}/appeal$|^POST moderation/appeals/${uuidPart}/resolve$|^GET me/moderation-notices$|^GET me/reports$`).test(`${request.method} ${route}`);
+  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !moderation && !sessionDelete && !exportResource && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
   if (route === "live" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Live updates do not accept query parameters.");
   if (agents && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Agent commands do not accept query parameters.");
+  if (moderation && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Moderation commands do not accept query parameters.");
   if (documentCommand && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Document commands do not accept query parameters.");
   if (alerts && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Alert commands do not accept query parameters.");
   if (groups && !groupSearch && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Group commands do not accept query parameters.");
@@ -251,6 +254,13 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       const parameters = route === "agent-runs" ? ["space_id", "limit", "cursor"] : [];
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid agent parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if (moderation && request.method === "GET") {
+      const parameters = route === "moderation/queue" ? ["limit", "cursor"] : route === "moderation/appeals" ? ["status"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid moderation parameters.");
         upstreamUrl.searchParams.set(name, value);
       }
     }

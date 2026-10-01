@@ -216,7 +216,7 @@ class OkHttpLiveTransport @Inject constructor(
         } catch (_error: RuntimeException) {
             null
         }
-        return IdentityFailure(error?.code ?: "REQUEST_FAILED", error?.message ?: "Live updates are not available.", response.code)
+        return IdentityFailure(error?.code ?: "REQUEST_FAILED", error?.message ?: "Live updates are not available.", response.code, error?.details.orEmpty())
     }
 }
 

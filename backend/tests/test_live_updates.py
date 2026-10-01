@@ -113,6 +113,42 @@ def test_a_removed_member_gets_no_more_hints_from_the_space_chat(client, app):
     assert hints.since_last() == []
 
 
+def leave_or_remove(client, actor, space_id, person, action):
+    roster = client.get(f"/v1/spaces/{space_id}/members", headers=auth(actor)).json()["data"]
+    reviewed = next(item for item in roster if item["account_id"] == person["user"]["id"])
+    path = f"/v1/spaces/{space_id}/leave" if action == "leave" else f"/v1/spaces/{space_id}/members/{person['user']['id']}/remove"
+    return client.post(path, headers={**auth(actor), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]}, json={})
+
+
+def test_ending_a_membership_tells_each_chat_it_changes_at_once(client, app):
+    """T86: an open chat learns about lost access from a hint, not from the next 30-second check."""
+    owner, member, space_id = family(client, app)
+    third = account(client, app, "third@example.test")
+    admit(client, owner, space_id, third)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    direct = open_chat(client, member, space_id, owner["user"]["id"]).json()["data"]
+    others = open_chat(client, owner, space_id, third["user"]["id"]).json()["data"]
+    hints = {name: Hints(app, person) for name, person in (("owner", owner), ("member", member), ("third", third))}
+    for collected in hints.values():
+        collected.since_last()
+
+    removed = leave_or_remove(client, owner, space_id, member, "remove")
+    assert removed.status_code == 200, removed.text
+    by_id = lambda items: sorted(items, key=lambda item: item["conversation_id"])
+    assert by_id(hints["member"].since_last()) == by_id([change(chat, "access"), change(direct, "access")])
+    assert hints["owner"].since_last() == [change(direct, "access")]
+    assert hints["third"].since_last() == []
+
+    left = leave_or_remove(client, third, space_id, third, "leave")
+    assert left.status_code == 200, left.text
+    assert by_id(hints["third"].since_last()) == by_id([change(chat, "access"), change(others, "access")])
+    assert hints["owner"].since_last() == [change(others, "access")]
+    assert hints["member"].since_last() == []
+    # A refused command tells nobody.
+    assert leave_or_remove(client, owner, space_id, owner, "leave").status_code == 409
+    assert hints["owner"].since_last() == []
+
+
 def test_inbox_hints_reach_only_the_recipient(client, app):
     actor, _task_id, _reminder, _body, _headers = schedule_reminder(client, app)
     other = account(client, app, "other@example.test")

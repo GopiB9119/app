@@ -90,23 +90,36 @@ private data class Confirmation(val title: String, val text: String, val confirm
 private data class ReportTarget(val type: String, val id: String, val label: String)
 
 @Composable
-fun CommunityRoute(viewModel: CommunityViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit) {
+fun CommunityRoute(viewModel: CommunityViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit, moderation: ModerationViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
-    if (state.accountId == accountId) CommunityScreen(state, CommunityActions(
-        viewModel::open, viewModel::back, { viewModel.reload() }, { viewModel.reload(more = true) }, viewModel::search,
+    val moderationState by moderation.state.collectAsStateWithLifecycle()
+    val moderationUi = moderationState.copy(working = moderationState.working || state.working)
+    val moderationActions = moderationActions(moderation)
+    val moderationTime = rememberModerationTime(timezone)
+    LaunchedEffect(state.requiresSignIn, moderationState.requiresSignIn) { if (state.requiresSignIn || moderationState.requiresSignIn) onSessionLost() }
+    LaunchedEffect(accountId, state.destination, moderationState.accountId, moderationState.reviewing) {
+        if (moderationState.accountId == accountId && state.destination == Destination.Blocked && !moderationState.reviewing) moderation.loadSafety()
+    }
+    if (state.accountId != accountId || moderationState.accountId != accountId) return
+    if (moderationState.reviewing) {
+        ModerationScreen(moderationUi, moderationActions, timezone)
+        return
+    }
+    CommunityScreen(state.copy(working = moderationUi.working), CommunityActions(
+        viewModel::open, viewModel::back, { viewModel.reload(); if (state.destination == Destination.Blocked) moderation.loadSafety() }, { viewModel.reload(more = true) }, viewModel::search,
         viewModel::follow, viewModel::like, viewModel::save, viewModel::createPage, viewModel::createPost, viewModel::comment,
         viewModel::retry, viewModel::discardPending, viewModel::publish, viewModel::deletePost, viewModel::endComment,
         viewModel::report, viewModel::blockPage, viewModel::blockAuthor, viewModel::unblock, viewModel::searchFor,
         viewModel::startEdit, viewModel::cancelEdit, viewModel::editPost,
         viewModel::unfollow, viewModel::startPageEdit, viewModel::cancelPageEdit, viewModel::editPage,
         viewModel::retryFollowing, viewModel::pin,
-    ), timezone, onBack)
+    ), timezone, onBack, safetyContent = { moderationHistory(moderationUi, moderationActions, moderationTime) })
+    ModerationAppealDialog(moderationUi, moderationActions)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: String, onExit: () -> Unit) {
+fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: String, onExit: () -> Unit, safetyContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {}) {
     var confirmation by remember { mutableStateOf<Confirmation?>(null) }
     var reporting by remember { mutableStateOf<ReportTarget?>(null) }
     val time = remember(timezone) {
@@ -158,7 +171,7 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
                         is Destination.Page -> page(state, actions, time, ask, report)
                         is Destination.Post -> post(state, actions, time, ask, report)
                         Destination.MyPages -> myPages(state, actions)
-                        Destination.Blocked -> blocked(state, actions, ask)
+                        Destination.Blocked -> { blocked(state, actions, ask); safetyContent() }
                     }
                     if (state.nextCursor != null && state.destination !is Destination.MyPages && state.destination !is Destination.Blocked) item("more") {
                         TextButton(onClick = actions.more, enabled = !state.busy) { Text(stringResource(R.string.community_more)) }
@@ -247,6 +260,7 @@ private fun PageItem(page: PageDto, state: CommunityState, actions: CommunityAct
     Column(Modifier.fillMaxWidth().clickable(role = Role.Button, enabled = !state.working) { actions.open(Destination.Page(page.handle)) }.padding(vertical = 6.dp).testTag("page-${page.handle}"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(page.name, style = MaterialTheme.typography.titleMedium)
         Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
+        ModerationMark(page.moderation)
         if (page.description.isNotEmpty()) Text(page.description, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
         if (!page.canManage) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("follow-${page.handle}")) {
             Text(stringResource(if (page.following) R.string.community_unfollow else R.string.community_follow))
@@ -263,6 +277,7 @@ private fun PostItem(post: PostDto, state: CommunityState, actions: CommunityAct
         Text(listOfNotNull(time.show(post.publishedAt ?: post.createdAt), post.editedAt?.let { stringResource(R.string.community_edited) }, if (pinnedMark && post.pinned) stringResource(R.string.community_pinned) else null, if (post.status == "draft") stringResource(R.string.community_draft) else null).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
         post.title?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
         Text(post.body, style = MaterialTheme.typography.bodyLarge)
+        ModerationMark(post.moderation)
         if (post.status == "published") FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             TextButton(onClick = { actions.like(post) }, enabled = !state.working, modifier = Modifier.testTag("like-${post.id}")) {
                 Icon(if (post.liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null)
@@ -286,6 +301,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(page.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
             Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
+            ModerationMark(page.moderation)
             if (page.description.isNotEmpty()) Text(page.description)
             if (page.canManage) {
                 Text(stringResource(R.string.community_you_own), color = MaterialTheme.colorScheme.primary)
@@ -451,6 +467,7 @@ private fun CommentItem(comment: CommentDto, state: CommunityState, actions: Com
         Text("${if (comment.mine) stringResource(R.string.community_you) else comment.authorName} / ${time.show(comment.createdAt)}", style = MaterialTheme.typography.labelLarge)
         Text(comment.body ?: stringResource(if (comment.status == "removed") R.string.community_comment_removed else R.string.community_comment_deleted),
             style = if (comment.body == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge)
+        ModerationMark(comment.moderation)
         if (comment.status == "visible") FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (comment.parentId == null) TextButton(onClick = { replying = !replying }, enabled = !state.working) { Text(stringResource(R.string.community_reply)) }
             if (comment.canRemove) TextButton(onClick = { ask(Confirmation(removeTitle, removeText, removeTitle) { actions.endComment(comment) }) }, enabled = !state.working) { Text(removeTitle) }
@@ -544,6 +561,7 @@ private fun FollowedItem(page: PageDto, state: CommunityState, actions: Communit
     Column(Modifier.fillMaxWidth().clickable(role = Role.Button, enabled = !state.working) { actions.open(Destination.Page(page.handle)) }.padding(vertical = DesignTokens.SpaceUnit * 2).testTag("followed-page-${page.handle}"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
         Text(page.name, style = MaterialTheme.typography.titleMedium)
         Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
+        ModerationMark(page.moderation)
         // Disabled until the list has reloaded, so a page just unfollowed cannot be sent again.
         OutlinedButton(onClick = { actions.unfollow(page) }, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius),
             modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).semantics { contentDescription = unfollowLabel }.testTag("unfollow-${page.handle}")) {

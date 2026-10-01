@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 import javax.inject.Inject
@@ -30,6 +31,8 @@ data class IdentityState(
     val profileSaved: Int = 0,
     // A saved sign-in exists but could not be checked, so the screen offers a retry instead of the sign-in form.
     val signInUnchecked: Boolean = false,
+    val pendingDeletionAt: String? = null,
+    val deletionNotice: AccountDeletionNotice? = null,
 )
 
 // Devices can name a zone by an older name (Asia/Calcutta for Asia/Kolkata) that the service refuses, so pick the listed zone with the same rules.
@@ -45,6 +48,8 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
     val state = mutableState.asStateFlow()
     private var startIntent: StartIntent? = null
     private var pending: PendingProof? = null
+    private var deletionCredentials: LoginDto? = null
+    private var credentialsRevision = 0
 
     init { refresh() }
 
@@ -101,7 +106,8 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
         if (mutableState.value.busy) return
         pending = null
         startIntent = null
-        mutableState.update { it.copy(mode = mode, challengeEmail = null, error = null, notice = null) }
+        credentialsChanged()
+        mutableState.update { it.copy(mode = mode, challengeEmail = null, error = null, notice = null, deletionNotice = null) }
     }
 
     fun begin(email: String) = action {
@@ -118,10 +124,41 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
 
     fun login(email: String, password: String) = action {
         if (email.isBlank() || password.isBlank()) throw IdentityFailure("VALIDATION_ERROR", "Enter your email and password.")
-        repository.login(email.trim(), password)
+        credentialsChanged()
+        val revision = credentialsRevision
+        val credentials = LoginDto(email.trim(), password)
+        try {
+            repository.login(credentials.email, credentials.password)
+        } catch (error: IdentityFailure) {
+            val purgeAfter = error.details["purge_after"]
+            if (error.code != "ACCOUNT_DELETION_PENDING" || purgeAfter == null) throw error
+            Instant.parse(purgeAfter)
+            if (revision == credentialsRevision) {
+                deletionCredentials = credentials
+                mutableState.update { it.copy(pendingDeletionAt = purgeAfter) }
+            }
+            return@action
+        }
+        finishLogin()
+    }
+
+    fun credentialsChanged() {
+        credentialsRevision += 1
+        deletionCredentials = null
+        mutableState.update { it.copy(pendingDeletionAt = null) }
+    }
+
+    fun cancelDeletion() = action {
+        val credentials = deletionCredentials ?: return@action
+        repository.cancelDeletion(credentials.email, credentials.password)
+        finishLogin()
+    }
+
+    private suspend fun finishLogin() {
         pending = null
         startIntent = null
-        mutableState.update { it.copy(challengeEmail = null) }
+        credentialsChanged()
+        mutableState.update { it.copy(challengeEmail = null, deletionNotice = null, signInUnchecked = false) }
         loadAccount()
     }
 
@@ -169,6 +206,31 @@ class IdentityViewModel @Inject constructor(private val repository: AccountRepos
         repository.logout(current.user.id)
         pending = null
         startIntent = null
+        credentialsChanged()
+        mutableState.update { IdentityState(loading = false, busy = true, timezones = it.timezones) }
+    }
+
+    fun accountDeleted(notice: AccountDeletionNotice) {
+        pending = null
+        startIntent = null
+        credentialsChanged()
+        mutableState.update { IdentityState(loading = false, timezones = it.timezones, deletionNotice = notice) }
+    }
+
+    fun signInAgain() = action {
+        val current = mutableState.value.profile ?: return@action
+        try {
+            repository.signInAgain(current.user.id)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_error: IOException) {
+            Unit
+        } catch (error: IdentityFailure) {
+            if (error.code == "ACCOUNT_CHANGED") throw error
+        }
+        pending = null
+        startIntent = null
+        credentialsChanged()
         mutableState.update { IdentityState(loading = false, busy = true, timezones = it.timezones) }
     }
 }

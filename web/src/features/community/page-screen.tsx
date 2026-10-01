@@ -8,7 +8,7 @@ import type { Account } from "@/features/identity/client";
 import { ApiError } from "@/features/identity/client";
 import {
   TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, pagePosts, pinPost, pinnedPosts, publishPost, readPage,
-  textProblem, topicLabels, unblock, updatePage, updatePost,
+  reasonLabels, textProblem, topicLabels, unblock, updatePage, updatePost,
 } from "./client";
 import type { CreateIntent, PublicPage, PublicPost, ReportTarget, Topic } from "./client";
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useViewer } from "./shared";
@@ -95,6 +95,7 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         {current.can_manage && <span className={styles.badge}>You own this page</span>}
       </div>
       {current.description && <p className={styles.description}>{current.description}</p>}
+      {current.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[current.moderation.reason]}. Only you can see it.</p>}
       {viewer && !current.can_manage && <div className={styles.actions}>
         {!current.blocked && <button className={current.following ? "secondary-button" : "primary-button"} aria-pressed={current.following} disabled={busy}
           onClick={() => run(() => followPage(viewer.id, current.id, !current.following))}>
@@ -128,6 +129,7 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
       {draftList.isError && !sessionLost(draftList.error) && <Failure error={draftList.error} retry={() => draftList.refetch()} />}
       {draftList.data?.length === 0 && <p className={styles.empty}>No drafts. New posts start as private drafts.</p>}
       {draftList.data?.map(post => <PostCard key={post.id} post={post} account={viewer} onChange={refresh}>
+        {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
         <PostManager account={viewer} post={post} onChanged={refresh} />
       </PostCard>)}
     </section>}
@@ -137,6 +139,7 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
       {pinned.data.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} pinnedMark onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
+          {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
           {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}
@@ -150,6 +153,7 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
       {shown.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
+          {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
           {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}

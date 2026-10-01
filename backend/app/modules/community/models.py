@@ -27,6 +27,7 @@ class PublicPage(Base):
         UniqueConstraint("owner_id", "creation_key", name="uq_public_page_creation"),
         Index("ix_public_page_owner", "owner_id"),
         Index("ix_public_page_popularity", "follower_count", "id"),
+        Index("ix_public_page_purge", "purge_after", postgresql_where=text("purge_after IS NOT NULL")),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

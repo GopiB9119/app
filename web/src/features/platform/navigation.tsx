@@ -13,7 +13,7 @@ export const mainSections = [
   { label: "Spaces", href: "/app/spaces", icon: UsersRound, paths: ["/app/spaces", "/app/tasks", "/app/events", "/app/documents"] },
   { label: "Messages", href: "/app/messages", icon: MessageSquare, paths: ["/app/messages"] },
   { label: "Discover", href: "/app/discover", icon: Compass, paths: ["/app/discover", "/app/home", "/app/pages", "/pages", "/posts"] },
-  { label: "Profile", href: "/app/settings/account", icon: UserRound, paths: ["/app/settings", "/app/safety"] },
+  { label: "Profile", href: "/app/settings/account", icon: UserRound, paths: ["/app/settings", "/app/safety", "/app/moderation"] },
 ] as const;
 
 export type MainSection = (typeof mainSections)[number]["label"];

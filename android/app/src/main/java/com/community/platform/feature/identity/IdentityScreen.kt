@@ -94,18 +94,32 @@ data class IdentityActions(
     val revokeOthers: () -> Unit,
     val logout: () -> Unit,
     val refresh: () -> Unit,
+    val credentialsChanged: () -> Unit = {},
+    val cancelDeletion: () -> Unit = {},
 )
 
 @Composable
-fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null) {
+fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, dataViewModel: AccountDataViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
-    IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh), onOpenTasks, onOpenInbox, onOpenAgent, onOpenBlocked)
+    val dataState by dataViewModel.state.collectAsStateWithLifecycle()
+    var showingData by rememberSaveable(state.profile?.user?.id) { mutableStateOf(false) }
+    LaunchedEffect(state.profile?.user?.id, state.profile?.user?.timezone) { dataViewModel.bind(state.profile) }
+    LaunchedEffect(dataState.signInRequired, state.busy) {
+        if (dataState.signInRequired && !state.busy) { showingData = false; viewModel.refresh() }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (!showingData && !dataState.busy) viewModel.refresh() }
+    if (showingData && state.profile != null) {
+        AccountDataRoute(dataViewModel, dataState.copy(busy = dataState.busy || state.busy),
+            onBack = { showingData = false }, onSignInAgain = viewModel::signInAgain, onDeleted = viewModel::accountDeleted)
+    } else {
+        IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh, viewModel::credentialsChanged, viewModel::cancelDeletion),
+            onOpenTasks, onOpenInbox, onOpenAgent, onOpenBlocked, onOpenData = { dataViewModel.bind(state.profile); showingData = true })
+    }
 }
 
 /** Sign-in, and once signed in the Profile section: account, sessions, the agent and the blocked list (DEC-014). */
 @Composable
-fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, secrets: SignInSecrets = viewModel()) {
+fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, secrets: SignInSecrets = viewModel(), onOpenData: (() -> Unit)? = null) {
     SideEffect { if (state.profile != null) secrets.forget() }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
@@ -130,10 +144,13 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
                     Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(unit * 5)) {
                         state.error?.let { StatusMessage(it, true) }
                         state.notice?.let { StatusMessage(it, false) }
+                        if (state.profile == null) state.deletionNotice?.let { notice ->
+                            StatusMessage(stringResource(R.string.account_deletion_notice, formatAccountDataTimestamp(notice.purgeAfter, notice.timezone)), false)
+                        }
                         if (state.profile != null && onOpenAgent != null) OutlinedButton(onClick = onOpenAgent, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-agent")) { Icon(Icons.Default.Face, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.agent_title)) }
                         if (state.profile != null && onOpenBlocked != null) OutlinedButton(onClick = onOpenBlocked, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-blocked")) { Icon(Icons.Default.Lock, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.account_blocked)) }
                         when {
-                            state.profile != null -> AccountBody(state, actions)
+                            state.profile != null -> AccountBody(state, actions, onOpenData)
                             state.signInUnchecked -> UncheckedSignIn(state, actions)
                             else -> AuthenticationBody(state, actions, secrets)
                         }
@@ -200,7 +217,10 @@ private fun AuthenticationBody(state: IdentityState, actions: IdentityActions, s
         }
     }
     if (!verifying) {
-        OutlinedTextField(value = email, onValueChange = { email = it.take(254) }, label = { Text(stringResource(R.string.email_address)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), leadingIcon = { Icon(Icons.Default.Email, null) }, modifier = Modifier.fillMaxWidth().testTag("email"))
+        OutlinedTextField(value = email, onValueChange = { value ->
+            val next = value.take(254)
+            if (email != next) { email = next; actions.credentialsChanged() }
+        }, label = { Text(stringResource(R.string.email_address)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), leadingIcon = { Icon(Icons.Default.Email, null) }, modifier = Modifier.fillMaxWidth().testTag("email"))
     } else {
         OutlinedTextField(value = draft.code, onValueChange = { draft.code = it.filter(Char::isDigit).take(6) }, label = { Text(stringResource(R.string.verification_code)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag("code"))
         if (state.mode == EntryMode.REGISTER) {
@@ -208,13 +228,23 @@ private fun AuthenticationBody(state: IdentityState, actions: IdentityActions, s
         }
     }
     if (state.mode == EntryMode.LOGIN || verifying) {
-        OutlinedTextField(value = draft.password, onValueChange = { draft.password = it.take(128) }, label = { Text(stringResource(if (state.mode == EntryMode.LOGIN) R.string.password else R.string.new_password)) }, singleLine = true, enabled = !state.busy, visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), supportingText = { if (state.mode != EntryMode.LOGIN) Text(stringResource(R.string.password_length)) }, modifier = Modifier.fillMaxWidth().testTag("password"))
+        OutlinedTextField(value = draft.password, onValueChange = { value ->
+            val next = value.take(128)
+            if (draft.password != next) { draft.password = next; actions.credentialsChanged() }
+        }, label = { Text(stringResource(if (state.mode == EntryMode.LOGIN) R.string.password else R.string.new_password)) }, singleLine = true, enabled = !state.busy, visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), supportingText = { if (state.mode != EntryMode.LOGIN) Text(stringResource(R.string.password_length)) }, modifier = Modifier.fillMaxWidth().testTag("password"))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(showPassword, onCheckedChange = { showPassword = it }, enabled = !state.busy)
             Text(stringResource(R.string.show_password), style = MaterialTheme.typography.bodyMedium)
         }
     }
     if (verifying && state.mode == EntryMode.REGISTER) TimezonePicker(timezone, state.timezones, !state.busy) { chosenTimezone = it }
+    if (state.mode == EntryMode.LOGIN) state.pendingDeletionAt?.let { purgeAfter ->
+        StatusMessage(stringResource(R.string.account_deletion_pending,
+            formatAccountDataTimestamp(purgeAfter, state.deletionNotice?.timezone ?: ZoneId.systemDefault().id)), true)
+        Button(onClick = actions.cancelDeletion, enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("cancel-deletion-sign-in"),
+            shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.account_deletion_cancel_sign_in)) }
+    }
     Button(
         onClick = { when { state.mode == EntryMode.LOGIN -> actions.login(email, draft.password); verifying -> actions.verify(draft.code, draft.password, name, timezone); else -> actions.begin(email) } },
         enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("primary-action"), shape = RoundedCornerShape(DesignTokens.ControlRadius),
@@ -230,16 +260,21 @@ private fun AuthenticationBody(state: IdentityState, actions: IdentityActions, s
 private data class Confirmation(val title: String, val action: () -> Unit)
 
 @Composable
-private fun AccountBody(state: IdentityState, actions: IdentityActions) {
+private fun AccountBody(state: IdentityState, actions: IdentityActions, onOpenData: (() -> Unit)?) {
     val profile = state.profile ?: return
-    var name by remember(profile.user.id) { mutableStateOf(profile.user.displayName) }
-    var timezone by remember(profile.user.id) { mutableStateOf(profile.user.timezone) }
-    var baseEtag by remember(profile.user.id) { mutableStateOf(profile.etag) }
+    var name by rememberSaveable(profile.user.id) { mutableStateOf(profile.user.displayName) }
+    var timezone by rememberSaveable(profile.user.id) { mutableStateOf(profile.user.timezone) }
+    var baseEtag by rememberSaveable(profile.user.id) { mutableStateOf(profile.etag) }
+    // The save count this editor last applied. A recreated screen keeps its draft; a new process counts again from 0.
+    var appliedSave by rememberSaveable(profile.user.id) { mutableStateOf(state.profileSaved) }
     var confirmation by remember { mutableStateOf<Confirmation?>(null) }
     LaunchedEffect(state.profileSaved) {
-        name = profile.user.displayName
-        timezone = profile.user.timezone
-        baseEtag = profile.etag
+        if (state.profileSaved > appliedSave) {
+            name = profile.user.displayName
+            timezone = profile.user.timezone
+            baseEtag = profile.etag
+        }
+        appliedSave = state.profileSaved
     }
     val logoutTitle = stringResource(R.string.confirm_logout)
     val othersTitle = stringResource(R.string.confirm_others)
@@ -253,6 +288,9 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions) {
         Text(stringResource(R.string.email_verified), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
     }
     Text(profile.user.email, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (onOpenData != null) OutlinedButton(onClick = onOpenData, enabled = !state.busy,
+        modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-data"),
+        shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.account_data_title)) }
     HorizontalDivider()
     Text(stringResource(R.string.profile), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
     OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text(stringResource(R.string.display_name)) }, singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth().testTag("profile-name"))

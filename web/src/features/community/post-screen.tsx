@@ -7,7 +7,7 @@ import { Ban, Flag, LoaderCircle, MessageCircle, Reply, Trash2 } from "lucide-re
 
 import type { Account } from "@/features/identity/client";
 import { ApiError } from "@/features/identity/client";
-import { block, createComment, endComment, isUnknown, postComments, readPost, textProblem } from "./client";
+import { block, createComment, endComment, isUnknown, postComments, readPost, reasonLabels, textProblem } from "./client";
 import type { CreateIntent, PostComment, PublicPost, ReportTarget } from "./client";
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, time, useViewer } from "./shared";
 import styles from "./community.module.css";
@@ -52,6 +52,7 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
   return <CommunityFrame account={viewer} current={null}>
     <div className={styles.heading}><h1>Post from {current.page_name}</h1></div>
     <PostCard post={current} account={viewer} onChange={setOverride} onReport={setReport} linkTitle={false}>
+      {current.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[current.moderation.reason]}. Only you can see it.</p>}
       {current.can_manage && <p className={styles.meta}>You own this page. <Link href={`/pages/${current.page_handle}`}>Edit or delete this post on the page</Link>.</p>}
     </PostCard>
     {current.status === "published" && <section className={styles.stack} aria-labelledby="comments-heading">
@@ -99,6 +100,7 @@ function CommentItem({ comment, account, postId, onChanged, onReport }: {
     </div>
     {visible ? <p className={styles.body}>{comment.body}</p>
       : <p className={styles.removed}>{comment.status === "removed" ? "Removed by the page owner" : "Comment deleted"}</p>}
+    {comment.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[comment.moderation.reason]}. Only you can see it.</p>}
     {account && visible && mode === "idle" && <div className={styles.actions}>
       {comment.parent_id === null && <button className="text-button" onClick={() => setMode("reply")}><Reply size={16} aria-hidden />Reply</button>}
       {comment.can_remove && <button className="text-button" onClick={() => setMode("remove")}><Trash2 size={16} aria-hidden />{comment.mine ? "Delete" : "Remove"}</button>}

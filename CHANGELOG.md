@@ -49,6 +49,9 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ### Product (audit session)
 
+- **Android device tests for care, events, the calendar and repeating reminders; confirmation dialogs scroll** (T93): 33 tests on an emulator with the network off, including 320 dp at 200% text. They found that the questions before stopping a medicine, cancelling an event, and cancelling, acknowledging, pausing, resuming, skipping or cancelling reminders cut their explanation off at large text sizes; their text now scrolls.
+- **Android account settings keep an unsaved name or timezone when the phone rotates** (T94): the draft and the version it started from survive rotation and a restarted app, and only a save replaces them. T50 had fixed this for the sign-in fields only.
+- **Offline tests for repeating reminders and snooze on the web; a refused snooze closes its dialog** (T92): 29 tests cover creating, confirming, retrying and refusing series changes and snoozes, and the layout at 320 px with 200% text. They found that a refused snooze left its dialog open on the old reminder; it now closes, shows the reason and reloads the inbox.
 - **`npm run verify` catches clashing migrations at once** (T64): when two sessions add a migration with the same number, every backend test fails after minutes with "Multiple heads". The command now checks the migration files first and names the two that clash.
 - **Security review of the code built today** (T88–T91): two reviews of the newer features (live updates, account deletion, moderation, Space roles and couples, documents, search, the agent and the web proxy) found four problems, all now fixed:
   - **Blocks and join requests:** an admin could let into a group someone the owner had blocked.

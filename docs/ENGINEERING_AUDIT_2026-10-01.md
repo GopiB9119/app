@@ -220,7 +220,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 - **A3.** There is no `FLAG_SECURE`; the policy is still open (C8-D05).
 - **A10.** Every API call holds one app-wide lock. [T82](TASKS.md#defects-that-break-approved-requirements) confirmed it and tried a narrower lock, then reverted it. The lock also keeps a refresh's late answer from overwriting a newer change, such as bringing back a deleted chat message, so each screen must ignore late answers first.
 - **A11.** Navigation is a string-keyed switchboard, and the Retrofit builders are copied between screens.
-- **A12.** Sign-in fields are lost when the screen rotates.
+- **A12.** Sign-in fields are lost when the screen rotates. Fixed by T50; the account settings fields had the same problem, fixed by [T94](TASKS.md#defects-that-break-approved-requirements).
 
 **Both clients**
 
@@ -276,7 +276,8 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
     - 9 needs no new test. The API takes a local time and a zone and works out the instant itself, and it refuses times that a clock change skips or repeats (`test_event_times_and_text_are_validated`). A check in the apps would refuse valid events whenever the server's and the device's timezone rules differ, so none was added.
   - **The holes listed above:**
     - The lock test is [T60](TASKS.md#defects-that-break-approved-requirements).
-    - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens are [T78](TASKS.md#defects-that-break-approved-requirements), after the live updates work (T65) settles on the web.
+    - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens are [T78](TASKS.md#defects-that-break-approved-requirements), after the live updates work (T65) settles on the web. [T92](TASKS.md#defects-that-break-approved-requirements) added 29 offline tests for repeating reminders and snooze.
+    - On Android, [T93](TASKS.md#defects-that-break-approved-requirements) added device tests for care, events, the calendar and repeating reminders, and found and fixed dialogs that cut their text off at 200%. Chat, checklists and group Spaces still have no device tests; chat waits for T65 and T67.
 
 ## 6. What Is Missing, and Why
 

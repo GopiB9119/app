@@ -7,6 +7,8 @@ from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import AccountSession, OutboxEvent, User
+from app.modules.messaging.models import Conversation
+from app.modules.realtime.hub import signal
 from app.modules.spaces.models import OwnershipTransfer, Space, SpaceAuditEvent, SpaceInvitation, SpaceJoinRequest, SpaceMembership, SpaceMembershipCommand, SpaceSettingsCommand
 from app.modules.spaces.schemas import (
     InvitationCursor,
@@ -286,10 +288,29 @@ class SpaceService:
                             aggregate_id=space.id, schema_version=1, created_at=now),
             ])
             database.flush()
+            self.announce_lost_access(database, space.id, target.account_id)
             database.add(SpaceMembershipCommand(id=identifier, space_id=space.id, actor_id=caller.id,
                 actor_admission_id=actor.admission_id, target_id=target.account_id,
                 target_admission_id=target.admission_id, action=action, request_key=key, request_digest=digest))
             return MembershipOutcome(space_id=space.id, account_id=target.account_id)
+
+    @staticmethod
+    def announce_lost_access(database, space_id, account_id):
+        """Live hints for each chat the person could see in this Space (T86): open chats then read again and show the change.
+
+        The person who left is told about the Space chat and their direct chats; the other person in each direct chat is
+        told too, because that chat can no longer take new messages. Hints carry identifiers only.
+        """
+        rows = database.execute(
+            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id)
+            .where(Conversation.space_id == space_id, or_(
+                Conversation.kind == "space",
+                Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
+            )).order_by(Conversation.id)
+        ).all()
+        for row in rows:
+            accounts = [account_id] if row.kind == "space" else [row.first_account_id, row.second_account_id]
+            signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="access")
 
     def member_view(self, database, membership):
         user = database.get(User, membership.account_id)

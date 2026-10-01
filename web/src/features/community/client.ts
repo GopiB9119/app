@@ -16,15 +16,22 @@ export const reasonLabels: Record<ReportReason, string> = {
   sexual: "Sexual content", misinformation: "False information", self_harm: "Self-harm", privacy: "Shares private information", other: "Something else",
 };
 export const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]$/;
+export const PAGE_STATUSES = ["active", "read_only", "deleted"] as const;
+export type PageStatus = typeof PAGE_STATUSES[number];
+export const pageStatusLabel: Record<PageStatus, string> = { active: "Active", read_only: "Read only", deleted: "Deleted" };
 const etag = z.string().min(3).max(200);
 // The server counts characters (code points), not UTF-16 units, so an emoji counts once.
 const chars = (min: number, max: number) => z.string().refine(value => { const length = [...value].length; return length >= min && length <= max; });
 
 export const pageSchema = z.object({
   id: uuid, handle: z.string().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/), name: chars(1, 80),
-  description: chars(0, 500), rules: chars(0, 2000).default(""), topic: z.enum(TOPICS), follower_count: z.number().int().nonnegative(),
+  description: chars(0, 500), rules: chars(0, 2000).default(""), topic: z.enum(TOPICS),
+  status: z.enum(PAGE_STATUSES).default("active"),
+  follower_count: z.number().int().nonnegative(),
   created_at: timestamp, updated_at: timestamp, following: z.boolean(), blocked: z.boolean(), can_manage: z.boolean(),
   etag: etag.nullable(),
+  purge_after: timestamp.nullable().default(null),
+  moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => value.can_manage === (value.etag !== null) && !(value.following && value.blocked));
 export type PublicPage = z.infer<typeof pageSchema>;
 
@@ -34,6 +41,7 @@ export const postSchema = z.object({
   like_count: z.number().int().nonnegative(), comment_count: z.number().int().nonnegative(),
   created_at: timestamp, published_at: timestamp.nullable(), edited_at: timestamp.nullable(),
   liked: z.boolean(), saved: z.boolean(), pinned: z.boolean().default(false), can_manage: z.boolean(), etag: etag.nullable(),
+  moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => (value.status === "published") === (value.published_at !== null)
   && value.can_manage === (value.etag !== null) && (value.status === "published" || value.can_manage)
   && (value.edited_at === null || value.status === "published") && (!value.pinned || value.status === "published"));
@@ -43,6 +51,7 @@ export const commentSchema = z.object({
   id: uuid, post_id: uuid, parent_id: uuid.nullable(), author_name: chars(1, 80),
   body: chars(1, 2000).nullable(), status: z.enum(["visible", "deleted", "removed"]),
   created_at: timestamp, mine: z.boolean(), can_remove: z.boolean(),
+  moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => (value.status === "visible") === (value.body !== null) && (!value.can_remove || value.status === "visible") && value.parent_id !== value.id);
 export type PostComment = z.infer<typeof commentSchema>;
 
@@ -56,6 +65,131 @@ export const blockSchema = z.object({
 export type Block = z.infer<typeof blockSchema>;
 export type ReportTarget = { type: "page" | "post" | "comment"; id: string; label: string };
 export type CreateIntent<Body> = { accountId: string; key: string; body: Body };
+
+const moderationTarget = z.enum(["page", "post", "comment"]);
+const moderationAction = z.enum(["no_action", "hide", "restore"]);
+const appealStatus = z.enum(["open", "upheld", "overturned"]);
+export const moderationTargetLabels = { page: "Page", post: "Post", comment: "Comment" } as const;
+export const moderationActionLabels = { no_action: "No action", hide: "Hidden", restore: "Restored" } as const;
+export const contentPreviewSchema = z.object({
+  name: z.string().nullish(), handle: z.string().nullish(), description: z.string().nullish(),
+  title: z.string().nullish(), body: z.string().nullish(), status: z.string(),
+});
+export type ContentPreview = z.infer<typeof contentPreviewSchema>;
+export const moderationQueueSchema = z.object({
+  target_type: moderationTarget, target_id: uuid, preview: contentPreviewSchema, page_name: z.string().nullable(),
+  report_count: z.number().int().positive(),
+  reasons: z.array(z.object({ reason: z.enum(REPORT_REASONS), count: z.number().int().positive() })).min(1),
+  first_reported_at: timestamp,
+}).refine(value => new Set(value.reasons.map(item => item.reason)).size === value.reasons.length
+  && value.reasons.reduce((total, item) => total + item.count, 0) === value.report_count);
+export type ModerationQueueItem = z.infer<typeof moderationQueueSchema>;
+export const moderationDecisionSchema = z.object({
+  id: uuid, target_type: moderationTarget, target_id: uuid, action: moderationAction, reason: z.enum(REPORT_REASONS),
+  note: chars(0, 1000), decided_by: uuid, decided_at: timestamp, appeal_of: uuid.nullable(),
+});
+export type ModerationDecisionBody = {
+  target_type: z.infer<typeof moderationTarget>; target_id: string; action: "no_action" | "hide"; reason: ReportReason; note: string;
+};
+export const moderationAppealSchema = z.object({
+  id: uuid, decision_id: uuid, note: chars(1, 1000), status: appealStatus, created_at: timestamp, resolved_at: timestamp.nullable(),
+}).refine(value => (value.status === "open") === (value.resolved_at === null));
+export const moderationAppealReviewSchema = z.object({
+  appeal: moderationAppealSchema, decision: moderationDecisionSchema, preview: contentPreviewSchema,
+  page_name: z.string().nullable(), resolution_note: chars(0, 1000).nullable(),
+}).refine(value => value.appeal.decision_id === value.decision.id);
+export type ModerationAppealReview = z.infer<typeof moderationAppealReviewSchema>;
+export const moderationNoticeSchema = z.object({
+  id: uuid, target_type: moderationTarget, target_id: uuid, action: moderationAction, reason: z.enum(REPORT_REASONS),
+  decided_at: timestamp, appeal_status: appealStatus.nullable(), appeal_of: uuid.nullable(),
+});
+export type ModerationNotice = z.infer<typeof moderationNoticeSchema>;
+export const myReportSchema = z.object({
+  id: uuid, target_type: moderationTarget, target_id: uuid, reason: z.enum(REPORT_REASONS),
+  status: z.enum(["open", "reviewed"]), outcome: z.enum(["action_taken", "no_action"]).nullable(),
+  action: moderationAction.nullable(), created_at: timestamp, reviewed_at: timestamp.nullable(),
+}).refine(value => value.status === "open"
+  ? value.outcome === null && value.action === null && value.reviewed_at === null
+  : value.outcome !== null && value.action !== null && value.reviewed_at !== null);
+
+export async function moderatorStatus(accountId: string, signal?: AbortSignal) {
+  return (await api("me/moderator", z.object({ moderator: z.boolean() }), { accountId, signal })).data;
+}
+
+export async function moderationQueue(accountId: string, cursor?: string | null, signal?: AbortSignal) {
+  const query = new URLSearchParams({ limit: "20" });
+  if (cursor) query.set("cursor", cursor);
+  const result = await api(`moderation/queue?${query}`, z.array(moderationQueueSchema).max(50), { accountId, signal });
+  if (!result.pagination || (cursor && result.pagination.next_cursor === cursor)
+    || new Set(result.data.map(item => `${item.target_type}:${item.target_id}`)).size !== result.data.length) invalid("The list is incomplete.");
+  return { items: result.data, next: result.pagination.next_cursor, hasMore: result.pagination.has_more };
+}
+
+export async function recordModerationDecision(intent: CreateIntent<ModerationDecisionBody>) {
+  const result = (await api("moderation/decisions", moderationDecisionSchema, {
+    method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
+  })).data;
+  if (result.target_type !== intent.body.target_type || result.target_id !== intent.body.target_id
+    || result.action !== intent.body.action || result.reason !== intent.body.reason || result.note !== intent.body.note
+    || result.decided_by !== intent.accountId || result.appeal_of !== null) invalid("The decision could not be confirmed.");
+  return result;
+}
+
+export async function moderationAppeals(accountId: string, status: "open" | "upheld" | "overturned" = "open", signal?: AbortSignal) {
+  const result = (await api(`moderation/appeals?${new URLSearchParams({ status })}`, z.array(moderationAppealReviewSchema), { accountId, signal })).data;
+  if (new Set(result.map(item => item.appeal.id)).size !== result.length || result.some(item => item.appeal.status !== status)) invalid();
+  return result;
+}
+
+export async function resolveModerationAppeal(accountId: string, appealId: string, body: { outcome: "upheld" | "overturned"; note: string }) {
+  const result = (await api(`moderation/appeals/${appealId}/resolve`, moderationAppealSchema, { method: "POST", accountId, body })).data;
+  if (result.id !== appealId || result.status !== body.outcome) invalid("The appeal resolution could not be confirmed.");
+  return result;
+}
+
+export async function moderationNotices(accountId: string, signal?: AbortSignal) {
+  return unique((await api("me/moderation-notices", z.array(moderationNoticeSchema), { accountId, signal })).data);
+}
+
+export async function appealModerationDecision(intent: CreateIntent<{ note: string }> & { decisionId: string }) {
+  const result = (await api(`moderation/decisions/${intent.decisionId}/appeal`, moderationAppealSchema, {
+    method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
+  })).data;
+  if (result.decision_id !== intent.decisionId || result.note !== intent.body.note) invalid("The appeal could not be confirmed.");
+  return result;
+}
+
+export async function myReports(accountId: string, signal?: AbortSignal) {
+  return unique((await api("me/reports", z.array(myReportSchema), { accountId, signal })).data);
+}
+
+export const MODERATOR_STATES = [
+  "pending", "active", "declined", "cancelled", "withdrawn", "removed", "stepped_down", "expired", "invalidated",
+] as const;
+export type ModeratorState = typeof MODERATOR_STATES[number];
+const moderatorRowBase = z.object({
+  id: uuid, page_id: uuid, account_id: uuid, display_name: chars(1, 80), status: z.enum(MODERATOR_STATES),
+  created_at: timestamp, expires_at: timestamp.nullable(), resolved_at: timestamp.nullable(), etag,
+});
+const pendingLifecycle = (value: { status: string; expires_at: string | null; resolved_at: string | null }) =>
+  (value.status === "pending") === (value.expires_at !== null) && (value.status === "pending") === (value.resolved_at === null);
+export const moderatorRowSchema = moderatorRowBase.refine(pendingLifecycle);
+export type ModeratorRow = z.infer<typeof moderatorRowSchema>;
+
+export const moderatorRoleSchema = moderatorRowBase.omit({ account_id: true, display_name: true }).extend({
+  page_handle: z.string().min(3).max(30), page_name: chars(1, 80),
+}).refine(pendingLifecycle);
+export type ModeratorRole = z.infer<typeof moderatorRoleSchema>;
+
+export const HANDOVER_STATES = ["pending", "accepted", "declined", "cancelled", "expired", "invalidated"] as const;
+export type HandoverState = typeof HANDOVER_STATES[number];
+export const handoverSchema = z.object({
+  id: uuid, page_id: uuid, page_handle: z.string().min(3).max(30), page_name: chars(1, 80),
+  from_account_id: uuid, from_name: chars(1, 80), to_account_id: uuid, to_name: chars(1, 80),
+  status: z.enum(HANDOVER_STATES),
+  created_at: timestamp, expires_at: timestamp.nullable(), resolved_at: timestamp.nullable(), etag,
+}).refine(pendingLifecycle);
+export type Handover = z.infer<typeof handoverSchema>;
 
 function invalid(message = "The service returned an unexpected response."): never {
   throw new ApiError(502, "INVALID_RESPONSE", message);
@@ -261,6 +395,94 @@ export async function unblock(accountId: string, blockId: string) {
   const result = (await api(`blocks/${blockId}/remove`, z.object({ id: uuid, status: z.literal("removed") }), { method: "POST", accountId, body: {} })).data;
   if (result.id !== blockId) invalid();
   return result;
+}
+
+export async function inviteModerator(intent: CreateIntent<{ account_id: string }> & { pageId: string }) {
+  const result = (await api(`pages/${intent.pageId}/moderators`, moderatorRowSchema, {
+    method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
+  })).data;
+  if (result.page_id !== intent.pageId || result.account_id !== intent.body.account_id || result.status !== "pending") {
+    invalid("The invitation could not be confirmed.");
+  }
+  return result;
+}
+
+export async function pageModerators(accountId: string, pageId: string, signal?: AbortSignal) {
+  const result = unique((await api(`pages/${pageId}/moderators`, z.array(moderatorRowSchema).max(10), { accountId, signal })).data);
+  if (result.some(item => item.page_id !== pageId || (item.status !== "pending" && item.status !== "active"))) invalid();
+  return result;
+}
+
+export async function myModeratorRoles(accountId: string, signal?: AbortSignal) {
+  const result = unique((await api("me/moderator-roles", z.array(moderatorRoleSchema).max(10), { accountId, signal })).data);
+  if (result.some(item => item.status !== "pending" && item.status !== "active")) invalid();
+  return result;
+}
+
+async function moderatorAction(accountId: string, pageId: string, row: Pick<ModeratorRow, "id" | "etag">, action: string, required: ModeratorState) {
+  const result = (await api(`pages/${pageId}/moderators/${row.id}/${action}`, moderatorRowSchema, {
+    method: "POST", accountId, body: {}, headers: { "If-Match": row.etag },
+  })).data;
+  if (result.id !== row.id || result.status !== required) invalid(`The ${action.replace("-", " ")} could not be confirmed.`);
+  return result;
+}
+
+export const acceptModerator = (accountId: string, pageId: string, row: ModeratorRole | ModeratorRow) => moderatorAction(accountId, pageId, row, "accept", "active");
+export const declineModerator = (accountId: string, pageId: string, row: ModeratorRole | ModeratorRow) => moderatorAction(accountId, pageId, row, "decline", "declined");
+export const withdrawModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "withdraw", "withdrawn");
+export const removeModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "remove", "removed");
+export const stepDownModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "step-down", "stepped_down");
+
+export async function offerHandover(intent: CreateIntent<{ to_account_id: string }> & { pageId: string; etag: string }) {
+  const result = (await api(`pages/${intent.pageId}/handover`, handoverSchema, {
+    method: "POST", accountId: intent.accountId, body: intent.body,
+    headers: { "Idempotency-Key": intent.key, "If-Match": intent.etag },
+  })).data;
+  if (result.page_id !== intent.pageId || result.to_account_id !== intent.body.to_account_id || result.status !== "pending") {
+    invalid("The offer could not be confirmed.");
+  }
+  return result;
+}
+
+export async function pageHandover(accountId: string, pageId: string, signal?: AbortSignal) {
+  return (await api(`pages/${pageId}/handover`, handoverSchema, { accountId, signal })).data;
+}
+
+export async function myHandoverOffers(accountId: string, signal?: AbortSignal) {
+  const result = unique((await api("me/handover-offers", z.array(handoverSchema).max(10), { accountId, signal })).data);
+  if (result.some(item => item.status !== "pending" || item.to_account_id !== accountId)) invalid();
+  return result;
+}
+
+async function handoverAction(accountId: string, pageId: string, offer: Handover, action: "accept" | "decline" | "cancel", required: HandoverState) {
+  const result = (await api(`pages/${pageId}/handover/${offer.id}/${action}`, handoverSchema, {
+    method: "POST", accountId, body: {}, headers: { "If-Match": offer.etag },
+  })).data;
+  if (result.id !== offer.id || result.status !== required) invalid(`The ${action} could not be confirmed.`);
+  return result;
+}
+
+const handoverOutcomes = { accept: "accepted", decline: "declined", cancel: "cancelled" } as const;
+
+export const respondHandover = (
+  accountId: string, pageId: string, offer: Handover, action: keyof typeof handoverOutcomes,
+) => handoverAction(accountId, pageId, offer, action, handoverOutcomes[action]);
+
+export async function archivePage(accountId: string, page: PublicPage) {
+  if (!page.etag) invalid();
+  return checkPage((await api(`pages/${page.id}/archive`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+}
+
+export async function restorePage(accountId: string, page: PublicPage) {
+  if (!page.etag) invalid();
+  return checkPage((await api(`pages/${page.id}/restore`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+}
+
+export async function deletePage(accountId: string, page: PublicPage, confirm: string) {
+  if (!page.etag) invalid();
+  return checkPage((await api(`pages/${page.id}/delete`, pageSchema, {
+    method: "POST", accountId, body: { confirm }, headers: { "If-Match": page.etag },
+  })).data, page.id);
 }
 
 export function isUnknown(error: unknown) {

@@ -20,10 +20,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -212,7 +214,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
         AlertDialog(
             onDismissRequest = actions.keep,
             title = { Text(stringResource(R.string.care_stop_title)) },
-            text = { Text(stringResource(R.string.care_stop_text, item.medicineName)) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text(stringResource(R.string.care_stop_text, item.medicineName)) } },
             confirmButton = { TextButton(onClick = actions.stop, modifier = Modifier.testTag("care-stop-confirm")) { Text(stringResource(R.string.care_stop_confirm)) } },
             dismissButton = { TextButton(onClick = actions.keep, modifier = Modifier.testTag("care-stop-keep")) { Text(stringResource(R.string.care_keep)) } },
         )
