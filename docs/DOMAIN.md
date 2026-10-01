@@ -52,7 +52,7 @@ Shared rules S1–S12 apply to every entity unless its entry says otherwise. "Ev
 | 3 | [Profile](#3-profile) | columns on `users` | Yes |
 | 4 | [Session](#4-session) | `account_sessions` | Yes |
 | 5 | [Device](#5-device) | — | No |
-| 6 | [Space](#6-space) | `spaces` | Family and solo |
+| 6 | [Space](#6-space) | `spaces` | Family, couple, solo and group |
 | 7 | [Membership](#7-membership) | `space_memberships`, `space_ownership_transfers` | Yes |
 | 8 | [Role](#8-role) | `space_memberships.role` | Owner and member |
 | 9 | [Permission](#9-permission) | rules in service code | Fixed rules |
@@ -233,12 +233,12 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Entity | A group with its own members, roles, permissions and resources. Table `spaces`. |
 | Purpose | **CONFIRMED** The main organizing concept (R2); a person can belong to many (R1); the types are family, couple, solo and custom group (R6). |
 | Owner | Module `spaces`. The Space owner runs it; who owns the content inside it is **PROPOSED** (C3-D10 PROPOSED). |
-| Scope | Private to its members. **CONFLICTING** whether a public community is a Space (D1; conflict C1). Decided in [DEC-011](DECISIONS.md#accepted-decisions) (under the product owner's delegation, awaiting review): the owner of a `group` Space may make it public, so signed-in accounts can find its name, description and member count and ask to join. Family and solo Spaces are always private. In every Space, content, members and history stay members-only. |
+| Scope | Private to its members. **CONFLICTING** whether a public community is a Space (D1; conflict C1). Decided in [DEC-011](DECISIONS.md#accepted-decisions) (under the product owner's delegation, awaiting review): the owner of a `group` Space may make it public, so signed-in accounts can find its name, description and member count and ask to join. Family, couple and solo Spaces are always private. In every Space, content, members and history stay members-only. |
 | Lifecycle | Built: created (the creator becomes the owner), then `active`; the owner can rename it and edit its description; the owner of a group can switch it between private and public; ownership can move (see Membership). Archive, deletion and type change are **TBD** (U-09; C3-D09 OPEN; C3-D08 PROPOSED). |
-| States | Built: `status IN ('active','archived')` with only `active` reachable; `space_type IN ('family','solo','group')`; `visibility IN ('private','public')`, and public only for `group`, enforced by the database. Couple is **CONFIRMED** (R6) but not built (T12). **PROPOSED** states DRAFT, PENDING_ACTIVATION, ACTIVE, LOCKED, READ_ONLY, ARCHIVED, DELETION_PENDING, DELETED (C3-D02 PROPOSED). |
+| States | Built: `status IN ('active','archived')` with only `active` reachable; `space_type IN ('family','solo','group','couple')`; `visibility IN ('private','public')`, and public only for `group`, enforced by the database. Couple Spaces are built under [DEC-017](DECISIONS.md#accepted-decisions) (provisional, awaiting the owner's review): usable by the creator at once, shown as waiting for the partner until one joins; there is no separate pending state. **PROPOSED** states DRAFT, PENDING_ACTIVATION, ACTIVE, LOCKED, READ_ONLY, ARCHIVED, DELETION_PENDING, DELETED (C3-D02 PROPOSED). |
 | Relationships | Memberships, Invitations, join requests, ownership offers, Tasks, Events, Conversations (one Space chat and direct chats) and audit rows. |
 | Permissions | Built: any signed-in account creates one (up to 50 per account); current members read it; only the owner renames it, edits its description or changes a group's visibility. Any signed-in account can find a public group's name, description and member count, unless either it or the group's owner has blocked the other. **CONFIRMED** each Space has its own permissions (R2); configurable permissions are not built (T13). |
-| Privacy classification | Private (C11-C03) for every family, solo and private group Space: never listed, searched or distinguishable from a missing one. A public group exposes only its name, description and member count; its content, members and history stay private. |
+| Privacy classification | Private (C11-C03) for every family, couple, solo and private group Space: never listed, searched or distinguishable from a missing one. A public group exposes only its name, description and member count; its content, members and history stay private. |
 | Events | `space.created`, `space.renamed`, `space.description_changed`, `space.made_public`, `space.made_private`. |
 | Commands | Create; rename and describe; make a group public or private. |
 | Queries | List my Spaces; read a Space; read its settings; find public groups; preview one public group. |
@@ -249,9 +249,9 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Agent access | **TBD** (D4). **PROPOSED** a Space agent uses only data approved for its scope (C3-D10 PROPOSED). |
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
-| Validation rules | Built: name 1–80 characters after trimming, without control characters; description up to 280 characters without control or text-direction characters (new lines allowed); type `family`, `solo` or `group`; only a group can be public. The name and description cannot change while invitations, join requests or ownership offers are pending. |
-| Invariants | Built: exactly one active owner; a solo Space has only its owner, enforced by the database; only a group is ever public, enforced by the database; `version > 0`; one creation per creator and request key. |
-| Failure modes | Built: non-members get 404, and a private Space looks exactly like a missing one in discovery; stale settings return 412; making a family or solo Space public returns 409 PRIVATE_SPACE_TYPE; creating more than 50 Spaces is refused. |
+| Validation rules | Built: name 1–80 characters after trimming, without control characters; description up to 280 characters without control or text-direction characters (new lines allowed); type `family`, `couple`, `solo` or `group`; only a group can be public. The name and description cannot change while invitations, join requests or ownership offers are pending. |
+| Invariants | Built: exactly one active owner; a solo Space has only its owner, enforced by the database; a couple Space has at most two active members (the owner and one partner), checked when inviting and accepting under the Space lock and enforced by the database; only a group is ever public, enforced by the database; the type never changes, enforced by the database; `version > 0`; one creation per creator and request key. |
+| Failure modes | Built: non-members get 404, and a private Space looks exactly like a missing one in discovery; stale settings return 412; making a family, couple or solo Space public returns 409 PRIVATE_SPACE_TYPE; inviting or admitting a third person to a couple returns 409 COUPLE_FULL, and inviting a second person while the partner's invitation still waits returns 409 COUPLE_INVITATION_PENDING; creating more than 50 Spaces is refused. |
 | Dependencies | User, Membership. |
 
 ### 7. Membership
@@ -1105,7 +1105,7 @@ Each backend module in `backend/app/modules/` owns its tables. Web features live
 | discovery | None of its own: search inside your Spaces (`GET /v1/search`) reads tasks, events and documents (DEC-015) | Yes | Yes |
 | integrations, realtime, safety | None; reserved folders | No | No |
 
-On 2026-10-01 the code defines 60 tables: 53 through migration `0022`, the 5 agent tables in `0023` and the 2 document tables in `0024`. `backend/tests/test_migrations.py` checks that the migrations create exactly the tables the code defines. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
+On 2026-10-01 the code defines 60 tables: 53 through migration `0022`, the 5 agent tables in `0023` and the 2 document tables in `0024`; `0025` (couple Spaces) adds a database rule, not a table. `backend/tests/test_migrations.py` checks that the migrations create exactly the tables the code defines. The intended design for all data is in the [data contract](CHAPTER_06_DATA_CONTRACT.md).
 
 ## Domain Invariants
 

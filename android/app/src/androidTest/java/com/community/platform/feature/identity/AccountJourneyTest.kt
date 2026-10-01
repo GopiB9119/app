@@ -596,4 +596,68 @@ class AccountJourneyTest {
         evidence.outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         assertTrue(evidence.length() > 1000)
     }
+
+    @Test fun nativeAgentActsOnlyAfterApprovalAndDeletesAMemoryWithTheRealBackend() {
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "A disposable emulator is required." }
+        check(InstrumentationRegistry.getArguments().getString("community_local_integration") == "true") { "Explicit local integration authorization is required." }
+        val owner = account("Agent Owner")
+        val spaceName = "Agent family ${System.currentTimeMillis()}"
+        val spaceId = postApi("/v1/spaces", payload("name" to spaceName, "space_type" to "family"), owner.token, UUID.randomUUID().toString())["id"].asString
+        fun newest() = getJson("http://10.0.2.2:8000/v1/agent-runs?space_id=$spaceId", owner.token).getAsJsonArray("data").first().asJsonObject
+        fun tasks() = getJson("http://10.0.2.2:8000/v1/tasks?space_id=$spaceId", owner.token).getAsJsonArray("data")
+        // The field keeps the typed request until the service confirms it, then empties; only then is the request listed.
+        fun ask(message: String): JsonObject {
+            reveal("agent-content", "agent-message")
+            compose.onNodeWithTag("agent-message").performTextInput(message)
+            compose.onNodeWithTag("agent-ask").performScrollTo().performClick()
+            compose.waitUntil(20000) { compose.onAllNodes(hasTestTag("agent-message") and hasText(message)).fetchSemanticsNodes().isEmpty() }
+            return newest().also { assertEquals(message, it["message"].asString) }
+        }
+
+        signIn(owner)
+        compose.onNodeWithTag("account-agent").performScrollTo().performClick()
+        waitForEnabled(hasTestTag("agent-message"))
+        compose.onNodeWithTag("agent-space").assertTextContains(spaceName)
+
+        val task = ask("Add a task to water the plants tomorrow")
+        assertEquals("waiting_for_approval", task["status"].asString)
+        assertEquals(0, tasks().size())
+        reveal("agent-content", "agent-approve-${task["id"].asString}")
+        compose.onNodeWithTag("agent-approve-${task["id"].asString}").performClick()
+        waitForText("Done. Created \u201cWater the plants\u201d.")
+        val created = tasks().single().asJsonObject
+        assertEquals("Water the plants", created["title"].asString)
+
+        val reminder = ask("Remind me about water the plants")["id"].asString
+        waitForText("What time should I remind you?")
+        reveal("agent-content", "agent-reply-$reminder")
+        compose.onNodeWithTag("agent-reply-$reminder").performTextInput("6 pm")
+        reveal("agent-content", "agent-answer-$reminder")
+        compose.onNodeWithTag("agent-answer-$reminder").performClick()
+        waitForText("Needs your approval")
+        reveal("agent-content", "agent-reject-$reminder")
+        compose.onNodeWithTag("agent-reject-$reminder").performClick()
+        waitForText("Okay. Nothing was changed.")
+        assertEquals(0, getJson("http://10.0.2.2:8000/v1/reminders?task_id=${created["id"].asString}", owner.token).getAsJsonArray("data").size())
+
+        val note = ask("Remember that the spare key is under the blue pot")["id"].asString
+        reveal("agent-content", "agent-approve-$note")
+        compose.onNodeWithTag("agent-approve-$note").performClick()
+        waitForText("Done. I'll remember that.")
+        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        val evidence = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("test-evidence"), "agent-native-live.png")
+        evidence.outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        assertTrue(evidence.length() > 1000)
+
+        // The view chips sit at the top of the list and are not composed while a lower request card is on screen.
+        reveal("agent-content", "agent-show-memories")
+        compose.onNodeWithTag("agent-show-memories").performClick()
+        val remove = hasContentDescription("Delete memory: The spare key is under the blue pot")
+        compose.waitUntil(20000) { compose.onAllNodes(remove and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(remove).performClick()
+        compose.onNodeWithTag("agent-forget-dialog-confirm").performClick()
+        waitForText("Nothing saved.")
+        assertEquals(0, getJson("http://10.0.2.2:8000/v1/agent-memories", owner.token).getAsJsonArray("data").size())
+        assertEquals(1, tasks().size())
+    }
 }

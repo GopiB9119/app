@@ -309,7 +309,14 @@ class SpaceDirectoryService:
                 raise DomainError(404, "NOT_FOUND", "Join request not found.")
             caller, accounts = self.spaces.lock_accounts(database, token, [snapshot.account_id])
             space = self.spaces.lock_space(database, space_id)
-            self.spaces.require_owner(database, space.id, caller.id, lock=True)
+            try:
+                self.spaces.require_owner(database, space.id, caller.id, lock=True)
+            except DomainError:
+                # The person who asked knows the request; anyone but the owner learns nothing new (T42).
+                raise DomainError(404, "NOT_FOUND", "Join request not found.") from None
+            if space.space_type != "group":
+                # Only groups take join requests; a family or couple admits people only by invitation (DEC-017).
+                raise DomainError(404, "NOT_FOUND", "Join request not found.")
             request = database.scalar(select(SpaceJoinRequest).where(SpaceJoinRequest.id == request_id).with_for_update()
                                       .execution_options(populate_existing=True))
             self.identity.authenticate(database, token, lock=True)

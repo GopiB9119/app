@@ -2190,3 +2190,214 @@ test('documents: members find cited text and deletion removes it from search', {
     await memberContext.close();
   }
 });
+
+test('agent: changes are shown first, a lost approval acts once, a declined reminder changes nothing and a memory is deleted', { timeout: 180000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const external = [];
+  await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+    external.push(route.request().url());
+    return route.abort('blockedbyclient');
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(page, `agent-${suffix}@example.test`);
+    const owner = (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': owner.id };
+    const created = await context.request.post(`${base}/api/spaces`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+      data: { name: `Agent family ${suffix}`, space_type: 'family' },
+    });
+    assert.equal(created.status(), 201, await created.text());
+    const family = (await created.json()).data;
+    const read = async route => {
+      const response = await context.request.get(`${base}/api/${route}`, { headers });
+      assert.equal(response.status(), 200, await response.text());
+      return (await response.json()).data;
+    };
+
+    await page.getByRole('link', { name: 'Agent', exact: true }).click();
+    await page.getByRole('heading', { name: 'Agent', exact: true, level: 1 }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/app/agent');
+    await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption({ label: family.name });
+    await page.getByText('No requests in this Space yet. Only you can see your requests.', { exact: true }).waitFor();
+    const request = page.getByRole('textbox', { name: 'What do you want to do?', exact: true });
+    const ask = async message => {
+      await request.fill(message);
+      await page.getByRole('button', { name: 'Ask', exact: true }).click();
+      const card = page.getByRole('article', { name: message, exact: true });
+      await card.waitFor();
+      return card;
+    };
+
+    const task = await ask('Add a task to water the plants tomorrow');
+    await task.getByRole('heading', { name: 'Check this before I do it', exact: true }).waitFor();
+    assert.deepEqual(await task.locator('dt').allTextContents(), ['Space', 'Title', 'Due date', 'Assigned to']);
+    const facts = await task.locator('dd').allTextContents();
+    assert.deepEqual([facts[0], facts[1], facts[3]], [family.name, 'Water the plants', 'Nobody']);
+    assert.notEqual(facts[2], 'None');
+    assert.deepEqual(await read(`tasks?space_id=${family.id}`), [], 'nothing is created before approval');
+    await page.screenshot({ path: path.join(root, '.local/screenshots/agent-approval-live-desktop.png'), fullPage: true });
+
+    const approvals = [];
+    await page.route('**/api/agent-approvals/*/approve', async route => {
+      approvals.push({ key: route.request().headers()['idempotency-key'], version: route.request().headers()['if-match'] });
+      const response = await route.fetch();
+      assert.equal(response.status(), 200);
+      if (approvals.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await task.getByRole('button', { name: 'Approve', exact: true }).click();
+    await task.getByText('No connection. Your changes are not confirmed.', { exact: true }).waitFor();
+    await task.getByRole('button', { name: 'Approve again', exact: true }).click();
+    await task.getByText('Done. Created \u201cWater the plants\u201d.', { exact: true }).waitFor();
+    await page.unroute('**/api/agent-approvals/*/approve');
+    assert.equal(approvals.length, 2);
+    assert.deepEqual(approvals[1], approvals[0]);
+    assert.match(approvals[0].key, /^[0-9a-f-]{36}$/);
+    assert.match(approvals[0].version, /^"[0-9a-f]{64}"$/);
+    const tasks = await read(`tasks?space_id=${family.id}`);
+    assert.deepEqual(tasks.map(item => item.title), ['Water the plants'], 'the retried approval created one task');
+
+    const reminder = await ask('Remind me about water the plants');
+    await reminder.getByText('What time should I remind you?', { exact: true }).waitFor();
+    await reminder.getByRole('textbox', { name: 'Your answer', exact: true }).fill('6 pm');
+    await reminder.getByRole('button', { name: 'Answer', exact: true }).click();
+    await reminder.getByRole('heading', { name: 'Check this before I do it', exact: true }).waitFor();
+    assert.deepEqual(await reminder.locator('dt').allTextContents(), ['Task', 'When', 'Time zone', 'Who']);
+    const when = await reminder.locator('dd').allTextContents();
+    assert.equal(when[0], 'Water the plants');
+    assert.match(when[1], /, 18:00$/);
+    assert.match(when[2], /^Asia\/Kolkata /);
+    await reminder.getByRole('button', { name: 'Don\'t do it', exact: true }).click();
+    await reminder.getByText('Okay. Nothing was changed.', { exact: true }).waitFor();
+    assert.deepEqual(await read(`reminders?task_id=${tasks[0].id}`), [], 'a declined reminder is never scheduled');
+
+    const note = await ask('Remember that the spare key is under the blue pot');
+    await note.getByRole('heading', { name: 'Check this before I do it', exact: true }).waitFor();
+    assert.deepEqual(await note.locator('dd').allTextContents(), ['The spare key is under the blue pot']);
+    await note.getByRole('button', { name: 'Approve', exact: true }).click();
+    await note.getByText('Done. I\'ll remember that.', { exact: true }).waitFor();
+    assert.deepEqual((await read('agent-memories')).map(item => item.content), ['The spare key is under the blue pot']);
+
+    await page.reload();
+    await page.getByRole('heading', { name: 'Your requests', exact: true }).waitFor();
+    await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption({ label: family.name });
+    await page.getByRole('article', { name: 'Remember that the spare key is under the blue pot', exact: true }).waitFor();
+    assert.equal(await page.getByRole('article').count(), 3, 'history keeps every request after a reload');
+
+    await page.getByRole('button', { name: 'Memories', exact: true }).click();
+    await page.getByRole('button', { name: 'Delete memory: The spare key is under the blue pot', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete this memory?', exact: true });
+    await dialog.getByText('The agent stops using it right away. This cannot be undone.', { exact: true }).waitFor();
+    await page.screenshot({ path: path.join(root, '.local/screenshots/agent-memory-delete-live-desktop.png'), fullPage: false });
+    await dialog.getByRole('button', { name: 'Delete memory', exact: true }).click();
+    await page.getByText('Nothing saved.', { exact: false }).waitFor();
+    assert.deepEqual(await read('agent-memories'), []);
+
+    await page.getByRole('button', { name: 'Requests', exact: true }).click();
+    await page.getByRole('article', { name: 'Add a task to water the plants tomorrow', exact: true })
+      .getByText('Done. Created \u201cWater the plants\u201d.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('article').count(), 3);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/agent-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('couples: a couple Space waits for the partner, admits one person and refuses a third', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const partnerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const thirdContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const external = [];
+  for (const context of [ownerContext, partnerContext, thirdContext]) await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+    external.push(route.request().url());
+    return route.abort('blockedbyclient');
+  });
+  const ownerPage = await ownerContext.newPage();
+  const partnerPage = await partnerContext.newPage();
+  const thirdPage = await thirdContext.newPage();
+  const errors = [];
+  for (const page of [ownerPage, partnerPage, thirdPage]) page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const coupleName = `Sam and Alex ${suffix}`;
+    await signUp(ownerPage, `couple-owner-${suffix}@example.test`);
+    await signUp(partnerPage, `couple-partner-${suffix}@example.test`);
+    await signUp(thirdPage, `couple-third-${suffix}@example.test`);
+    const partner = (await (await partnerContext.request.get(`${base}/api/me`)).json()).data;
+    const third = (await (await thirdContext.request.get(`${base}/api/me`)).json()).data;
+
+    await ownerPage.goto(`${base}/app/spaces`);
+    await ownerPage.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
+    await ownerPage.getByLabel('Space type', { exact: true }).selectOption('couple');
+    await ownerPage.getByRole('heading', { name: 'New couple Space', exact: true }).waitFor();
+    await ownerPage.getByText('Private couple Space: only you and one partner you invite', { exact: true }).waitFor();
+    await ownerPage.getByLabel('Space name', { exact: true }).fill(coupleName);
+    await ownerPage.getByRole('button', { name: 'Create Space', exact: true }).click();
+    await ownerPage.getByText('Couple Space created. Invite your partner to join you.', { exact: true }).waitFor();
+    const ownerRow = ownerPage.getByRole('listitem').filter({ hasText: coupleName });
+    await ownerRow.getByText('Waiting for your partner', { exact: true }).waitFor();
+    await ownerRow.getByText('Private', { exact: true }).waitFor();
+    assert.equal(await ownerRow.getByRole('button', { name: `Join requests for ${coupleName}` }).count(), 0);
+
+    await ownerPage.getByRole('button', { name: `Manage invitations for ${coupleName}`, exact: true }).click();
+    await ownerPage.getByText('A couple Space is for two people: you and one partner. One invitation can wait at a time.', { exact: true }).waitFor();
+    await ownerPage.getByLabel('Recipient account ID', { exact: true }).fill(partner.id);
+    await ownerPage.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await ownerPage.getByText('Invitation created.', { exact: true }).waitFor();
+    await ownerPage.getByLabel('Recipient account ID', { exact: true }).fill(third.id);
+    await ownerPage.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await ownerPage.getByText('Your partner\'s invitation is still waiting. Cancel it before inviting someone else.', { exact: true }).waitFor();
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/couple-invite-live-desktop.png'), fullPage: true });
+
+    await partnerPage.goto(`${base}/app/spaces`);
+    await partnerPage.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
+    await partnerPage.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    const invitation = partnerPage.getByRole('dialog', { name: `Join ${coupleName}?`, exact: true });
+    await invitation.getByRole('button', { name: 'Join Space', exact: true }).click();
+    await partnerPage.getByText(`Joined ${coupleName}.`, { exact: true }).waitFor();
+    const partnerRow = partnerPage.getByRole('listitem').filter({ hasText: coupleName });
+    await partnerRow.getByText('With Alex Morgan', { exact: true }).waitFor();
+    await partnerRow.getByText('Couple', { exact: false }).first().waitFor();
+
+    await ownerPage.getByLabel('Recipient account ID', { exact: true }).fill(third.id);
+    await ownerPage.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await ownerPage.getByText('This couple Space already has two people.', { exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: 'Close invitation management', exact: true }).click();
+    await ownerPage.getByRole('button', { name: 'Refresh Spaces', exact: true }).click();
+    await ownerRow.getByText('With Alex Morgan', { exact: true }).waitFor();
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const listed = await ownerContext.request.get(`${base}/api/spaces?limit=50`, { headers: { Origin: base, 'X-Account-ID': owner.id } });
+    assert.equal(listed.status(), 200, await listed.text());
+    const couple = (await listed.json()).data.find(space => space.name === coupleName);
+    assert.deepEqual([couple.space_type, couple.visibility, couple.role], ['couple', 'private', 'owner']);
+    const hidden = await thirdContext.request.get(`${base}/api/spaces/${couple.id}`, { headers: { Origin: base, 'X-Account-ID': third.id } });
+    assert.equal(hidden.status(), 404);
+
+    await partnerPage.setViewportSize({ width: 320, height: 844 });
+    await partnerPage.evaluate(() => document.fonts.ready);
+    assert.equal(await partnerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await partnerPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await partnerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await partnerRow.getByText('With Alex Morgan', { exact: true }).scrollIntoViewIfNeeded();
+    await partnerPage.screenshot({ path: path.join(root, '.local/screenshots/couple-partner-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await partnerContext.close();
+    await thirdContext.close();
+  }
+});

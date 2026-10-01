@@ -28,6 +28,14 @@ Built for [T22](../../../../docs/TASKS.md#spaces) under [DEC-011](../../../../do
 - Requests expire after 14 days; after a decline the person waits 7 days; a group admits at most 50 members, a person waits on at most 20 requests and a group holds at most 100. The name and description cannot change while requests are waiting, so a person is answered about what they asked to join.
 - Evidence: `tests/test_space_directory.py` (12 tests) and the migration test in `tests/test_migrations.py`.
 
+## Couple Spaces
+
+Built for [T12](../../../../docs/TASKS.md#approved-requirements-not-built-yet) under [DEC-017](../../../../docs/DECISIONS.md#accepted-decisions) (provisional). Migration `0025` adds the `couple` type and a deferred database rule that refuses a third active member of an active couple Space. A couple is always private and never takes join requests.
+
+- The creator is the owner and can use the Space at once. They invite one partner with the ordinary invitation; while that invitation waits (and has not expired), inviting anyone else returns 409 `COUPLE_INVITATION_PENDING`. With two members, inviting or accepting returns 409 `COUPLE_FULL`. Both checks run under the Space lock, so parallel invitations leave exactly one waiting.
+- Leaving, removal and ownership transfer follow the family rules. After a separation the owner may invite a new partner, whose new admission hides everything from before; the former partner keeps no access.
+- Evidence: `tests/test_couple_spaces.py` (6 tests, including parallel invitations, a planted invitation and the database rule) and the couple case in `tests/test_space_directory.py`.
+
 A new rename is blocked while an unexpired pending invitation or ownership offer exists. Resolve or withdraw that review first; the settings command never changes its reviewed Space name silently. Expired pending rows do not block. This conservative local restriction is not an approved general Space lifecycle policy.
 
 The [delivery ledger](../../../../docs/PRODUCT_FEATURES.md#space-name-settings-batch) records the real backend/web and native build/JVM checks, current preview, and outstanding native-device qualification.

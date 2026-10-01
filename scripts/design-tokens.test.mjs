@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  checkTokens, contrastFailures, contrastPairs, contrastRatio, cssFile, findHandCopies, findStyleViolations, globalsFile, kotlinFile,
-  loadTokens, read, renderCss, renderKotlin, staleOutputs, themeFile, tokenStylesheets,
+  checkTokens, contrastFailures, contrastPairs, contrastRatio, cssFile, findHandCopies, findScreenViolations, findStyleViolations, globalsFile, kotlinFile,
+  loadTokens, read, renderCss, renderKotlin, staleOutputs, themeFile, tokenScreens, tokenStylesheets,
 } from './design-tokens.mjs';
 
 const tokens = loadTokens();
@@ -57,7 +57,7 @@ test('text colours keep 4.5:1 contrast and control borders 3:1', () => {
 });
 
 test('feature stylesheets moved to tokens use only token variables and token corners', () => {
-  assert.equal(tokenStylesheets.length, 6);
+  assert.equal(tokenStylesheets.length, 8);
   assert.deepEqual(findStyleViolations(), []);
   const file = tokenStylesheets[0];
   assert.deepEqual(findStyleViolations({ [file]: [
@@ -73,6 +73,39 @@ test('feature stylesheets moved to tokens use only token variables and token cor
     'web/src/features/care/care.module.css: older variable var(--line)',
     'web/src/features/care/care.module.css: fallback in var(--line, #c9d3cc)',
     'web/src/features/care/care.module.css: corner radius 999px',
+  ]);
+});
+
+test('feature stylesheets moved to tokens space in whole space units', () => {
+  const file = tokenStylesheets[0];
+  assert.deepEqual(findStyleViolations({ [file]: [
+    '.a { padding: 9px 12px; margin: 0 auto; gap: var(--space-unit); }',
+    '.b { margin-top: calc(var(--space-unit) * 2.5); row-gap: calc(var(--space-unit) / 2); top: 0; }',
+    '.c { inset: calc(var(--space-unit) * -2); padding-left: calc(var(--space-unit) * 5); border-top: 3px solid var(--color-border); }',
+    '.d:hover { left: 1.5em; } @media (max-width: 440px) { .e { margin: 6px 0; } } /* padding: 10px in a comment */',
+  ].join('\n') }), [
+    'web/src/features/care/care.module.css: typed spacing 9px',
+    'web/src/features/care/care.module.css: typed spacing 12px',
+    'web/src/features/care/care.module.css: typed spacing 1.5em',
+    'web/src/features/care/care.module.css: typed spacing 6px',
+    'web/src/features/care/care.module.css: spacing off the 4 px scale var(--space-unit) * 2.5',
+    'web/src/features/care/care.module.css: spacing off the 4 px scale var(--space-unit) / 2',
+  ]);
+});
+
+test('Android screens moved to tokens take corners and target heights from DesignTokens', () => {
+  assert.equal(tokenScreens.length, 6);
+  assert.deepEqual(findScreenViolations(), []);
+  const file = tokenScreens[0];
+  assert.deepEqual(findScreenViolations({ [file]: [
+    'Button(shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp))',
+    'Row(Modifier.heightIn(min = 44.dp)) // RoundedCornerShape(4.dp) in a comment',
+    'Surface(shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget))',
+    'Row(Modifier.fillMaxWidth().heightIn(min = 56.dp))',
+  ].join('\n') }), [
+    'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: corner size 6 dp',
+    'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: target height 48 dp',
+    'android/app/src/main/java/com/community/platform/feature/identity/IdentityScreen.kt: target height 44 dp',
   ]);
 });
 

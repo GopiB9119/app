@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bookmark, BookmarkCheck, Compass, Flag, Heart, House, LoaderCircle, LogIn, MessageCircle, Newspaper, RefreshCw, ShieldBan } from "lucide-react";
+import { Bookmark, BookmarkCheck, Compass, Flag, Heart, LoaderCircle, LogIn, MessageCircle, Newspaper, RefreshCw, Rss, ShieldBan, UserRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
@@ -34,23 +34,28 @@ export function problemText(error: unknown, fallback: string) {
   return text;
 }
 
+// The public feed, page and post search, and your pages make up the Discover section (DEC-014); Blocked is under Profile.
 type Section = "home" | "discover" | "pages" | "safety";
 const sections: { key: Section; href: string; label: string; icon: React.ReactNode; signedIn: boolean }[] = [
-  { key: "home", href: "/app/home", label: "Home", icon: <House size={18} aria-hidden />, signedIn: true },
-  { key: "discover", href: "/app/discover", label: "Discover", icon: <Compass size={18} aria-hidden />, signedIn: false },
+  { key: "home", href: "/app/home", label: "Feed", icon: <Rss size={18} aria-hidden />, signedIn: true },
+  { key: "discover", href: "/app/discover", label: "Pages and posts", icon: <Compass size={18} aria-hidden />, signedIn: false },
   { key: "pages", href: "/app/pages", label: "Your pages", icon: <Newspaper size={18} aria-hidden />, signedIn: true },
-  { key: "safety", href: "/app/safety", label: "Blocked", icon: <ShieldBan size={18} aria-hidden />, signedIn: true },
 ];
 
 export function CommunityFrame({ account, current, children }: { account: Account | null; current: Section | null; children: React.ReactNode }) {
   return <Shell account={Boolean(account)}>
     <main className={styles.main}>
-      <nav className={styles.navigation} aria-label="Community">
-        {sections.filter(item => account || !item.signedIn).map(item => item.key === current
-          ? <span key={item.key} aria-current="page">{item.icon}{item.label}</span>
-          : <Link key={item.key} href={item.href}>{item.icon}{item.label}</Link>)}
-        {!account && <Link href="/login"><LogIn size={18} aria-hidden />Sign in</Link>}
-      </nav>
+      {current === "safety" && account
+        ? <nav className={styles.navigation} aria-label="Profile">
+          <Link href="/app/settings/account"><UserRound size={18} aria-hidden />Account</Link>
+          <span aria-current="page"><ShieldBan size={18} aria-hidden />Blocked</span>
+        </nav>
+        : <nav className={styles.navigation} aria-label="Discover">
+          {sections.filter(item => account || !item.signedIn).map(item => item.key === current
+            ? <span key={item.key} aria-current="page">{item.icon}{item.label}</span>
+            : <Link key={item.key} href={item.href}>{item.icon}{item.label}</Link>)}
+          {!account && <Link href="/login"><LogIn size={18} aria-hidden />Sign in</Link>}
+        </nav>}
       {children}
     </main>
   </Shell>;

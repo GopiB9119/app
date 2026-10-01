@@ -4,7 +4,7 @@ Live journeys through a real browser, the web proxy, the API and PostgreSQL. The
 
 | File | Journeys |
 | --- | --- |
-| `identity.test.mjs` | Accounts, Spaces, invitations, membership, tasks, reminders, messages, community, events, care and groups |
+| `identity.test.mjs` | Accounts, Spaces, invitations, membership, tasks, reminders, messages, community, events, care, groups, documents and the agent |
 | `scheduling.test.mjs` | Repeating reminders and snooze, with a real delivery by the worker |
 | `alerts.test.mjs` | Alerts, quiet hours and backup people (conflict C10 in the Product Understanding) |
 

@@ -57,6 +57,7 @@ from app.modules.spaces.api import router as spaces_router
 from app.modules.spaces.directory import SpaceDirectoryService
 from app.modules.spaces.service import OwnershipTransferService, SpaceService
 from app.modules.platform.work import render as render_work
+from app.schema import migration_check
 from app.telemetry import Metrics, emit, method_name, trace_context
 
 BODY_LIMIT = 16384
@@ -250,9 +251,13 @@ def create_app(settings=None, clock=utcnow):
         return {"status": "ok"}
 
     @application.get("/health/ready", include_in_schema=False)
-    def ready():
+    def ready(request: Request):
         with engine.connect() as connection:
-            connection.execute(text("SELECT 1 FROM users LIMIT 1"))
+            applied = connection.scalars(text("SELECT version_num FROM alembic_version")).all()
+        if not migration_check().satisfied_by(applied):
+            # The reason goes to the request log only; the response stays the same as for an unreachable database.
+            request.state.failure = "MigrationsPending"
+            raise DomainError(503, "SERVICE_UNAVAILABLE", "Service is temporarily unavailable.")
         return {"status": "ready"}
 
     @application.get("/metrics", include_in_schema=False)

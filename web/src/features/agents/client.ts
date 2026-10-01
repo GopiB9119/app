@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { api } from "@/features/identity/client";
+import { ApiError, api } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime({ offset: true });
@@ -98,5 +98,14 @@ export async function readMemories(accountId: string, signal?: AbortSignal) {
 }
 
 export async function forgetMemory(accountId: string, memoryId: string) {
-  return (await api(`agent-memories/${memoryId}`, deletedSchema, { method: "DELETE", accountId, body: {} })).data;
+  let result: z.infer<typeof deletedSchema>;
+  try {
+    result = (await api(`agent-memories/${memoryId}`, deletedSchema, { method: "DELETE", accountId, body: {} })).data;
+  } catch (error) {
+    // Deleting again after a lost answer finds nothing left: the memory is gone, which is what the person asked for.
+    if (error instanceof ApiError && error.status === 404) return { id: memoryId, status: "deleted" as const };
+    throw error;
+  }
+  if (result.id !== memoryId) throw new ApiError(502, "INVALID_RESPONSE", "The service returned an unexpected response.");
+  return result;
 }

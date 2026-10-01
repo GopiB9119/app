@@ -16,12 +16,12 @@ import javax.inject.Inject
 
 data class SpaceSettingsState(
     val accountId: String? = null, val spaceId: String? = null,
-    val basis: SpaceSettingsDto? = null, val name: String = "",
+    val basis: SpaceSettingsDto? = null, val name: String = "", val description: String = "",
     val pending: SpaceSettingsIntent? = null, val busy: Boolean = false,
     val conflict: Boolean = false, val denied: Boolean = false, val requiresSignIn: Boolean = false,
     val error: String? = null, val notice: String? = null,
 ) {
-    val dirty: Boolean get() = basis != null && name != basis.name
+    val dirty: Boolean get() = basis != null && (name != basis.name || description != basis.description.orEmpty())
     val locked: Boolean get() = busy || pending != null
 }
 
@@ -52,7 +52,7 @@ class SpaceSettingsViewModel @Inject constructor(private val repository: SpaceSe
             try {
                 val result = operation(account, space)
                 if (generation == expected) mutableState.update {
-                    it.copy(basis = result, name = result.name, pending = null, conflict = false,
+                    it.copy(basis = result, name = result.name, description = result.description.orEmpty(), pending = null, conflict = false,
                         notice = if (current.pending != null) "Settings saved. Current name: ${result.name}" else null)
                 }
             } catch (error: CancellationException) { throw error }
@@ -77,6 +77,10 @@ class SpaceSettingsViewModel @Inject constructor(private val repository: SpaceSe
         if (!mutableState.value.locked && !mutableState.value.denied) mutableState.update { it.copy(name = value, notice = null) }
     }
 
+    fun description(value: String) {
+        if (!mutableState.value.locked && !mutableState.value.denied) mutableState.update { it.copy(description = value, error = null, notice = null) }
+    }
+
     fun refresh() {
         val current = mutableState.value
         if (!current.locked && !current.dirty && !current.conflict) reload()
@@ -97,8 +101,13 @@ class SpaceSettingsViewModel @Inject constructor(private val repository: SpaceSe
         if (name.codePointCount(0, name.length) !in 1..80 || name.codePoints().anyMatch { Character.getType(it) in invalidTypes }) {
             mutableState.update { it.copy(error = "Enter a name of 1 to 80 characters without control characters.") }; return
         }
-        if (name == basis.name) return
-        mutableState.update { it.copy(pending = SpaceSettingsIntent(account, basis.id, name, basis.etag, UUID.randomUUID().toString())) }
+        val description = current.description.trim()
+        if (current.description.codePointCount(0, current.description.length) > 280 || current.description.codePoints().anyMatch { it != '\n'.code && Character.getType(it) in invalidTypes }) {
+            mutableState.update { it.copy(error = "Keep the description to 280 characters without control characters.") }; return
+        }
+        val descriptionChanged = description != basis.description.orEmpty()
+        if (name == basis.name && !descriptionChanged) return
+        mutableState.update { it.copy(pending = SpaceSettingsIntent(account, basis.id, name, basis.etag, UUID.randomUUID().toString(), if (descriptionChanged) description else null)) }
         retry()
     }
 

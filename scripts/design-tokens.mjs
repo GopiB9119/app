@@ -27,7 +27,13 @@ export const contrastPairs = [
 export const tokenStylesheets = [
   'care/care.module.css', 'events/events.module.css', 'community/community.module.css',
   'messaging/messages.module.css', 'planning/tasks.module.css', 'planning/checklist.module.css',
+  'platform/navigation.module.css', 'platform/home.module.css',
 ].map(file => path.join(root, 'web/src/features', file));
+// Android screens whose corners and target heights come from DesignTokens; a row taller than the minimum target, such as 56 dp, may stay a number.
+export const tokenScreens = [
+  'identity/IdentityScreen.kt', 'planning/TaskScreen.kt', 'messaging/MessagingScreen.kt',
+  'community/CommunityScreen.kt', 'care/CareScreen.kt', 'events/EventsScreen.kt',
+].map(file => path.join(root, 'android/app/src/main/java/com/community/platform/feature', file));
 const olderNames = ['ink', 'muted', 'green', 'green-hover', 'green-soft', 'canvas', 'line', 'white', 'accent', 'danger', 'radius'];
 
 export const read = file => readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
@@ -152,6 +158,25 @@ export function findStyleViolations(texts = Object.fromEntries(tokenStylesheets.
     report('older variable', (css.match(/var\(--[a-z-]+/g) ?? []).filter(name => olderNames.includes(name.slice(6))).map(name => `${name})`));
     report('fallback in', css.match(/var\(--[a-z-]+,[^)]*\)/g) ?? []);
     report('corner radius', [...css.matchAll(/border-radius:\s*([^;}]+)/g)].map(match => match[1].trim()).filter(value => value !== '0' && !/^var\(--radius-[a-z]+\)$/.test(value)));
+    // Spacing is a whole number of space units: `var(--space-unit)` or `calc(var(--space-unit) * n)`, or 0.
+    const spacing = [...css.matchAll(/\{([^{}]*)\}/g)]
+      .flatMap(block => [...block[1].matchAll(/(?:^|;)\s*(?:margin|padding|gap|row-gap|column-gap|inset|top|right|bottom|left)(?:-[a-z-]+)?\s*:\s*([^;]+)/g)])
+      .map(match => match[1].trim());
+    report('typed spacing', spacing.flatMap(value => value.match(/-?(?:\d+\.?\d*|\.\d+)(?:px|r?em)\b/g) ?? []).filter(length => Number.parseFloat(length) !== 0));
+    report('spacing off the 4 px scale', spacing.flatMap(value => [...value.matchAll(/var\(--space-unit\)\s*([*/])\s*(-?[\d.]+)/g)])
+      .filter(([, operator, number]) => operator === '/' || !Number.isInteger(Number(number))).map(match => match[0]));
+  }
+  return found;
+}
+
+export function findScreenViolations(texts = Object.fromEntries(tokenScreens.map(file => [file, read(file)]))) {
+  const found = [];
+  for (const [file, text] of Object.entries(texts)) {
+    const where = path.relative(root, file).replaceAll('\\', '/');
+    const code = text.replace(/\/\/.*$/gm, '');
+    const report = (problem, values) => { for (const value of new Set(values)) found.push(`${where}: ${problem} ${value} dp`); };
+    report('corner size', [...code.matchAll(/RoundedCornerShape\(\s*([\d.]+)\.dp\s*\)/g)].map(match => match[1]));
+    report('target height', [...code.matchAll(/heightIn\(\s*min\s*=\s*([\d.]+)\.dp/g)].map(match => match[1]).filter(value => Number(value) <= 48));
   }
   return found;
 }
@@ -170,6 +195,7 @@ if (process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLTo
       ...stale.map(([file]) => `${path.relative(root, file)} is out of date; run npm run tokens`),
       ...findHandCopies(tokens),
       ...findStyleViolations(),
+      ...findScreenViolations(),
       ...contrastFailures(tokens),
     ];
     if (problems.length) {

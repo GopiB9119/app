@@ -3,9 +3,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import Settings
-from app.modules.scheduling import models
+from app.schema import schema_metadata
 
-target_metadata = models.Reminder.metadata
+target_metadata = schema_metadata()
 database_url = Settings().database_url
 
 if context.is_offline_mode():

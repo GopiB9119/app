@@ -15,7 +15,7 @@ const labels: Record<Tab, string> = { following: "Following", latest: "Latest", 
 
 export function HomeScreen() {
   const viewer = useViewer();
-  if (viewer.pending) return <Loading label="Loading your home feed" />;
+  if (viewer.pending) return <Loading label="Loading your feed" />;
   if (viewer.error) return <CommunityFrame account={null} current="home"><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
   return <Home key={viewer.account?.id ?? "signed-out"} viewer={viewer.account} />;
 }
@@ -38,12 +38,12 @@ function Home({ viewer }: { viewer: ReturnType<typeof useViewer>["account"] }) {
     : tab === "saved" ? "Posts you save appear here. Only you can see your saved posts." : "No public posts yet.";
   return <CommunityFrame account={viewer} current="home">
     <div className={styles.heading}>
-      <h1>Home</h1>
+      <h1>Feed</h1>
       <button className="icon-button" aria-label="Refresh posts" title="Refresh posts" disabled={posts.isFetching} onClick={() => posts.refetch()}>
         <RefreshCw size={18} className={posts.isFetching ? "spin" : ""} aria-hidden />
       </button>
     </div>
-    {viewer && <div className={styles.tabs} role="group" aria-label="Home feed">
+    {viewer && <div className={styles.tabs} role="group" aria-label="Feed">
       {(Object.keys(labels) as Tab[]).map(key => <button key={key} className="secondary-button" aria-pressed={tab === key} onClick={() => { setTab(key); setUpdates({}); }}>{labels[key]}</button>)}
     </div>}
     {!viewer && <p className={styles.notice}><Link href="/login">Sign in</Link> to follow pages, like, save and comment. Public posts are shown below.</p>}

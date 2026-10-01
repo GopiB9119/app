@@ -50,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 import java.time.Instant
 import java.time.LocalDateTime
@@ -146,7 +147,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     FilterChip(selected = !state.past, onClick = { actions.showPast(false) }, label = { Text(stringResource(R.string.events_upcoming)) }, modifier = Modifier.testTag("events-upcoming"))
                                     FilterChip(selected = state.past, onClick = { actions.showPast(true) }, label = { Text(stringResource(R.string.events_past)) }, modifier = Modifier.testTag("events-past"))
-                                    Button(onClick = actions.startCreate, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("events-new")) { Text(stringResource(R.string.events_new)) }
+                                    Button(onClick = actions.startCreate, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("events-new")) { Text(stringResource(R.string.events_new)) }
                                 }
                             }
                             if (!state.loading && state.events.isEmpty() && state.error == null) item("empty") {
@@ -237,8 +238,8 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
             val editable = EventsViewModel.editableHere(event)
             if (!editable) Text(stringResource(R.string.events_edit_web), style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = actions.startEdit, enabled = editable && !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("event-edit")) { Text(stringResource(R.string.events_edit)) }
-                OutlinedButton(onClick = actions.askCancel, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("event-cancel")) { Text(stringResource(R.string.events_cancel)) }
+                OutlinedButton(onClick = actions.startEdit, enabled = editable && !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-edit")) { Text(stringResource(R.string.events_edit)) }
+                OutlinedButton(onClick = actions.askCancel, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-cancel")) { Text(stringResource(R.string.events_cancel)) }
             }
         }
         TextButton(onClick = actions.close, enabled = !state.working) { Text(stringResource(R.string.events_back_to_list)) }
@@ -272,10 +273,10 @@ private fun EventForm(state: EventsState, actions: EventsActions) {
         state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("event-problem")) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.pending != null && state.mode == EventMode.CREATE) {
-                Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("event-retry")) { Text(stringResource(R.string.events_retry)) }
-                OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("event-discard")) { Text(stringResource(R.string.events_discard)) }
+                Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-retry")) { Text(stringResource(R.string.events_retry)) }
+                OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-discard")) { Text(stringResource(R.string.events_discard)) }
             } else {
-                Button(onClick = actions.save, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("event-save")) {
+                Button(onClick = actions.save, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-save")) {
                     Text(stringResource(if (state.mode == EventMode.EDIT) R.string.events_save else R.string.events_create))
                 }
                 TextButton(onClick = actions.close, enabled = !state.working) { Text(stringResource(R.string.events_close_form)) }

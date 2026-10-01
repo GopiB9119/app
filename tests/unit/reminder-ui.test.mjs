@@ -380,3 +380,25 @@ test('offline request review remains usable at narrow widths and large text', as
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+test('offline request lists work as tabs from the keyboard', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { requestInbox: true });
+    const received = page.getByRole('tab', { name: 'Received', exact: true });
+    const sent = page.getByRole('tab', { name: 'Sent', exact: true });
+    await received.waitFor();
+    assert.equal(await received.getAttribute('tabindex'), '0', 'Only the selected tab is in the Tab order.');
+    assert.equal(await sent.getAttribute('tabindex'), '-1');
+    await received.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await sent.getAttribute('aria-selected'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Sent');
+    await page.getByRole('tabpanel', { name: 'Sent' }).getByText('No sent requests.', { exact: true }).waitFor();
+    await page.keyboard.press('Home');
+    assert.equal(await received.getAttribute('aria-selected'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Received');
+    await page.getByRole('tabpanel', { name: 'Received' }).getByRole('button', { name: 'Decline', exact: true }).waitFor();
+    assert.equal(await sent.getAttribute('tabindex'), '-1');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

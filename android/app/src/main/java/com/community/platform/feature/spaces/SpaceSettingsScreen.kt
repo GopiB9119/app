@@ -40,13 +40,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.community.platform.R
 
-data class SpaceSettingsActions(val name: (String) -> Unit, val save: () -> Unit, val retry: () -> Unit, val reload: () -> Unit)
+data class SpaceSettingsActions(val name: (String) -> Unit, val save: () -> Unit, val retry: () -> Unit, val reload: () -> Unit, val description: (String) -> Unit)
 
 @Composable
 fun SpaceSettingsRoute(viewModel: SpaceSettingsViewModel, accountId: String, spaceId: String, onBack: () -> Unit, onSessionLost: () -> Unit) {
@@ -54,12 +55,14 @@ fun SpaceSettingsRoute(viewModel: SpaceSettingsViewModel, accountId: String, spa
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
     if (state.accountId == accountId && state.spaceId == spaceId) SpaceSettingsScreen(state,
-        SpaceSettingsActions(viewModel::name, viewModel::save, viewModel::retry, viewModel::reload), onBack)
+        SpaceSettingsActions(viewModel::name, viewModel::save, viewModel::retry, viewModel::reload, viewModel::description), onBack)
 }
 
 @Composable
 fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions, onBack: () -> Unit) {
     var confirmation by remember { mutableStateOf<String?>(null) }
+    val descriptionChanged = state.basis != null && state.description.trim() != state.basis.description.orEmpty()
+    val descriptionDirty = state.basis != null && state.description != state.basis.description.orEmpty()
     val back: () -> Unit = {
         if (!state.busy) {
             if (state.pending != null) confirmation = "uncertain"
@@ -85,12 +88,22 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
                     OutlinedTextField(value = state.name, onValueChange = { actions.name(it.take(160)) },
                         label = { Text(stringResource(R.string.space_settings_name)) }, enabled = !state.locked,
                         minLines = 1, maxLines = 4, modifier = Modifier.fillMaxWidth().testTag("space-settings-name"))
-                    if (state.pending != null && !state.busy) Text(stringResource(R.string.space_settings_uncertain))
+                    OutlinedTextField(value = state.description, onValueChange = actions.description,
+                        label = { Text(stringResource(if (state.basis.visibility == "public") R.string.space_settings_description_public else R.string.space_settings_description_private)) },
+                        enabled = !state.locked, minLines = 3, maxLines = 6,
+                        supportingText = { Text(stringResource(R.string.space_settings_description_count, state.description.codePointCount(0, state.description.length)), Modifier.fillMaxWidth(), textAlign = TextAlign.End) },
+                        modifier = Modifier.fillMaxWidth().testTag("space-settings-description"))
+                    if (state.pending != null && !state.busy) Text(stringResource(if (state.pending.description != null) R.string.space_settings_uncertain_changes else R.string.space_settings_uncertain))
                     Button(onClick = if (state.pending != null) actions.retry else actions.save,
-                        enabled = !state.busy && !state.conflict && state.name.isNotBlank() && (state.pending != null || state.name.trim() != state.basis.name),
+                        enabled = !state.busy && !state.conflict && state.name.isNotBlank() && (state.pending != null || state.name.trim() != state.basis.name || descriptionChanged),
                         modifier = Modifier.fillMaxWidth().testTag("space-settings-save")) {
                         Icon(if (state.pending != null) Icons.Default.Refresh else Icons.Default.Check, null)
-                        Text(stringResource(if (state.pending != null) R.string.space_settings_retry else R.string.space_settings_save), Modifier.padding(start = 8.dp))
+                        Text(stringResource(when {
+                            state.pending?.description != null -> R.string.space_settings_retry_changes
+                            state.pending != null -> R.string.space_settings_retry
+                            descriptionChanged -> R.string.save_changes
+                            else -> R.string.space_settings_save
+                        }), Modifier.padding(start = 8.dp))
                     }
                     if (state.conflict) TextButton(onClick = { confirmation = "reload" }, enabled = !state.busy) { Text(stringResource(R.string.space_settings_reload)) }
                 } else if (!state.denied && !state.busy) TextButton(onClick = actions.reload) { Text(stringResource(R.string.space_settings_reload)) }
@@ -99,9 +112,24 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
     }
     if (confirmation != null) AlertDialog(
         onDismissRequest = { confirmation = null },
-        title = { Text(stringResource(if (confirmation == "uncertain") R.string.space_settings_unconfirmed_title else R.string.space_settings_discard_title)) },
-        text = { Text(stringResource(if (confirmation == "uncertain") R.string.space_settings_leave_uncertain else if (confirmation == "reload") R.string.space_settings_discard_reload else R.string.space_settings_discard_body)) },
-        confirmButton = { TextButton(onClick = { val action = confirmation; confirmation = null; if (action == "reload") actions.reload() else onBack() }) { Text(stringResource(if (confirmation == "uncertain") R.string.space_settings_leave else R.string.space_settings_discard)) } },
+        title = { Text(stringResource(when {
+            confirmation == "uncertain" -> R.string.space_settings_unconfirmed_title
+            descriptionDirty -> R.string.space_settings_discard_changes_title
+            else -> R.string.space_settings_discard_title
+        })) },
+        text = { Text(stringResource(when {
+            confirmation == "uncertain" && state.pending?.description != null -> R.string.space_settings_leave_uncertain_changes
+            confirmation == "uncertain" -> R.string.space_settings_leave_uncertain
+            confirmation == "reload" && descriptionDirty -> R.string.space_settings_discard_changes_reload
+            confirmation == "reload" -> R.string.space_settings_discard_reload
+            descriptionDirty -> R.string.space_settings_discard_changes_body
+            else -> R.string.space_settings_discard_body
+        })) },
+        confirmButton = { TextButton(onClick = { val action = confirmation; confirmation = null; if (action == "reload") actions.reload() else onBack() }) { Text(stringResource(when {
+            confirmation == "uncertain" -> R.string.space_settings_leave
+            descriptionDirty -> R.string.space_settings_discard_changes
+            else -> R.string.space_settings_discard
+        })) } },
         dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(R.string.space_settings_keep)) } },
     )
 }

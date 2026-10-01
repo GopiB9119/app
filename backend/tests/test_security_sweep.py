@@ -115,14 +115,18 @@ def test_a_real_server_process_writes_no_private_request_values(app):
     server = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10) as client:
-            deadline = time.monotonic() + 60
+            # Starting takes about 12 seconds on a quiet machine and has taken over 60 while other suites ran.
+            deadline = time.monotonic() + 120
             while True:
                 try:
                     if client.get("/health/live").status_code == 200:
                         break
                 except httpx.TransportError:
                     pass
-                assert time.monotonic() < deadline, "The server did not start."
+                if server.poll() is not None or time.monotonic() >= deadline:
+                    server.terminate()
+                    errors = server.communicate(timeout=30)[1]
+                    raise AssertionError(f"The server did not start (exit code {server.returncode}):\n{errors[-3000:]}")
                 time.sleep(0.25)
             assert client.post("/v1/auth/login", json={"email": "sentinel-4471@example.test", "password": "Sentinel-pass-4471!"}).status_code == 401
             assert client.get("/v1/me", headers={"Authorization": "Bearer sentinel-token-4471"}).status_code == 401

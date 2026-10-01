@@ -40,6 +40,24 @@ class SpaceRepositoryTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.spaces(fixture.accountId) } }
     }
 
+    @Test fun coupleCreationKeepsTypeAndPrivateVisibility() = runBlocking {
+        val command = SpaceCommand.Create(fixture.accountId, "Our planning", UUID.randomUUID().toString(), "couple")
+        fixture.api.space = fixture.space.copy(spaceType = "couple")
+        val result = fixture.repository.execute(command) as SpaceCommandResult.SpaceSaved
+        assertEquals("couple", result.space.spaceType)
+        assertEquals("private", result.space.visibility)
+        assertEquals(CreateFamilySpaceDto("Our planning", "couple"), fixture.api.creations.single())
+        assertEquals("couple", fixture.repository.spaces(fixture.accountId).items.single().spaceType)
+        fixture.api.space = fixture.api.space.copy(role = "member")
+        assertEquals("member", fixture.repository.read(fixture.accountId, fixture.spaceId).role)
+    }
+
+    @Test fun coupleResponsesRejectPublicVisibility() = runBlocking {
+        fixture.api.space = fixture.space.copy(spaceType = "couple", visibility = "public")
+        val error = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.spaces(fixture.accountId) } }
+        assertEquals("INVALID_RESPONSE", error.code)
+    }
+
     @Test fun boundedPagesRetainOpaqueCursorAndCurrentRole() = runBlocking {
         fixture.api.pagination = PaginationDto("opaque-next-page", true)
         val page = fixture.repository.spaces(fixture.accountId, "previous-page")

@@ -61,6 +61,21 @@ class SpaceViewModelTest {
         assertTrue(fixture.api.recipients.isEmpty())
     }
 
+    @Test fun coupleCreationSendsTypeAndShowsPartnerInvitationNotice() = runBlocking {
+        val value = ready()
+        value.startCreate(); value.creationType("group"); value.visibility("public"); value.description("Group-only description")
+        value.creationType("couple"); value.name("Our planning")
+        fixture.api.space = fixture.space.copy(spaceType = "couple", name = "Our planning")
+        value.create(); idle(value)
+        assertEquals(listOf(CreateFamilySpaceDto("Our planning", "couple")), fixture.api.creations)
+        assertEquals("Couple Space saved. Invite your partner to join you.", value.state.value.notice)
+        assertEquals("couple", value.state.value.selectedSpace!!.spaceType)
+        assertEquals("private", value.state.value.selectedSpace!!.visibility)
+        assertNull(value.state.value.pending)
+        assertTrue(!value.state.value.showingMembers)
+        assertTrue(value.state.value.members.isEmpty())
+    }
+
     @Test fun ownershipOfferRequiresExactMemberReviewAndNeverGrantsOwnerImmediately() = runBlocking {
         val value = ready()
         value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)

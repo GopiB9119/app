@@ -1,5 +1,6 @@
 package com.community.platform
 
+import com.community.platform.feature.agents.AgentApi
 import com.community.platform.feature.care.CareApi
 import com.community.platform.feature.community.CommunityApi
 import com.community.platform.feature.discovery.SearchApi
@@ -64,6 +65,9 @@ object IdentityModule {
                 request.method == "GET" && COMMUNITY_POST_LISTS.matches(path) -> 524288L
                 request.method == "GET" && COMMUNITY_DRAFTS.matches(path) -> 1572864L
                 request.method == "GET" && path == "/v1/me/blocks" -> 262144L
+                // Ten agent requests with their questions, approvals, plans and history; up to 51 saved memories.
+                request.method == "GET" && path == "/v1/agent-runs" -> 524288L
+                request.method == "GET" && path == "/v1/agent-memories" -> 262144L
                 else -> 65536L
             }
             val response = chain.proceed(request)
@@ -166,6 +170,13 @@ object IdentityModule {
         .addConverterFactory(GsonConverterFactory.create(gson))
         .build()
         .create(SearchApi::class.java)
+
+    @Provides @Singleton fun agents(client: OkHttpClient, gson: Gson): AgentApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson))
+        .build()
+        .create(AgentApi::class.java)
 
     @Provides @Singleton fun care(client: OkHttpClient, gson: Gson): CareApi = Retrofit.Builder()
         .baseUrl(BuildConfig.API_URL)

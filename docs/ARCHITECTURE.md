@@ -1,6 +1,6 @@
 # Architecture
 
-How the system is built today, and where the intended design is written. As built at migration 0024 on 2026-10-01. Labels follow the [Product Understanding](PRODUCT_UNDERSTANDING.md#labels).
+How the system is built today, and where the intended design is written. As built at migration 0025 on 2026-10-01. Labels follow the [Product Understanding](PRODUCT_UNDERSTANDING.md#labels).
 
 This is level 4 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). Only the CONFIRMED rules below bind. Everything else here describes the current implementation, which is evidence, not the intended architecture ([Constitution Article 6](PRODUCT_CONSTITUTION.md#article-6-code-and-tests-are-evidence)). The intended design is PROPOSED in the Chapter 10 contract and the ADRs until confirmed.
 

@@ -58,8 +58,9 @@ function MyPages({ account }: { account: Account }) {
     <section className={styles.stack} aria-labelledby="following-heading">
       <h2 id="following-heading">Pages you follow</h2>
       {error && <div className="message error" role="alert">{error}</div>}
+      {following.isPending && <p role="status">Loading pages you follow...</p>}
       {following.isError && !sessionLost(following.error) && <Failure error={following.error} retry={() => following.refetch()} />}
-      {!following.isPending && followed.length === 0 && <p className={styles.empty}>You do not follow any pages. <Link href="/app/discover">Discover pages</Link>.</p>}
+      {following.isSuccess && followed.length === 0 && <p className={styles.empty}>You do not follow any pages. <Link href="/app/discover">Discover pages</Link>.</p>}
       <ul className={styles.list}>
         {followed.map(page => <li key={page.id} className={styles.row}>
           <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>@{page.handle}</span></span>

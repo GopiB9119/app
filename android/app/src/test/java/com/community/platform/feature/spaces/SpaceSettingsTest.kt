@@ -152,4 +152,134 @@ class SpaceSettingsTest {
         assertEquals(setOf("name"), body.keySet())
         assertEquals("New", body["name"].asString)
     }
+
+    @Test fun settingsDescriptionOnlySaveKeepsNameAndReviewedHeaders() = runBlocking {
+        val current = ready()
+        val description = "Family plans\nShared notes"
+        current.description("  $description  ")
+        assertTrue(current.state.value.dirty)
+        value = original.copy(description = description, version = "2")
+        current.save(); idle(current)
+        assertEquals(1, commands.size)
+        val (key, etag, body) = commands.single()
+        assertEquals(original.name, body.name)
+        assertEquals(description, body.description)
+        assertEquals(original.etag, etag)
+        assertEquals(key, UUID.fromString(key).toString())
+        assertNull(current.state.value.pending)
+        assertEquals(description, current.state.value.description)
+        assertFalse(current.state.value.dirty)
+    }
+
+    @Test fun settingsNameOnlySaveLeavesDescriptionUnchanged() = runBlocking {
+        val current = ready()
+        value = original.copy(description = "Reviewed description")
+        current.reload(); idle(current)
+        current.name("New name")
+        value = value.copy(name = "New name", version = "2")
+        current.save(); idle(current)
+        assertEquals(1, commands.size)
+        assertEquals("New name", commands.single().third.name)
+        assertNull(commands.single().third.description)
+        assertEquals(original.etag, commands.single().second)
+        assertEquals("Reviewed description", current.state.value.description)
+        assertNull(current.state.value.pending)
+    }
+
+    @Test fun settingsUnknownDescriptionResultRetriesExactOriginalIntent() = runBlocking {
+        val current = ready()
+        current.name("New name")
+        current.description("  New description\nSecond line  ")
+        failure = 503
+        current.save(); idle(current)
+        val intent = current.state.value.pending!!
+        assertEquals("New name", intent.name)
+        assertEquals("New description\nSecond line", intent.description)
+        assertEquals(original.etag, intent.etag)
+        assertEquals(intent.key, UUID.fromString(intent.key).toString())
+        current.name("Different name"); current.description("Different description")
+        current.refresh(); current.reload(); current.save()
+        assertEquals(1, commands.size)
+        assertEquals(intent, current.state.value.pending)
+        assertEquals("New name", current.state.value.name)
+        assertEquals("  New description\nSecond line  ", current.state.value.description)
+        failure = 0
+        value = original.copy(name = intent.name, description = intent.description, version = "2")
+        current.retry(); idle(current)
+        assertEquals(2, commands.size)
+        assertEquals(commands[0], commands[1])
+        assertEquals(intent.key, commands[1].first)
+        assertEquals(intent.etag, commands[1].second)
+        assertEquals(intent.name, commands[1].third.name)
+        assertEquals(intent.description, commands[1].third.description)
+        assertNull(current.state.value.pending)
+        assertFalse(current.state.value.dirty)
+    }
+
+    @Test fun settingsDescriptionRejectsOverlongAndControlCharactersLocally() = runBlocking {
+        val current = ready()
+        for (description in listOf("x".repeat(281), "Before\tAfter", "Before\rAfter", "Before\u0000After", "Before\u202eAfter", "\tDescription", "Description\r")) {
+            current.description(description)
+            current.save(); idle(current)
+            assertEquals("Keep the description to 280 characters without control characters.", current.state.value.error)
+            assertTrue(commands.isEmpty())
+            assertNull(current.state.value.pending)
+        }
+    }
+
+    @Test fun settingsDescriptionDraftResetsOnReloadAndTracksUnsavedChanges() = runBlocking {
+        val current = ready()
+        value = original.copy(description = "Reviewed description")
+        current.reload(); idle(current)
+        assertEquals("Reviewed description", current.state.value.description)
+        assertFalse(current.state.value.dirty)
+        current.description("Unsaved description")
+        current.refresh()
+        assertTrue(current.state.value.dirty)
+        assertEquals("Unsaved description", current.state.value.description)
+        current.reload(); idle(current)
+        assertEquals("Reviewed description", current.state.value.description)
+        assertFalse(current.state.value.dirty)
+        current.description("  Reviewed description  ")
+        current.save(); idle(current)
+        assertTrue(commands.isEmpty())
+        assertTrue(current.state.value.dirty)
+        current.description("")
+        value = value.copy(description = "", version = "2")
+        current.save(); idle(current)
+        assertEquals("", commands.single().third.description)
+        assertFalse(current.state.value.dirty)
+    }
+
+    @Test fun settingsWireIncludesChangedDescriptionAndExactReviewHeaders() = runBlocking {
+        var request: Request? = null
+        val saved = original.copy(description = "New description\nSecond line")
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            request = chain.request()
+            okhttp3.Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(EnvelopeDto(saved, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = SpaceSettingsRepository(IdentityModule.spaceSettings(http, Gson()), fixture.accounts)
+        val intent = SpaceSettingsIntent(fixture.accountId, fixture.spaceId, original.name, original.etag, UUID.randomUUID().toString(), saved.description)
+        assertEquals(saved, wire.save(intent))
+        assertEquals(intent.etag, request!!.header("If-Match"))
+        assertEquals(intent.key, request!!.header("Idempotency-Key"))
+        val buffer = Buffer(); request!!.body!!.writeTo(buffer)
+        val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
+        assertEquals(setOf("name", "description"), body.keySet())
+        assertEquals(original.name, body["name"].asString)
+        assertEquals(saved.description, body["description"].asString)
+    }
+
+    @Test fun settingsResponseMustConfirmTrimmedDescription(): Unit = runBlocking {
+        val intent = SpaceSettingsIntent(fixture.accountId, fixture.spaceId, original.name, original.etag, UUID.randomUUID().toString(), "  Reviewed description  ")
+        for (description in listOf(null, "Other description", "  Reviewed description  ")) {
+            value = original.copy(description = description)
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { repository.save(intent) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+            assertEquals("The Space settings could not be confirmed.", error.message)
+        }
+        value = original.copy(description = "Reviewed description")
+        assertEquals(value, repository.save(intent))
+    }
 }

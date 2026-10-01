@@ -234,11 +234,22 @@ function ReminderRequests({ user, disabled, onLocked, onDenied, onNotice }: {
   const rows = [...new Map(records.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
   const selected = approval?.request ?? selection?.request;
   const close = () => { setSelection(null); setApproval(null); setError(""); };
+  // The two lists follow the tab pattern: arrow keys, Home and End move between them, and only the selected tab is in the Tab order.
+  const moveTab = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = event.key === "Home" ? "received" : event.key === "End" ? "sent"
+      : event.key === "ArrowLeft" || event.key === "ArrowRight" ? (direction === "received" ? "sent" : "received") : null;
+    if (!next || disabled || selection) return;
+    event.preventDefault();
+    setDirection(next);
+    setError("");
+    document.getElementById(`${titleId}-${next}`)?.focus();
+  };
   return <section className={styles.requests} aria-labelledby={titleId}>
     <div className={styles.sectionHeading}><h2 id={titleId}>Reminder requests</h2><button className="icon-button" aria-label="Refresh reminder requests" title="Refresh reminder requests" disabled={disabled || !!selection || records.isFetching} onClick={() => records.refetch()}><RefreshCw size={18} className={records.isFetching ? "spin" : ""} /></button></div>
-    <div className={styles.requestTabs} role="tablist" aria-label="Reminder request lists">{(["received", "sent"] as const).map(value => <button key={value} role="tab" aria-selected={direction === value} disabled={disabled || !!selection} onClick={() => { setDirection(value); setError(""); }}>
+    <div className={styles.requestTabs} role="tablist" aria-label="Reminder request lists" onKeyDown={moveTab}>{(["received", "sent"] as const).map(value => <button key={value} id={`${titleId}-${value}`} role="tab" aria-selected={direction === value} aria-controls={`${titleId}-panel`} tabIndex={direction === value ? 0 : -1} disabled={disabled || !!selection} onClick={() => { setDirection(value); setError(""); }}>
       {value === "received" ? <Inbox size={17} /> : <Send size={17} />}{value === "received" ? "Received" : "Sent"}
     </button>)}</div>
+    <div role="tabpanel" id={`${titleId}-panel`} aria-labelledby={`${titleId}-${direction}`}>
     {records.isPending && <p role="status">Loading requests...</p>}
     {(records.error || (error && !selection)) && <p className="message error" role="alert">{records.error?.message ?? error}</p>}
     {!records.isPending && !records.isError && rows.length === 0 && <p className={styles.empty}>No {direction} requests.</p>}
@@ -253,6 +264,7 @@ function ReminderRequests({ user, disabled, onLocked, onDenied, onNotice }: {
       </div>}
     </li>)}</ul>}
     {records.hasNextPage && <button className="text-button" disabled={disabled || !!selection || records.isFetching} onClick={() => records.fetchNextPage()}>Load more requests</button>}
+    </div>
     {selection && selected && <ReminderDialog title={selection.action === "review" ? "Review reminder request" : selection.action === "decline" ? "Decline reminder request?" : "Withdraw reminder request?"} locked={locked} onClose={close}>
       <p className={styles.reviewTitle}>{selected.task_title}</p><dl className={styles.facts}>
         <dt>From</dt><dd>{selected.requested_by.display_name}</dd><dt>Recipient</dt><dd>{selected.recipient.display_name}</dd>

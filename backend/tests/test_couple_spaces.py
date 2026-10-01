@@ -8,8 +8,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.modules.spaces.models import Space, SpaceInvitation, SpaceMembership
 from tests.test_documents import add, found, listed, read, search
+from tests.test_events import create as create_event, listed as listed_events
 from tests.test_identity import account, auth
-from tests.test_messaging import advance, roster_entry
+from tests.test_messaging import advance, messages, open_chat, roster_entry, send
 from tests.test_space_directory import ask, set_visibility
 from tests.test_spaces import create_space, invite_account
 
@@ -117,6 +118,10 @@ def test_couple_database_rules_refuse_a_third_member_and_a_type_change(client, a
 def test_after_a_separation_a_new_partner_sees_nothing_from_before(client, app):
     owner, partner, space = couple(client, app)
     shared = add(client, partner, space["id"], name="budget.txt", content="Our shared budget plan.").json()["data"]
+    event = create_event(client, partner, space["id"], title="Anniversary dinner")
+    assert event.status_code == 201, event.text
+    chat = open_chat(client, partner, space["id"]).json()["data"]
+    assert send(client, partner, chat["id"], "Our private plans").status_code == 201
     advance(app, minutes=1)
     reviewed = roster_entry(client, owner, space["id"], partner["user"]["id"])
     removed = client.post(
@@ -135,6 +140,11 @@ def test_after_a_separation_a_new_partner_sees_nothing_from_before(client, app):
     assert listed(client, newcomer, space["id"]).json()["data"] == []
     assert read(client, newcomer, shared["id"]).status_code == 404
     assert found(search(client, newcomer, "budget"), "documents") == []
+    assert listed_events(client, newcomer, space["id"]).json()["data"] == []
+    newcomer_chat = open_chat(client, newcomer, space["id"]).json()["data"]
+    assert newcomer_chat["id"] == chat["id"]
+    assert messages(client, newcomer, chat["id"]).json()["data"] == []
+    assert messages(client, partner, chat["id"]).status_code == 404
     assert read(client, owner, shared["id"]).status_code == 200
     # The former partner cannot come back while the new partner is there.
     again = invite_account(client, owner, space["id"], partner["user"]["id"])
@@ -149,3 +159,42 @@ def test_the_partner_can_leave_and_the_owner_must_hand_over_first(client, app):
     assert active_members(app, space["id"]) == 1
     assert client.get(f"/v1/spaces/{space['id']}", headers=auth(owner)).json()["data"]["space_type"] == "couple"
     assert client.get(f"/v1/spaces/{space['id']}", headers=auth(partner)).status_code == 404
+
+
+def test_the_owner_hands_the_couple_over_and_then_leaves(client, app):
+    owner, partner, space = couple(client, app)
+    reviewed = roster_entry(client, owner, space["id"], partner["user"]["id"])
+    base = f"/v1/spaces/{space['id']}/ownership-transfers"
+    offered = client.post(base, headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]},
+                          json={"recipient_account_id": partner["user"]["id"]})
+    assert offered.status_code == 201, offered.text
+    transfer = offered.json()["data"]
+    accepted = client.post(f"{base}/{transfer['id']}/accept", headers={**auth(partner), "If-Match": transfer["etag"]}, json={})
+    assert accepted.status_code == 200, accepted.text
+    left = leave(client, owner, space["id"])
+    assert left.status_code == 200, left.text
+    assert client.get(f"/v1/spaces/{space['id']}", headers=auth(partner)).json()["data"]["role"] == "owner"
+    assert client.get(f"/v1/spaces/{space['id']}", headers=auth(owner)).status_code == 404
+    assert active_members(app, space["id"]) == 1
+
+
+def test_two_people_accepting_at_once_leave_the_couple_at_two(client, app):
+    owner = account(client, app)
+    people = [account(client, app, f"accepting-{number}@example.test") for number in range(2)]
+    space_id = create_space(client, owner, "Us", space_type="couple").json()["data"]["id"]
+    first = invite_account(client, owner, space_id, people[0]["user"]["id"])
+    assert first.status_code == 201, first.text
+    # The second invitation can only exist if it bypassed the service; both people then accept together.
+    planted = str(uuid4())
+    with app.state.sessions.begin() as database:
+        database.add(SpaceInvitation(
+            id=planted, space_id=space_id, inviter_id=owner["user"]["id"], recipient_id=people[1]["user"]["id"],
+            request_key=str(uuid4()), status="pending", created_at=app.state.clock(),
+            expires_at=app.state.clock() + timedelta(hours=1),
+        ))
+    invitations = [first.json()["data"]["id"], planted]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda index: accept(client, people[index], invitations[index]), range(2)))
+    assert sorted(result.status_code for result in results) == [200, 409], [result.text for result in results]
+    assert {result.json()["error"]["code"] for result in results if result.status_code == 409} == {"COUPLE_FULL"}
+    assert active_members(app, space_id) == 2

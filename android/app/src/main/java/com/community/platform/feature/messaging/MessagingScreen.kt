@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 import com.community.platform.feature.spaces.SpaceMemberDto
 import java.time.Instant
@@ -207,11 +208,11 @@ private fun ConversationList(state: MessagingState, actions: MessagingActions, t
         state.selectedSpace?.let { space ->
             item("open-actions") {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = actions.openSpaceChat, enabled = !state.opening, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("messages-open-space")) {
+                    Button(onClick = actions.openSpaceChat, enabled = !state.opening, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("messages-open-space")) {
                         Icon(Icons.Default.Home, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.messages_open_space, space.name))
                     }
                     state.members.filter { it.accountId != state.accountId }.forEach { member ->
-                        OutlinedButton(onClick = { actions.openDirect(member) }, enabled = !state.opening, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("messages-direct-${member.accountId}")) {
+                        OutlinedButton(onClick = { actions.openDirect(member) }, enabled = !state.opening, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("messages-direct-${member.accountId}")) {
                             Icon(Icons.Default.Person, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.messages_direct, member.displayName))
                         }
                     }
@@ -290,7 +291,7 @@ private fun MessageBubble(message: MessageDto, chat: ChatState, actions: Messagi
     Box(Modifier.fillMaxWidth(), contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart) {
         Surface(
             color = if (message.mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(8.dp), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.86f).testTag("message-${message.position}"),
+            shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.86f).testTag("message-${message.position}"),
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -316,7 +317,7 @@ private fun MessageBubble(message: MessageDto, chat: ChatState, actions: Messagi
 @Composable
 private fun PendingBubble(entry: PendingSend, canEdit: Boolean, actions: MessagingActions, onStop: (String) -> Unit) {
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(8.dp), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.86f).testTag("pending-${entry.state.name.lowercase()}")) {
+        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.86f).testTag("pending-${entry.state.name.lowercase()}")) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(entry.intent.body, style = MaterialTheme.typography.bodyLarge)
                 when (entry.state) {

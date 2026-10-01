@@ -210,8 +210,8 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 **Backend**
 
 - **B01 (Low; synthetic data only).** The `0018` backfill can still show a message or event to someone who joined at exactly the same instant as its author. This affects only data older than `0018`.
-- **B10.** Alembic's metadata registers 35 of the 53 tables, so autogenerate is unreliable.
-- **B12.** Sessions expire only at an absolute time, readiness does not check the migration head, and the API docs are on by default.
+- **B10.** Alembic's metadata registers 35 of the 53 tables, so autogenerate is unreliable. Tracked as [T57](TASKS.md#defects-that-break-approved-requirements); in a new process `alembic check` stopped with an error before comparing anything.
+- **B12.** Sessions expire only at an absolute time, readiness does not check the migration head, and the API docs are on by default. The readiness part is [T58](TASKS.md#defects-that-break-approved-requirements).
 
 **Android**
 
@@ -227,8 +227,8 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 **Web**
 
 - **W09.** Placeholder contrast is 3.68:1, and a delete button is 36 px. T36 and T37 cover this.
-- **W10.** The reminder tabs have no keyboard behaviour.
-- **W11.** The followed-pages list shows "empty" when loading fails.
+- **W10.** The reminder tabs have no keyboard behaviour. Tracked as [T55](TASKS.md#defects-that-break-approved-requirements).
+- **W11.** The followed-pages list shows "empty" when loading fails. Tracked as [T56](TASKS.md#defects-that-break-approved-requirements).
 - **W12.** Failures to load the timezone list are silent.
 - **W07.** The Space pickers read only the first 50 Spaces. That is safe only while accounts are capped at 50.
 

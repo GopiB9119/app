@@ -186,7 +186,26 @@ class SpaceService:
             by_account = {membership.account_id: membership for membership in memberships}
             actor = by_account.get(caller.id)
             target = by_account.get(target_id)
-            if actor is None or target is None or (action == "remove" and (actor.role != "owner" or actor.status != "active")):
+            receipt = database.scalar(select(SpaceMembershipCommand).where(
+                SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
+                SpaceMembershipCommand.request_key == key,
+            ))
+            # Only a current member may learn that this private Space exists; anyone else gets exactly the answer for a
+            # missing Space (T42). The one exception is a former member repeating their own confirmed leave exactly.
+            if actor is not None and actor.status != "active":
+                repeated = (
+                    action == "leave" and receipt is not None and expected is not None
+                    and receipt.actor_admission_id == actor.admission_id
+                    and receipt.request_digest == self.security.digest(
+                        "space.membership.command", ":".join((action, target_id, expected)))
+                )
+                if not repeated:
+                    raise DomainError(404, "NOT_FOUND", "Space not found.")
+                self.identity.authenticate(database, token, lock=True)
+                return MembershipOutcome(space_id=space.id, account_id=actor.account_id)
+            if actor is None:
+                raise DomainError(404, "NOT_FOUND", "Space not found.")
+            if target is None or (action == "remove" and actor.role != "owner"):
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             self.identity.authenticate(database, token, lock=True)
             if target.role == "owner":
@@ -194,10 +213,6 @@ class SpaceService:
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current member before continuing.")
             digest = self.security.digest("space.membership.command", ":".join((action, target_id, expected)))
-            receipt = database.scalar(select(SpaceMembershipCommand).where(
-                SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
-                SpaceMembershipCommand.request_key == key,
-            ))
             if receipt is not None:
                 if receipt.actor_admission_id != actor.admission_id or receipt.target_admission_id != target.admission_id:
                     raise DomainError(404, "NOT_FOUND", "Membership not found.")
@@ -206,7 +221,7 @@ class SpaceService:
                 if target.status != "removed":
                     raise DomainError(409, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")
                 return MembershipOutcome(space_id=space.id, account_id=target.account_id)
-            if actor.status != "active" or target.status != "active":
+            if target.status != "active":
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             if expected != self.membership_etag(target):
                 raise DomainError(412, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")
@@ -545,7 +560,11 @@ class SpaceService:
                 statement.with_for_update().execution_options(populate_existing=True)
             )
             if action == "revoke":
-                self.require_owner(database, space.id, caller.id, lock=True)
+                try:
+                    self.require_owner(database, space.id, caller.id, lock=True)
+                except DomainError:
+                    # Someone who knows an invitation but no longer owns its Space learns nothing new (T42).
+                    raise DomainError(404, "NOT_FOUND", "Invitation not found.") from None
             if action == "accept" and invitation.status == "pending":
                 inviter = accounts[invitation.inviter_id]
                 if inviter.status != "active" or inviter.verified_at is None:
@@ -619,6 +638,13 @@ class OwnershipTransferService:
             raise DomainError(403, "REAUTHENTICATION_REQUIRED", "Sign in again before changing family ownership.")
         return caller, session
 
+    @staticmethod
+    def active_member(database, space_id, account_id):
+        return database.scalar(select(SpaceMembership.account_id).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.account_id == account_id,
+            SpaceMembership.status == "active",
+        )) is not None
+
     def participants(self, database, space_id, from_id, to_id, lock=False):
         statement = select(SpaceMembership, User).join(User, User.id == SpaceMembership.account_id).where(
             SpaceMembership.space_id == space_id, SpaceMembership.account_id.in_({from_id, to_id}),
@@ -673,6 +699,8 @@ class OwnershipTransferService:
             if space.space_type == "solo":
                 self.spaces.require_owner(database, space_id, caller.id)
                 raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Space ownership cannot be transferred.")
+            if not self.active_member(database, space_id, caller.id):
+                raise DomainError(404, "NOT_FOUND", "Space not found.")
             sender, recipient = self.participants(database, space_id, caller.id, recipient_id, lock=True)
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the intended next owner first.")
@@ -730,6 +758,9 @@ class OwnershipTransferService:
         caller, _accounts = self.spaces.lock_accounts(database, token, [transfer.from_account_id, transfer.to_account_id])
         space = self.spaces.lock_space(database, space_id, active=action == "accept")
         transfer = database.scalar(select(OwnershipTransfer).where(OwnershipTransfer.id == identifier).with_for_update().execution_options(populate_existing=True))
+        if not self.active_member(database, space_id, caller.id):
+            # A participant who has left gets the same answer as for a missing Space (T42).
+            raise DomainError(404, "NOT_FOUND", "Ownership transfer not found.")
         sender, recipient = self.participants(database, space_id, transfer.from_account_id, transfer.to_account_id, lock=True)
         if (sender[0].admission_id, recipient[0].admission_id) != (transfer.from_admission_id, transfer.to_admission_id):
             raise DomainError(404, "NOT_FOUND", "Ownership transfer not found.")

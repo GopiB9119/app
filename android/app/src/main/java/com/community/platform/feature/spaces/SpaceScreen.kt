@@ -200,17 +200,19 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                     val selected = state.selectedSpace
                     when {
                         state.creating -> {
-                            item("create-title") { Text(stringResource(when (state.creationType) { "solo" -> R.string.spaces_new_solo; "group" -> R.string.spaces_new_group; else -> R.string.spaces_new_family }), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }) }
+                            item("create-title") { Text(stringResource(when (state.creationType) { "solo" -> R.string.spaces_new_solo; "couple" -> R.string.spaces_new_couple; "group" -> R.string.spaces_new_group; else -> R.string.spaces_new_family }), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() }) }
                             item("create-type") {
                                 Text(stringResource(R.string.spaces_type), style = MaterialTheme.typography.labelLarge)
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     FilterChip(selected = state.creationType == "family", onClick = { actions.creationType("family") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_family_type)) })
+                                    FilterChip(selected = state.creationType == "couple", onClick = { actions.creationType("couple") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_couple_type)) }, modifier = Modifier.testTag("space-type-couple"))
                                     FilterChip(selected = state.creationType == "group", onClick = { actions.creationType("group") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_group_type)) }, modifier = Modifier.testTag("space-type-group"))
                                     FilterChip(selected = state.creationType == "solo", onClick = { actions.creationType("solo") }, enabled = !state.locked, label = { Text(stringResource(R.string.spaces_solo_type)) })
                                 }
                             }
-                            item("create-name") { OutlinedTextField(value = state.nameDraft, onValueChange = { actions.name(it.take(160)) }, label = { Text(stringResource(when (state.creationType) { "solo" -> R.string.space_settings_name; "group" -> R.string.spaces_group_name; else -> R.string.spaces_name })) }, enabled = !state.locked, minLines = 1, maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("space-name")) }
+                            item("create-name") { OutlinedTextField(value = state.nameDraft, onValueChange = { actions.name(it.take(160)) }, label = { Text(stringResource(when (state.creationType) { "solo", "couple" -> R.string.space_settings_name; "group" -> R.string.spaces_group_name; else -> R.string.spaces_name })) }, enabled = !state.locked, minLines = 1, maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("space-name")) }
                             if (state.creationType == "solo") item("solo-audience") { Text(stringResource(R.string.spaces_only_you)) }
+                            if (state.creationType == "couple") item("couple-audience") { Text(stringResource(R.string.spaces_couple_audience)) }
                             if (state.creationType == "group") {
                                 item("create-description") {
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -241,7 +243,15 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                             item("selected") {
                                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(selected.name, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.testTag("selected-space-name").semantics { heading() })
-                                    Text(stringResource(when (selected.spaceType) { "solo" -> R.string.spaces_only_you; "group" -> if (selected.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.labelLarge)
+                                    Text(stringResource(when (selected.spaceType) { "solo" -> R.string.spaces_only_you; "couple" -> R.string.spaces_couple_space; "group" -> if (selected.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.labelLarge)
+                                    if (selected.spaceType == "couple" && state.showingMembers) {
+                                        if (state.members.size == 1) Text(stringResource(R.string.spaces_couple_waiting), style = MaterialTheme.typography.bodyMedium)
+                                        else if (state.members.size == 2) {
+                                            state.members.singleOrNull { it.accountId != state.accountId }?.let { partner ->
+                                                Text(stringResource(R.string.spaces_couple_with, partner.displayName), style = MaterialTheme.typography.bodyMedium)
+                                            }
+                                        }
+                                    }
                                     selected.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                                     SpaceFact(stringResource(R.string.spaces_your_role), stringResource(if (selected.role == "owner") R.string.spaces_owner else R.string.spaces_member))
                                     if (selected.role == "owner" && onOpenSettings != null) OutlinedButton(onClick = { onOpenSettings(selected) }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-open-settings")) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.space_settings_title)) }
@@ -310,6 +320,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 item("invite-title") { Text(stringResource(R.string.spaces_invite_member), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
                                 item("invite-form") {
                                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        if (selected.spaceType == "couple") Text(stringResource(R.string.spaces_couple_invite_hint), style = MaterialTheme.typography.bodyMedium)
                                         OutlinedTextField(value = state.recipientDraft, onValueChange = { actions.recipient(it.take(80)) }, label = { Text(stringResource(R.string.spaces_recipient_id)) }, enabled = !state.locked, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("space-recipient"))
                                         SpaceFact(stringResource(R.string.spaces_invited_role), stringResource(R.string.spaces_member))
                                         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -350,7 +361,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                     Column(Modifier.fillMaxWidth().clickable(enabled = !state.navigationLocked, role = Role.Button) { actions.open(space.id) }.padding(vertical = 10.dp).testTag("space-row-${space.id}"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Icon(Icons.Default.Home, null, Modifier.size(23.dp), tint = MaterialTheme.colorScheme.primary); Text(space.name, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge); Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp)) }
                                         Text(stringResource(if (space.role == "owner") R.string.spaces_owner else R.string.spaces_member), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                        Text(stringResource(when (space.spaceType) { "solo" -> R.string.spaces_solo_type; "group" -> if (space.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.bodySmall)
+                                        Text(stringResource(when (space.spaceType) { "solo" -> R.string.spaces_solo_type; "couple" -> R.string.spaces_couple_space; "group" -> if (space.visibility == "public") R.string.spaces_public_group else R.string.spaces_private_group; else -> R.string.spaces_family_type }), style = MaterialTheme.typography.bodySmall)
                                         HorizontalDivider(Modifier.padding(top = 8.dp))
                                     }
                                 }

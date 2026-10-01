@@ -1,0 +1,18 @@
+/* Home, the personal overview (DEC-014). */
+.main { width: min(920px, 100%); margin: 0 auto; padding: calc(var(--space-unit) * 6) calc(var(--space-unit) * 4) calc(var(--space-unit) * 16); display: grid; gap: calc(var(--space-unit) * 5); min-width: 0; }
+.heading { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 3); align-items: center; justify-content: space-between; }
+.heading h1 { margin: 0; }
+.shortcuts { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); }
+.shortcuts a { display: inline-flex; align-items: center; gap: calc(var(--space-unit) * 2); min-height: var(--target-minimum); padding: 0 calc(var(--space-unit) * 4); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); text-decoration: none; font-weight: 600; }
+.shortcuts a:hover { background: var(--color-primary-surface); }
+.section { display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
+.sectionHead { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4); align-items: baseline; justify-content: space-between; border-bottom: 1px solid var(--color-border); padding-bottom: calc(var(--space-unit) * 2); }
+.sectionHead h2 { margin: 0; font-size: 1.15rem; }
+.sectionHead a, .row a { display: inline-flex; align-items: center; min-height: var(--target-minimum); color: var(--color-primary); font-weight: 600; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(var(--space-unit) * 2); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4); min-width: 0; padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 4); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
+.when { flex: none; min-width: calc(var(--space-unit) * 12); font-weight: 700; font-variant-numeric: tabular-nums; }
+.text { flex: 1 1 calc(var(--space-unit) * 40); min-width: 0; display: grid; gap: var(--space-unit); overflow-wrap: anywhere; }
+.detail { color: var(--color-muted); font-size: 0.9rem; }
+.quiet { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); color: var(--color-muted); }
+.problem { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); border-radius: var(--radius-control); background: var(--color-danger-surface); color: var(--color-danger); }

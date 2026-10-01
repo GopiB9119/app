@@ -189,7 +189,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
 
     fun creationType(value: String) {
         val current = mutableState.value
-        if (current.creating && !current.locked && value in setOf("family", "group", "solo")) mutableState.update { it.copy(creationType = value, error = null, notice = null) }
+        if (current.creating && !current.locked && value in setOf("family", "couple", "group", "solo")) mutableState.update { it.copy(creationType = value, error = null, notice = null) }
     }
 
     fun visibility(value: String) {
@@ -305,7 +305,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                         spaces = listOf(result.space) + current.spaces.filterNot { it.id == result.space.id },
                         invitations = if (command is SpaceCommand.Accept) current.invitations.filterNot { it.id == command.invitation.id } else current.invitations,
                         selectedSpace = result.space, members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, sent = emptyList(), sentCursor = null, creating = false, nameDraft = "", descriptionDraft = "", visibilityDraft = "private", recipientDraft = "", tab = SpaceTab.SPACES,
-                        pending = null, notice = if (command is SpaceCommand.Accept) "Joined ${result.space.name}." else when (result.space.spaceType) { "solo" -> "Solo Space saved."; "group" -> if (result.space.visibility == "public") "Public group saved. People can find it and ask to join." else "Group saved."; else -> "Family Space saved." },
+                        pending = null, notice = if (command is SpaceCommand.Accept) "Joined ${result.space.name}." else when (result.space.spaceType) { "solo" -> "Solo Space saved."; "couple" -> "Couple Space saved. Invite your partner to join you."; "group" -> if (result.space.visibility == "public") "Public group saved. People can find it and ask to join." else "Group saved."; else -> "Family Space saved." },
                     )
                     is SpaceCommandResult.InvitationSaved -> current.copy(
                         sent = listOf(result.invitation) + current.sent.filterNot { it.id == result.invitation.id },

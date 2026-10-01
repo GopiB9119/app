@@ -736,7 +736,9 @@ def test_same_creation_key_is_scoped_to_actual_actor(client, app):
         {"name": "Family\nname", "space_type": "family"},
         {"name": "Family\u200b", "space_type": "family"},
         {"name": "x" * 81, "space_type": "family"},
-        {"name": "Family", "space_type": "couple"},
+        # DEC-017 added couple Spaces; an unknown type and a public couple are still refused.
+        {"name": "Family", "space_type": "club"},
+        {"name": "Family", "space_type": "couple", "visibility": "public"},
         {"name": "Family", "space_type": "family", "visibility": "public"},
         {"name": "Family", "space_type": "family", "owner_id": str(uuid4())},
         {"name": "Family", "space_type": "family", "role": "owner"},
@@ -878,8 +880,8 @@ def test_space_openapi_documents_authentication_and_private_projections(app):
         assert schema["paths"][path][method]["security"] == [{"AccountSession": []}]
     request = schema["components"]["schemas"]["CreateSpace"]
     assert request["additionalProperties"] is False
-    # DEC-011 added the group type; family and solo keep their existing rules.
-    assert request["properties"]["space_type"]["enum"] == ["family", "solo", "group"]
+    # DEC-011 added the group type and DEC-017 the couple type; family and solo keep their existing rules.
+    assert request["properties"]["space_type"]["enum"] == ["family", "solo", "group", "couple"]
     assert request["properties"]["name"]["maxLength"] == 80
     response = schema["components"]["schemas"]["SpaceView"]["properties"]
     assert "creation_key" not in response

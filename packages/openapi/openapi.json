@@ -26765,7 +26765,8 @@
             "enum": [
               "family",
               "solo",
-              "group"
+              "group",
+              "couple"
             ],
             "title": "Space Type"
           },
@@ -32305,7 +32306,8 @@
             "enum": [
               "family",
               "solo",
-              "group"
+              "group",
+              "couple"
             ],
             "title": "Space Type"
           },
@@ -32378,7 +32380,8 @@
             "enum": [
               "family",
               "solo",
-              "group"
+              "group",
+              "couple"
             ],
             "title": "Space Type"
           },

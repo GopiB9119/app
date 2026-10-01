@@ -62,6 +62,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 import java.time.Instant
 import java.time.LocalDate
@@ -160,8 +161,8 @@ fun CareScreen(state: CareState, actions: CareActions) {
                         item("intro") { Text(stringResource(R.string.care_intro), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("care-intro")) }
                         item("views") {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(selected = state.view == CareView.DAY, onClick = actions.showDay, enabled = !state.working, label = { Text(stringResource(R.string.care_day_plan)) }, modifier = Modifier.heightIn(min = 48.dp).testTag("care-show-day"))
-                                FilterChip(selected = state.view == CareView.MEDICINES, onClick = { actions.showMedicines(state.stopped) }, enabled = !state.working, label = { Text(stringResource(R.string.care_my_medicines)) }, modifier = Modifier.heightIn(min = 48.dp).testTag("care-show-medicines"))
+                                FilterChip(selected = state.view == CareView.DAY, onClick = actions.showDay, enabled = !state.working, label = { Text(stringResource(R.string.care_day_plan)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-show-day"))
+                                FilterChip(selected = state.view == CareView.MEDICINES, onClick = { actions.showMedicines(state.stopped) }, enabled = !state.working, label = { Text(stringResource(R.string.care_my_medicines)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-show-medicines"))
                             }
                         }
                     }
@@ -188,9 +189,9 @@ fun CareScreen(state: CareState, actions: CareActions) {
                         CareView.MEDICINES -> {
                             item("medicine-controls") {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilterChip(selected = !state.stopped, onClick = { actions.showMedicines(false) }, enabled = !state.working, label = { Text(stringResource(R.string.care_current)) }, modifier = Modifier.heightIn(min = 48.dp).testTag("care-current"))
-                                    FilterChip(selected = state.stopped, onClick = { actions.showMedicines(true) }, enabled = !state.working, label = { Text(stringResource(R.string.care_stopped)) }, modifier = Modifier.heightIn(min = 48.dp).testTag("care-stopped"))
-                                    Button(onClick = actions.startAdd, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("care-add")) { Text(stringResource(R.string.care_add)) }
+                                    FilterChip(selected = !state.stopped, onClick = { actions.showMedicines(false) }, enabled = !state.working, label = { Text(stringResource(R.string.care_current)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-current"))
+                                    FilterChip(selected = state.stopped, onClick = { actions.showMedicines(true) }, enabled = !state.working, label = { Text(stringResource(R.string.care_stopped)) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-stopped"))
+                                    Button(onClick = actions.startAdd, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-add")) { Text(stringResource(R.string.care_add)) }
                                 }
                             }
                             if (!state.loading && state.instructions.isEmpty() && state.error == null) item("medicines-empty") {
@@ -263,7 +264,7 @@ private fun DoseRow(occurrence: CareOccurrenceDto, medicine: CareDayInstructionD
                     val label = if (current != null && current != value) stringResource(R.string.care_change_to, outcomeLabel(value)) else outcomeLabel(value)
                     FilterChip(
                         selected = current == value, enabled = !state.working && current != value, onClick = { actions.report(occurrence, value) },
-                        label = { Text(label) }, modifier = Modifier.heightIn(min = 48.dp).testTag("care-$value"),
+                        label = { Text(label) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-$value"),
                     )
                 }
             }
@@ -288,7 +289,7 @@ private fun MedicineRow(item: CareInstructionDto, state: CareState, actions: Car
         if (item.instructions.isNotEmpty()) Text(item.instructions, style = MaterialTheme.typography.bodyMedium)
         Text(stringResource(R.string.care_source_line, sourceLabel(item.source), localDay(item.confirmedAt, state.timezone)), style = MaterialTheme.typography.bodySmall)
         item.stoppedAt?.let { Text(stringResource(R.string.care_stopped_on, localDay(it, state.timezone)), style = MaterialTheme.typography.bodySmall) }
-        if (item.status == "active") OutlinedButton(onClick = { actions.askStop(item) }, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("care-stop")) {
+        if (item.status == "active") OutlinedButton(onClick = { actions.askStop(item) }, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-stop")) {
             Text(stringResource(R.string.care_stop))
         }
         HorizontalDivider()
@@ -319,7 +320,7 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
         Column(Modifier.selectableGroup()) {
             CARE_SOURCES.forEach { value ->
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget)
                         .selectable(selected = draft.source == value, enabled = !locked, role = Role.RadioButton, onClick = { actions.draft { it.copy(source = value) } })
                         .testTag("care-source-$value"),
                     verticalAlignment = Alignment.CenterVertically,
@@ -353,7 +354,7 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
                 label = { Text(stringResource(R.string.care_field_end)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.widthIn(min = 160.dp).testTag("care-end"))
         }
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget)
                 .toggleable(value = draft.confirmed, enabled = !locked, role = Role.Checkbox, onValueChange = { checked -> actions.draft { it.copy(confirmed = checked) } })
                 .testTag("care-confirm"),
             verticalAlignment = Alignment.CenterVertically,
@@ -365,11 +366,11 @@ private fun MedicineForm(state: CareState, actions: CareActions) {
         state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-problem")) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.pendingCreate != null) {
-                Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("care-retry")) { Text(stringResource(R.string.care_retry)) }
-                OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("care-discard")) { Text(stringResource(R.string.care_discard)) }
+                Button(onClick = actions.retry, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-retry")) { Text(stringResource(R.string.care_retry)) }
+                OutlinedButton(onClick = actions.discard, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-discard")) { Text(stringResource(R.string.care_discard)) }
             } else {
-                Button(onClick = actions.save, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp).testTag("care-save")) { Text(stringResource(R.string.care_save)) }
-                TextButton(onClick = { actions.showMedicines(false) }, enabled = !state.working, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.care_close_form)) }
+                Button(onClick = actions.save, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("care-save")) { Text(stringResource(R.string.care_save)) }
+                TextButton(onClick = { actions.showMedicines(false) }, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) { Text(stringResource(R.string.care_close_form)) }
             }
         }
     }

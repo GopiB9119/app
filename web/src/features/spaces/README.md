@@ -10,9 +10,13 @@ An uncertain Space/invitation creation response retains its immutable payload an
 
 ## Group Spaces and Find Groups
 
-Built for [T22](../../../../docs/TASKS.md#spaces) under [DEC-011](../../../../docs/DECISIONS.md#accepted-decisions). The create form offers Family, Group and Solo; a group gets an optional description and an explicit Private or Public choice that says who can find it. Each row shows the type and a Private or Public mark. Owners edit the description in Space settings and switch a group between private and public after a confirmation that states the consequences; making it private closes waiting requests. Owners of groups have a Join requests dialog to approve or decline (with a confirmation) each person, whose note is shown.
+Built for [T22](../../../../docs/TASKS.md#spaces) under [DEC-011](../../../../docs/DECISIONS.md#accepted-decisions). The create form offers Family, Couple, Group and Solo; a group gets an optional description and an explicit Private or Public choice that says who can find it. Each row shows the type and a Private or Public mark. Owners edit the description in Space settings and switch a group between private and public after a confirmation that states the consequences; making it private closes waiting requests. Owners of groups have a Join requests dialog to approve or decline (with a confirmation) each person, whose note is shown.
 
 `/app/spaces/discover` (Find groups) searches public groups by name or description and shows name, description, member count and the viewer's relation. Asking to join takes an optional 280-character note and keeps its request key for an exact retry after an unconfirmed send. People can withdraw a waiting request and see all their requests with their outcome. The proxy forwards only the nine group routes, and only `q`, `limit` and `cursor` on the search. The client checks that each answer matches what was asked.
+
+## Couple Spaces
+
+Built for [T12](../../../../docs/TASKS.md#approved-requirements-not-built-yet) under [DEC-017](../../../../docs/DECISIONS.md#accepted-decisions) (provisional). The create form also offers Couple, with the note "Private couple Space: only you and one partner you invite". A couple row reads the two-person roster and shows "Waiting for your partner" or "With" and the partner's name; the read is keyed by the Space version, so refreshing the list after someone joins or leaves reads it again. The invitation dialog explains that a couple is for two people with one waiting invitation at a time, and the server's `COUPLE_FULL` and `COUPLE_INVITATION_PENDING` messages are shown as they are. Evidence: the `couples:` journey in `tests/e2e/identity.test.mjs` and the Space schema test in `tests/web-client.test.mjs`.
 
 ## Members
 

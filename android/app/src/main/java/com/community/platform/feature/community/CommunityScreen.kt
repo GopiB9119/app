@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.DesignTokens
 import com.community.platform.R
 import java.time.Instant
 import java.time.ZoneId
@@ -228,7 +229,7 @@ private fun PageItem(page: PageDto, state: CommunityState, actions: CommunityAct
         Text(page.name, style = MaterialTheme.typography.titleMedium)
         Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
         if (page.description.isNotEmpty()) Text(page.description, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
-        if (!page.canManage) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("follow-${page.handle}")) {
+        if (!page.canManage) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("follow-${page.handle}")) {
             Text(stringResource(if (page.following) R.string.community_unfollow else R.string.community_follow))
         }
         HorizontalDivider()
@@ -449,7 +450,7 @@ private fun ReportDialog(target: ReportTarget, onDismiss: () -> Unit, onSend: (S
     AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.community_report_title, target.label)) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             REPORT_REASONS.forEach { value ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).selectable(selected = reason == value, role = Role.RadioButton) { reason = value }, verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).selectable(selected = reason == value, role = Role.RadioButton) { reason = value }, verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = reason == value, onClick = null)
                     Spacer(Modifier.width(8.dp))
                     Text(value.replace("_", " ").replaceFirstChar(Char::uppercase))

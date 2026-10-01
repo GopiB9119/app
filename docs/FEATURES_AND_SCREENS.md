@@ -75,7 +75,8 @@ Rule: a public feed is not production-ready until reporting, blocking and visibi
 | Group Space (friends, a club, a team), private or public ([DEC-011](DECISIONS.md#accepted-decisions)) | Yes / Yes / Yes | Working (limited): private by default; the owner can make it public with a confirmation, and back; family and solo stay private ([T22](TASKS.md#spaces)) |
 | Find groups: search public groups by name or description; see name, description and member count only | Yes / Yes / Yes | Working (limited): blocks hide groups both ways; private groups never appear |
 | Solo Space (one human owner, no invitations) | Yes / Yes / Yes | Working (limited); native device qualification open |
-| Couple Space (exactly two partners), temporary event Space | No / No / No | Not built |
+| Couple Space (the creator and one partner) | Yes / Yes / Yes | Working (limited), [DEC-017](DECISIONS.md#accepted-decisions), provisional: usable at once and shown as waiting for the partner; one waiting invitation at a time; a third person is refused; always private ([T12](TASKS.md#approved-requirements-not-built-yet)) |
+| Temporary event Space | No / No / No | Not built |
 | Archive, restore, expiry, type conversion | No / No / No | Not built |
 
 ### 2.5 Members, Invitations and Settings
@@ -190,7 +191,7 @@ Rules: organize confirmed instructions only. No diagnosis, prescribing, inferred
 
 ### 2.16 Agent
 
-All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation) stay **Deferred** to the separate Agent workstream until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11). Under that provisional decision, a first release without an AI model exists **on the backend only** ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)): in one Space a person can list the tasks they see, add or complete a task, set their own one-time reminder, and save or delete a note or their usual reminder time. Every change is shown as exact fields and runs only after approval, through the same task and reminder services as the screens; health, contacting anyone, other people's reminders, money, members and deleting are refused. The web screen is written but not linked (T34) and Android is not started (T35). Future Agent tools must call the same authorized domain services built here.
+All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation) stay **Deferred** to the separate Agent workstream until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11). Under that provisional decision, a first release without an AI model exists **on the backend only** ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)): in one Space a person can list the tasks they see, add or complete a task, set their own one-time reminder, and save or delete a note or their usual reminder time. Every change is shown as exact fields and runs only after approval, through the same task and reminder services as the screens; health, contacting anyone, other people's reminders, money, members and deleting are refused. The web screen `/app/agent` is linked from the header and verified live ([T34](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-web-screen-checkpoint)); Android is not started (T35). Future Agent tools must call the same authorized domain services built here.
 
 ## 3. Pages and Screens
 
@@ -213,6 +214,7 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | `/app/safety` | Blocked pages and people | Working (limited) |
 | `/app/documents` | Documents of a Space: add, list, open at cited lines, delete | Working (limited) |
 | `/app/search` | Search inside your Spaces | Working (limited) |
+| `/app/agent` | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Working (limited): no AI model; under provisional DEC-012 |
 | `/app/settings/privacy` | Export and deletion | Not built |
 
 ### Android screens
@@ -232,6 +234,7 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Care instructions and medication reminders | Account screen | Working (limited); not device-qualified |
 | Documents: add, list, open at cited lines, delete | Space detail | Working (limited); 7 offline screen tests and a live journey on the emulator |
 | Search inside your Spaces | Account screen | Working (limited); covered by the same device tests |
+| Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Account screen | Working (limited): no AI model; under provisional DEC-012 ([T35](TASKS.md#approved-requirements-not-built-yet)) |
 | Safety, privacy, export, deletion | Account screen | Blocked list inside Community works; privacy, export and deletion not built |
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.

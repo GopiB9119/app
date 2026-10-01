@@ -24,8 +24,8 @@ data class SpaceSettingsDto(
     val etag: String,
     val description: String? = null,
 )
-data class EditSpaceSettingsDto(val name: String)
-data class SpaceSettingsIntent(val accountId: String, val spaceId: String, val name: String, val etag: String, val key: String)
+data class EditSpaceSettingsDto(val name: String, val description: String? = null)
+data class SpaceSettingsIntent(val accountId: String, val spaceId: String, val name: String, val etag: String, val key: String, val description: String? = null)
 
 interface SpaceSettingsApi {
     @GET("v1/spaces/{id}/settings")
@@ -39,14 +39,15 @@ interface SpaceSettingsApi {
 
 @Singleton
 class SpaceSettingsRepository @Inject constructor(private val api: SpaceSettingsApi, private val accounts: AccountRepository) {
-    private fun checked(response: Response<EnvelopeDto<SpaceSettingsDto>>, spaceId: String): SpaceSettingsDto {
+    private fun checked(response: Response<EnvelopeDto<SpaceSettingsDto>>, spaceId: String, description: String? = null): SpaceSettingsDto {
         val result = accounts.result(response)
         try {
             require(UUID.fromString(result.id).toString() == result.id && result.id == spaceId)
             require(result.name.isNotBlank() && result.name.codePointCount(0, result.name.length) <= 80)
-            require(result.spaceType in setOf("family", "solo", "group") && result.visibility in setOf("private", "public") && result.status == "active" && result.role == "owner")
+            require(result.spaceType in setOf("family", "couple", "solo", "group") && result.visibility in setOf("private", "public") && result.status == "active" && result.role == "owner")
             require(result.visibility == "private" || result.spaceType == "group")
             result.description?.let { require(it.codePointCount(0, it.length) <= 280) }
+            require(description == null || result.description == description.trim())
             require(result.version.matches(Regex("[1-9][0-9]*")) && result.version.toLong() > 0)
             require(result.etag.matches(Regex("\"[a-f0-9]{64}\"")))
             Instant.parse(result.createdAt)
@@ -62,6 +63,6 @@ class SpaceSettingsRepository @Inject constructor(private val api: SpaceSettings
     }
 
     suspend fun save(intent: SpaceSettingsIntent): SpaceSettingsDto = accounts.authorized(intent.accountId) {
-        checked(api.save(it, intent.spaceId, intent.etag, intent.key, EditSpaceSettingsDto(intent.name)), intent.spaceId)
+        checked(api.save(it, intent.spaceId, intent.etag, intent.key, EditSpaceSettingsDto(intent.name, intent.description)), intent.spaceId, intent.description)
     }
 }

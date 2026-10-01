@@ -6,10 +6,10 @@ The one place where the product's colours, font, spacing unit, corner radii and 
 
 1. Edit [tokens.json](tokens.json). A changed value changes every screen that uses it, so check where it is used first.
 2. Run `npm run tokens` from the repository root. It writes [web/src/app/design-tokens.css](../../web/src/app/design-tokens.css) and [DesignTokens.kt](../../android/app/src/main/java/com/community/platform/DesignTokens.kt). Never edit those two files by hand.
-3. Run `npm run check:tokens`. It fails when a generated file is out of date, when `globals.css` or `CommunityTheme.kt` types a token colour by hand, when the font name appears outside the `@font-face` rule, when a text colour pair falls below 4.5:1 contrast or the input border below 3:1, or when a stylesheet on the token list (`tokenStylesheets` in [scripts/design-tokens.mjs](../../scripts/design-tokens.mjs)) types a colour, uses an older name or a fallback, or sets a corner other than `0` or a radius token. `npm run test:tokens` runs the same checks as tests.
+3. Run `npm run check:tokens`. It fails when a generated file is out of date, when `globals.css` or `CommunityTheme.kt` types a token colour by hand, when the font name appears outside the `@font-face` rule, when a text colour pair falls below 4.5:1 contrast or the input border below 3:1, or when a stylesheet on the token list (`tokenStylesheets` in [scripts/design-tokens.mjs](../../scripts/design-tokens.mjs)) types a colour, uses an older name or a fallback, sets a corner other than `0` or a radius token, or types a spacing value (margin, padding, gap or offset) instead of `var(--space-unit)` or `calc(var(--space-unit) * n)` with a whole number `n`. It also fails when an Android screen on its token list (`tokenScreens`) types a corner size, or a minimum height of 48 dp or less, instead of using `DesignTokens`. `npm run test:tokens` runs the same checks as tests.
 4. Check the changed screens at 320 px / 320 dp and 200% text.
 
-When a feature stylesheet uses only token variables, add it to `tokenStylesheets` so it stays that way.
+When a feature stylesheet uses only token variables, add it to `tokenStylesheets` so it stays that way; likewise add an Android screen to `tokenScreens` once its corners and target heights come from `DesignTokens`.
 
 ## Names
 
@@ -29,8 +29,8 @@ The web stylesheet still has older names (`--ink`, `--muted`, `--green`, `--gree
 
 Tracked in [T37](../../docs/TASKS.md#design-and-experience):
 
-- The calendar, reminders and Spaces stylesheets and the Android screens still contain colours, corner sizes and spacing of their own.
-- Spacing is not yet on the 4-unit scale everywhere, and there are two toggle styles.
-- There is no shared text-size scale yet.
+- The calendar, reminders and Spaces stylesheets still contain colours, corner sizes and spacing of their own, and so do the Android reminders, calendar and Spaces screens. The other Android screens take their corners and target heights from `DesignTokens` but still type their own spacing.
+- The stylesheets on the token list space in whole space units, but still type sizes such as widths, heights and font sizes; the message delete button is 36 px, below the 44 px web target.
+- There is no shared text-size scale yet: most web text is sized in px, so it does not grow when the root text size does.
 
 The font is Source Sans 3, under the SIL Open Font License ([licenses/SourceSans3-LICENSE.md](licenses/SourceSans3-LICENSE.md)).

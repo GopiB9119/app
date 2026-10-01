@@ -181,3 +181,14 @@ test('History pages and memories are read and deleted with bounded requests', as
   assert.equal(deletion.options.method, 'DELETE');
   assert.deepEqual(deletion.body, {});
 });
+
+test('Deleting a memory that is already gone counts as deleted, and only that memory may be confirmed', async () => {
+  let answer = () => Response.json({ error: { code: 'NOT_FOUND', message: 'Memory not found.' }, request_id: 'r' }, { status: 404 });
+  const client = load(recorder(() => answer()).fetch);
+  // The client runs in its own realm, so compare a plain copy rather than the object's prototype.
+  assert.deepEqual({ ...(await client.forgetMemory(accountId, memoryId)) }, { id: memoryId, status: 'deleted' });
+  answer = () => Response.json({ data: { id: spaceId, status: 'deleted' }, request_id: 'r' });
+  await assert.rejects(client.forgetMemory(accountId, memoryId), error => error.status === 502 && error.code === 'INVALID_RESPONSE');
+  answer = () => Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Try again.' }, request_id: 'r' }, { status: 503 });
+  await assert.rejects(client.forgetMemory(accountId, memoryId), error => error.status === 503);
+});

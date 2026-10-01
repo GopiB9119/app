@@ -24,9 +24,11 @@ before(async () => {
         import { createRoot } from 'react-dom/client';
         import { Providers } from './src/app/providers';
         import { PublicPageScreen } from './src/features/community/page-screen';
+        import { MyPagesScreen } from './src/features/community/pages-screen';
         import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
-        window.renderCommunityFixture = () => root.render(<Providers><PublicPageScreen reference="garden-club" /></Providers>);`,
+        window.renderCommunityFixture = () => root.render(<Providers><PublicPageScreen reference="garden-club" /></Providers>);
+        window.renderMyPagesFixture = () => root.render(<Providers><MyPagesScreen /></Providers>);`,
       resolveDir: web, sourcefile: 'offline-community.tsx', loader: 'tsx',
     },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
@@ -183,6 +185,65 @@ test('post editor saves against the version it opened with, so a change made whi
     const stored = await page.evaluate(() => window.communityFixture.post);
     assert.equal(stored.body, 'Seeds arrive on Friday.', 'The newer text must not be reverted.');
     assert.equal(stored.title, 'Spring plants');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// "Pages you follow" while its list is loading, after loading fails and after Retry. The followed list is held until the test releases it.
+test('followed pages show loading and failure instead of claiming the person follows nothing', async () => {
+  const context = await browser.newContext();
+  try {
+    const outbound = [];
+    const errors = [];
+    await context.route('**/*', route => { outbound.push(route.request().url()); return route.abort('blockedbyclient'); });
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setContent('<html><head><title>Offline pages</title></head><body><div id="root"></div></body></html>');
+    await page.addStyleTag({ content: css });
+    await page.evaluate(({ accountId, pageId }) => {
+      const created = '2026-09-19T10:00:00Z';
+      const followed = {
+        id: pageId, handle: 'garden-club', name: 'Garden Club', description: 'Weekly meetups in the park.', topic: 'hobbies',
+        follower_count: 3, created_at: created, updated_at: created, following: true, blocked: false, can_manage: false, etag: null,
+      };
+      const state = window.pagesFixture = { calls: [], fail: true, waiting: [] };
+      state.release = () => { for (const resume of state.waiting.splice(0)) resume(); };
+      const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-pages', ...extra }), { status: 200 });
+      window.fetch = async (input, config = {}) => {
+        const url = new URL(String(input), 'https://offline.invalid');
+        const method = config.method ?? 'GET';
+        state.calls.push({ route: url.pathname, method });
+        if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
+        if (url.pathname === '/api/me/pages' && method === 'GET') return reply([]);
+        if (url.pathname === '/api/me/following' && method === 'GET') {
+          await new Promise(resume => state.waiting.push(resume));
+          if (state.fail) return new Response(JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Service is temporarily unavailable.' }, request_id: 'offline-pages' }), { status: 503 });
+          return reply([followed], { pagination: { next_cursor: null, has_more: false } });
+        }
+        throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
+      };
+    }, { accountId, pageId });
+    await page.addScriptTag({ content: javascript });
+    await page.evaluate(() => window.renderMyPagesFixture());
+    const following = page.getByRole('region', { name: 'Pages you follow', exact: true });
+    await following.waitFor();
+    const empty = following.getByText('You do not follow any pages.', { exact: false });
+    await following.getByRole('status').filter({ hasText: 'Loading pages you follow' }).waitFor();
+    assert.equal(await empty.count(), 0);
+    // The failed load is retried once, as every query is.
+    for (let answered = 0; answered < 2; answered++) {
+      await page.waitForFunction(count => window.pagesFixture.waiting.length === 1 && window.pagesFixture.calls.filter(call => call.route === '/api/me/following').length === count, answered + 1);
+      await page.evaluate(() => window.pagesFixture.release());
+    }
+    await following.getByRole('alert').filter({ hasText: 'Service is temporarily unavailable.' }).waitFor();
+    assert.equal(await empty.count(), 0, 'A failed load must not say the person follows no pages.');
+    await page.evaluate(() => { window.pagesFixture.fail = false; });
+    await following.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.waitForFunction(() => window.pagesFixture.waiting.length === 1);
+    await page.evaluate(() => window.pagesFixture.release());
+    await following.getByRole('button', { name: 'Unfollow Garden Club', exact: true }).waitFor();
+    assert.equal(await following.getByRole('alert').count(), 0);
+    assert.equal(await empty.count(), 0);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

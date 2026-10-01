@@ -11,6 +11,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.community.platform.feature.agents.AgentRoute
+import com.community.platform.feature.agents.AgentViewModel
 import com.community.platform.feature.care.CareRoute
 import com.community.platform.feature.care.CareViewModel
 import com.community.platform.feature.community.CommunityRoute
@@ -58,15 +60,16 @@ class MainActivity : ComponentActivity() {
     private val care: CareViewModel by viewModels()
     private val documents: DocumentViewModel by viewModels()
     private val search: SearchViewModel by viewModels()
+    private val agent: AgentViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { CommunityTheme { AccountWorkspace(viewModel, tasks, reminders, spaces, calendar, spaceSettings, checklist, messaging, community, events, care, groups, documents, search) } }
+        setContent { CommunityTheme { AccountWorkspace(viewModel, tasks, reminders, spaces, calendar, spaceSettings, checklist, messaging, community, events, care, groups, documents, search, agent) } }
     }
 }
 
 @Composable
-private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, reminders: ReminderViewModel, spaces: SpaceViewModel, calendar: CalendarViewModel, spaceSettings: SpaceSettingsViewModel, checklist: ChecklistViewModel, messaging: MessagingViewModel, community: CommunityViewModel, events: EventsViewModel, care: CareViewModel, groups: GroupViewModel, documents: DocumentViewModel, search: SearchViewModel) {
+private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, reminders: ReminderViewModel, spaces: SpaceViewModel, calendar: CalendarViewModel, spaceSettings: SpaceSettingsViewModel, checklist: ChecklistViewModel, messaging: MessagingViewModel, community: CommunityViewModel, events: EventsViewModel, care: CareViewModel, groups: GroupViewModel, documents: DocumentViewModel, search: SearchViewModel, agent: AgentViewModel) {
     val account by identity.state.collectAsStateWithLifecycle()
     var screen by rememberSaveable { mutableStateOf("account") }
     var reminderTaskId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -115,6 +118,7 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         community.bind(if (screen == "community") accountId else null)
         events.bind(if (screen == "events") accountId else null, eventsSpaceId, account.profile?.user?.timezone ?: "UTC")
         care.bind(if (screen == "care") accountId else null, account.profile?.user?.timezone ?: "UTC")
+        agent.bind(if (screen == "agent") accountId else null)
     }
     if (screen == "search" && accountId != null && documentSearchAccountId == accountId) {
         SearchRoute(search, accountId, onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() }, onOpenDocument = { hit ->
@@ -128,6 +132,8 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             onCloseViewer = { if (documentsReturnScreen == "search") screen = "search" else documents.closeViewer() })
     } else if (screen == "care" && accountId != null) {
         CareRoute(care, accountId, onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
+    } else if (screen == "agent" && accountId != null) {
+        AgentRoute(agent, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
     } else if (screen == "events" && accountId != null && eventsSpaceId != null) {
         EventsRoute(events, accountId, eventsSpaceName, onBack = { screen = eventsReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() })
     } else if (screen == "community" && accountId != null) {
@@ -158,6 +164,6 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         TaskRoute(tasks, accountId, onBack = { screen = taskReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() }, onRemind = { record -> reminderTaskId = record.task.id; reminderSpaceId = record.task.spaceId; reminderReturnScreen = "tasks"; screen = "reminders" }, onChecklist = { record -> checklistTaskId = record.task.id; checklistSpaceId = record.task.spaceId; screen = "checklist" })
     } else {
         IdentityRoute(identity, onOpenTasks = { taskEntrySpaceId = null; taskReturnScreen = "account"; screen = "tasks" }, onOpenInbox = { reminderTaskId = null; reminderSpaceId = null; reminderReturnScreen = "account"; screen = "reminders" }, onOpenSpaces = { screen = "spaces" }, onOpenCalendar = { screen = "calendar" }, onOpenMessages = { messagesSpaceId = null; messagesReturnScreen = "account"; screen = "messages" }, onOpenCommunity = { screen = "community" }, onOpenCare = { screen = "care" },
-            onOpenSearch = { documentSearchAccountId = accountId; screen = "search" })
+            onOpenSearch = { documentSearchAccountId = accountId; screen = "search" }, onOpenAgent = { screen = "agent" })
     }
 }
