@@ -268,8 +268,10 @@
     <string name="calendar_due_date">Due date</string>
     <string name="calendar_in_inbox">In inbox</string>
     <string name="calendar_scheduled_zone">Scheduled in %1$s</string>
+    <string name="calendar_event_zone">Event in %1$s</string>
     <string name="calendar_source_changed">Task changed</string>
     <string name="calendar_open_tasks">Space tasks</string>
+    <string name="calendar_open_events">Space events</string>
     <string name="calendar_open_reminders">My reminders</string>
     <string name="calendar_more">Load more entries</string>
     <string name="calendar_close">Close</string>

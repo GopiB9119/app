@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  checkTokens, contrastFailures, contrastRatio, cssFile, findHandCopies, globalsFile, knownContrastGaps, kotlinFile,
-  loadTokens, read, renderCss, renderKotlin, staleOutputs, themeFile,
+  checkTokens, contrastFailures, contrastPairs, contrastRatio, cssFile, findHandCopies, findStyleViolations, globalsFile, kotlinFile,
+  loadTokens, read, renderCss, renderKotlin, staleOutputs, themeFile, tokenStylesheets,
 } from './design-tokens.mjs';
 
 const tokens = loadTokens();
@@ -41,18 +41,39 @@ test('a colour typed by hand is reported', () => {
   ]);
 });
 
-test('text colours keep 4.5:1 contrast and the focus colour 3:1', () => {
+test('text colours keep 4.5:1 contrast and control borders 3:1', () => {
   assert.deepEqual(contrastFailures(tokens), []);
   const failures = contrastFailures({ ...tokens, color: { ...tokens.color, muted: '#9aa59f' } });
   assert.equal(failures.length, 2);
   assert.match(failures[0], /^muted on background: 2\.\d\d:1, needs 4\.5:1$/);
   assert.match(failures[1], /^muted on surface: 2\.\d\d:1, needs 4\.5:1$/);
+  // The colours T37 replaced fail the same checks.
+  assert.deepEqual(contrastFailures({ ...tokens, color: { ...tokens.color, controlBorder: '#acbcb3', placeholder: '#798980' } }), [
+    'placeholder on surface: 3.68:1, needs 4.5:1',
+    'controlBorder on background: 1.86:1, needs 3:1',
+    'controlBorder on surface: 1.98:1, needs 3:1',
+  ]);
+  assert.ok(contrastPairs.some(([foreground, background, minimum]) => foreground === 'accent' && background === 'warningSurface' && minimum === 4.5));
 });
 
-test('the shipped colours still below their target stay listed until T37 changes them', () => {
-  for (const [foreground, background, minimum, task] of knownContrastGaps) {
-    assert.ok(contrastRatio(tokens.color[foreground], tokens.color[background]) < minimum, `${foreground} on ${background} now passes; remove it from knownContrastGaps (${task})`);
-  }
+test('feature stylesheets moved to tokens use only token variables and token corners', () => {
+  assert.equal(tokenStylesheets.length, 6);
+  assert.deepEqual(findStyleViolations(), []);
+  const file = tokenStylesheets[0];
+  assert.deepEqual(findStyleViolations({ [file]: [
+    '.a { color: #17634f; background: rgba(0, 0, 0, 0.5); border-color: white; }',
+    '.b { color: var(--green); border: 1px solid var(--line, #c9d3cc); border-radius: 999px; }',
+    '.c { border-radius: var(--radius-control); } .d { border-radius: 0; } /* #fff in a comment */',
+  ].join('\n') }), [
+    'web/src/features/care/care.module.css: typed colour #17634f',
+    'web/src/features/care/care.module.css: typed colour #c9d3cc',
+    'web/src/features/care/care.module.css: colour function rgba(',
+    'web/src/features/care/care.module.css: named colour white',
+    'web/src/features/care/care.module.css: older variable var(--green)',
+    'web/src/features/care/care.module.css: older variable var(--line)',
+    'web/src/features/care/care.module.css: fallback in var(--line, #c9d3cc)',
+    'web/src/features/care/care.module.css: corner radius 999px',
+  ]);
 });
 
 test('contrast arithmetic matches published reference values', () => {

@@ -8,10 +8,12 @@
   --color-background: #f6f8f6;
   --color-surface: #ffffff;
   --color-border: #dce4df;
-  --color-control-border: #acbcb3;
-  --color-placeholder: #798980;
+  --color-control-border: #7d8e85;
+  --color-placeholder: #66786f;
   --color-accent: #b4553d;
   --color-danger: #a53032;
+  --color-danger-surface: #fff0ed;
+  --color-warning-surface: #fff7e0;
   --font-family: "Source Sans 3";
   --space-unit: 4px;
   --radius-control: 6px;

@@ -43,6 +43,8 @@ The full records are in [DECISIONS.md](DECISIONS.md). If this summary and a reco
 | DEC-007 | The care work built on 2026-10-01 is kept, and care is in scope for now. Who approves its medical, legal and privacy rules is open (Q12). |
 | DEC-008 | The authority hierarchy and the rules in Articles 4 to 8. |
 | DEC-009 | Working agreement: messages are read for their intent; discussion never becomes code automatically; routine engineering decisions are made without asking and ready work continues; the product owner is interrupted only for the reasons listed in the record. |
+| DEC-013 | One design system: colours, the font, spacing, corner radii and touch-target sizes are defined once in the design tokens and generated into both apps. Every new or changed screen follows the screen rules, and AI sessions change a shared token or component, after checking every place that uses it, instead of patching one screen. |
+| DEC-014 | Home is a personal overview, and web and Android share five main sections: Home, Spaces, Messages, Discover and Profile. |
 
 DEC-001 approved Article 2. DEC-003 no longer applies.
 

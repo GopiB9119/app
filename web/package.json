@@ -7,9 +7,9 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 3000",
     "typecheck": "tsc --noEmit",
-    "test:client": "node --test ../tests/web-client.test.mjs ../tests/messaging-client.test.mjs ../tests/community-client.test.mjs ../tests/events-client.test.mjs ../tests/scheduling-client.test.mjs",
-    "test:unit": "node --test --test-concurrency=1 ../tests/unit/identity-ui.test.mjs ../tests/unit/planning-ui.test.mjs ../tests/unit/reminder-ui.test.mjs ../tests/unit/reminder-controls.test.mjs ../tests/unit/messaging-ui.test.mjs",
-    "test:e2e": "node --test --test-concurrency=1 ../tests/e2e/identity.test.mjs ../tests/e2e/scheduling.test.mjs"
+    "test:client": "node --test \"../tests/*-client.test.mjs\" ../tests/documents-client.test.mjs",
+    "test:unit": "node --test --test-concurrency=1 \"../tests/unit/*.test.mjs\" ../tests/unit/documents-ui.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 \"../tests/e2e/*.test.mjs\""
   },
   "dependencies": {
     "@hookform/resolvers": "https://registry.npmjs.org/@hookform/resolvers/-/resolvers-3.10.0.tgz",

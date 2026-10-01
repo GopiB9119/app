@@ -92,7 +92,14 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const publicCommunity = publicRead.test(`${request.method} ${route}`);
   const groupSearch = request.method === "GET" && route === "discover/spaces";
   const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/visibility$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
-  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !sessionDelete && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^DELETE agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
+  const documentAdd = request.method === "POST" && new RegExp(`^spaces/${uuidPart}/documents$`).test(route);
+  const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));
+  const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
+  const documents = documentCommand || documentRead;
+  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !sessionDelete && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (agents && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Agent commands do not accept query parameters.");
+  if (documentCommand && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Document commands do not accept query parameters.");
   if (alerts && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Alert commands do not accept query parameters.");
   if (groups && !groupSearch && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Group commands do not accept query parameters.");
   if ((reminderSeries || (notificationAction && route.endsWith("/snooze"))) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Reminder commands do not accept query parameters.");
@@ -104,7 +111,9 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   if (spaceSettings && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Space settings do not accept query parameters.");
   if ((spaceMembers || removeMember || leaveSpace) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Membership commands do not accept query parameters.");
   if ((ownershipOffer || ownershipResponse) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Ownership commands do not accept query parameters.");
-  if (Number(request.headers.get("content-length") ?? 0) > 16384) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
+  // Only adding a document may carry a large body: 512 KB of text can grow when JSON escapes it.
+  const bodyLimit = documentAdd ? 2200000 : 16384;
+  if (Number(request.headers.get("content-length") ?? 0) > bodyLimit) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
   const sessionToken = request.cookies.get(sessionName)?.value;
   const anonymous = publicCommunity && (!sessionToken || !request.headers.get("x-account-id"));
   if (!publicPaths.has(route) && !anonymous && !sessionToken) return failure(401, "AUTHENTICATION_REQUIRED", "Sign in to continue.");
@@ -125,7 +134,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     if (mutating) {
       if (!request.headers.get("content-type")?.startsWith("application/json")) return failure(415, "VALIDATION_ERROR", "A JSON request is required.");
       const text = await request.text();
-      if (Buffer.byteLength(text) > 16384) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
+      if (Buffer.byteLength(text) > bodyLimit) return failure(413, "PAYLOAD_TOO_LARGE", "Request is too large.");
       try { body = JSON.parse(text); } catch { return failure(422, "VALIDATION_ERROR", "Request is not valid JSON."); }
       if (!body || typeof body !== "object" || Array.isArray(body)) return failure(422, "VALIDATION_ERROR", "Request must be an object.");
       if (["auth/register", "auth/recover", "auth/verify-email", "auth/reset-password"].includes(route)) {
@@ -164,6 +173,13 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
         upstreamUrl.searchParams.set(name, value);
       }
     }
+    if (documentRead) {
+      const parameters = route === "search" ? ["q", "space_id"] : route.endsWith("/documents") ? ["limit", "cursor"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid document parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
     if (groupSearch) {
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!["q", "limit", "cursor"].includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid search parameters.");
@@ -174,6 +190,13 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       const parameters = route === "reminder-backups" ? ["role", "task_id", "limit", "cursor"] : route === "reminder-backups/contacts" ? ["task_id"] : [];
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid alert parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
+    if (agents && request.method === "GET") {
+      const parameters = route === "agent-runs" ? ["space_id", "limit", "cursor"] : [];
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid agent parameters.");
         upstreamUrl.searchParams.set(name, value);
       }
     }

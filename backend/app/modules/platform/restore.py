@@ -10,14 +10,15 @@ from sqlalchemy import create_engine, func, select, text, update
 from sqlalchemy.engine import make_url
 
 from app.config import Settings
+from app.keys import Keyring
 from app.modules.identity.models import AccountSession, Challenge, IdentityMail, User
 from app.modules.identity.security import Security
+from app.modules.platform.keys import PROTECTED, batch, ciphers, holder, label
 from app.modules.scheduling.models import Reminder
 from app.modules.spaces.models import Space, SpaceMembership
 
 DRILL_HOST = "restore-db"
 DRILL_DATABASE = "community_restore"
-CIPHERTEXT = ((User, "email_cipher"), (Challenge, "email_cipher"), (IdentityMail, "payload_cipher"))
 SENDABLE_MAIL = ("queued", "retry", "processing")
 OUTSIDE_TARGETS = (("db", 5432), ("mail", 1025), ("api", 8000), ("host.docker.internal", 8000))
 CHECKS = ("migration", "counts", "key", "ciphertext", "invariants")
@@ -66,14 +67,20 @@ def readable(security: Security, value: str) -> str | None:
         return None
 
 
-def ciphertext_check(connection, key: bytes) -> dict[str, dict[str, int]]:
-    security = Security(key)
+def ciphertext_check(connection, key: bytes | Keyring) -> dict[str, dict[str, int]]:
+    # The column list and ciphers are the key rotation's own, so a newly encrypted column is checked here too.
+    keyring = key if isinstance(key, Keyring) else Keyring.parse(key)
+    cache = ciphers(keyring)
     result = {}
-    for model, column in CIPHERTEXT:
-        field = getattr(model, column)
-        values = connection.scalars(select(field).where(field.is_not(None))).all()
-        valid = sum(readable(security, value) is not None for value in values)
-        result[f"{model.__tablename__}.{column}"] = {"rows": len(values), "valid": valid}
+    for model, column, kind, size in PROTECTED:
+        rows = valid = 0
+        after = None
+        while page := batch(connection, model, column, size, after):
+            rows += len(page)
+            valid += sum(holder(value, kind, keyring, cache) is not None for _identifier, value in page)
+            after = page[-1][0]
+        result[label(model, column)] = {"rows": rows, "valid": valid}
+    security = Security(keyring)
     rows = connection.execute(select(User.email_lookup, User.email_cipher)).all()
     matched = 0
     for lookup, cipher in rows:

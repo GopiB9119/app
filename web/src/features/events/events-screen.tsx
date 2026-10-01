@@ -198,10 +198,12 @@ function EventAlertChoice({ user, eventId }: { user: Account; eventId: string })
   </div>;
 }
 
-function EventEditor({ user, spaceId, zone, existing, onClose, onSaved, onReload }: {
+function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, onReload }: {
   user: Account; spaceId: string; zone: string; existing?: SpaceEvent;
   onClose: () => void; onSaved: (event: SpaceEvent) => void; onReload?: () => void;
 }) {
+  // An edit is saved against the version the form was filled from, so a newer version is refused instead of overwritten.
+  const [existing] = useState(shown);
   const formId = useId();
   const [form, setForm] = useState<EventForm>(() => existing ? formFromEvent(existing) : blank(zone));
   const [intent, setIntent] = useState<CreateIntent | null>(null);

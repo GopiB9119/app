@@ -844,7 +844,7 @@ Permission rules as built:
 
 | Field | Contract |
 | --- | --- |
-| Entity | Information an agent keeps between conversations. Built, not connected: the model `agent_memories`, with no table. |
+| Entity | Information an agent keeps between conversations. Built under [DEC-012](DECISIONS.md#accepted-decisions) (**PROVISIONAL**, C11): the table `agent_memories` (migration `0023`). |
 | Purpose | **CONFIRMED** Agents support memory (R8). |
 | Owner | Module `agents`. The unconnected model ties each memory to one account. |
 | Scope | Whether memory belongs to a person, a Space or an agent scope is **TBD** (U-16; D4). |
@@ -856,8 +856,8 @@ Permission rules as built:
 | Events | **TBD**. |
 | Commands | **TBD**. |
 | Queries | **TBD**. |
-| APIs | None. |
-| Persistence | None (model only). |
+| APIs | **PROVISIONAL** (DEC-012): `GET /v1/agent-memories` and `DELETE /v1/agent-memories/{id}`, own memories only; saving happens only through an approved agent request. |
+| Persistence | `agent_memories` (migration `0023`); at most 50 notes per account. |
 | Retention | **TBD** (C12-D08 OPEN). |
 | Audit requirements | **TBD**. |
 | Agent access | **TBD** (D4). Built, not connected: tools `agent.memory.read` (read) and `agent.memory.save` (write, needs approval). |
@@ -884,8 +884,8 @@ Permission rules as built:
 | Events | **TBD**. |
 | Commands | **TBD**. |
 | Queries | **TBD**. |
-| APIs | None; no agent routes are registered. |
-| Persistence | None. |
+| APIs | **PROVISIONAL** (DEC-012): the request, approval, memory and tool operations listed under AgentRun, AgentApproval and Memory. |
+| Persistence | No agent identity table: the agent acts for the person using it, with their current permissions ([DEC-012](DECISIONS.md#accepted-decisions)). |
 | Retention | **TBD**. |
 | Audit requirements | **PROPOSED** every run, tool call and approval is recorded (Chapter 12 contract). |
 | Agent access | Not applicable. |
@@ -956,7 +956,7 @@ Permission rules as built:
 
 | Field | Contract |
 | --- | --- |
-| Entity | An action an agent may call. Built, not connected: seven tool definitions in `backend/app/modules/agents/tools.py`, under policy version `agent-policy-local-2026-09-26`. |
+| Entity | An action an agent may call. Built under [DEC-012](DECISIONS.md#accepted-decisions) (**PROVISIONAL**, C11): seven tool definitions in `backend/app/modules/agents/tools.py`, under policy version `agent-policy-2026-10-01`. |
 | Purpose | **CONFIRMED** Agents have allowed tools (R7). |
 | Owner | Module `agents`. |
 | Scope | Per agent scope. |
@@ -968,8 +968,8 @@ Permission rules as built:
 | Events | **TBD**. |
 | Commands | Built, not connected: `tasks.create`, `tasks.complete`, `reminders.schedule` and `agent.memory.save` (write, medium risk, need approval). |
 | Queries | Built, not connected: `family.members.list`, `family.tasks.list` and `agent.memory.read` (read, low risk, no approval). |
-| APIs | None. |
-| Persistence | Built, not connected: the `agent_tool_calls` model (tool name and version, read or write, risk, succeeded or failed, input digest, result reference). |
+| APIs | **PROVISIONAL** (DEC-012): `GET /v1/agent-tools` lists the tools; tools run only inside agent requests. |
+| Persistence | `agent_tool_calls` (migration `0023`): tool name and version, read or write, risk, succeeded or failed, input digest, result reference. |
 | Retention | **TBD**. |
 | Audit requirements | **PROPOSED** every tool call is logged (Chapter 12 contract). |
 | Agent access | Not applicable. |
@@ -984,7 +984,7 @@ Permission rules as built:
 
 | Field | Contract |
 | --- | --- |
-| Entity | One piece of agent work started by a person's request. Built, not connected: models `agent_runs`, `agent_run_events` and `agent_tool_calls`, with no tables and no routes. |
+| Entity | One piece of agent work started by a person's request. Built under [DEC-012](DECISIONS.md#accepted-decisions) (**PROVISIONAL**, C11): tables `agent_runs`, `agent_run_events` and `agent_tool_calls` (migration `0023`), with routes. |
 | Purpose | Carry a request from start to a verified outcome. |
 | Owner | Module `agents`. |
 | Scope | Built, not connected: one Space, account, admission and session. |
@@ -996,8 +996,8 @@ Permission rules as built:
 | Events | Built, not connected: `agent_run_events` (sequence, type, summary). |
 | Commands | **TBD**. |
 | Queries | **TBD**. |
-| APIs | None. |
-| Persistence | None (models only). |
+| APIs | **PROVISIONAL** (DEC-012): `POST /v1/agent-runs` (`Idempotency-Key`), `GET /v1/agent-runs?space_id=` (current admission only, newest first, at most 50 per page), `GET /v1/agent-runs/{id}`, `POST /v1/agent-runs/{id}/resume` and `/cancel`. |
+| Persistence | `agent_runs`, `agent_run_events`, `agent_tool_calls` (migration `0023`); 100 requests per account per day; at most 4 questions per request. |
 | Retention | **TBD**. |
 | Audit requirements | **PROPOSED** run history is kept (Chapter 12 contract). |
 | Agent access | Not applicable. |
@@ -1012,7 +1012,7 @@ Permission rules as built:
 
 | Field | Contract |
 | --- | --- |
-| Entity | A person's decision on one exact agent action. Built, not connected: the model `agent_approvals`, with no table. |
+| Entity | A person's decision on one exact agent action. Built under [DEC-012](DECISIONS.md#accepted-decisions) (**PROVISIONAL**, C11): the table `agent_approvals` (migration `0023`). |
 | Purpose | **CONFIRMED** Agents have approval policies (R7). |
 | Owner | Module `agents`. |
 | Scope | One run and one action. |
@@ -1024,8 +1024,8 @@ Permission rules as built:
 | Events | **TBD**. |
 | Commands | **TBD**. |
 | Queries | **TBD**. |
-| APIs | None. |
-| Persistence | None (model only). |
+| APIs | **PROVISIONAL** (DEC-012): `POST /v1/agent-approvals/{id}/approve` (`If-Match` and `Idempotency-Key`) and `/reject` (`If-Match`); approvals expire after 15 minutes. |
+| Persistence | `agent_approvals` (migration `0023`): one per request, unique effect key. |
 | Retention | **TBD**. |
 | Audit requirements | **PROPOSED** approval history is kept (Chapter 12 contract). |
 | Agent access | Not applicable. |

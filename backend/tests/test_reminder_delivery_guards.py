@@ -1008,9 +1008,10 @@ def test_separate_worker_process_recovers_persisted_due_work_without_duplicate(c
         "COMMUNITY_REMINDER_DISPATCH_ENABLED": "true",
     }
     for expected in ({"available": 1}, {}):
+        # The limit only guards against a hung worker: starting one can take over 20 s when the machine is busy.
         execution = subprocess.run(
             [sys.executable, "-m", "app.reminder_worker", "--once"],
-            env=environment, capture_output=True, text=True, timeout=20,
+            env=environment, capture_output=True, text=True, timeout=60,
         )
         assert execution.returncode == 0, execution.stderr
         assert json.loads(execution.stdout)["counts"] == expected

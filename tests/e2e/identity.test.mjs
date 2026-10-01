@@ -2072,3 +2072,112 @@ test('groups: a public group is found, joined on approval, and hidden again when
     await seekerContext.close();
   }
 });
+
+test('documents: members find cited text and deletion removes it from search', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const external = [];
+  for (const context of [ownerContext, memberContext]) await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+    external.push(route.request().url());
+    return route.abort('blockedbyclient');
+  });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const word = `lantern${suffix}`;
+    const fileName = `picnic-${suffix}.md`;
+    const citedText = `Bring ${word} blankets to the park.`;
+    const content = `# Family picnic\nMeeting notes\n${citedText}\nPack fruit and water.\n`;
+    await signUp(ownerPage, `document-owner-${suffix}@example.test`);
+    await signUp(memberPage, `document-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+      data: { name: `Documents family ${suffix}`, space_type: 'family' },
+    });
+    assert.equal(created.status(), 201, await created.text());
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id },
+    });
+    assert.equal(sent.status(), 201, await sent.text());
+    await memberPage.goto(`${base}/app/spaces`);
+    await memberPage.getByRole('heading', { name: 'Spaces', exact: true, level: 1 }).waitFor();
+    await memberPage.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    const invitation = memberPage.getByRole('dialog', { name: `Join ${family.name}?`, exact: true });
+    await invitation.getByRole('button', { name: 'Join Space', exact: true }).click();
+    await memberPage.getByText(`Joined ${family.name}.`, { exact: true }).waitFor();
+    const joined = await memberContext.request.get(`${base}/api/spaces/${family.id}`, { headers: memberHeaders });
+    assert.equal(joined.status(), 200);
+    assert.equal((await joined.json()).data.role, 'member');
+
+    await ownerPage.goto(`${base}/app/documents?space_id=${family.id}`);
+    await ownerPage.getByRole('heading', { name: 'Documents', exact: true, level: 1 }).waitFor();
+    await ownerPage.getByRole('heading', { name: `Add a document to ${family.name}`, exact: true }).waitFor();
+    await ownerPage.setInputFiles('input[type="file"]', { name: fileName, mimeType: 'text/markdown', buffer: Buffer.from(content, 'utf8') });
+    await ownerPage.getByRole('button', { name: 'Add document', exact: true }).click();
+    await ownerPage.getByText(`Added \u201c${fileName}\u201d to ${family.name}.`, { exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: fileName, exact: true }).waitFor();
+    const listed = await ownerContext.request.get(`${base}/api/spaces/${family.id}/documents`, { headers: ownerHeaders });
+    assert.equal(listed.status(), 200);
+    const documents = (await listed.json()).data;
+    assert.equal(documents.length, 1);
+    assert.equal(documents[0].name, fileName);
+
+    await memberPage.goto(`${base}/app/search`);
+    await memberPage.getByRole('heading', { name: 'Search', exact: true, level: 1 }).waitFor();
+    await memberPage.getByLabel('Search your Spaces', { exact: true }).fill(word);
+    await memberPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await memberPage.getByRole('heading', { name: 'Documents (1)', exact: true, level: 3 }).waitFor();
+    const result = memberPage.getByRole('region', { name: 'Documents (1)', exact: true }).getByRole('link', { name: fileName, exact: true });
+    const address = new URL(await result.getAttribute('href'), base);
+    assert.equal(address.pathname, '/app/documents');
+    assert.equal(address.searchParams.get('space_id'), family.id);
+    assert.equal(address.searchParams.get('id'), documents[0].id);
+    const firstLine = Number(address.searchParams.get('line'));
+    const lastLine = Number(address.searchParams.get('end'));
+    assert.ok(Number.isInteger(firstLine) && firstLine >= 1 && firstLine <= 3);
+    assert.ok(Number.isInteger(lastLine) && lastLine >= 3 && lastLine <= documents[0].line_count);
+    await result.click();
+    await memberPage.getByRole('heading', { name: fileName, exact: true, level: 2 }).waitFor();
+    await memberPage.locator('#L3[aria-current="location"]').waitFor();
+    assert.equal(await memberPage.locator('#L3').innerText(), citedText);
+    assert.equal(await memberPage.locator(`#L${firstLine}`).getAttribute('aria-current'), 'location');
+    assert.equal(await memberPage.locator(`#L${lastLine}`).getAttribute('aria-current'), 'location');
+    await memberPage.setViewportSize({ width: 320, height: 844 });
+    await memberPage.evaluate(() => document.fonts.ready);
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+
+    await ownerPage.goto(address.href);
+    await ownerPage.getByRole('heading', { name: fileName, exact: true, level: 2 }).waitFor();
+    await ownerPage.getByRole('button', { name: 'Delete document', exact: true }).click();
+    const confirmation = ownerPage.getByRole('dialog', { name: 'Delete document?', exact: true });
+    await confirmation.getByText(`Delete \u201c${fileName}\u201d from ${family.name}? Its text is removed for everyone and cannot be recovered.`, { exact: true }).waitFor();
+    await confirmation.getByRole('button', { name: 'Delete document', exact: true }).click();
+    await ownerPage.getByText(`Deleted \u201c${fileName}\u201d.`, { exact: true }).waitFor();
+    await ownerPage.getByText('No documents yet. Add a .txt, .md or .csv file.', { exact: true }).waitFor();
+
+    await memberPage.goto(`${base}/app/search`);
+    await memberPage.getByRole('heading', { name: 'Search', exact: true, level: 1 }).waitFor();
+    await memberPage.getByLabel('Search your Spaces', { exact: true }).fill(word);
+    await memberPage.getByRole('button', { name: 'Search', exact: true }).click();
+    await memberPage.getByText('Nothing found in your Spaces. Messages, care records and reminders are not searched.', { exact: true }).waitFor();
+    assert.equal(await memberPage.getByRole('link', { name: fileName, exact: true }).count(), 0);
+    await ownerPage.setViewportSize({ width: 320, height: 844 });
+    await ownerPage.evaluate(() => document.fonts.ready);
+    assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
+  }
+});

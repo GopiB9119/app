@@ -14,10 +14,12 @@ object DesignTokens {
     val Background = Color(0xFFF6F8F6)
     val Surface = Color(0xFFFFFFFF)
     val Border = Color(0xFFDCE4DF)
-    val ControlBorder = Color(0xFFACBCB3)
-    val Placeholder = Color(0xFF798980)
+    val ControlBorder = Color(0xFF7D8E85)
+    val Placeholder = Color(0xFF66786F)
     val Accent = Color(0xFFB4553D)
     val Danger = Color(0xFFA53032)
+    val DangerSurface = Color(0xFFFFF0ED)
+    val WarningSurface = Color(0xFFFFF7E0)
     val LetterSpacing = 0.sp
     val SpaceUnit = 4.dp
     val ControlRadius = 6.dp

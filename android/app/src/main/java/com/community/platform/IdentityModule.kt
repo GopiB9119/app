@@ -2,7 +2,9 @@ package com.community.platform
 
 import com.community.platform.feature.care.CareApi
 import com.community.platform.feature.community.CommunityApi
+import com.community.platform.feature.discovery.SearchApi
 import com.community.platform.feature.events.EventsApi
+import com.community.platform.feature.files.DocumentApi
 import com.community.platform.feature.identity.IdentityApi
 import com.community.platform.feature.identity.KeystoreSessionStore
 import com.community.platform.feature.identity.SessionStore
@@ -49,6 +51,9 @@ object IdentityModule {
             // Message pages can hold 30 messages of up to 2000 characters each.
             // Event pages hold 20 events with 2000-character details; one event can list up to 500 responses.
             val maximumBytes = when {
+                request.method == "GET" && Regex("/v1/documents/[a-fA-F0-9-]{36}").matches(path) -> 1572864L
+                request.method == "GET" && path.startsWith("/v1/spaces/") && path.endsWith("/documents") -> 262144L
+                request.method == "GET" && path == "/v1/search" -> 262144L
                 request.method == "GET" && path == "/v1/tasks" -> 262144L
                 request.method == "GET" && path.startsWith("/v1/conversations/") && path.endsWith("/messages") -> 524288L
                 path.startsWith("/v1/events/") || (path.startsWith("/v1/spaces/") && path.endsWith("/events")) -> 524288L
@@ -147,6 +152,20 @@ object IdentityModule {
         .addConverterFactory(GsonConverterFactory.create(gson.newBuilder().serializeNulls().create()))
         .build()
         .create(EventsApi::class.java)
+
+    @Provides @Singleton fun documents(client: OkHttpClient, gson: Gson): DocumentApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson.newBuilder().disableHtmlEscaping().create()))
+        .build()
+        .create(DocumentApi::class.java)
+
+    @Provides @Singleton fun search(client: OkHttpClient, gson: Gson): SearchApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson))
+        .build()
+        .create(SearchApi::class.java)
 
     @Provides @Singleton fun care(client: OkHttpClient, gson: Gson): CareApi = Retrofit.Builder()
         .baseUrl(BuildConfig.API_URL)

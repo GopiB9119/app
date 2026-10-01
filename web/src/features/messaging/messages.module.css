@@ -1,58 +1,58 @@
 .main { width: min(1180px, calc(100% - 80px)); margin: 0 auto; padding: 28px 0 64px; flex: 1; }
-.navigation { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; min-height: 46px; border-bottom: 1px solid var(--line); }
-.navigation a, .navigation span { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; text-decoration: none; }
-.navigation [aria-current] { color: var(--ink); font-weight: 650; border-bottom: 2px solid var(--green); }
+.navigation { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; min-height: 46px; border-bottom: 1px solid var(--color-border); }
+.navigation a, .navigation span { display: inline-flex; align-items: center; gap: 8px; min-height: var(--target-minimum); text-decoration: none; }
+.navigation [aria-current] { color: var(--color-ink); font-weight: 650; border-bottom: 2px solid var(--color-primary); }
 .layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 32px; margin-top: 28px; align-items: start; }
 .sidebar { min-width: 0; }
 .sectionHeading { display: flex; align-items: center; gap: 10px; min-height: 44px; margin-bottom: 16px; }
 .sectionHeading h1 { font-size: 28px; }
 .sectionHeading button { margin-left: auto; }
-.badge { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 7px; border-radius: 13px; background: var(--accent); color: var(--white); font-size: 13px; font-weight: 650; }
-.start { display: grid; gap: 12px; padding: 16px 0 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 12px; }
-.start button { min-height: 44px; }
+.badge { display: inline-grid; place-items: center; min-width: 26px; height: 26px; padding: 0 7px; border-radius: var(--radius-control); background: var(--color-accent); color: var(--color-surface); font-size: 13px; font-weight: 650; }
+.start { display: grid; gap: 12px; padding: 16px 0 20px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); margin-bottom: 12px; }
+.start button { min-height: var(--target-minimum); }
 .memberChoices { display: grid; gap: 2px; }
 .memberChoices button { justify-content: flex-start; text-align: left; overflow-wrap: anywhere; white-space: normal; }
-.emptyNote { color: var(--muted); padding: 12px 0; }
+.emptyNote { color: var(--color-muted); padding: 12px 0; }
 .conversationList { list-style: none; margin: 0; padding: 0; }
-.conversationList button { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 8px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--ink); text-align: left; }
-.conversationList button[aria-current] { background: var(--green-soft); }
-.conversationMark { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; color: var(--green); background: var(--green-soft); border-radius: 6px; }
+.conversationList button { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 10px 8px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: transparent; color: var(--color-ink); text-align: left; }
+.conversationList button[aria-current] { background: var(--color-primary-surface); }
+.conversationMark { display: grid; place-items: center; flex: 0 0 40px; width: 40px; height: 40px; color: var(--color-primary); background: var(--color-primary-surface); border-radius: var(--radius-control); }
 .conversationIdentity { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .conversationIdentity strong { font-weight: 600; overflow-wrap: anywhere; }
-.conversationIdentity span { color: var(--muted); font-size: 13px; font-weight: 400; overflow-wrap: anywhere; }
-.unconfirmed { flex: 0 0 auto; color: var(--danger); font-size: 12px; font-weight: 650; }
-.chat { min-width: 0; border-left: 1px solid var(--line); padding-left: 32px; min-height: 420px; }
-.placeholder { display: grid; justify-items: start; gap: 12px; padding: 40px 0; color: var(--muted); }
+.conversationIdentity span { color: var(--color-muted); font-size: 13px; font-weight: 400; overflow-wrap: anywhere; }
+.unconfirmed { flex: 0 0 auto; color: var(--color-danger); font-size: 12px; font-weight: 650; }
+.chat { min-width: 0; border-left: 1px solid var(--color-border); padding-left: 32px; min-height: 420px; }
+.placeholder { display: grid; justify-items: start; gap: 12px; padding: 40px 0; color: var(--color-muted); }
 .pane { display: grid; gap: 12px; }
 .chatHeader { display: flex; align-items: center; gap: 10px; }
 .back { display: none; }
 .chatTitle { min-width: 0; }
 .chatTitle h2 { font-size: 22px; overflow-wrap: anywhere; }
-.chatTitle span { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
-.protection { display: flex; align-items: center; gap: 7px; color: var(--green); font-size: 14px; }
-.historyNote { color: var(--muted); font-size: 13px; }
+.chatTitle span { color: var(--color-muted); font-size: 14px; overflow-wrap: anywhere; }
+.protection { display: flex; align-items: center; gap: 7px; color: var(--color-primary); font-size: 14px; }
+.historyNote { color: var(--color-muted); font-size: 13px; }
 .messages { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: min(60dvh, 640px); overflow-y: auto; overscroll-behavior: contain; }
 .messages li { display: flex; }
 .messages li.mine { justify-content: flex-end; }
 .end { min-height: 1px; }
-.bubble { position: relative; max-width: min(560px, 88%); min-width: 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); display: grid; gap: 4px; }
-.mine .bubble { background: var(--green-soft); border-color: #c9ded3; }
+.bubble { position: relative; max-width: min(560px, 88%); min-width: 0; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); display: grid; gap: 4px; }
+.mine .bubble { background: var(--color-primary-surface); border-color: var(--color-border); }
 .pendingBubble { border-style: dashed; }
-.meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding-right: 36px; }
-.meta strong { color: var(--ink); font-weight: 600; }
+.meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--color-muted); padding-right: 36px; }
+.meta strong { color: var(--color-ink); font-weight: 600; }
 .body { white-space: pre-wrap; overflow-wrap: anywhere; }
-.removed { color: var(--muted); font-style: italic; }
+.removed { color: var(--color-muted); font-style: italic; }
 .deleteButton { position: absolute; top: 2px; right: 2px; width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
 .confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
 .confirm span { flex-basis: 100%; }
 .confirm button { min-height: 40px; }
-.composer { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
-.composer textarea { width: 100%; min-width: 0; min-height: 88px; resize: vertical; padding: 10px 12px; border: 1px solid #acbcb3; border-radius: var(--radius); font: inherit; font-weight: 400; color: var(--ink); background: var(--white); }
-.composer textarea:focus-visible { outline: 3px solid #b4553d; outline-offset: 3px; }
-.composer textarea[aria-invalid=true] { border-color: var(--danger); }
+.composer { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.composer textarea { width: 100%; min-width: 0; min-height: 88px; resize: vertical; padding: 10px 12px; border: 1px solid var(--color-control-border); border-radius: var(--radius-control); font: inherit; font-weight: 400; color: var(--color-ink); background: var(--color-surface); }
+.composer textarea:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 3px; }
+.composer textarea[aria-invalid=true] { border-color: var(--color-danger); }
 .composer button { justify-self: end; min-height: 46px; min-width: 120px; }
-.count { color: var(--muted); font-size: 13px; }
-.readOnly { color: var(--muted); padding: 12px 0; border-top: 1px solid var(--line); }
+.count { color: var(--color-muted); font-size: 13px; }
+.readOnly { color: var(--color-muted); padding: 12px 0; border-top: 1px solid var(--color-border); }
 
 @media (max-width: 760px) {
   .main { width: calc(100% - 32px); padding-top: 16px; }

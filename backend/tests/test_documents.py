@@ -242,7 +242,7 @@ def test_search_returns_only_what_the_person_can_open_now(client, app):
     assert found(search(client, owner, "zebrafinch"), "documents") == [] and found(search(client, owner, "zebrafinch"), "tasks") == []
 
     # Word beginnings, any order, every word required; operators typed by the person are plain text.
-    for words in ("insur", "polic numb", "number policy", "4471", "priya renewal", "passport & | ! :* insur"[0:0] + "insur | !"):
+    for words in ("insur", "polic numb", "number policy", "4471", "priya renewal", "insur & | ! :*"):
         hits = found(search(client, member, words), "documents")
         assert [hit["document_id"] for hit in hits] == [document["id"]], words
     hit = found(search(client, member, "renewal"), "documents")[0]
@@ -255,15 +255,37 @@ def test_search_returns_only_what_the_person_can_open_now(client, app):
         rejected = search(client, member, words)
         assert rejected.status_code == 422 and rejected.json()["error"]["code"] == code
     assert client.get("/v1/search", params={"q": "passport"}).status_code == 401
+    # Someone admitted afterwards finds none of it: tasks keep their creation-time audience, the rest the admission boundary.
+    advance(app, minutes=1)
+    newcomer = account(client, app, "newcomer@example.test")
+    admit(client, owner, space_id, newcomer)
+    late = search(client, newcomer, "passport insur").json()["data"]
+    assert late["documents"] == [] and late["tasks"] == [] and late["events"] == []
+    for words in ("passport", "insurance", "హైదరాబాద్"):
+        assert search(client, newcomer, words).json()["data"] == {**late, "query": words}
+    # A former member who returns has a new admission and finds nothing from before it.
+    reviewed = roster_entry(client, owner, space_id, member["user"]["id"])
+    removal = client.post(
+        f"/v1/spaces/{space_id}/members/{member['user']['id']}/remove",
+        headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]}, json={},
+    )
+    assert removal.status_code == 200, removal.text
+    gone = search(client, member, "passport insur").json()["data"]
+    assert gone["tasks"] == [] and gone["events"] == [] and gone["documents"] == []
+    advance(app, minutes=1)
+    admit(client, owner, space_id, member)
+    back = search(client, member, "passport").json()["data"]
+    assert back["tasks"] == [] and back["events"] == [] and back["documents"] == []
 
 
 def test_search_ranks_documents_and_bounds_passages(client, app):
     owner = account(client, app)
     space_id = create_space(client, owner).json()["data"]["id"]
     long_text = "\n\n".join(f"Section {number}: garden watering notes, part {number}." + " filler" * 120 for number in range(8))
-    many = add(client, owner, space_id, name="garden.txt", content=long_text).json()["data"]
+    many = add(client, owner, space_id, name="notes.txt", content=long_text).json()["data"]
     titled = add(client, owner, space_id, name="garden plan.md", content="Seeds and soil.").json()["data"]
     hits = found(search(client, owner, "garden"), "documents")
+    # A name match counts more than a passage that mentions the word once.
     assert hits[0]["document_id"] == titled["id"] and hits[0]["start_line"] == 1
     assert [hit["document_id"] for hit in hits].count(many["id"]) == 3
 

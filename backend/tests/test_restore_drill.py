@@ -6,6 +6,8 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select, update
 
 from app.modules.identity.models import AccountSession
+from app.modules.messaging.models import ConversationMessage
+from app.modules.platform.keys import PROTECTED, label
 from app.modules.platform.restore import (
     ciphertext_check,
     compare_counts,
@@ -16,7 +18,11 @@ from app.modules.platform.restore import (
     table_counts,
 )
 from app.modules.spaces.models import Space, SpaceMembership
+from tests.test_care import create_instruction
+from tests.test_exports import ready_export
 from tests.test_identity import account, auth, begin
+from tests.test_messaging import open_chat, send
+from tests.test_spaces import create_space
 
 
 def test_restore_checks_refuse_every_database_outside_the_drill():
@@ -59,6 +65,27 @@ def test_protected_fields_open_only_with_the_recorded_key(client, app):
     assert all(item["valid"] == item["rows"] for item in recorded.values())
     assert {name: item["rows"] for name, item in control.items()} == {name: item["rows"] for name, item in recorded.items()}
     assert all(item["valid"] == 0 for item in control.values())
+
+
+def test_messages_care_and_exports_must_open_with_the_recorded_key_too(client, app):
+    person = account(client, app)
+    assert create_instruction(client, person).status_code == 201
+    chat = open_chat(client, person, create_space(client, person).json()["data"]["id"]).json()["data"]
+    assert send(client, person, chat["id"], "Bring water").status_code == 201
+    ready_export(client, app, person)
+    key = app.state.settings.load_key()
+    with app.state.engine.connect() as connection:
+        recorded = ciphertext_check(connection, key)
+    assert set(recorded) == {label(model, column) for model, column, _kind, _size in PROTECTED} | {"users.email_lookup"}
+    assert all(item["valid"] == item["rows"] for item in recorded.values())
+    for name in ("care_instructions.payload_cipher", "account_exports.archive_cipher", label(ConversationMessage, "body_cipher")):
+        assert recorded[name]["rows"] >= 1, name
+    with app.state.engine.begin() as connection:
+        connection.execute(update(ConversationMessage).values(body_cipher=Fernet(Fernet.generate_key()).encrypt(b"other key").decode("ascii")))
+    with app.state.engine.connect() as connection:
+        damaged = ciphertext_check(connection, key)
+    assert damaged[label(ConversationMessage, "body_cipher")] == {"rows": 1, "valid": 0}
+    assert all(item["valid"] == item["rows"] for name, item in damaged.items() if name != label(ConversationMessage, "body_cipher"))
 
 
 def test_seal_retires_restored_credentials_and_pending_proofs_only(client, app):

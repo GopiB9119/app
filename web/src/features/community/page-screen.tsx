@@ -136,7 +136,9 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
   </CommunityFrame>;
 }
 
-function PageEditor({ account, page, onDone }: { account: Account; page: PublicPage; onDone: () => void }) {
+function PageEditor({ account, page: shown, onDone }: { account: Account; page: PublicPage; onDone: () => void }) {
+  // Saved against the version the editor opened with, so a newer version is refused instead of overwritten.
+  const [page] = useState(shown);
   const [name, setName] = useState(page.name);
   const [description, setDescription] = useState(page.description);
   const [topic, setTopic] = useState<Topic>(page.topic);
@@ -225,6 +227,8 @@ function Composer({ account, page, onCreated }: { account: Account; page: Public
 
 function PostManager({ account, post, onChanged }: { account: Account; post: PublicPost; onChanged: () => void }) {
   const [mode, setMode] = useState<"idle" | "edit" | "publish" | "delete">("idle");
+  // The editor starts from the post shown when Edit is chosen and saves against that version only.
+  const [base, setBase] = useState(post);
   const [title, setTitle] = useState(post.title ?? "");
   const [body, setBody] = useState(post.body);
   const [busy, setBusy] = useState(false);
@@ -241,9 +245,15 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
     } finally { setBusy(false); }
   }
   const label = post.title ?? "this post";
+  function edit() {
+    setBase(post);
+    setTitle(post.title ?? "");
+    setBody(post.body);
+    setMode("edit");
+  }
   return <div className={styles.stack}>
     {mode === "idle" && <div className={styles.actions}>
-      <button className="text-button" onClick={() => setMode("edit")}><Pencil size={16} aria-hidden />Edit</button>
+      <button className="text-button" onClick={edit}><Pencil size={16} aria-hidden />Edit</button>
       {post.status === "draft" && <button className="text-button" onClick={() => setMode("publish")}><Send size={16} aria-hidden />Publish</button>}
       <button className="text-button" onClick={() => setMode("delete")}><Trash2 size={16} aria-hidden />Delete</button>
     </div>}
@@ -251,10 +261,10 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
       event.preventDefault();
       if (invalid || busy) return;
       const changes: { title?: string | null; body?: string } = {};
-      if ((title.trim() || null) !== post.title) changes.title = title.trim() || null;
-      if (body.trim() !== post.body) changes.body = body.trim();
+      if ((title.trim() || null) !== base.title) changes.title = title.trim() || null;
+      if (body.trim() !== base.body) changes.body = body.trim();
       if (Object.keys(changes).length === 0) { setMode("idle"); return; }
-      void run(() => updatePost(account.id, post, changes));
+      void run(() => updatePost(account.id, base, changes));
     }}>
       <label>Title (optional)<input value={title} maxLength={240} onChange={event => setTitle(event.target.value)} disabled={busy} /></label>
       <label>Text<textarea value={body} maxLength={10000} onChange={event => setBody(event.target.value)} disabled={busy} /></label>

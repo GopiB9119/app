@@ -191,6 +191,8 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 ### Agent Workstream: Deferred
 
+The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11); `scripts/feature-catalog.test.mjs` checks this, and only a confirmed decision may change that check. Meanwhile a first release without an AI model exists on the backend only, built under that provisional decision: requests in one Space, exact approvals, task creation and completion, the person's own one-time reminder, and notes ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)). Its web screen is written but not linked, and Android is not started (T34, T35).
+
 | Feature | B/W/A | Boundary |
 | --- | --- | --- |
 | agents.scoped-chat | D/D/D | Separate Agent owner |

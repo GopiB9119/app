@@ -20,6 +20,7 @@ PREVIEW_LIFETIME = timedelta(minutes=5)
 SCHEDULING_HORIZON = timedelta(days=366)
 CATCHUP_WINDOW = timedelta(hours=24)
 MAX_DISPATCH_ATTEMPTS = 5
+DISPATCH_SCAN_PAGES = 5
 
 
 def local_candidates(local_time, zone_name):
@@ -364,20 +365,39 @@ class ReminderService:
             raise ValueError("Dispatch batch must be between 1 and 100.")
         if not self.identity.settings.reminder_dispatch_enabled:
             return {"paused": 1}
-        with self.sessions() as database:
-            now = self.clock()
-            identifiers = database.scalars(select(Reminder.id).where(
-                Reminder.status == "scheduled", Reminder.scheduled_at <= now,
-                or_(Reminder.next_attempt_at.is_(None), Reminder.next_attempt_at <= now),
-            ).order_by(Reminder.scheduled_at, Reminder.id).limit(limit)).all()
-        results = {}
-        for identifier in identifiers:
-            try:
-                outcome = self.dispatch(identifier)
-            except SQLAlchemyError:
+        # Oldest first. A reminder whose account is locked stays due and does not use a place in this pass, so locked
+        # accounts cannot hold back everyone else; the rest of that account's reminders wait too, keeping their order.
+        results, busy, handled, after = {}, set(), 0, None
+        for _page in range(DISPATCH_SCAN_PAGES):
+            with self.sessions() as database:
+                now = self.clock()
+                statement = select(Reminder.id, Reminder.account_id, Reminder.scheduled_at).where(
+                    Reminder.status == "scheduled", Reminder.scheduled_at <= now,
+                    or_(Reminder.next_attempt_at.is_(None), Reminder.next_attempt_at <= now),
+                )
+                if after is not None:
+                    statement = statement.where(or_(
+                        Reminder.scheduled_at > after[0], and_(Reminder.scheduled_at == after[0], Reminder.id > after[1]),
+                    ))
+                rows = database.execute(statement.order_by(Reminder.scheduled_at, Reminder.id).limit(limit)).all()
+            for identifier, account_id, scheduled_at in rows:
+                after = (scheduled_at, identifier)
+                if account_id in busy:
+                    continue
                 try:
-                    outcome = self.record_dispatch_failure(identifier)
+                    outcome = self.dispatch(identifier)
                 except SQLAlchemyError:
-                    outcome = "database_unavailable"
-            results[outcome] = results.get(outcome, 0) + 1
+                    try:
+                        outcome = self.record_dispatch_failure(identifier)
+                    except SQLAlchemyError:
+                        outcome = "database_unavailable"
+                results[outcome] = results.get(outcome, 0) + 1
+                if outcome == "busy":
+                    busy.add(account_id)
+                    continue
+                handled += 1
+                if handled >= limit:
+                    return results
+            if len(rows) < limit:
+                break
         return results

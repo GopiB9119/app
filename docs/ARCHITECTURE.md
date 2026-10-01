@@ -31,7 +31,7 @@ flowchart LR
 | Web app | Next.js 16, React 19, TypeScript, TanStack Query, Zod | `web/` | Built |
 | Web BFF | Same-origin proxy: allowlist of API routes, Origin checks, HttpOnly session cookie | `web/src/app/api/[...path]/route.ts` | Built |
 | Android app | Kotlin, Jetpack Compose, Hilt, Retrofit and OkHttp, Keystore session storage | `android/` | Built |
-| Design tokens | One JSON file; `scripts/design-tokens.mjs` generates web CSS variables (`web/src/app/design-tokens.css`) and Android constants (`DesignTokens.kt`), and checks them | `packages/design-tokens/` | Built for the global stylesheet and the Android theme; feature styles still hold their own values ([DEC-013](DECISIONS.md#accepted-decisions), provisional) |
+| Design tokens | One JSON file; `scripts/design-tokens.mjs` generates web CSS variables (`web/src/app/design-tokens.css`) and Android constants (`DesignTokens.kt`), and checks them | `packages/design-tokens/` | Built for the global stylesheet, the Android theme and six feature stylesheets (care, events, community, messages, tasks, checklist); the calendar, reminders and Spaces styles and the Android screens still hold their own values ([DEC-013](DECISIONS.md#accepted-decisions)) |
 | API | Python FastAPI modular monolith, SQLAlchemy 2, Alembic migrations | `backend/app/` | Built |
 | Database | PostgreSQL 17 | Compose service `db` | Built |
 | Identity mail worker | Sends sign-in codes to the local test inbox | `backend/app/worker.py`, Compose service `identity-mail-worker` | Built |

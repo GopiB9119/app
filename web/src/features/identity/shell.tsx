@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Bell, CalendarDays, Compass, House, Layers2, MessageSquare, Pill, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Bell, CalendarDays, Compass, House, Layers2, MessageSquare, Pill, Search, ShieldCheck } from "lucide-react";
 
 export function Shell({ children, account = false }: { children: React.ReactNode; account?: boolean }) {
   return <div className="application">
@@ -11,6 +11,7 @@ export function Shell({ children, account = false }: { children: React.ReactNode
       <span className="environment"><span className="status-square" /> Local test environment</span>
       {account && <Link className="icon-button" href="/app/home" aria-label="Home feed" title="Home feed"><House size={20} aria-hidden /></Link>}
       <Link className="icon-button" href="/app/discover" aria-label="Discover pages" title="Discover pages"><Compass size={20} aria-hidden /></Link>
+      {account && <Link className="icon-button" href="/app/search" aria-label="Search" title="Search"><Search size={20} aria-hidden /></Link>}
       {account && <Link className="icon-button" href="/app/messages" aria-label="Messages" title="Messages"><MessageSquare size={20} aria-hidden /></Link>}
       {account && <Link className="icon-button" href="/app/calendar" aria-label="Calendar" title="Calendar"><CalendarDays size={20} aria-hidden /></Link>}
       {account && <Link className="icon-button" href="/app/care" aria-label="Medicines" title="Medicines"><Pill size={20} aria-hidden /></Link>}

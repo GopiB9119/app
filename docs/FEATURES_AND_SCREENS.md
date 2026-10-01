@@ -25,7 +25,7 @@ No row is marked working because a folder, README, mock, compile or old test nam
 | Web | TypeScript, Next.js 16 App Router, React 19, Zod, TanStack Query, React Hook Form, Lucide icons, same-origin session BFF | [web/package.json](../web/package.json) |
 | Android | Kotlin, Jetpack Compose + Material 3, Coroutines/StateFlow, ViewModel, Hilt, Retrofit/OkHttp, Android Keystore session storage; min SDK 26, target 35, JDK 21 toolchain | [app/build.gradle.kts](../android/app/build.gradle.kts) |
 | Checks | pytest on isolated PostgreSQL schemas, Node test runner (typed client/BFF + offline component + live browser), JUnit, Compose instrumentation | [tests](../tests), [backend/tests](../backend/tests) |
-| Design tokens | One JSON file generated into web CSS variables and Android Kotlin constants by `npm run tokens`; `npm run check:tokens` guards it ([DEC-013](DECISIONS.md#accepted-decisions), provisional) | [tokens.json](../packages/design-tokens/tokens.json) |
+| Design tokens | One JSON file generated into web CSS variables and Android Kotlin constants by `npm run tokens`; `npm run check:tokens` guards it ([DEC-013](DECISIONS.md#accepted-decisions)) | [tokens.json](../packages/design-tokens/tokens.json) |
 
 Not yet added, and only added with the feature that needs them: WebSocket gateway, Room database, WorkManager jobs, push provider, object storage/scanner, recurrence library, reviewed end-to-end encryption library, external calendar/SMS/WhatsApp/voice providers.
 
@@ -186,7 +186,7 @@ Uploads, immutable versions, quarantine/scanning, previews, OCR, extraction, sha
 
 ### 2.16 Agent
 
-All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation) are **Deferred** to the separate Agent workstream. Future Agent tools must call the same authorized domain services built here.
+All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation) stay **Deferred** to the separate Agent workstream until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11). Under that provisional decision, a first release without an AI model exists **on the backend only** ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)): in one Space a person can list the tasks they see, add or complete a task, set their own one-time reminder, and save or delete a note or their usual reminder time. Every change is shown as exact fields and runs only after approval, through the same task and reminder services as the screens; health, contacting anyone, other people's reminders, money, members and deleting are refused. The web screen is written but not linked (T34) and Android is not started (T35). Future Agent tools must call the same authorized domain services built here.
 
 ## 3. Pages and Screens
 
@@ -228,7 +228,7 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.
 
-Target navigation ([DEC-014](DECISIONS.md#accepted-decisions), provisional; [T38](TASKS.md#design-and-experience)): the same five main sections in both apps, Home, Spaces, Messages, Discover and Profile, with Home as a personal overview (needs attention, today, your Spaces, pages you follow). Today Android opens every feature from the account screen, and the web header uses icons without words and has no Spaces link.
+Target navigation ([DEC-014](DECISIONS.md#accepted-decisions); [T38](TASKS.md#design-and-experience)): the same five main sections in both apps, Home, Spaces, Messages, Discover and Profile, with Home as a personal overview (needs attention, today, your Spaces, pages you follow). Today Android opens every feature from the account screen, and the web header uses icons without words and has no Spaces link.
 
 ## 4. Rules Every Feature Follows
 
@@ -243,7 +243,7 @@ Target navigation ([DEC-014](DECISIONS.md#accepted-decisions), provisional; [T38
 - **Errors:** show a clear, specific message; keep drafts; offer retry or reload; clear private data on sign-out, account change or lost access.
 - **Limits:** every list is paginated and bounded; every input has length and character rules; every receipt table has a local bound.
 - **Local only:** synthetic accounts, local services, no external sends, no provider credentials, no spending, no deployment.
-- **Screen design** ([DEC-013](DECISIONS.md#accepted-decisions), provisional), for every new or changed screen on web and Android. Existing screens change only through tasks that name the change ([T37](TASKS.md#design-and-experience)).
+- **Screen design** ([DEC-013](DECISIONS.md#accepted-decisions)), for every new or changed screen on web and Android. Existing screens change only through tasks that name the change ([T37](TASKS.md#design-and-experience)).
   - Most important first: details, history and rare settings sit behind "View all", a details view or settings.
   - One main action per screen or section; other actions are secondary or under "More".
   - Lists and form sections stay unframed; cards only for repeated items; never a card inside a card.

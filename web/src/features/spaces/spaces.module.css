@@ -54,7 +54,7 @@
 .spaceIdentity { flex: 1; min-width: 0; }
 .spaceIdentity h3 { font-size: 18px; line-height: 1.35; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
 .spaceIdentity span { color: var(--muted); font-size: 14px; }
-.spaceActions { display: flex; align-items: center; flex-shrink: 0; gap: 4px; }
+.spaceActions { display: flex; flex-wrap: wrap; align-items: center; flex-shrink: 0; gap: 4px; }
 .spaceActions > a, .spaceActions > button { flex: 0 0 44px; width: 44px; height: 44px; }
 .membershipActions { flex-wrap: wrap; }
 .membershipActions button { min-width: 0; white-space: normal; overflow-wrap: anywhere; }

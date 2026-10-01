@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, ClipboardList, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
+import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
@@ -152,6 +152,7 @@ function FamilySpaces({ user }: { user: Account }) {
               <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={`Tasks for ${space.name}`} aria-label={`Tasks for ${space.name}`}><ClipboardList size={18} aria-hidden /></Link>
               <Link className="icon-button" href={`/app/messages?space_id=${space.id}`} title={`Chat for ${space.name}`} aria-label={`Chat for ${space.name}`}><MessageSquare size={18} aria-hidden /></Link>
               <Link className="icon-button" href={`/app/events?space_id=${space.id}`} title={`Events for ${space.name}`} aria-label={`Events for ${space.name}`}><CalendarClock size={18} aria-hidden /></Link>
+              <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={`Documents for ${space.name}`} aria-label={`Documents for ${space.name}`}><FileText size={18} aria-hidden /></Link>
               {space.role === "owner" && <button className="icon-button" title={`Settings for ${space.name}`} aria-label={`Settings for ${space.name}`} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /></button>}
               {space.space_type !== "solo" && <button className="icon-button" title={`Members of ${space.name}`} aria-label={`Members of ${space.name}`} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /></button>}
               {space.role === "owner" && space.space_type !== "solo" && <button className="icon-button" title={`Manage invitations for ${space.name}`} aria-label={`Manage invitations for ${space.name}`} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
