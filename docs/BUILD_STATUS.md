@@ -1344,6 +1344,7 @@ They found four problems, none critical or high, and confirmed the rest as sound
   - Deleting an account needs the password, survives races, and erases the listed data.
   - Moderators cannot decide on their own content, and reporters stay anonymous.
   - Only the owner changes roles, and the two-person limit on couple Spaces holds even when two people join at once.
+  - The web app renders no raw HTML anywhere (no `dangerouslySetInnerHTML` or `innerHTML`), so everything people write is shown as text. Every link it builds is a fixed path or uses IDs that its schemas check are UUIDs. The audit session checked this itself.
 - **Fixed before the review ended:** the reviewer of deletion found two defects that the gaps session fixed meanwhile, not yet committed then. Deleting an account failed with a 500 because of a query that lost its tables, and page rules survived erasure.
 
 | Check (2026-10-01) | Result |
