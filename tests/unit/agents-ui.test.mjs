@@ -110,6 +110,8 @@ async function fixture(context, options = {}) {
       state.calls.push({ route: url.pathname, query: Object.fromEntries(url.searchParams), method, body, headers });
       if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       if (url.pathname === '/api/spaces' && method === 'GET') return reply(spaces, { pagination: { next_cursor: null, has_more: false } });
+      // Every signed-in header shows the inbox's unread count on its bell (DEC-014, T38).
+      if (url.pathname === '/api/notifications' && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
       if (url.pathname === '/api/agent-runs' && method === 'GET') {
         const mine = state.runs.filter(item => item.space_id === url.searchParams.get('space_id'));
         const start = url.searchParams.has('cursor') ? Number(url.searchParams.get('cursor').slice('after-'.length)) : 0;

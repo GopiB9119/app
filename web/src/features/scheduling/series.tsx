@@ -7,6 +7,7 @@ import { z } from "zod";
 import { CalendarClock, Check, LoaderCircle, Pause, Pencil, Play, RefreshCw, Repeat, SkipForward, X } from "lucide-react";
 import { api, ApiError } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
+import { TimezoneListProblem } from "@/features/identity/timezone-list-problem";
 import { dateInZone } from "@/features/planning/calendar-client";
 import { commandSeries, describeRule, moveSeries, offsetLabel, previewSeries, replaceSeries, saveSeries, seriesPage, seriesReason, seriesStatusLabels, weekdayLabels, weekdayNames } from "./client";
 import type { ReminderSeries, ReminderSeriesPreview, SeriesCommandIntent, SeriesIntent, SeriesMoveIntent, SeriesOperation, SeriesRule, Weekday } from "./client";
@@ -267,6 +268,7 @@ export function SeriesList({ user, taskId, disabled, onLocked, onDenied, onNotic
       <p className={styles.reviewTitle}>{editing.task_title}</p>
       <p className={styles.disclosure}>Now: {describeRule(editing)} in {editing.timezone}, until {formatLocalDate(editing.end_date)}.</p>
       <label><span id={`${titleId}-repeat`}>Repeat</span><select aria-labelledby={`${titleId}-repeat`} name="series_change_repeat" value={editFrequency} disabled={editLocked} onChange={event => setEditFrequency(event.target.value === "weekly" ? "weekly" : "daily")}><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+      {zones.isError && <TimezoneListProblem retry={() => zones.refetch()} />}
       <SeriesForm key={editFrequency} user={user} taskId={editing.task_id} frequency={editFrequency} zones={zones.data?.data ?? [user.timezone]}
         disabled={false} onLocked={setEditLocked} onDenied={onDenied} replacing={editing} onCancel={() => setEditing(null)}
         onSaved={async () => { setEditing(null); setEditLocked(false); onNotice("Repeating reminder changed."); await refresh(); }} />

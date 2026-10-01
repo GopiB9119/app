@@ -92,7 +92,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const spaceRead = request.method === "GET" && /^spaces\/[a-f0-9-]{36}$/.test(route);
   const spaceSettings = ["GET", "PATCH"].includes(request.method) && /^spaces\/[a-f0-9-]{36}\/settings$/.test(route);
   const spaceMembers = request.method === "GET" && /^spaces\/[a-f0-9-]{36}\/members$/.test(route);
-  const removeMember = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/members\/[a-f0-9-]{36}\/remove$/.test(route);
+  const removeMember = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/members\/[a-f0-9-]{36}\/(remove|role)$/.test(route);
   const leaveSpace = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/leave$/.test(route);
   const ownershipList = request.method === "GET" && /^spaces\/[a-f0-9-]{36}\/ownership-transfers$/.test(route);
   const ownershipOffer = request.method === "POST" && /^spaces\/[a-f0-9-]{36}\/ownership-transfers$/.test(route);

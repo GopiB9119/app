@@ -30,6 +30,8 @@ before(async () => {
     platform: 'browser',
     format: 'iife',
     jsx: 'automatic',
+    // The form's shell imports CSS modules, and esbuild writes their CSS beside this path; the tests use only the script.
+    outfile: path.join(root, '.local/offline-account-fixture.js'),
     define: { 'process.env.NODE_ENV': '"development"' },
     plugins: [{
       name: 'offline-next-link',
@@ -43,7 +45,7 @@ before(async () => {
       },
     }],
   });
-  componentBundle = result.outputFiles[0].text;
+  componentBundle = result.outputFiles.find(file => file.path.endsWith('.js')).text;
   const executable = process.env.COMMUNITY_CHROMIUM_PATH;
   if (executable) assert.ok(existsSync(executable), 'The selected isolated Chromium executable must exist.');
   browser = await chromium.launch({ executablePath: executable, headless: true });
@@ -51,7 +53,7 @@ before(async () => {
 
 after(async () => { await browser?.close(); });
 
-async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolkata']) {
+async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolkata'], failures = {}) {
   const outbound = [];
   const consoleErrors = [];
   await context.route('**/*', route => {
@@ -61,13 +63,13 @@ async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolk
   const page = await context.newPage();
   page.on('pageerror', error => consoleErrors.push(error.message));
   await page.setContent('<html><head><title>Offline account component</title></head><body><div id="root"></div></body></html>');
-  await page.evaluate(zones => {
+  await page.evaluate(({ zones, failures }) => {
     let sequence = 0;
     Object.defineProperty(crypto, 'randomUUID', {
       value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`,
       configurable: true,
     });
-    window.componentApi = { calls: [], failures: {} };
+    window.componentApi = { calls: [], failures };
     window.fetch = async (input, options = {}) => {
       const route = String(input);
       const request = {
@@ -95,7 +97,7 @@ async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolk
       }
       return new Response(JSON.stringify({ data, request_id: 'offline-fixture' }), { status: 200 });
     };
-  }, timezones);
+  }, { zones: timezones, failures });
   await page.addScriptTag({ content: componentBundle });
   await page.evaluate(selected => window.renderAccountForm(selected), mode);
   await page.getByRole('heading', { name: mode === 'recover' ? 'Recover your account' : 'Create your account' }).waitFor();
@@ -199,8 +201,31 @@ test(`offline registration in ${browserZone} starts in ${expected} and sends it`
 });
 }
 
+test('offline registration says when the timezone list did not load and retries it', async () => {
+  const context = await browser.newContext({ timezoneId: 'Europe/Berlin' });
+  try {
+    const unavailable = { remaining: 1, status: 503, code: 'SERVICE_UNAVAILABLE', message: 'Service is temporarily unavailable.' };
+    const { page, outbound, consoleErrors } = await fixture(context, 'register', ['UTC', 'Asia/Kolkata', 'Europe/Berlin'], { '/api/timezones': unavailable });
+    await page.locator('input[name="email"]').fill('alex@example.test');
+    await page.getByRole('button', { name: 'Send verification code' }).click();
+    await page.getByRole('heading', { name: 'Complete your account' }).waitFor();
+    const problem = page.getByRole('alert').filter({ hasText: 'The list of timezones did not load' });
+    await problem.waitFor();
+    // Berlin is not among the few zones offered before the list arrives.
+    assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'UTC');
+    await problem.getByRole('button', { name: 'Retry', exact: true }).click();
+    await problem.waitFor({ state: 'detached' });
+    assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'Europe/Berlin');
+    const calls = await page.evaluate(() => window.componentApi.calls);
+    assert.equal(calls.filter(call => call.route === '/api/timezones').length, 2);
+    assert.equal(calls.filter(call => call.route === '/api/auth/verify-email').length, 0);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(consoleErrors, []);
+  } finally { await context.close(); }
+});
+
 for (const mode of ['register', 'recover']) {
-test(`offline ${mode} retry keeps its key until the requested email changes`, async () => {
+  test(`offline ${mode} retry keeps its key until the requested email changes`, async () => {
   const context = await browser.newContext();
   try {
     const { page, outbound } = await fixture(context, mode);

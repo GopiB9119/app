@@ -2,14 +2,16 @@
 
 import { useEffect, useId, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Crown, LoaderCircle, LogOut, RefreshCw, UserRoundMinus, UsersRound, X } from "lucide-react";
+import { Check, Crown, LoaderCircle, LogOut, RefreshCw, ShieldCheck, UserRound, UserRoundMinus, UsersRound, X } from "lucide-react";
 import { ApiError } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
-import { changeOwnership, endMembership, ownershipLabels, ownershipPage, readMembers } from "./client";
-import type { FamilySpace, MembershipIntent, OwnershipIntent, OwnershipTransfer, SpaceMember } from "./client";
+import { changeOwnership, changeRole, endMembership, ownershipLabels, ownershipPage, readMembers } from "./client";
+import type { FamilySpace, MembershipIntent, OwnershipIntent, OwnershipTransfer, RoleIntent, SpaceMember } from "./client";
 import styles from "./spaces.module.css";
 
 type Selection = { member: SpaceMember; action: "remove" | "leave" };
+type RoleSelection = { member: SpaceMember; role: "admin" | "member" };
+const roleLabels = { owner: "Owner", admin: "Admin", member: "Member" } as const;
 
 function denied(error: Error | null) {
   return error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === "ACCOUNT_CHANGED");
@@ -20,11 +22,14 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
   const titleId = useId();
   const [selection, setSelection] = useState<Selection | null>(null);
   const [intent, setIntent] = useState<MembershipIntent | null>(null);
+  const [roleSelection, setRoleSelection] = useState<RoleSelection | null>(null);
+  const [roleIntent, setRoleIntent] = useState<RoleIntent | null>(null);
   const [ownershipLocked, setOwnershipLocked] = useState(false);
   const [ownershipError, setOwnershipError] = useState<Error | null>(null);
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
-  const roster = useQuery({ queryKey: ["spaceMembers", user.id, space.id], enabled: intent === null,
+  const [roleDialog, setRoleDialog] = useState<HTMLDialogElement | null>(null);
+  const roster = useQuery({ queryKey: ["spaceMembers", user.id, space.id], enabled: intent === null && roleIntent === null,
     queryFn: ({ signal }) => readMembers(user.id, space.id, signal), refetchOnWindowFocus: false });
   const change = useMutation({
     mutationFn: endMembership,
@@ -45,17 +50,33 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
       }
     },
   });
-  const problem = ownershipError ?? change.error ?? roster.error;
-  const blocked = denied(ownershipError) || denied(change.error) || denied(roster.error);
-  const locked = intent !== null || change.isPending || ownershipLocked;
+  const roleChange = useMutation({
+    mutationFn: changeRole,
+    onSuccess: async (result, command) => {
+      setRoleSelection(null); setRoleIntent(null);
+      setNotice(`${result.display_name} is now ${command.role === "admin" ? "an admin" : "a member"}.`);
+      await client.invalidateQueries({ predicate: query => query.queryKey.includes(user.id) });
+    },
+    onError: error => {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        setRoleIntent(null); setRoleSelection(null);
+        client.invalidateQueries({ queryKey: ["spaceMembers", user.id, space.id] });
+      }
+    },
+  });
+  const problem = ownershipError ?? change.error ?? roleChange.error ?? roster.error;
+  const blocked = denied(ownershipError) || denied(change.error) || denied(roleChange.error) || denied(roster.error);
+  const locked = intent !== null || change.isPending || roleIntent !== null || roleChange.isPending || ownershipLocked;
   const own = roster.data?.find(member => member.account_id === user.id);
+  const canChangeRoles = own?.role === "owner" && (space.space_type === "family" || space.space_type === "group");
   useEffect(() => { dialog?.showModal(); return () => dialog?.close(); }, [dialog]);
+  useEffect(() => { roleDialog?.showModal(); return () => roleDialog?.close(); }, [roleDialog]);
   useEffect(() => {
-    if (!intent) return;
+    if (!intent && !roleIntent) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [intent]);
+  }, [intent, roleIntent]);
   useEffect(() => {
     if (!blocked) return;
     if (problem instanceof ApiError && (problem.status === 401 || problem.code === "ACCOUNT_CHANGED")) {
@@ -64,27 +85,36 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
   }, [blocked, problem, client, user.id]);
 
   function review(member: SpaceMember, action: Selection["action"]) {
-    if (locked || selection || blocked) return;
-    change.reset(); setNotice(""); setSelection({ member, action });
+    if (locked || selection || roleSelection || blocked) return;
+    change.reset(); roleChange.reset(); setNotice(""); setSelection({ member, action });
   }
+
+  function reviewRole(member: SpaceMember, role: RoleSelection["role"]) {
+    if (locked || selection || roleSelection || blocked) return;
+    change.reset(); roleChange.reset(); setNotice(""); setRoleSelection({ member, role });
+  }
+
+  const busy = !!selection || !!roleSelection;
 
   return <section className={styles.invitationSection} aria-labelledby={titleId}>
     <div className={styles.sectionHeading}><UsersRound size={20} aria-hidden /><h2 id={titleId}>{blocked ? "Members unavailable" : `Members of ${space.name}`}</h2>
-      <button className="icon-button" aria-label="Refresh members" title="Refresh members" disabled={locked || !!selection || roster.isFetching} onClick={() => { change.reset(); setOwnershipError(null); roster.refetch(); }}><RefreshCw size={18} className={roster.isFetching ? "spin" : ""} aria-hidden /></button>
+      <button className="icon-button" aria-label="Refresh members" title="Refresh members" disabled={locked || busy || roster.isFetching} onClick={() => { change.reset(); roleChange.reset(); setOwnershipError(null); roster.refetch(); }}><RefreshCw size={18} className={roster.isFetching ? "spin" : ""} aria-hidden /></button>
       <button className="icon-button" aria-label="Close member management" title="Close member management" disabled={locked} onClick={onClose}><X size={18} aria-hidden /></button>
     </div>
     {notice && <p className="message success" role="status"><Check size={17} aria-hidden />{notice}</p>}
-    {problem && !selection && <p className="message error" role="alert">{problem.message}</p>}
+    {problem && !busy && <p className="message error" role="alert">{problem.message}</p>}
     {roster.isPending && <p role="status">Loading members...</p>}
     {!blocked && !roster.isError && <ul className={styles.invitationList}>{roster.data?.map(member => <li key={member.account_id}>
       <div className={styles.invitationDetails}><h3>{member.display_name}{member.account_id === user.id ? " (you)" : ""}</h3>
-        <span>{member.role === "owner" ? "Owner" : "Member"}</span><span className={styles.accountCode}>{member.account_id}</span>
+        <span>{roleLabels[member.role]}</span><span className={styles.accountCode}>{member.account_id}</span>
       </div>
-      {own?.role === "owner" && member.role === "member" && <button className="icon-button" aria-label={`Remove ${member.display_name} (${member.account_id})`} title={`Remove ${member.display_name}`} disabled={locked || !!selection} onClick={() => review(member, "remove")}><UserRoundMinus size={19} aria-hidden /></button>}
-      {member.account_id === user.id && member.role === "member" && <button className="secondary-button" disabled={locked || !!selection} onClick={() => review(member, "leave")}><LogOut size={17} aria-hidden />Leave Space</button>}
+      {canChangeRoles && member.role !== "owner" && <button className="secondary-button" aria-label={`${member.role === "admin" ? "Make member" : "Make admin"}: ${member.display_name} (${member.account_id})`} disabled={locked || busy}
+        onClick={() => reviewRole(member, member.role === "admin" ? "member" : "admin")}>{member.role === "admin" ? <UserRound size={17} aria-hidden /> : <ShieldCheck size={17} aria-hidden />}{member.role === "admin" ? "Make member" : "Make admin"}</button>}
+      {((own?.role === "owner" && member.role !== "owner") || (own?.role === "admin" && member.role === "member")) && <button className="icon-button" aria-label={`Remove ${member.display_name} (${member.account_id})`} title={`Remove ${member.display_name}`} disabled={locked || busy} onClick={() => review(member, "remove")}><UserRoundMinus size={19} aria-hidden /></button>}
+      {member.account_id === user.id && member.role !== "owner" && <button className="secondary-button" disabled={locked || busy} onClick={() => review(member, "leave")}><LogOut size={17} aria-hidden />Leave Space</button>}
     </li>)}</ul>}
     {!blocked && roster.data && !roster.isError && <OwnershipOffers user={user} space={space} members={roster.data}
-      disabled={intent !== null || change.isPending || selection !== null || roster.isFetching}
+      disabled={intent !== null || change.isPending || roleIntent !== null || roleChange.isPending || busy || roster.isFetching}
       onLocked={setOwnershipLocked} onDenied={setOwnershipError} />}
     {selection && !blocked && <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={`${titleId}-review`} onCancel={event => { if (locked) event.preventDefault(); else setSelection(null); }}>
       <div className="dialog-heading"><h2 id={`${titleId}-review`}>{selection.action === "leave" ? "Leave this family Space?" : "Remove this family member?"}</h2>
@@ -102,6 +132,24 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
           setIntent(command); change.mutate(command);
         }}>{change.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <LogOut size={17} aria-hidden />}
           {intent && !change.isPending ? "Retry original change" : selection.action === "leave" ? "Leave Space" : "Remove member"}</button>
+      </div>
+    </dialog>}
+    {roleSelection && !blocked && <dialog ref={setRoleDialog} className={styles.invitationDialog} aria-labelledby={`${titleId}-role`} onCancel={event => { if (locked) event.preventDefault(); else setRoleSelection(null); }}>
+      <div className="dialog-heading"><h2 id={`${titleId}-role`}>{roleSelection.role === "admin" ? "Make this person an admin?" : "Make this admin a member?"}</h2>
+        <button className="icon-button" aria-label="Close role confirmation" title="Close role confirmation" disabled={locked} onClick={() => setRoleSelection(null)}><X size={18} aria-hidden /></button>
+      </div>
+      <dl className={styles.reviewFacts}><dt>Space</dt><dd>{space.name}</dd><dt>Member</dt><dd>{roleSelection.member.display_name}</dd><dt>Account ID</dt><dd className={styles.accountCode}>{roleSelection.member.account_id}</dd></dl>
+      <p>{roleSelection.role === "admin" ? "Admins can invite people, remove members and answer join requests. They cannot change roles, Space settings or ownership." : "They will no longer be able to invite or remove people."}</p>
+      {roleChange.isError && <p className="message error" role="alert">{roleChange.error.message}</p>}
+      {roleIntent && !roleChange.isPending && <p role="status">The result is unconfirmed.</p>}
+      <div className={`dialog-actions ${styles.membershipActions}`}>
+        <button className="secondary-button" disabled={locked} onClick={() => setRoleSelection(null)}>Cancel</button>
+        <button className="primary-button" disabled={roleChange.isPending} onClick={() => {
+          const command = roleIntent ?? { accountId: user.id, spaceId: space.id, targetId: roleSelection.member.account_id,
+            role: roleSelection.role, key: crypto.randomUUID(), etag: roleSelection.member.etag };
+          setRoleIntent(command); roleChange.mutate(command);
+        }}>{roleChange.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : roleIntent ? <RefreshCw size={17} aria-hidden /> : roleSelection.role === "admin" ? <ShieldCheck size={17} aria-hidden /> : <UserRound size={17} aria-hidden />}
+          {roleIntent && !roleChange.isPending ? "Retry" : roleSelection.role === "admin" ? "Make admin" : "Make member"}</button>
       </div>
     </dialog>}
   </section>;

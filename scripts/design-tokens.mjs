@@ -27,7 +27,7 @@ export const contrastPairs = [
 export const tokenStylesheets = [
   'care/care.module.css', 'events/events.module.css', 'community/community.module.css',
   'messaging/messages.module.css', 'planning/tasks.module.css', 'planning/checklist.module.css',
-  'platform/navigation.module.css', 'platform/home.module.css',
+  'platform/home.module.css',
 ].map(file => path.join(root, 'web/src/features', file));
 // Android screens whose corners and target heights come from DesignTokens; a row taller than the minimum target, such as 56 dp, may stay a number.
 export const tokenScreens = [

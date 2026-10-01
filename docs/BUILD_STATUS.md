@@ -891,7 +891,7 @@ Builds [T34](TASKS.md#approved-requirements-not-built-yet) on the [agent backend
 
 **Boundary.**
 - **Text size:** at 200% text the request hint and dates grow more than the surrounding text, because they are sized relative to the root while most text on every screen is sized in pixels. This is the open shared text-size scale (DEC-013, not decided), not a fault of this screen.
-- **Not checked here:** a screen reader on a real device, Android (T35), and the owner's review of DEC-012.
+- **Not checked here:** a screen reader on a real device and the owner's review of DEC-012. Android followed in the [Android agent checkpoint](#android-agent-checkpoint).
 
 ## Tabs, Followed Pages And Migration Checks Checkpoint
 
@@ -944,6 +944,64 @@ Builds [T35](TASKS.md#approved-requirements-not-built-yet): the [agent web scree
 
 **Boundary.** The double-text device check scales text inside the screen, not the system font, so it does not show the delete dialog at double size. No screen reader was used. The web and Android agent screens stay subject to the owner's review of DEC-012.
 
+## Couple Spaces And Space Privacy Checkpoint
+
+Builds [T12](TASKS.md#approved-requirements-not-built-yet) (couple Spaces, R6) under [DEC-017](DECISIONS.md#accepted-decisions), closes [T22](TASKS.md#spaces) (group Spaces) and fixes [T42](TASKS.md#defects-that-break-approved-requirements) (audit B03, R12) together with four more ways to tell a private Space from a missing one, found by an independent review. DEC-011 and DEC-017 stay provisional until the owner reviews them ([DEC-016](DECISIONS.md#accepted-decisions)).
+
+- **Couple Spaces (T12):**
+  - **Who:** a `couple` Space is always private and holds at most two people: the person who creates it (the owner) and one partner, who joins through the ordinary invitation.
+  - **Waiting:** the creator can use it at once. Web and Android say "Waiting for your partner" until the partner joins, then "With" and the partner's name.
+  - **Limits:** only one invitation can wait at a time (`409 COUPLE_INVITATION_PENDING`); a third person is refused when inviting and when accepting (`409 COUPLE_FULL`). Both checks run under the Space lock, and migration `0025` adds a deferred database rule that refuses a third active member whatever path tries.
+  - **Separation:** either person can leave (the owner after handing ownership over), and the owner can remove the partner. A new partner joins with a new admission and sees nothing from before; the former partner keeps no access. No join requests, no public visibility, no change of type.
+- **Group Spaces closed (T22):** the build session built them and stopped after about 11:00. This session added the missing piece, editing a Space's description on Android as on the web (labels, counter, original-intent retry), and re-ran the evidence below.
+- **A private Space looks exactly like a missing one (T42 and the review):** for anyone who is not a current member, every operation that names a Space now gives the same status and body for a real private Space as for an unused ID. What changed (status codes are unchanged, all 404):
+
+  | Operation | Before | Now |
+  | --- | --- | --- |
+  | Leave, remove (T42) | "Membership not found." | "Space not found." |
+  | A former member reusing their leave key with another or no review | `409` or `428` | "Space not found."; the exact repeat of their confirmed leave still answers with it |
+  | Offering ownership | "Ownership transfer not available." | "Space not found." |
+  | Answering an ownership offer after leaving | "Ownership transfer not available." | "Ownership transfer not found." |
+  | Revoking an invitation one knows, without owning the Space | "Space not found." | "Invitation not found." |
+  | Approving or declining a join request one knows, without owning the Space | "Space not found." | "Join request not found." |
+
+  Approving a join request is also refused unless the Space is a group, so a request planted in the database cannot admit a couple partner.
+- **Changed tests** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): four existing tests asserted that a couple Space could not be created: `test_creation_rejects_invalid_and_authority_fields` and `test_space_openapi_documents_authentication_and_private_projections` in `test_spaces.py`, one case in `test_space_directory.py`, and one in `tests/web-client.test.mjs`. DEC-017 changed that requirement, so each now checks that a couple is accepted while an unknown type and a public couple are refused.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Backend | `tests/test_couple_spaces.py` **8 passed**: privacy and the one-partner limit; a planted invitation; parallel invitations; parallel accepts of a real and a planted invitation (one joins, one gets `COUPLE_FULL`); the database rule against a third member and a type change; after a separation the new partner sees no earlier document, event or chat message and the former partner none; handing over and then leaving. `tests/test_space_privacy.py` **5 passed**: every signed-in operation that names a Space in its path, query or body (33), called with schema-valid values, as an outsider of a family, couple, solo and private group Space holding an invitation or a join request it really received, and as a former member holding an ownership offer made to them. With the two updated Space tests and the worker recovery test: **26 passed** (`.local/t42-after.txt`). |
+| The fixes are needed | Each committed method was put back on its own by a test-only plugin, with no source file changed (`backend/.local/t42_before_all.py`, `.local/t42-before-all-result.txt`). Old leave and remove: 5 privacy tests failed. Old invitation revoke: 3. Old ownership offer: 4. Old answer to an offer: 1. Old join request decision: 1. Nothing put back: 5 passed. |
+| Complete backend suite | Before the review fixes: **455 passed, 3 failed** in 2,933 s (`.local/full-backend-couples-20261001.xml`). Two were tests that still expected a couple to be refused, updated as described above. The third, `test_separate_worker_process_recovers_persisted_due_work_without_duplicate`, ran while an Android build and two other test runs loaded the machine; it passed on its own. |
+| Independent review | A blind review by a second model (Grok 4.7) against the stated rules found the four further differences in the table, the join request path, and the test gaps closed above: generic calls stopping at validation, random IDs where a person knows real ones, a family Space only, a Space ID in the query or body, and no handover, parallel-accept or event and chat checks for couples. |
+| Web | Type check passed. All client tests: **106 passed**. Live, against the local API at `0025`: all 8 Space journeys (`spaces:` two, `invitations:`, `members:`, `solo:`, `space settings:`, `groups:` and the new `couples:`) **passed** before the privacy fixes (`.local/spaces-live-20261001.txt`) and again after the API was restarted with them (`.local/spaces-live-t42-20261001.txt`). Screenshots: `.local/screenshots/couple-invite-live-desktop.png`, `couple-partner-live-320-200pct.png`. |
+| Offline web screens | **38 passed, 15 failed**, none of them about Spaces. The 15 fail on a header change another session made at 17:14 for T38: the shared header now reads `/api/notifications`, which the document screen tests do not expect, and imports a new CSS module that the account screen tests' builder cannot load. That work is in progress, and this session left it alone. |
+| Android | Every JVM test class by name: **257 passed**, 0 failed, 0 skipped in 19 classes (`.local/android-jvm-all.txt`), including 3 couple tests and 7 description-editing tests. Lint 0 errors (11 warnings, as before); debug app and test app built. |
+| Contract | [OpenAPI](../packages/openapi/openapi.json) regenerated: the Space type now lists `couple`; still 159 operations on 132 paths. |
+
+Live since about 16:20: the development database is at `0025`; the shared API was restarted at 17:21 with the privacy fixes.
+
+**Boundary.**
+- **Device:** the 15 offline Space screen tests were not re-run on the emulator for the couple choice or the description field, and no device test covers either yet.
+- **Text size:** the 200% check sets the root font size, and most Spaces text is sized in pixels, so it shows nothing overflows rather than that the text grows; the shared text-size scale is still open (DEC-013).
+- **Not built:** roles beyond owner and member (P5, T13); partner-only privacy beyond the family rules; a database rule for "one waiting invitation", which the service enforces and which cannot admit a third person anyway.
+
+## Timezone List Failures Checkpoint
+
+Builds [T59](TASKS.md#defects-that-break-approved-requirements), audit finding W12 of the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#lower-severity-findings).
+
+- **The defect:** when the list of timezones could not be loaded, nothing said so. Sign-up offered its four starting zones, and the account, reminder and repeating reminder forms offered only the person's current zone. Someone in another zone could not choose it and did not know why.
+- **The fix:** one shared message, `TimezoneListProblem` in `web/src/features/identity/timezone-list-problem.tsx`, says "The list of timezones did not load, so yours may be missing." and offers Retry. It appears under the timezone field on sign-up and in account settings, above the reminder form, and in the "Change repeating reminder" dialog. Retry loads the list again and never submits a form.
+- **Found while testing:** after a Retry on the sign-up form, the zone was set before the new options were on screen, so the browser could not select it, and the form stayed on UTC. The zone is now chosen after the options render. The rule is unchanged: a zone the person picked is never replaced, which the three sign-up timezone tests from T54 still check.
+- **Test harness repair:** `tests/unit/identity-ui.test.mjs` could no longer be built, because the signed-in header (`shell.tsx`) now imports a CSS module from the navigation work in progress (T38). The build now names an output file, as the other offline harnesses do, and the tests use only its script. No assertion changed; the 8 existing tests pass again.
+
+| Check (2026-10-01) | Result |
+| --- | --- |
+| Before the fix | The new sign-up, reminder form and account settings tests failed: no message appeared. The repeating reminder dialog test failed when its bundle was built without the dialog's message, in a temporary copy under `.local` that was then deleted; the shared source was not changed. |
+| After the fix | `identity-ui` **9 passed**, `reminder-ui` **14 passed**, the new `account-ui` **1 passed**; all of `tests/unit` **59 passed**, 0 failed. The web type check passes. |
+| Live journeys | `desktop:` (sign-up and the account's timezone), `reminders:` and `repeating reminders:` passed. `reminder requests:` failed once in that run, at 36.8 s, and passed when run again alone; the first failure's detail was not captured. |
+
+**Boundary.** The audit found this on the web (W12); the Android screens were not checked for the same gap here.
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

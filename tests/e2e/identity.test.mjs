@@ -314,6 +314,9 @@ test('calendar: real private agenda preserves dates, zones, source access and re
     const previewResponse = await context.request.post(`${base}/api/reminders/preview`, { headers, data: { task_id: task.id, local_time: '2026-11-02T00:15', timezone: 'Asia/Kolkata' } });
     assert.equal(previewResponse.status(), 200, await previewResponse.text());
     const reminder = await create('reminders', { preview_token: (await previewResponse.json()).data.options[0].preview_token });
+    // The calendar opens from Home now, not from the header (DEC-014, T38).
+    await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Home', exact: true }).click();
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
     await page.getByRole('link', { name: 'Calendar', exact: true }).click();
     await page.getByRole('heading', { name: 'Calendar', exact: true }).waitFor();
     await page.getByLabel('Month', { exact: true }).fill('2026-11');
@@ -2399,5 +2402,98 @@ test('couples: a couple Space waits for the partner, admits one person and refus
     await ownerContext.close();
     await partnerContext.close();
     await thirdContext.close();
+  }
+});
+
+test('roles: the owner makes an admin, who invites and removes ordinary members but cannot touch admins', { timeout: 240000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const helperContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const ordinaryContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const newcomerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const contexts = [ownerContext, helperContext, ordinaryContext, newcomerContext];
+  const external = [];
+  for (const context of contexts) await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+    external.push(route.request().url());
+    return route.abort('blockedbyclient');
+  });
+  const [ownerPage, helperPage, ordinaryPage, newcomerPage] = await Promise.all(contexts.map(context => context.newPage()));
+  const errors = [];
+  for (const page of [ownerPage, helperPage, ordinaryPage, newcomerPage]) page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const spaceName = `Morgan household ${suffix}`;
+    await signUp(ownerPage, `roles-owner-${suffix}@example.test`);
+    await signUp(helperPage, `roles-helper-${suffix}@example.test`);
+    await signUp(ordinaryPage, `roles-ordinary-${suffix}@example.test`);
+    await signUp(newcomerPage, `roles-newcomer-${suffix}@example.test`);
+    const me = async context => (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const [owner, helper, ordinary, newcomer] = await Promise.all(contexts.map(me));
+    const headersFor = person => ({ Origin: base, 'X-Account-ID': person.id });
+    const created = await ownerContext.request.post(`${base}/api/spaces`, {
+      headers: { ...headersFor(owner), 'Idempotency-Key': crypto.randomUUID() }, data: { name: spaceName, space_type: 'family' },
+    });
+    assert.equal(created.status(), 201, await created.text());
+    const space = (await created.json()).data;
+    for (const [context, person] of [[helperContext, helper], [ordinaryContext, ordinary]]) {
+      const sent = await ownerContext.request.post(`${base}/api/spaces/${space.id}/invitations`, {
+        headers: { ...headersFor(owner), 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: person.id },
+      });
+      assert.equal(sent.status(), 201, await sent.text());
+      const joined = await context.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: headersFor(person), data: {} });
+      assert.equal(joined.status(), 200, await joined.text());
+    }
+
+    await ownerPage.goto(`${base}/app/spaces`);
+    await ownerPage.getByRole('button', { name: `Members of ${spaceName}`, exact: true }).click();
+    await ownerPage.getByRole('button', { name: `Make admin: Alex Morgan (${helper.id})`, exact: true }).click();
+    const promote = ownerPage.getByRole('dialog', { name: 'Make this person an admin?', exact: true });
+    await promote.getByText('Admins can invite people, remove members and answer join requests. They cannot change roles, Space settings or ownership.', { exact: true }).waitFor();
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/roles-make-admin-live-desktop.png'), fullPage: false });
+    await promote.getByRole('button', { name: 'Make admin', exact: true }).click();
+    await ownerPage.getByText('Alex Morgan is now an admin.', { exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: `Make member: Alex Morgan (${helper.id})`, exact: true }).waitFor();
+
+    await helperPage.goto(`${base}/app/spaces`);
+    const helperRow = helperPage.getByRole('listitem').filter({ hasText: spaceName });
+    await helperRow.getByText('Admin', { exact: false }).first().waitFor();
+    assert.equal(await helperRow.getByRole('button', { name: `Settings for ${spaceName}` }).count(), 0, 'Settings stay with the owner.');
+    await helperPage.getByRole('button', { name: `Manage invitations for ${spaceName}`, exact: true }).click();
+    await helperPage.getByLabel('Recipient account ID', { exact: true }).fill(newcomer.id);
+    await helperPage.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await helperPage.getByText('Invitation created.', { exact: true }).waitFor();
+    await helperPage.getByRole('button', { name: 'Close invitation management', exact: true }).click();
+    await newcomerPage.goto(`${base}/app/spaces`);
+    await newcomerPage.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    await newcomerPage.getByRole('dialog', { name: `Join ${spaceName}?`, exact: true }).getByRole('button', { name: 'Join Space', exact: true }).click();
+    await newcomerPage.getByText(`Joined ${spaceName}.`, { exact: true }).waitFor();
+
+    await helperPage.getByRole('button', { name: `Members of ${spaceName}`, exact: true }).click();
+    await helperPage.getByRole('button', { name: `Remove Alex Morgan (${newcomer.id})`, exact: true }).waitFor();
+    assert.equal(await helperPage.getByRole('button', { name: `Remove Alex Morgan (${owner.id})` }).count(), 0, 'An admin cannot remove the owner.');
+    assert.equal(await helperPage.getByRole('button', { name: /^Make (admin|member):/ }).count(), 0, 'Only the owner changes roles.');
+    await helperPage.getByRole('button', { name: `Remove Alex Morgan (${ordinary.id})`, exact: true }).click();
+    await helperPage.getByRole('dialog', { name: 'Remove this family member?', exact: true }).getByRole('button', { name: 'Remove member', exact: true }).click();
+    await helperPage.getByText('Member removed.', { exact: true }).waitFor();
+    const gone = await ordinaryContext.request.get(`${base}/api/spaces/${space.id}`, { headers: headersFor(ordinary) });
+    assert.equal(gone.status(), 404);
+
+    await ownerPage.getByRole('button', { name: 'Refresh members', exact: true }).click();
+    await ownerPage.getByRole('button', { name: `Make member: Alex Morgan (${helper.id})`, exact: true }).click();
+    await ownerPage.getByRole('dialog', { name: 'Make this admin a member?', exact: true }).getByRole('button', { name: 'Make member', exact: true }).click();
+    await ownerPage.getByText('Alex Morgan is now a member.', { exact: true }).waitFor();
+    const demoted = await helperContext.request.get(`${base}/api/spaces/${space.id}`, { headers: headersFor(helper) });
+    assert.equal((await demoted.json()).data.role, 'member');
+
+    await ownerPage.setViewportSize({ width: 320, height: 844 });
+    await ownerPage.evaluate(() => document.fonts.ready);
+    assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await ownerPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/roles-members-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    for (const context of contexts) await context.close();
   }
 });

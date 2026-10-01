@@ -4,7 +4,7 @@ Built: sign-in, registration with email verification, recovery and password rese
 
 The account forms are server-rendered, so they post rather than use GET, and their fields and button stay disabled until the page is interactive. Before this, an early Send put the email (and on sign-in the password) in the address, and text typed while the page loaded was silently replaced ([T30](../../../../docs/TASKS.md#defects-that-break-approved-requirements)).
 
-Registration starts in the browser's timezone under the name the service lists, so an older name the browser reports, such as Asia/Calcutta, becomes Asia/Kolkata; when the service lists no such zone it starts in UTC ([T54](../../../../docs/TASKS.md#defects-that-break-approved-requirements)).
+Registration starts in the browser's timezone under the name the service lists, so an older name the browser reports, such as Asia/Calcutta, becomes Asia/Kolkata; when the service lists no such zone it starts in UTC ([T54](../../../../docs/TASKS.md#defects-that-break-approved-requirements)). When the list of timezones cannot be loaded, registration and the account page say so and offer Retry, using `timezone-list-problem.tsx`, which the reminder forms share ([T59](../../../../docs/TASKS.md#defects-that-break-approved-requirements)).
 
 `client.ts` holds the shared typed `api()` helper that every web feature uses. It calls the same-origin proxy in `app/api/[...path]/route.ts`, sends the expected account ID and validates every response with Zod. `shell.tsx` is the shared page header with the navigation links.
 

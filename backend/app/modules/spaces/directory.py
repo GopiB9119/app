@@ -285,7 +285,7 @@ class SpaceDirectoryService:
     def pending(self, token, space_id):
         with self.sessions() as database:
             caller, _session = self.identity.authenticate(database, token)
-            self.spaces.require_owner(database, space_id, caller.id)
+            self.spaces.require_manager(database, space_id, caller.id)
             rows = database.execute(
                 select(SpaceJoinRequest, User).join(User, User.id == SpaceJoinRequest.account_id).where(
                     SpaceJoinRequest.space_id == space_id, SpaceJoinRequest.status == "pending",
@@ -310,9 +310,9 @@ class SpaceDirectoryService:
             caller, accounts = self.spaces.lock_accounts(database, token, [snapshot.account_id])
             space = self.spaces.lock_space(database, space_id)
             try:
-                self.spaces.require_owner(database, space.id, caller.id, lock=True)
+                self.spaces.require_manager(database, space.id, caller.id, lock=True)
             except DomainError:
-                # The person who asked knows the request; anyone but the owner learns nothing new (T42).
+                # The person who asked knows the request; anyone but the owner or an admin learns nothing new (T42).
                 raise DomainError(404, "NOT_FOUND", "Join request not found.") from None
             if space.space_type != "group":
                 # Only groups take join requests; a family or couple admits people only by invitation (DEC-017).

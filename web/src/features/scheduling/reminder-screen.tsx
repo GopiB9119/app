@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { TimezoneListProblem } from "@/features/identity/timezone-list-problem";
 import { readTask } from "@/features/planning/client";
 import { notificationPreferencesSchema, offsetLabel, previewReminder, reminderLabels, reminderPage, reminderSchema, saveReminder } from "./client";
 import { previewReminderRequest, reminderRequestPage, requestLabels, respondReminderRequest, reviewReminderRequest, saveReminderRequest } from "./client";
@@ -159,6 +160,7 @@ function ReminderForm({ user, taskId, disabled, onLocked, onDenied, onSaved }: {
     {mode === "self" && !review && <label><span id={`${fieldId}-repeat`}>Repeat</span><select aria-labelledby={`${fieldId}-repeat`} name="reminder_repeat" value={repeat} disabled={locked || seriesBusy || !eligible} onChange={event => { setRepeat(event.target.value as "once" | "daily" | "weekly"); setError(""); }}>
       <option value="once">Does not repeat</option><option value="daily">Every day</option><option value="weekly">Every week</option>
     </select></label>}
+    {zones.isError && !review && <TimezoneListProblem retry={() => zones.refetch()} />}
     {mode === "self" && repeat !== "once" && !review ? <SeriesForm user={user} taskId={taskId} frequency={repeat} zones={zones.data?.data ?? [user.timezone]} disabled={disabled || !eligible} onLocked={setSeriesBusy} onDenied={onDenied} onSaved={async result => { setRepeat("once"); await onSaved(result); }} />
     : review ? <section className={styles.review} aria-labelledby={`${fieldId}-review`}>
       <h3 id={`${fieldId}-review`}>{"requested_by" in review ? "Review reminder request" : "Review reminder"}</h3><dl className={styles.facts}>

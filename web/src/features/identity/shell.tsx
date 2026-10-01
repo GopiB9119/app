@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Bell, Bot, Compass, Layers2, Search, ShieldCheck } from "lucide-react";
 import { api, userSchema } from "@/features/identity/client";
 import { MainFrame } from "@/features/platform/navigation";
-import navigation from "@/features/platform/navigation.module.css";
 import { notificationPage } from "@/features/scheduling/client";
 
 // Signed-in pages show the five main sections (DEC-014); the header keeps search, the notification inbox and the agent.
@@ -39,7 +38,7 @@ function InboxBell() {
   });
   const count = unread.data ?? 0;
   const label = count > 0 ? `Notification inbox, ${count} unread` : "Notification inbox";
-  return <Link className={`icon-button ${navigation.bell}`} href="/app/notifications" aria-label={label} title={label}>
-    <Bell size={20} aria-hidden />{count > 0 && <span className={navigation.count} aria-hidden>{count > 99 ? "99+" : count}</span>}
+  return <Link className="icon-button inbox-bell" href="/app/notifications" aria-label={label} title={label}>
+    <Bell size={20} aria-hidden />{count > 0 && <span className="inbox-count" aria-hidden>{count > 99 ? "99+" : count}</span>}
   </Link>;
 }

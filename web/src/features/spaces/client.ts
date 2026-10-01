@@ -8,7 +8,7 @@ const spaceShape = z.object({
   space_type: z.enum(["family", "solo", "group", "couple"]),
   visibility: z.enum(["private", "public"]),
   status: z.literal("active"),
-  role: z.enum(["owner", "member"]),
+  role: z.enum(["owner", "admin", "member"]),
   version: z.string().regex(/^[1-9][0-9]*$/),
   created_at: z.string().datetime({ offset: true }),
 });
@@ -54,7 +54,7 @@ export async function changeVisibility(intent: VisibilityIntent) {
 
 export const directoryEntrySchema = z.object({
   id: z.string().uuid(), name: z.string().min(1).max(80), description: z.string().max(280),
-  member_count: z.number().int().min(1).max(50), viewer_role: z.enum(["owner", "member"]).nullable(),
+  member_count: z.number().int().min(1).max(50), viewer_role: z.enum(["owner", "admin", "member"]).nullable(),
   pending_request_id: z.string().uuid().nullable(), can_request: z.boolean(),
 }).refine(entry => !(entry.viewer_role && (entry.pending_request_id || entry.can_request)) && !(entry.pending_request_id && entry.can_request));
 export type DirectoryEntry = z.infer<typeof directoryEntrySchema>;
@@ -126,7 +126,7 @@ export async function decideJoinRequest(accountId: string, spaceId: string, revi
 
 export const memberSchema = z.object({
   account_id: z.string().uuid(), display_name: z.string().min(1).max(80),
-  role: z.enum(["owner", "member"]), joined_at: z.string().datetime({ offset: true }),
+  role: z.enum(["owner", "admin", "member"]), joined_at: z.string().datetime({ offset: true }),
   etag: z.string().min(3).max(140).regex(/^"[^"\r\n]+"$/),
 });
 export const membersSchema = z.array(memberSchema).min(1).max(50).superRefine((members, context) => {
@@ -139,6 +139,7 @@ export const membershipOutcomeSchema = z.object({
 });
 export type SpaceMember = z.infer<typeof memberSchema>;
 export type MembershipIntent = { accountId: string; spaceId: string; targetId: string; action: "remove" | "leave"; key: string; etag: string };
+export type RoleIntent = { accountId: string; spaceId: string; targetId: string; role: "admin" | "member"; key: string; etag: string };
 
 export async function readMembers(accountId: string, spaceId: string, signal?: AbortSignal) {
   const result = await api(`spaces/${spaceId}/members`, membersSchema, { accountId, signal });
@@ -152,6 +153,13 @@ export async function endMembership(intent: MembershipIntent) {
   const result = await api(route, membershipOutcomeSchema, { method: "POST", accountId: intent.accountId,
     body: {}, headers: { "If-Match": intent.etag, "Idempotency-Key": intent.key } });
   if (result.data.space_id !== intent.spaceId || result.data.account_id !== intent.targetId) throw new ApiError(502, "INVALID_RESPONSE", "The membership response does not match this review.");
+  return result.data;
+}
+
+export async function changeRole(intent: RoleIntent) {
+  const result = await api(`spaces/${intent.spaceId}/members/${intent.targetId}/role`, memberSchema, { method: "POST", accountId: intent.accountId,
+    body: { role: intent.role }, headers: { "If-Match": intent.etag, "Idempotency-Key": intent.key } });
+  if (result.data.account_id !== intent.targetId || result.data.role !== intent.role) throw new ApiError(502, "INVALID_RESPONSE", "The role response does not match this review.");
   return result.data;
 }
 

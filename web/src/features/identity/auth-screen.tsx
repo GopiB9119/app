@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { api, authSchema, challengeSchema, doneSchema } from "./client";
 import { Shell } from "./shell";
+import { TimezoneListProblem } from "./timezone-list-problem";
 
 const inputSchema = z.object({
   email: z.string().email("Enter a valid email address.").refine(value => value.endsWith(".test"), "Use a synthetic .test address in this local build."),
@@ -35,18 +36,22 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   const [notice, setNotice] = useState("");
   const [visible, setVisible] = useState(false);
   const [timezones, setTimezones] = useState<string[]>(startingTimezones);
+  const [zoneLoad, setZoneLoad] = useState({ attempt: 0, failed: false });
   const [initialZone] = useState(() => signUpTimezone(startingTimezones));
   const [requestIntent, setRequestIntent] = useState<{ email: string; key: string } | null>(null);
   const form = useForm<Fields>({ resolver: zodResolver(inputSchema), defaultValues: { email: "", password: "", code: "", display_name: "", timezone: initialZone } });
 
   useEffect(() => {
     const controller = new AbortController();
-    api("timezones", z.array(z.string()), { signal: controller.signal }).then(result => {
-      setTimezones(result.data);
-      if (form.getValues("timezone") === initialZone) form.setValue("timezone", signUpTimezone(result.data));
-    }).catch(() => {});
+    api("timezones", z.array(z.string()), { signal: controller.signal })
+      .then(result => setTimezones(result.data))
+      .catch(() => { if (!controller.signal.aborted) setZoneLoad(load => ({ ...load, failed: true })); });
     return () => controller.abort();
-  }, []);
+  }, [zoneLoad.attempt]);
+  // After the new options render, so a select already on screen (as after Retry) can show the chosen zone.
+  useEffect(() => {
+    if (form.getValues("timezone") === initialZone) form.setValue("timezone", signUpTimezone(timezones));
+  }, [timezones]);
 
   async function submit(fields: Fields) {
     setMessage("");
@@ -109,6 +114,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
         </>}
         {passwordShown && <label><span id="password-label">{mode === "login" ? "Password" : "New password"}</span><div className="password-field"><input type={visible ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} maxLength={128} disabled={!interactive} {...form.register("password")} aria-labelledby="password-label" aria-invalid={!!form.formState.errors.password} aria-describedby="password-hint password-error" /><button className="icon-button" type="button" disabled={!interactive} onClick={() => setVisible(!visible)} aria-label={visible ? "Hide password" : "Show password"} title={visible ? "Hide password" : "Show password"}>{visible ? <EyeOff size={19} /> : <Eye size={19} />}</button></div><span id="password-hint" className="field-hint">{mode !== "login" ? "12 to 128 characters" : ""}</span><FieldError id="password-error" message={form.formState.errors.password?.message} /></label>}
         {challenge && mode === "register" && <label><span id="signup-timezone-label">Timezone</span><select aria-labelledby="signup-timezone-label" {...form.register("timezone")}>{timezones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>}
+        {challenge && mode === "register" && zoneLoad.failed && <TimezoneListProblem retry={() => setZoneLoad(load => ({ attempt: load.attempt + 1, failed: false }))} />}
         {message && <div role="alert" className="message error">{message}</div>}
         {notice && <div role="status" className="message success"><Check size={18} />{notice}<Link href="/login">Sign in</Link></div>}
         <button className="primary-button" type="submit" disabled={!interactive || form.formState.isSubmitting}>{form.formState.isSubmitting ? <LoaderCircle size={19} className="spin" aria-hidden /> : mode === "recover" ? <KeyRound size={19} aria-hidden /> : <ArrowRight size={19} aria-hidden />}<span>{form.formState.isSubmitting ? "Please wait" : mode === "login" ? "Sign in" : challenge ? mode === "register" ? "Verify and create account" : "Change password" : "Send verification code"}</span></button>

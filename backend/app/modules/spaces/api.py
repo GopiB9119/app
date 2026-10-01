@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.spaces.schemas import (
+    ChangeMemberRole,
     ChangeSpaceVisibility,
     CreateJoinRequest,
     CreateOwnershipTransfer,
@@ -122,6 +123,15 @@ def remove_member(request: Request, space_id: UUID, account_id: UUID, body: Memb
                   idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
     return envelope(request, request.app.state.spaces.end_membership(
         token(request), str(space_id), str(account_id), "remove", str(idempotency_key), if_match,
+    ))
+
+
+@router.post("/{space_id}/members/{account_id}/role", response_model=Envelope[SpaceMemberView],
+             responses={412: {"model": ErrorEnvelope}, 428: {"model": ErrorEnvelope}})
+def change_member_role(request: Request, space_id: UUID, account_id: UUID, body: ChangeMemberRole,
+                       idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.spaces.change_role(
+        token(request), str(space_id), str(account_id), body.role, str(idempotency_key), if_match,
     ))
 
 

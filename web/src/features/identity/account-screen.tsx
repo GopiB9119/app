@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Check, CheckCheck, Clock3, Globe2, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, X } from "lucide-react";
 import { Account, ApiError, api, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
 import { Shell } from "./shell";
+import { TimezoneListProblem } from "./timezone-list-problem";
 
 export function AccountScreen() {
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
@@ -87,6 +88,7 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
           <form className="profile-form" onSubmit={event => { event.preventDefault(); setNotice(""); setError(""); save.mutate(); }}>
             <label>Display name<input name="display_name" autoComplete="name" required maxLength={80} value={draft.display_name} onChange={event => setDraft({ ...draft, display_name: event.target.value })} /></label>
             <label><span id="profile-timezone-label">Timezone</span><div className="input-label-icon"><Globe2 size={16} aria-hidden /><select name="timezone" aria-labelledby="profile-timezone-label" value={draft.timezone} onChange={event => setDraft({ ...draft, timezone: event.target.value })}>{timezoneOptions.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></div></label>
+            {zones.isError && <TimezoneListProblem retry={() => zones.refetch()} />}
             <div className="form-actions"><button className="primary-button" type="submit" disabled={!changed || save.isPending}>{save.isPending ? <LoaderCircle size={17} className="spin" /> : <Save size={17} />}Save changes</button>{changed && <button type="button" className="text-button" onClick={() => { setDraft({ display_name: user.display_name, timezone: user.timezone }); setDraftVersion(etag); }}>Discard</button>}</div>
           </form>
           <div className="account-facts"><span>Account status<strong><span className="status-square" />Active</strong></span><span>Email verification<strong>Verified</strong></span></div>

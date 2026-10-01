@@ -64,7 +64,7 @@ async function fixture(context, options = {}) {
       local_time: reminder.local_time, timezone: reminder.timezone, scheduled_at: reminder.scheduled_at, dispatch_expires_at: reminder.expires_at,
       expires_at: '2026-09-22T10:00:00Z', created_at: '2026-09-19T10:00:00Z', resolved_at: null, status: 'pending', source_changed: false, reminder_id: null, version: '1', channel: 'in_app' };
     const state = window.reminderFixture = { calls: [], reminders: options.seed ? [reminder] : [], notifications: options.inbox ? [notification] : [], requests: options.requestInbox || options.requestSent ? [proposal] : [],
-      preferences: true, generation: 1, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap };
+      preferences: true, generation: 1, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap, timezoneFailures: options.timezoneFailures ?? 0 };
     const receipts = new Map();
     const response = (data, extra = {}, headers = {}) => new Response(JSON.stringify({ data, request_id: 'offline-reminder', ...extra }), { status: 200, headers });
     const failure = (status, code, message) => new Response(JSON.stringify({ error: { code, message, details: {} }, request_id: 'offline-reminder' }), { status });
@@ -76,11 +76,16 @@ async function fixture(context, options = {}) {
       const headers = Object.fromEntries(new Headers(config.headers));
       state.calls.push({ route: url.pathname, method, body, headers, query: url.search });
       if (url.pathname === '/api/me') return response({ id: accountId, email: 'alex@example.test', display_name: 'Alex Morgan', timezone: 'America/New_York', email_verified: true, version: 1 });
-      if (url.pathname === '/api/timezones') return response(['America/New_York', 'Asia/Kolkata', 'UTC']);
+      if (url.pathname === '/api/timezones') return state.timezoneFailures-- > 0 ? failure(503, 'SERVICE_UNAVAILABLE', 'Service is temporarily unavailable.') : response(['America/New_York', 'Asia/Kolkata', 'UTC']);
       if (state.denied) return failure(404, 'NOT_FOUND', 'Task access is unavailable.');
       if (url.pathname === `/api/tasks/${taskId}`) return response(task, {}, { ETag: `"${'a'.repeat(64)}"` });
       if (url.pathname === '/api/reminder-requests' && method === 'GET') return response(state.requests.filter(item => (url.searchParams.get('direction') === 'sent' ? item.requested_by : item.recipient).account_id === accountId), pageOf([]));
-      if (url.pathname === '/api/reminder-series' && method === 'GET') return response([], pageOf([]));
+      if (url.pathname === '/api/reminder-series' && method === 'GET') return response(options.seedSeries ? [{
+        id: '6f1c2f0e-8f53-4d55-9a53-1d2b8b7c9e01', task_id: taskId, space_id: spaceId, task_title: task.title, task_version: '1', source_changed: false,
+        frequency: 'daily', repeat_every: 1, weekdays: [], local_time: '08:00', timezone: 'America/New_York', start_date: '2026-11-01', end_date: '2026-12-01',
+        clock_change_policy: 'shift_forward', status: 'paused', reason: 'paused', next_occurrence: null, created_at: '2026-09-19T10:00:00Z',
+        updated_at: '2026-09-19T10:00:00Z', version: '1', etag: '"series-1"', channel: 'in_app',
+      }] : [], pageOf([]));
       if (url.pathname === '/api/reminder-backups' && method === 'GET') return response([], pageOf([]));
       if (url.pathname === '/api/reminder-backups/contacts') return response([]);
       if (url.pathname === '/api/me/alerts') return response({ items: [], quiet: { active: false, until: null }, next_check_at: '2026-11-02T10:00:00Z', generated_at: '2026-09-19T10:00:00Z' });
@@ -399,6 +404,38 @@ test('offline request lists work as tabs from the keyboard', async () => {
     assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Received');
     await page.getByRole('tabpanel', { name: 'Received' }).getByRole('button', { name: 'Decline', exact: true }).waitFor();
     assert.equal(await sent.getAttribute('tabindex'), '-1');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+test('offline reminder form says when the timezone list did not load and retries it', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { timezoneFailures: Infinity });
+    const zones = page.locator('select[name="reminder_timezone"] option');
+    const problem = page.getByRole('alert').filter({ hasText: 'The list of timezones did not load' });
+    await problem.waitFor();
+    assert.deepEqual(await zones.allTextContents(), ['America/New York']);
+    await page.evaluate(() => { window.reminderFixture.timezoneFailures = 0; });
+    await problem.getByRole('button', { name: 'Retry', exact: true }).click();
+    await problem.waitFor({ state: 'detached' });
+    assert.deepEqual(await zones.allTextContents(), ['America/New York', 'Asia/Kolkata', 'UTC']);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+test('offline repeating reminder change says when the timezone list did not load and retries it', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { seedSeries: true, timezoneFailures: Infinity });
+    await page.getByRole('button', { name: 'Change repeating reminder: Buy groceries', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const problem = dialog.getByRole('alert').filter({ hasText: 'The list of timezones did not load' });
+    await problem.waitFor();
+    assert.deepEqual(await dialog.locator('select[name="series_timezone"] option').allTextContents(), ['America/New York']);
+    await page.evaluate(() => { window.reminderFixture.timezoneFailures = 0; });
+    await problem.getByRole('button', { name: 'Retry', exact: true }).click();
+    await problem.waitFor({ state: 'detached' });
+    assert.deepEqual(await dialog.locator('select[name="series_timezone"] option').allTextContents(), ['America/New York', 'Asia/Kolkata', 'UTC']);
+    assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.route.startsWith('/api/reminder-series') && call.method !== 'GET').length), 0);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

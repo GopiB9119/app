@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, House, MessageSquare, UserRound, UsersRound } from "lucide-react";
-import styles from "./navigation.module.css";
+
+// Styles are in globals.css (.main-nav, .app-frame), because every screen's header uses this navigation.
 
 // The five main sections (DEC-014), in this order on web and Android. Each lists the paths that belong to it;
 // the notification inbox, search and the agent stay in the header.
@@ -24,8 +25,8 @@ export function currentSection(pathname: string): MainSection | null {
 
 export function MainNavigation() {
   const current = currentSection(usePathname() ?? "");
-  return <nav className={styles.navigation} aria-label="Main">
-    {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} className={styles.item} aria-current={current === label ? "page" : undefined}>
+  return <nav className="main-nav" aria-label="Main">
+    {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} aria-current={current === label ? "page" : undefined}>
       <Icon size={20} aria-hidden /><span>{label}</span>
     </Link>)}
   </nav>;
@@ -33,5 +34,5 @@ export function MainNavigation() {
 
 /** Signed-in pages: the main navigation is a bar under the header on narrow screens and a column at the side on wide ones. */
 export function MainFrame({ children }: { children: React.ReactNode }) {
-  return <div className={styles.frame}><MainNavigation /><div className={styles.content}>{children}</div></div>;
+  return <div className="app-frame"><MainNavigation /><div className="app-content">{children}</div></div>;
 }

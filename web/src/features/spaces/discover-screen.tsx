@@ -110,7 +110,7 @@ function FindGroups({ user }: { user: Account }) {
           {entry.description && <p>{entry.description}</p>}
           <div className={styles.groupMeta}>
             <span><UsersRound size={15} aria-hidden />{entry.member_count === 1 ? "1 member" : `${entry.member_count} members`}</span>
-            {entry.viewer_role && <span className={styles.chip}>{entry.viewer_role === "owner" ? "You own this group" : "You are a member"}</span>}
+            {entry.viewer_role && <span className={styles.chip}>{entry.viewer_role === "owner" ? "You own this group" : entry.viewer_role === "admin" ? "You are an admin" : "You are a member"}</span>}
             {entry.pending_request_id && <span className={styles.chip}>Request sent</span>}
             {!entry.viewer_role && !entry.pending_request_id && !entry.can_request && <span>Not accepting your request right now</span>}
           </div>

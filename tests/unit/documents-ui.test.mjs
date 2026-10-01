@@ -111,6 +111,8 @@ async function fixture(context, options = {}) {
         id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1,
       });
       if (url.pathname === '/api/spaces' && method === 'GET') return paged([space]);
+      // Every signed-in header shows the inbox's unread count on its bell (DEC-014, T38).
+      if (url.pathname === '/api/notifications' && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
       if (url.pathname === `/api/spaces/${spaceId}/documents` && method === 'GET') return paged(state.documents);
       if (url.pathname === `/api/spaces/${spaceId}/documents` && method === 'POST') {
         const key = headers['idempotency-key'];

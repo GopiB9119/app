@@ -265,12 +265,12 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Lifecycle | Built: created with the Space (owner) or by accepting an invitation (member); ends when the owner removes the member or the member leaves; returning needs a new invitation and creates a new admission. Rules for leaving, removal, suspension and rejoining are **TBD** (C3-D06 OPEN). |
 | States | Built: `status IN ('active','removed')`; ownership offers `pending, accepted, declined, cancelled, expired, invalidated`. **PROPOSED** a fuller membership state set (C3-D02 and C18-D06, both PROPOSED). |
 | Relationships | Joins a User to a Space. Its admission ID limits access to tasks, messages, events and reminders. Ownership offers move the owner role between two memberships. |
-| Permissions | Built: members see the roster; the owner removes ordinary members; members leave; the owner cannot leave or be removed and must transfer ownership first; an ownership offer needs a sign-in within the last 15 minutes. |
+| Permissions | Built: members see the roster; the owner removes members and admins, and since [DEC-018](DECISIONS.md#accepted-decisions) (provisional) an admin removes ordinary members; members and admins leave; the owner cannot leave or be removed and must transfer ownership first; an ownership offer needs a sign-in within the last 15 minutes, and may go to a member or an admin. |
 | Privacy classification | Private (C11-C03). Built: the roster shows display names and roles, not admission IDs. |
-| Events | `space.member_removed`, `space.member_left`, `space.ownership_offered`, and `space.ownership_<status>` when an offer ends. |
-| Commands | Remove a member; leave; offer ownership; accept, decline or cancel an offer. |
+| Events | `space.member_removed`, `space.member_left`, `space.member_made_admin`, `space.admin_made_member`, `space.ownership_offered`, and `space.ownership_<status>` when an offer ends. |
+| Commands | Remove a member; leave; change a member's role (owner only); offer ownership; accept, decline or cancel an offer. |
 | Queries | List members; list ownership offers. |
-| APIs | `GET /v1/spaces/{space_id}/members`; `POST /v1/spaces/{space_id}/members/{account_id}/remove` and `POST /v1/spaces/{space_id}/leave` (Idempotency-Key, If-Match); `POST /v1/spaces/{space_id}/ownership-transfers` (Idempotency-Key, If-Match); `GET /v1/spaces/{space_id}/ownership-transfers`; `POST /v1/spaces/{space_id}/ownership-transfers/{transfer_id}/accept`, `/decline` and `/cancel` (If-Match). |
+| APIs | `GET /v1/spaces/{space_id}/members`; `POST /v1/spaces/{space_id}/members/{account_id}/remove` and `POST /v1/spaces/{space_id}/leave` (Idempotency-Key, If-Match); `POST /v1/spaces/{space_id}/members/{account_id}/role` (Idempotency-Key, If-Match); `POST /v1/spaces/{space_id}/ownership-transfers` (Idempotency-Key, If-Match); `GET /v1/spaces/{space_id}/ownership-transfers`; `POST /v1/spaces/{space_id}/ownership-transfers/{transfer_id}/accept`, `/decline` and `/cancel` (If-Match). |
 | Persistence | `space_memberships`, `space_membership_commands`, `space_ownership_transfers`. |
 | Retention | Built: ended memberships are kept as `removed`. **TBD** (C3-D09 OPEN). |
 | Audit requirements | Built: `space_audit_events` plus outbox. |
@@ -290,25 +290,25 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Purpose | **CONFIRMED** Each Space has its own roles (R2). |
 | Owner | Module `spaces`. |
 | Scope | One membership. |
-| Lifecycle | Built: `owner` for the creator, `member` for everyone admitted by invitation; the owner role moves only through an accepted ownership offer. Assigning other roles is **TBD** (T13; P5). |
-| States | Built: `role IN ('owner','member')`. **PROPOSED** owner, admin, moderator, member, guest and observer, where admins cannot manage other admins or the owner (C3-D03 PROPOSED; guests C3-D07 OPEN). |
+| Lifecycle | Built: `owner` for the creator, `member` for everyone admitted by invitation or join request; the owner role moves only through an accepted ownership offer. Since [DEC-018](DECISIONS.md#accepted-decisions) (provisional) the owner makes a reviewed member an admin, or an admin a member again, in family and group Spaces. Moderators, guests and observers are not built. |
+| States | Built: `role IN ('owner','admin','member')`. **PROPOSED** also moderator, guest and observer (C3-D03 PROPOSED; guests C3-D07 OPEN). |
 | Relationships | Part of a Membership. |
 | Permissions | See [Permission](#9-permission). |
 | Privacy classification | Private (C11-C03). |
-| Events | Ownership events (see Membership). |
-| Commands | None besides ownership transfer. |
-| Queries | Shown in the roster. |
-| APIs | None of its own. |
+| Events | `space.member_made_admin`, `space.admin_made_member` and the ownership events (see Membership). |
+| Commands | Change a member's role (owner only), besides ownership transfer. |
+| Queries | Shown in the roster and on each Space. |
+| APIs | `POST /v1/spaces/{space_id}/members/{account_id}/role` with `{"role": "admin" or "member"}` (Idempotency-Key, If-Match). |
 | Persistence | `space_memberships.role`. |
 | Retention | As Membership. |
 | Audit requirements | As Membership. |
 | Agent access | **CONFIRMED** an agent never becomes an administrator automatically (R7). Whether agents hold roles is **TBD** (D4). |
 | Allowed agent actions | None. **PROPOSED** no permission changes in the first release (P8). |
 | External side effects | None. |
-| Validation rules | Built: role from the fixed list. |
-| Invariants | Built: exactly one active owner per Space. |
-| Failure modes | None beyond Membership's. |
-| Dependencies | Membership, Permission; P5 and T13. |
+| Validation rules | Built: role from the fixed list; only the owner changes roles, never their own and never in solo or couple Spaces (409 ROLE_NOT_AVAILABLE). |
+| Invariants | Built: exactly one active owner per Space. An admin invites (always as a member), revokes invitations, removes ordinary members and decides join requests; never changes roles, removes the owner or another admin, edits settings or offers ownership. An invitation admits only while its sender is still the owner or an admin. |
+| Failure modes | Built: a stale review returns 412, the same role again 409 NO_CHANGES, an admin removing an admin 409 OWNER_ONLY. |
+| Dependencies | Membership, Permission; P5 and T13. Per-Space permission settings are not decided (DEC-018). |
 
 ### 9. Permission
 
@@ -318,7 +318,7 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Purpose | **CONFIRMED** Each Space has its own permissions (R2); retrieval respects permissions (R11). |
 | Owner | Each module enforces its own rules under S1 and S2. |
 | Scope | One action on one item. |
-| Lifecycle | Built: rules change only when the code changes. Per-Space permission settings are **TBD** (T13; P5). |
+| Lifecycle | Built: rules change only when the code changes. Per-Space permission settings are **TBD** (T13; not decided by DEC-018). |
 | States | None. |
 | Relationships | Uses the account's status, the Session, the Membership (admission), the Role, task access grants and, for care, the person described. |
 | Permissions | The rules as built are in the table below. |
@@ -344,10 +344,11 @@ Permission rules as built:
 | --- | --- |
 | Create a Space | Any signed-in account (up to 50) |
 | See a Space, its roster, its Space chat and its events | Its current members |
-| Rename a Space; invite; withdraw an invitation; remove a member | The owner |
+| Rename a Space or change its visibility; change a member's role; remove an admin | The owner |
+| Invite; withdraw an invitation; remove an ordinary member; approve or decline a request to join a group | The owner or an admin ([DEC-018](DECISIONS.md#accepted-decisions), provisional) |
 | Offer ownership | The owner, signed in within the last 15 minutes |
 | Accept or decline an invitation or an ownership offer | The intended person |
-| Leave a Space | Any member except the owner |
+| Leave a Space | Any member or admin; not the owner |
 | Create a task or an event; answer an event; send in the Space chat | Current members |
 | Edit, assign or cancel a task; add, rename or remove checklist items; ask the assignee to accept a reminder | The Space owner, or the task's creator in the same admission |
 | Change a task's progress, complete or reopen it; tick checklist items | The people above and the current assignee |
@@ -1099,7 +1100,7 @@ Each backend module in `backend/app/modules/` owns its tables. Web features live
 | community | public_pages, public_page_follows, public_posts, public_post_comments, public_post_reactions, public_saved_posts, content_reports, account_blocks, community_audit_events | Yes | Yes |
 | events | space_events, space_event_responses | Yes | Yes |
 | care | care_instructions, care_dose_reports, care_commands, care_audit_events | Yes; kept by [DEC-007](DECISIONS.md#accepted-decisions), not an approved requirement ([TASKS X1](TASKS.md#work-outside-the-approved-scope); Q12) | Yes; kept by DEC-007 (X1) |
-| agents | agent_runs, agent_run_events, agent_approvals, agent_tool_calls, agent_memories (migration `0023`; **PROVISIONAL**, [DEC-012](DECISIONS.md#accepted-decisions), C11) | Written but not linked (T34) | No (T35) |
+| agents | agent_runs, agent_run_events, agent_approvals, agent_tool_calls, agent_memories (migration `0023`; **PROVISIONAL**, [DEC-012](DECISIONS.md#accepted-decisions), C11) | Yes (T34) | Yes (T35) |
 | files | space_documents, space_document_chunks (migration `0024`; **PROVISIONAL**, [DEC-015](DECISIONS.md#accepted-decisions), made under DEC-016) | Yes | Yes |
 | platform | None (local restore drill helper) | — | — |
 | discovery | None of its own: search inside your Spaces (`GET /v1/search`) reads tasks, events and documents (DEC-015) | Yes | Yes |

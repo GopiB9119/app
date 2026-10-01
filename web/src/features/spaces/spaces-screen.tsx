@@ -129,9 +129,9 @@ function FamilySpaces({ user }: { user: Account }) {
 
   const accountChanged = problem instanceof ApiError && (problem.status === 401 || problem.code === "ACCOUNT_CHANGED");
   const visible = !accountChanged && !spaces.isError ? spaces.data?.data ?? [] : [];
-  const managedSpace = visible.find(space => space.id === managedSpaceId && space.role === "owner" && space.space_type !== "solo");
+  const managedSpace = visible.find(space => space.id === managedSpaceId && space.role !== "member" && space.space_type !== "solo");
   const membersSpace = visible.find(space => space.id === membersSpaceId);
-  const requestsSpace = visible.find(space => space.id === requestsSpaceId && space.role === "owner" && space.space_type === "group");
+  const requestsSpace = visible.find(space => space.id === requestsSpaceId && space.role !== "member" && space.space_type === "group");
   const dialogOpen = managedSpaceId !== null || membersSpaceId !== null || settingsSpaceId !== null || requestsSpaceId !== null;
   const choosing = intent !== null || accountChanged;
   return <Shell account>
@@ -161,7 +161,7 @@ function FamilySpaces({ user }: { user: Account }) {
           {!spaces.isPending && !spaces.isError && spaces.data?.data.length === 0 && <div className={styles.empty}><UsersRound size={32} strokeWidth={1.5} aria-hidden /><h3>No Spaces yet</h3><p>Create a family or group Space, or <Link href="/app/spaces/discover">find a public group</Link> to join.</p></div>}
           {!spaces.isError && !accountChanged && <ul className={styles.spaceList}>{spaces.data?.data.map(space => <li key={space.id}>
             <span className={styles.familyMark} aria-hidden>{space.visibility === "public" ? <Globe size={23} /> : <UsersRound size={23} />}</span>
-            <div className={styles.spaceIdentity}><h3>{space.name}</h3><span>{spaceTypeLabels[space.space_type]} <span aria-hidden>/</span> {space.role === "owner" ? "Owner" : "Member"}</span>
+            <div className={styles.spaceIdentity}><h3>{space.name}</h3><span>{spaceTypeLabels[space.space_type]} <span aria-hidden>/</span> {space.role === "owner" ? "Owner" : space.role === "admin" ? "Admin" : "Member"}</span>
               {space.space_type === "couple" && <CoupleStatus accountId={user.id} spaceId={space.id} version={space.version} />}
               {space.description && <p className={styles.description}>{space.description}</p>}</div>
             <span className={styles.rowPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden className={styles.publicMark} />Public</> : <><LockKeyhole size={14} aria-hidden />Private</>}</span>
@@ -172,8 +172,8 @@ function FamilySpaces({ user }: { user: Account }) {
               <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={`Documents for ${space.name}`} aria-label={`Documents for ${space.name}`}><FileText size={18} aria-hidden /></Link>
               {space.role === "owner" && <button className="icon-button" title={`Settings for ${space.name}`} aria-label={`Settings for ${space.name}`} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /></button>}
               {space.space_type !== "solo" && <button className="icon-button" title={`Members of ${space.name}`} aria-label={`Members of ${space.name}`} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /></button>}
-              {space.role === "owner" && space.space_type !== "solo" && <button className="icon-button" title={`Manage invitations for ${space.name}`} aria-label={`Manage invitations for ${space.name}`} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
-              {space.role === "owner" && space.space_type === "group" && <button className="icon-button" title={`Join requests for ${space.name}`} aria-label={`Join requests for ${space.name}`} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /></button>}
+              {space.role !== "member" && space.space_type !== "solo" && <button className="icon-button" title={`Manage invitations for ${space.name}`} aria-label={`Manage invitations for ${space.name}`} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
+              {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={`Join requests for ${space.name}`} aria-label={`Join requests for ${space.name}`} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /></button>}
             </div>
           </li>)}</ul>}
         </section>

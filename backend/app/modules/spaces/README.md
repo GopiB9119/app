@@ -34,7 +34,11 @@ Built for [T12](../../../../docs/TASKS.md#approved-requirements-not-built-yet) u
 
 - The creator is the owner and can use the Space at once. They invite one partner with the ordinary invitation; while that invitation waits (and has not expired), inviting anyone else returns 409 `COUPLE_INVITATION_PENDING`. With two members, inviting or accepting returns 409 `COUPLE_FULL`. Both checks run under the Space lock, so parallel invitations leave exactly one waiting.
 - Leaving, removal and ownership transfer follow the family rules. After a separation the owner may invite a new partner, whose new admission hides everything from before; the former partner keeps no access.
-- Evidence: `tests/test_couple_spaces.py` (6 tests, including parallel invitations, a planted invitation and the database rule) and the couple case in `tests/test_space_directory.py`.
+- Evidence: `tests/test_couple_spaces.py` (8 tests, including parallel invitations, parallel accepts, a planted invitation, the database rule, history after a separation and handing over before leaving) and the couple case in `tests/test_space_directory.py`.
+
+## Private Spaces Look Missing
+
+Anyone who is not a current member gets the same status and body for a real private Space as for an unused ID on every operation that names a Space ([T42](../../../../docs/TASKS.md#defects-that-break-approved-requirements)). Leave and remove answer "Space not found." to non-members; a former member may only repeat their own confirmed leave exactly. Offering ownership answers "Space not found.", answering an offer after leaving "Ownership transfer not found.", revoking a known invitation without owning the Space "Invitation not found.", and deciding a known join request without owning the group "Join request not found."; only groups take join requests at all. `tests/test_space_privacy.py` calls all 33 operations that name a Space with schema-valid values for both IDs and compares the answers.
 
 A new rename is blocked while an unexpired pending invitation or ownership offer exists. Resolve or withdraw that review first; the settings command never changes its reviewed Space name silently. Expired pending rows do not block. This conservative local restriction is not an approved general Space lifecycle policy.
 

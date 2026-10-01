@@ -69,7 +69,7 @@ class SpaceView(BaseModel):
     space_type: Literal["family", "solo", "group", "couple"]
     visibility: Literal["private", "public"]
     status: Literal["active"]
-    role: Literal["owner", "member"]
+    role: Literal["owner", "admin", "member"]
     version: str
     created_at: datetime
 
@@ -81,9 +81,13 @@ class SpaceSettingsView(SpaceView):
 class SpaceMemberView(BaseModel):
     account_id: str
     display_name: str
-    role: Literal["owner", "member"]
+    role: Literal["owner", "admin", "member"]
     joined_at: datetime
     etag: str
+
+
+class ChangeMemberRole(Input):
+    role: Literal["admin", "member"]
 
 
 class MembershipAction(Input):
@@ -117,7 +121,7 @@ class SpaceDirectoryEntry(BaseModel):
     name: str
     description: str
     member_count: int
-    viewer_role: Literal["owner", "member"] | None
+    viewer_role: Literal["owner", "admin", "member"] | None
     pending_request_id: str | None
     can_request: bool
 

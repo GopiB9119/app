@@ -57,7 +57,7 @@ test('text colours keep 4.5:1 contrast and control borders 3:1', () => {
 });
 
 test('feature stylesheets moved to tokens use only token variables and token corners', () => {
-  assert.equal(tokenStylesheets.length, 8);
+  assert.equal(tokenStylesheets.length, 7);
   assert.deepEqual(findStyleViolations(), []);
   const file = tokenStylesheets[0];
   assert.deepEqual(findStyleViolations({ [file]: [

@@ -229,7 +229,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
 - **W09.** Placeholder contrast is 3.68:1, and a delete button is 36 px. T36 and T37 cover this.
 - **W10.** The reminder tabs have no keyboard behaviour. Tracked as [T55](TASKS.md#defects-that-break-approved-requirements).
 - **W11.** The followed-pages list shows "empty" when loading fails. Tracked as [T56](TASKS.md#defects-that-break-approved-requirements).
-- **W12.** Failures to load the timezone list are silent.
+- **W12.** Failures to load the timezone list are silent. Tracked as [T59](TASKS.md#defects-that-break-approved-requirements).
 - **W07.** The Space pickers read only the first 50 Spaces. That is safe only while accounts are capped at 50.
 
 ## 5. Tests and Evidence

@@ -89,11 +89,11 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | spaces.family | P/P/P | Create/list/detail and reviewed owner-only name settings; broader settings/lifecycle remain |
 | spaces.couple | P/P/P | The creator and one invited partner ([DEC-017](DECISIONS.md#accepted-decisions), provisional); one waiting invitation at a time; the database refuses a third person; always private; separation by leave or removal, then a new partner sees nothing from before. Partner-only privacy beyond the family rules remains |
 | spaces.solo | P/P/P | Explicit creation, private tasks/reminders/calendar/name settings, database-enforced single owner, no invitations/transfers/conversion; native device qualification open |
-| spaces.custom | P/P/P | Group Spaces, private by default and optionally public ([DEC-011](DECISIONS.md#accepted-decisions)); owner and member roles only; reviewed per-group features and policy remain |
+| spaces.custom | P/P/P | Group Spaces, private by default and optionally public ([DEC-011](DECISIONS.md#accepted-decisions)); owner, admin and member roles; reviewed per-group features and policy remain |
 | spaces.temporary-event | U/U/U | Explicit expiry, read-only/archive and retained-data policy |
 | spaces.invitations | P/P/P | Existing verified account, inbox/review/accept/decline/revoke; no external contact send |
 | spaces.admission | P/P/P | Exact admission epochs, new invitation for return, no old task grants |
-| spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; delegated roles and restrictions remain |
+| spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; owner, admin and member roles ([DEC-018](DECISIONS.md#accepted-decisions), provisional: admins invite, remove ordinary members and answer join requests; only the owner changes roles). Moderators, guests, observers, restrictions and per-Space permission settings remain |
 | spaces.join-requests | P/P/P | Requests to public groups with an optional note, owner approval as a new admission, withdrawal, 14-day expiry and a 7-day wait after a decline ([T22](TASKS.md#spaces)) |
 | spaces.ownership-transfer | P/P/P | Two-party exact review and one-owner continuity; native device evidence pending |
 | spaces.history-policy | P/P/P | Creation-time task grants; configurable history sharing not implemented |
@@ -191,7 +191,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 ### Agent Workstream: Deferred
 
-The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11); `scripts/feature-catalog.test.mjs` checks this, and only a confirmed decision may change that check. Meanwhile a first release without an AI model exists on the backend only, built under that provisional decision: requests in one Space, exact approvals, task creation and completion, the person's own one-time reminder, and notes ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)). Its web screen at `/app/agent` is linked from the header and passes an offline screen test and a live journey ([T34](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-web-screen-checkpoint)); Android is not started (T35).
+The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decisions) (conflict C11); `scripts/feature-catalog.test.mjs` checks this, and only a confirmed decision may change that check. Meanwhile a first release without an AI model exists on the backend only, built under that provisional decision: requests in one Space, exact approvals, task creation and completion, the person's own one-time reminder, and notes ([T33](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-backend-checkpoint)). Its web screen at `/app/agent` is linked from the header and passes an offline screen test and a live journey ([T34](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#agent-web-screen-checkpoint)), and on Android from the account screen, with 6 offline screen tests and a live journey on the emulator ([T35](TASKS.md#approved-requirements-not-built-yet); [checkpoint](BUILD_STATUS.md#android-agent-checkpoint)).
 
 | Feature | B/W/A | Boundary |
 | --- | --- | --- |

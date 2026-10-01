@@ -29,6 +29,9 @@ MAX_SPACE_INVITATIONS = 200
 OWNERSHIP_OFFER_LIFETIME = timedelta(minutes=15)
 OWNERSHIP_AUTH_MAX_AGE = timedelta(minutes=15)
 MAX_OWNERSHIP_OFFERS = 100
+# DEC-018: admins help the owner with membership; roles are changed only by the owner.
+MANAGERS = ("owner", "admin")
+ROLE_SPACE_TYPES = ("family", "group")
 
 
 class SpaceService:
@@ -205,11 +208,13 @@ class SpaceService:
                 return MembershipOutcome(space_id=space.id, account_id=actor.account_id)
             if actor is None:
                 raise DomainError(404, "NOT_FOUND", "Space not found.")
-            if target is None or (action == "remove" and actor.role != "owner"):
+            if target is None or (action == "remove" and actor.role not in MANAGERS):
                 raise DomainError(404, "NOT_FOUND", "Membership not found.")
             self.identity.authenticate(database, token, lock=True)
             if target.role == "owner":
                 raise DomainError(409, "OWNER_REQUIRED", "The owner must remain in this family Space.")
+            if action == "remove" and actor.role == "admin" and target.role == "admin":
+                raise DomainError(409, "OWNER_ONLY", "Only the owner can remove an admin.")
             if expected is None:
                 raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current member before continuing.")
             digest = self.security.digest("space.membership.command", ":".join((action, target_id, expected)))
@@ -241,6 +246,67 @@ class SpaceService:
                 actor_admission_id=actor.admission_id, target_id=target.account_id,
                 target_admission_id=target.admission_id, action=action, request_key=key, request_digest=digest))
             return MembershipOutcome(space_id=space.id, account_id=target.account_id)
+
+    def member_view(self, database, membership):
+        user = database.get(User, membership.account_id)
+        return SpaceMemberView(account_id=membership.account_id, display_name=user.display_name, role=membership.role,
+                               joined_at=membership.joined_at, etag=self.membership_etag(membership))
+
+    def change_role(self, token, space_id, target_id, role, key, expected):
+        """The owner makes a reviewed member an admin, or an admin a member again (DEC-018)."""
+        action = "make_admin" if role == "admin" else "make_member"
+        with self.sessions.begin() as database:
+            caller, _accounts = self.lock_accounts(database, token, [target_id])
+            space = self.lock_space(database, space_id)
+            memberships = database.scalars(
+                select(SpaceMembership).where(SpaceMembership.space_id == space.id,
+                                             SpaceMembership.account_id.in_({caller.id, target_id}))
+                .order_by(SpaceMembership.account_id).with_for_update().execution_options(populate_existing=True)
+            ).all()
+            by_account = {membership.account_id: membership for membership in memberships}
+            actor, target = by_account.get(caller.id), by_account.get(target_id)
+            if actor is None or actor.status != "active":
+                raise DomainError(404, "NOT_FOUND", "Space not found.")
+            if actor.role != "owner" or target is None or target.status != "active" or target.account_id == caller.id:
+                raise DomainError(404, "NOT_FOUND", "Membership not found.")
+            self.identity.authenticate(database, token, lock=True)
+            if space.space_type not in ROLE_SPACE_TYPES:
+                raise DomainError(409, "ROLE_NOT_AVAILABLE", "Admins exist only in family and group Spaces.")
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current member before continuing.")
+            digest = self.security.digest("space.membership.command", ":".join((action, target_id, expected)))
+            receipt = database.scalar(select(SpaceMembershipCommand).where(
+                SpaceMembershipCommand.space_id == space.id, SpaceMembershipCommand.actor_id == caller.id,
+                SpaceMembershipCommand.request_key == key,
+            ))
+            if receipt is not None:
+                if receipt.actor_admission_id != actor.admission_id or receipt.target_admission_id != target.admission_id:
+                    raise DomainError(404, "NOT_FOUND", "Membership not found.")
+                if receipt.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Review the changed role change.")
+                return self.member_view(database, target)
+            if target.role == "owner":
+                raise DomainError(409, "OWNER_REQUIRED", "Hand over ownership instead.")
+            if expected != self.membership_etag(target):
+                raise DomainError(412, "MEMBERSHIP_CHANGED", "Membership changed. Review it again.")
+            if target.role == role:
+                raise DomainError(409, "NO_CHANGES", "This person already has that role.")
+            target.role = role
+            space.version += 1
+            identifier = str(uuid4())
+            event_type = "space.member_made_admin" if role == "admin" else "space.admin_made_member"
+            now = self.clock()
+            database.add_all([
+                SpaceAuditEvent(id=identifier, space_id=space.id, actor_id=caller.id, target_id=target.account_id,
+                                action=event_type, created_at=now),
+                OutboxEvent(id=identifier, event_type=event_type, actor_id=caller.id,
+                            aggregate_id=space.id, schema_version=1, created_at=now),
+            ])
+            database.flush()
+            database.add(SpaceMembershipCommand(id=identifier, space_id=space.id, actor_id=caller.id,
+                actor_admission_id=actor.admission_id, target_id=target.account_id,
+                target_admission_id=target.admission_id, action=action, request_key=key, request_digest=digest))
+            return self.member_view(database, target)
 
     def list_spaces(self, token, limit, cursor=None):
         with self.sessions() as database:
@@ -388,6 +454,20 @@ class SpaceService:
         if database.scalar(statement) is None:
             raise DomainError(404, "NOT_FOUND", "Space not found.")
 
+    @staticmethod
+    def require_manager(database, space_id, account_id, lock=False):
+        """The owner or an admin; anyone else gets the missing-Space answer."""
+        statement = select(SpaceMembership).where(
+            SpaceMembership.space_id == space_id,
+            SpaceMembership.account_id == account_id,
+            SpaceMembership.role.in_(MANAGERS),
+            SpaceMembership.status == "active",
+        )
+        if lock:
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        if database.scalar(statement) is None:
+            raise DomainError(404, "NOT_FOUND", "Space not found.")
+
     def invitation_view(self, invitation, space, inviter):
         status = invitation.status
         if status == "pending" and invitation.expires_at <= self.clock():
@@ -439,7 +519,7 @@ class SpaceService:
         with self.sessions.begin() as database:
             caller, accounts = self.lock_accounts(database, token, [recipient_id])
             space = self.lock_space(database, space_id)
-            self.require_owner(database, space.id, caller.id, lock=True)
+            self.require_manager(database, space.id, caller.id, lock=True)
             self.identity.authenticate(database, token, lock=True)
             if space.space_type == "solo":
                 raise DomainError(409, "SOLO_OWNER_ONLY", "Solo Spaces cannot invite another person.")
@@ -500,7 +580,7 @@ class SpaceService:
             )
             kind = "space_invitations" if space_id else "invitation_inbox"
             if space_id:
-                self.require_owner(database, space_id, caller.id)
+                self.require_manager(database, space_id, caller.id)
                 statement = statement.where(SpaceInvitation.space_id == space_id)
             else:
                 statement = statement.join(SpaceMembership, and_(
@@ -511,7 +591,7 @@ class SpaceService:
                     SpaceInvitation.status == "pending",
                     SpaceInvitation.expires_at > self.clock(),
                     User.status == "active",
-                    SpaceMembership.role == "owner",
+                    SpaceMembership.role.in_(MANAGERS),
                     SpaceMembership.status == "active",
                 )
             if cursor:
@@ -561,7 +641,7 @@ class SpaceService:
             )
             if action == "revoke":
                 try:
-                    self.require_owner(database, space.id, caller.id, lock=True)
+                    self.require_manager(database, space.id, caller.id, lock=True)
                 except DomainError:
                     # Someone who knows an invitation but no longer owns its Space learns nothing new (T42).
                     raise DomainError(404, "NOT_FOUND", "Invitation not found.") from None
@@ -569,7 +649,8 @@ class SpaceService:
                 inviter = accounts[invitation.inviter_id]
                 if inviter.status != "active" or inviter.verified_at is None:
                     raise DomainError(409, "INVITATION_UNAVAILABLE", "This invitation is unavailable.")
-                self.require_owner(database, space.id, inviter.id, lock=True)
+                # The invitation holds only while the person who sent it is still the owner or an admin.
+                self.require_manager(database, space.id, inviter.id, lock=True)
             self.identity.authenticate(database, token, lock=True)
             membership = database.get(SpaceMembership, (space.id, caller.id))
             if action == "accept" and invitation.status == "accepted":
@@ -664,7 +745,7 @@ class OwnershipTransferService:
             return "expired"
         session = database.get(AccountSession, transfer.from_session_id, populate_existing=True)
         if (space.status != "active" or space.version != transfer.source_version
-                or sender[0].role != "owner" or recipient[0].role != "member"
+                or sender[0].role != "owner" or recipient[0].role not in ("member", "admin")
                 or sender[0].admission_id != transfer.from_admission_id or recipient[0].admission_id != transfer.to_admission_id
                 or session is None or session.account_id != transfer.from_account_id or session.revoked_at is not None
                 or session.expires_at <= self.clock()):
@@ -715,7 +796,7 @@ class OwnershipTransferService:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Review the changed ownership offer.")
                 self.identity.authenticate(database, token, lock=True)
                 return self.view(database, existing, space, sender, recipient)
-            if sender[0].role != "owner" or recipient[0].role != "member":
+            if sender[0].role != "owner" or recipient[0].role not in ("member", "admin"):
                 raise DomainError(404, "NOT_FOUND", "Ownership transfer not available.")
             if expected != self.spaces.membership_etag(recipient[0]):
                 raise DomainError(412, "MEMBERSHIP_CHANGED", "The intended owner changed. Reload and review again.")

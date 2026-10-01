@@ -53,7 +53,7 @@ class SpaceMembership(Base):
         UniqueConstraint("admission_id", name="uq_space_membership_admission"),
         UniqueConstraint("space_id", "admission_sequence", name="uq_space_membership_admission_sequence"),
         CheckConstraint("admission_sequence > 0", name="ck_space_membership_admission_sequence"),
-        CheckConstraint("role IN ('owner', 'member')", name="ck_space_membership_role"),
+        CheckConstraint("role IN ('owner', 'admin', 'member')", name="ck_space_membership_role"),
         CheckConstraint("status IN ('active', 'removed')", name="ck_space_membership_status"),
         Index("ix_space_membership_account", "account_id", "status", "space_id"),
         Index(
@@ -119,7 +119,7 @@ class SpaceMembershipCommand(Base):
     __tablename__ = "space_membership_commands"
     __table_args__ = (
         UniqueConstraint("space_id", "actor_id", "request_key", name="uq_space_membership_command"),
-        CheckConstraint("action IN ('remove', 'leave')", name="ck_space_membership_command_action"),
+        CheckConstraint("action IN ('remove', 'leave', 'make_admin', 'make_member')", name="ck_space_membership_command_action"),
     )
 
     id: Mapped[str] = mapped_column(ForeignKey("space_audit_events.id"), primary_key=True)
