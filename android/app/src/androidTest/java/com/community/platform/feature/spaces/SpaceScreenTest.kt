@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNotInList
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -76,6 +77,7 @@ class SpaceScreenTest {
 
     private fun reveal(tag: String) { compose.onNodeWithTag("space-workspace").performScrollToNode(hasTestTag(tag)) }
     private fun revealText(text: String) { compose.onNodeWithTag("space-workspace").performScrollToNode(hasText(text)) }
+    private fun absent(tag: String) = compose.assertNotInList("space-workspace", tag)
 
     @Test fun createSpaceKeepsTheEnteredNameAndShowsTheConfirmedOwnerView() {
         var state by mutableStateOf(workspace())
@@ -277,7 +279,8 @@ class SpaceScreenTest {
         compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
         reveal("space-leave")
         compose.onNodeWithTag("space-remove-$accountId").assertDoesNotExist()
-        compose.onNodeWithTag("space-remove-$otherId").assertDoesNotExist()
+        absent("space-remove-$otherId")
+        reveal("space-leave")
         compose.onNodeWithTag("space-leave").performScrollTo().performClick()
         compose.onNodeWithText("Leave this family Space?").assertIsDisplayed()
         compose.runOnIdle { assertNull(left) }
@@ -585,10 +588,7 @@ class SpaceScreenTest {
             reveal("invitation-revoke-${invitation.id}")
             compose.onNodeWithTag("invitation-revoke-${invitation.id}").performScrollTo().assertIsDisplayed()
             compose.runOnIdle { state = state.copy(selectedSpace = member.copy(memberInvites = false)) }
-            compose.onNodeWithTag("space-recipient").assertDoesNotExist()
-            compose.onNodeWithTag("space-invite").assertDoesNotExist()
-            compose.onNodeWithTag("space-member-invite-note").assertDoesNotExist()
-            compose.onNodeWithTag("invitation-revoke-${invitation.id}").assertDoesNotExist()
+            for (tag in listOf("space-recipient", "space-invite", "space-member-invite-note", "invitation-revoke-${invitation.id}")) absent(tag)
         }
         compose.runOnIdle { assertEquals(2, requests.size); assertTrue(requests.all { it.recipientAccountId == otherId }) }
     }

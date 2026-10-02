@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -18,6 +19,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -33,9 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNotInList
 import java.io.File
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -149,7 +151,7 @@ class CommunityScreenTest {
         compose.setContent { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
         reveal("followed-loading")
         compose.onNodeWithText("Loading pages you follow\u2026").assertIsDisplayed()
-        compose.onAllNodesWithText("You do not follow any pages.").assertCountEquals(0)
+        absent(hasText("You do not follow any pages."))
 
         state = state.copy(loading = false, followedStatus = ListStatus.LOADED)
         reveal("followed-empty")
@@ -258,7 +260,7 @@ class CommunityScreenTest {
         // Once unpinned, the post is back in the date list and offers Pin to top.
         val unpinned = pinned.copy(pinned = false)
         state = state.copy(posts = listOf(unpinned), pinned = emptyList())
-        compose.onAllNodesWithTag("pinned-heading").assertCountEquals(0)
+        absent("pinned-heading")
         reveal("pin-$postId")
         compose.onNodeWithTag("pin-$postId").assertTextContains("Pin to top").performClick()
         assertEquals(listOf(pinned, unpinned), pins)
@@ -288,11 +290,9 @@ class CommunityScreenTest {
         }
     }
 
-    /** No item of the list has [tag]. The list composes only the items near the screen, so a count of nodes cannot show this. */
-    private fun absent(tag: String) {
-        val error = assertThrows("$tag is in the list", AssertionError::class.java) { reveal(tag) }
-        assertTrue(error.message.orEmpty(), error.message.orEmpty().contains("No node found that matches"))
-    }
+    /** Nothing in the list matches, wherever the list is scrolled to ([assertNotInList]). */
+    private fun absent(matcher: SemanticsMatcher) = compose.assertNotInList("community-content", matcher)
+    private fun absent(tag: String) = absent(hasTestTag(tag))
 
     @Test fun largeTextNarrowOwnerManagesModeratorsHandoverAndPageState() {
         val owned = page.copy(canManage = true, etag = "\"p1\"")
@@ -311,7 +311,7 @@ class CommunityScreenTest {
         largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
         insideAndShown("page-moderators", "moderator-$activeId", "moderator-handover-$activeId", "moderator-remove-$activeId", "moderator-withdraw-$waitingId", "page-state", "page-archive", "page-delete")
         // While an invitation waits, no second one can be sent.
-        compose.onAllNodesWithTag("moderator-invite-id").assertCountEquals(0)
+        absent("moderator-invite-id")
         reveal("page-moderators")
         capture("community-page-moderators-large-text.png")
         // Handing over, removing and withdrawing each ask first, naming the person.
@@ -345,14 +345,15 @@ class CommunityScreenTest {
         // A read-only page says so, keeps its moderators listed, and offers only Restore and Delete.
         state = state.copy(page = owned.copy(status = "read_only"), handover = null)
         insideAndShown("page-read-only", "moderator-remove-$activeId", "page-restore", "page-delete")
-        for (tag in listOf("page-edit", "post-save-draft", "moderator-invite-id", "moderator-handover-$activeId", "page-archive")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("page-edit", "post-save-draft", "moderator-invite-id", "moderator-handover-$activeId", "page-archive")) absent(tag)
+        reveal("page-restore")
         compose.onNodeWithTag("page-restore").performScrollTo().performClick()
         assertEquals(1, restores)
 
         // A deleted page shows its owner only when it will be erased and how to restore it.
         state = state.copy(page = owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z"))
         insideAndShown("page-deleted", "page-restore")
-        for (tag in listOf("page-moderators", "page-state", "post-save-draft", "page-read-only")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("page-moderators", "page-state", "post-save-draft", "page-read-only")) absent(tag)
         reveal("page-deleted")
         capture("community-page-deleted-large-text.png")
         compose.onNodeWithTag("page-restore").performScrollTo().performClick()
@@ -390,7 +391,7 @@ class CommunityScreenTest {
         largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
         insideAndShown("offer-$offerId", "offer-accept-$offerId", "offer-decline-$offerId", "role-$waitingId", "role-accept-$waitingId", "role-decline-$waitingId",
             "role-$activeId", "role-open-$activeId", "role-step-down-$activeId")
-        compose.onAllNodesWithTag("moderating-none").assertCountEquals(0)
+        absent("moderating-none")
         reveal("offer-$offerId")
         capture("community-page-roles-large-text.png")
         // Taking over a page and agreeing to moderate ask first; declining does not.

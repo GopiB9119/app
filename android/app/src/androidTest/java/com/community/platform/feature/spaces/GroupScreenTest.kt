@@ -27,6 +27,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.community.platform.CommunityTheme
 import com.community.platform.feature.assertNarrowScreen
+import com.community.platform.feature.assertNotInList
 import com.community.platform.feature.assertReachable
 import com.community.platform.feature.assertTextNotClipped
 import com.community.platform.feature.identity.AccountRepository
@@ -124,6 +125,7 @@ class GroupScreenTest {
         compose.onNode(matcher).performScrollTo()
     }
     private fun reveal(tag: String) = reveal(hasTestTag(tag))
+    private fun absent(matcher: SemanticsMatcher) = compose.assertNotInList("group-workspace", matcher)
     // The list composes only what is near the screen, so a check that something at the end is gone first scrolls there.
     private fun scrollToEnd() { compose.onNodeWithTag("group-workspace").performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 100_000f) } }
     private fun inCard(id: String, text: String) = hasText(text) and hasAnyAncestor(hasTestTag("group-$id"))
@@ -203,8 +205,8 @@ class GroupScreenTest {
         compose.onNode(inCard(quiltersId, "Quilting circle")).assertIsDisplayed()
         compose.onNodeWithTag("group-ask-$quiltersId").assertIsEnabled()
         reveal(hasText("Your join requests"))
-        compose.onNodeWithText("Show more groups").assertDoesNotExist()
-        compose.onNodeWithText("You have not asked to join any group.").assertDoesNotExist()
+        absent(hasText("Show more groups"))
+        absent(hasText("You have not asked to join any group."))
         for (text in listOf("Waiting for review", "I walk most evenings.", "Approved", "Declined", "Withdrawn", "Closed: the group became private", "Expired")) {
             reveal(hasText(text))
             compose.onNodeWithText(text).assertIsDisplayed()

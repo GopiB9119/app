@@ -1631,7 +1631,26 @@ Builds [T119](TASKS.md#defects-that-break-approved-requirements), found by the a
 | The test as it was (copy only) | Failed as in every earlier run: `performScrollTo()` found no node with the post's Pin tag. |
 | Can a count miss a control? (copy only) | Yes. After the Follow button was shown, a count of the post's Pin found none while the Pin was in the list; `absent` failed for that Pin and for Follow, as it should, and passed for the owner's Edit page button, which a moderator does not have. |
 
-**Boundary.** Only this test changed. Whether other device tests count nodes after scrolling in the same way was not checked here.
+**Boundary.** Only this test changed. Whether other device tests count nodes after scrolling in the same way was not checked here; [T122](#android-absence-checks-look-through-the-whole-list-checkpoint) then checked them.
+
+## Android Absence Checks Look Through The Whole List Checkpoint
+
+Builds [T122](TASKS.md#defects-that-break-approved-requirements), found by the audit session. After [T119](#android-moderator-test-repaired-checkpoint), a read-only review on Claude Opus 5.5 followed each of the 230 checks that something is missing, in 14 Android device test classes, to the list item that would hold it (`.local/absence-review/report.md`). 19 could pass with the control shown, because a lazy list composes only the items near the screen and the test had scrolled elsewhere. 11 more depended on the screen's height.
+
+- **Fix, in the tests only:** `assertNotInList(list, matcher)` in `ScreenChecks.kt` expects Compose's `performScrollToNode`, which scrolls to the top of a lazy list and then a screen at a time to its end, to find nothing. The Community, Space and Group screen tests call it through a short `absent`: for 18 of the 19 checks, for 3 of the height-dependent ones, and for 2 more checks in the same lines. The `absent` that T119 added now uses it too. The list is left at its end, so a test reveals what it presses next.
+- **Not changed:**
+  - Two height-dependent checks whose item has left the screen's state, so no screen rule can bring it back: a post result after switching to pages, and a member after removal.
+  - The live `AccountJourneyTest` checks, which need the local services.
+  - `CalendarScreenTest`, which the completion session is changing for T117.
+- **How it was tested:** a copy of commit `2c96447` with the change, plus copy-only switches in the four screens. Each switch breaks one rule, for example showing the invite form while an invitation waits. Copy-only classes ran the current and the old version of each test with one switch on.
+
+| Check (2026-10-02, read-only API 36 emulator, network off, 320 × 640 dp) | Result |
+| --- | --- |
+| Switches off | `CommunityScreenTest` **12 of 12**, `GroupScreenTest` **15 of 15**, `SpaceScreenTest` **22 of 23** (`.local/t120/device.txt`). The failure is `invitePolicyConfirmStaysReachableAtLargeText`, a Space settings test that compares a whole description with its first sentence. The design session has corrected it in the working copy but not committed it; this change does not touch it. |
+| One switch on, the current tests | All 11 failed at the changed check, naming the control that was shown. |
+| One switch on, the old tests | They missed the control in 5 of the 11 cases: the pinned heading after the last unpin; the moderator panel and page state on a deleted page; Edit page and the composer on a read-only page (caught only at the next check, the invite form); "You do not moderate any pages." beside roles and offers; and "You have not asked to join any group." beside requests. They caught it in the other 6: the empty followed-pages message while loading, before or after the loading line; a second moderator invitation while one waits; Remove on the owner, for a member; "Show more groups" after the last page; and the invite form after member invites are turned off. That last one stopped on the emulator's font scale change the first time, and failed at its check in two later runs (`.local/t120/device-rerun.txt`). |
+
+**Boundary.** The switches exist only in the copy. Whether an old check missed depends on the screen size: some that the review expected to miss caught the control at 320 × 640 dp, and might not on another screen.
 
 ## Remaining Gates
 
