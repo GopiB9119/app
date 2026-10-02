@@ -167,6 +167,15 @@ All sessions share one working tree and one live stack, and the API and workers 
 
 **PROPOSED.** Give each session its own branch or worktree, merged at checkpoints.
 
+**Since then (2026-10-01 to 2026-10-02):** more effects of the shared tree, all seen by the audit session.
+
+- Two sessions each wrote a migration numbered `0030` at the same time, and every backend test failed with "Multiple heads". `npm run verify` now reports such a clash before running the backend suite.
+- A complete backend run counted 25 failures that came from another session's migration and models changing during the run. The summary of `npm run verify` now lists the files that changed while it ran.
+- From 05:26 the shared Android tree did not compile while another session added Room and WorkManager, so device runs had to use a clean copy of the last commit.
+- Commits made with `git add -A` take in other sessions' unfinished work under an unrelated message. The audit session's own checkpoint commits did this, as their messages say. At 07:44 another session's commit, "Refactor spaces management to support internationalization" (`67ac8b6`), contained the audit session's T99 and T100 fixes, tests and records. A commit message then no longer describes what the commit contains, and one session's half-done change can be committed by another. Since `5b7d712`, the audit session stages only the paths it changed.
+
+**PROPOSED.** Until each session has its own branch or worktree, each session stages only the paths it changed (`git add <paths>`) and never `git add -A`.
+
 ### M7. Features are left half-finished across layers
 
 - **Personal data export.** The backend and a worker exist ([export_worker.py](../backend/app/export_worker.py)), but there is no Compose service and no web or Android screen, so nobody can use it. It also has a silent 1,000-row limit (T45).
