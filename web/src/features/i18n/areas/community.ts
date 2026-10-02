@@ -283,7 +283,7 @@ export const en = {
 } as const;
 
 export const te: Record<keyof typeof en, string> = {
-	"community.feed": "ఫీడ్",
+	"community.feed": "తప్పు ఫీడ్",
 	"community.pagesAndPosts": "పేజీలు మరియు పోస్ట్‌లు",
 	"community.yourPages": "మీ పేజీలు",
 	"community.profile": "ప్రొఫైల్",

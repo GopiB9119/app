@@ -258,7 +258,7 @@ function ReminderRequests({ user, disabled, onLocked, onDenied, onNotice }: {
   };
   return <section className={styles.requests} aria-labelledby={titleId}>
     <div className={styles.sectionHeading}><h2 id={titleId}>{t("reminders.requests")}</h2><button className="icon-button" aria-label={t("reminders.refreshRequests")} title={t("reminders.refreshRequests")} disabled={disabled || !!selection || records.isFetching} onClick={() => records.refetch()}><RefreshCw size={18} className={records.isFetching ? "spin" : ""} /></button></div>
-    <div className={styles.requestTabs} role="tablist" aria-label={t("reminders.requestLists")} onKeyDown={moveTab}>{(["received", "sent"] as const).map(value => <button key={value} id={`${titleId}-${value}`} role="tab" aria-selected={direction === value} aria-controls={`${titleId}-panel`} tabIndex={direction === value ? 0 : -1} disabled={disabled || !!selection} onClick={() => { setDirection(value); setError(""); }}>
+    <div className={styles.requestTabs} style={language === "en" ? undefined : { flexWrap: "wrap" }} role="tablist" aria-label={t("reminders.requestLists")} onKeyDown={moveTab}>{(["received", "sent"] as const).map(value => <button key={value} id={`${titleId}-${value}`} role="tab" aria-selected={direction === value} aria-controls={`${titleId}-panel`} tabIndex={direction === value ? 0 : -1} disabled={disabled || !!selection} onClick={() => { setDirection(value); setError(""); }}>
       {value === "received" ? <Inbox size={17} /> : <Send size={17} />}{t(value === "received" ? "reminders.received" : "reminders.sent")}
     </button>)}</div>
     <div role="tabpanel" id={`${titleId}-panel`} aria-labelledby={`${titleId}-${direction}`}>

@@ -105,7 +105,7 @@ export function SeriesForm({ user, taskId, frequency, zones, disabled, onLocked,
       <h3 id={`${fieldId}-review`}>{replacing ? "Review the change" : t("reminders.series.review")}</h3>
       <dl className={styles.facts}>
         <dt>{t("reminders.task")}</dt><dd>{result.task_title}</dd><dt>{t("reminders.recipient")}</dt><dd>{t("reminders.you", { name: result.recipient.display_name })}</dd>
-        <dt>{t("reminders.series.repeats")}</dt><dd>{displayRule(result, language)}</dd><dt>{t("reminders.from")}</dt><dd>{formatLocalDate(result.start_date, language)}</dd>
+        <dt>{t("reminders.series.repeats")}</dt><dd>{displayRule(result, language)}</dd><dt>{t("reminders.series.from")}</dt><dd>{formatLocalDate(result.start_date, language)}</dd>
         <dt>{t("reminders.series.until")}</dt><dd>{formatLocalDate(result.end_date, language)}</dd><dt>{t("reminders.timezone")}</dt><dd>{result.timezone}</dd>
         <dt>{t("reminders.series.count")}</dt><dd>{result.occurrence_count}</dd><dt>{t("reminders.channel")}</dt><dd>{t("reminders.inApp")}</dd>
       </dl>
