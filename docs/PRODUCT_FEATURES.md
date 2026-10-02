@@ -59,7 +59,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | identity.relationships | U/U/U | Explicit relationships distinct from legal/care authority |
 | identity.privacy-consent | P/P/P | Narrow reminder preferences; wider purpose/version/withdrawal controls remain |
 | identity.account-lifecycle | U/U/U | Deactivation/deletion, revocation and resumable purge |
-| identity.data-export | U/U/U | Fresh-auth scoped export, protected download and expiry |
+| identity.data-export | P/P/P | Recent-sign-in export of chosen categories, download for 24 hours in the requesting session only, cancel ([DEC-022](DECISIONS.md#accepted-decisions), T68); account deletion with a 7-day grace period on all three; backups' retention (Q19) remains |
 | identity.delegations | D/D/D | Shared authority contracts retained; Agent delegation deferred |
 
 ### Public Community
@@ -108,7 +108,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | messaging.direct-conversations | P/P/P | Two current members of one Space, bound to both admissions; read-only after either leaves. Blocks, cross-Space contacts remain |
 | messaging.group-conversations | P/P/P | One Space chat per Space for current members; custom groups and conversation-specific membership remain |
 | messaging.messages | P/P/P | Durable message + outbox commit, immutable send key, attributed sender, server-side encryption at rest (not E2E) |
-| messaging.offline-outbox | U/U/U | Crash-safe pending command, explicit reconciliation after unknown acceptance (current retry identity is in memory only) |
+| messaging.offline-outbox | U/U/P | Android keeps unconfirmed chat messages sealed with a Keystore key and resends them with the same key ([DEC-021](DECISIONS.md#accepted-decisions), T67); web retry identity is in memory only |
 | messaging.history-sync | P/P/P | Admission-bounded history, position paging and bounded polling; event cursor/WebSocket sync remains |
 | messaging.delivery-read-receipts | U/U/U | Accepted, received, decrypted, read and business acknowledgment distinct (only own read position exists) |
 | messaging.unread-counts | P/P/P | Per-admission forward-only read position; excludes own and deleted messages |
@@ -178,7 +178,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | notifications.verified-endpoints | P/P/P | Local identity email only; delivery/device bindings remain |
 | notifications.delivery-consent | P/P/P | Task-linked personal consent; channel/purpose/expiry grants remain |
 | notifications.templates-locales | P/P/P | Local identity email and reminder content; localization/template lifecycle remain |
-| notifications.push | U/U/U | Approved provider, device binding, OS permission, redacted background payload |
+| notifications.push | U/P/P | No provider ([DEC-005](DECISIONS.md#accepted-decisions)); browser alerts while a tab is open and Android checks about every 15 minutes after opt-in ([DEC-020](DECISIONS.md#accepted-decisions), T66); provider push, device binding and redacted payloads remain |
 | notifications.email | P/P/P | Local synthetic identity mail only, not production notification email |
 | notifications.sms | U/U/U | Provider/consent/region/cost gates; no live sends |
 | notifications.whatsapp | U/U/U | Official supported capabilities only; separate authorization |
@@ -254,16 +254,16 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | safety.reports | P/P/P | Page/post/comment reports with fixed reasons, one open report per target, daily bound and outbox event; no reviewer tools, decisions or notices yet |
 | safety.blocking | P/P/P | Block pages (hidden everywhere, follow ended) and comment authors (comments hidden, cannot comment on your pages); messaging blocks remain |
 | safety.muting | U/U/U | Personal notification/feed preference, not send restriction |
-| safety.moderation-cases | U/U/U | Scoped evidence, actual human decisions and notices |
+| safety.moderation-cases | P/P/P | Platform moderators hide or keep reported public pages, posts and comments with a reason; authors see notices ([DEC-024](DECISIONS.md#accepted-decisions), T69); evidence copies and restrictions on people remain |
 | safety.policies | U/U/U | Versioned applicable rules and governed publication |
 | safety.evidence | U/U/U | Minimal immutable lawful evidence and access audit |
-| safety.reviewer-queues | U/U/U | Assignment, conflict of interest, expiry and current authority |
+| safety.reviewer-queues | P/P/P | One oldest-first queue of reported public content, grouped per item; conflict of interest refused; assignment and expiry remain |
 | safety.restrictions | U/U/U | Exact scoped reversible/expiring enforcement where applicable |
-| safety.appeals | U/U/U | Independent review; overturn does not erase other restrictions |
+| safety.appeals | P/P/P | One appeal per hiding decision, reviewed by a different moderator, who keeps it or restores the content (T69) |
 | safety.privileged-access | U/U/U | Workforce identity, step-up, purpose and time bounds |
 | safety.incidents | U/U/U | Runbooks, containment, evidence and recovery ownership |
 | safety.retention-legal-holds | U/U/U | Reviewed retention and protected exceptions, not indefinite storage |
-| safety.data-rights | U/U/U | Export/delete across original and derived data |
+| safety.data-rights | P/P/P | Data download and account deletion that erases the person's own data and keeps what others share (T68); derived data in backups (Q19) remains |
 | safety.age-guardian-policy | U/U/U | Qualified policy; family owner is not automatically a guardian |
 
 ### Integrations
@@ -283,11 +283,11 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
 | realtime.websocket-gateway | U/U/U | Authenticated bounded session transport |
-| realtime.subscriptions | U/U/U | Current resource authorization on subscribe and delivery |
+| realtime.subscriptions | P/P/P | One server-sent event stream per signed-in app with hints for conversations and the reminder inbox, checked against current access when read ([DEC-019](DECISIONS.md#accepted-decisions), [ADR-0006](adr/0006-live-updates.md), T65); other resources remain |
 | realtime.authorized-replay | U/U/U | No old history grant through replay |
 | realtime.snapshot-cursors | U/U/U | Coherent snapshot/log boundary and account/scope-bound cursors |
 | realtime.client-reconciliation | U/U/U | Stable logical IDs across REST/event orderings |
-| realtime.backpressure | U/U/U | Bounded memory, reconnect and explicit full-resync behavior |
+| realtime.backpressure | P/P/P | At most 5 streams per account, 100 queued hints per stream, 30-minute streams, resync after a lost listener, client backoff (T65) |
 
 ### Platform and Client Quality
 
@@ -308,7 +308,7 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | platform.deployment | P/P/P | Local builds/Compose; no production deployment |
 | platform.design-system | P/P/P | Existing operational styles and Compose theme; wider components remain |
 | platform.accessibility | U/P/P | Some measured narrow/large-text checks; full assistive technology review remains |
-| platform.localization | U/P/P | English and timezone handling; Telugu/Hindi/RTL coverage remains |
+| platform.localization | U/P/P | Android in English, Telugu and Hindi; the web shell and sign-in screens in all three with a remembered choice, other web screens still English ([DEC-023](DECISIONS.md#accepted-decisions), T70, T98); machine-translated drafts await review; RTL remains |
 | platform.client-offline-state | U/P/P | Visible failure and in-memory intents; no durable process-death outbox |
 
 ## Screens and Navigation

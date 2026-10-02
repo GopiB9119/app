@@ -284,6 +284,7 @@ fun ReminderScreen(state: ReminderWorkspaceState, actions: ReminderActions, onBa
                                 Text(stringResource(R.string.reminders_preferences), style = MaterialTheme.typography.titleLarge)
                                 Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = preference.value.enabled, onCheckedChange = actions.preference, enabled = !state.locked, modifier = Modifier.testTag("reminder-preference")); Text(stringResource(R.string.reminders_preference_label), Modifier.weight(1f)) }
                                 Text(stringResource(R.string.reminders_preference_effect), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                PhoneAlertsSetting(state.accountId)
                             }
                         } }
                     }

@@ -155,7 +155,7 @@ Other evidence gaps:
 - The default `npm` test scripts skip the identity, care and alerts client suites (15 tests) and the alerts journey (T51).
 - One saved test report, `.local/live-sweep-20261001.xml`, is not valid XML because it contains terminal colour codes.
 
-**Since then:** T51 completed the test commands and documented how to save a valid report, and [T64](TASKS.md#defects-that-break-approved-requirements) added `npm run verify`, one local command that runs every check and writes one summary, including the files that changed during the run. A CI service is still blocked, as the Operations row in section 6 says.
+**Since then:** T51 completed the test commands and documented how to save a valid report, and [T64](TASKS.md#defects-that-break-approved-requirements) added `npm run verify`, one local command that runs every check and writes one summary, including the files that changed during the run. [T96](TASKS.md#defects-that-break-approved-requirements) added the Android device tests to it. A CI service is still blocked, as the Operations row in section 6 says.
 
 ### M6. Sessions disturb each other
 
@@ -277,7 +277,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
   - **The holes listed above:**
     - The lock test is [T60](TASKS.md#defects-that-break-approved-requirements).
     - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens are [T78](TASKS.md#defects-that-break-approved-requirements), after the live updates work (T65) settles on the web. [T92](TASKS.md#defects-that-break-approved-requirements) added 29 offline tests for repeating reminders and snooze.
-    - On Android, [T93](TASKS.md#defects-that-break-approved-requirements) added device tests for care, events, the calendar and repeating reminders, and found and fixed dialogs that cut their text off at 200%. Chat, checklists and group Spaces still have no device tests; chat waits for T65 and T67.
+    - On Android, [T93](TASKS.md#defects-that-break-approved-requirements) added device tests for care, events, the calendar and repeating reminders, and found and fixed dialogs that cut their text off at 200%. [T95](TASKS.md#defects-that-break-approved-requirements) added checklists and group Spaces and found two defects ([T97](TASKS.md#defects-that-break-approved-requirements)). Only chat still has no device tests; it waits for T65 and T67. [T96](TASKS.md#defects-that-break-approved-requirements) runs them all with `npm run verify -- -Suite device`.
 
 ## 6. What Is Missing, and Why
 

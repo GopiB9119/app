@@ -414,6 +414,8 @@
     <string name="groups_requests_private">This group is private, so nobody can ask to join.</string>
     <string name="groups_approve">Approve</string>
     <string name="groups_decline">Decline</string>
+    <string name="groups_keep">Keep</string>
+    <string name="groups_confirm_decline">Confirm decline</string>
     <string name="groups_status_pending">Waiting for review</string>
     <string name="groups_status_approved">Approved</string>
     <string name="groups_status_declined">Declined</string>
@@ -600,11 +602,11 @@
     <string name="moderation_reports">Reports</string>
     <string name="moderation_appeals">Appeals</string>
     <string name="moderation_only">Only platform moderators can open this page.</string>
-    <string name="moderation_loading">Loading moderation...</string>
-    <string name="moderation_loading_reports">Loading reports...</string>
-    <string name="moderation_loading_appeals">Loading appeals...</string>
-    <string name="moderation_loading_notices">Loading decisions...</string>
-    <string name="moderation_loading_your_reports">Loading your reports...</string>
+    <string name="moderation_loading">Loading moderation&#8230;</string>
+    <string name="moderation_loading_reports">Loading reports&#8230;</string>
+    <string name="moderation_loading_appeals">Loading appeals&#8230;</string>
+    <string name="moderation_loading_notices">Loading decisions&#8230;</string>
+    <string name="moderation_loading_your_reports">Loading your reports&#8230;</string>
     <string name="moderation_reports_empty">No reports are waiting.</string>
     <string name="moderation_appeals_empty">No appeals are waiting.</string>
     <string name="moderation_notices_title">Decisions about your content</string>
@@ -637,7 +639,10 @@
     <string name="moderation_report_action">Reviewed: action taken</string>
     <string name="moderation_report_no_action">Reviewed: no action</string>
     <string name="moderation_first_reported">First reported %1$s</string>
-    <string name="moderation_report_count">%1$d reports</string>
+    <plurals name="moderation_report_count">
+        <item quantity="one">%1$d report</item>
+        <item quantity="other">%1$d reports</item>
+    </plurals>
     <string name="moderation_reason_count">%1$s: %2$d</string>
     <string name="moderation_summary">%1$s / %2$s</string>
     <string name="moderation_comment">Comment</string>
@@ -1113,4 +1118,17 @@
     <string name="home_read_item">Read %1$s</string>
     <string name="home_read_from">Read the post from %1$s</string>
     <string name="account_blocked">Blocked</string>
+    <string name="phone_alerts_label">Phone alerts for new reminders and messages</string>
+    <string name="phone_alerts_explain">Checked about every 15 minutes while you have a network. Messages show only how many are unread.</string>
+    <string name="phone_alerts_refused">Android did not allow notifications. Phone alerts are off.</string>
+    <string name="phone_alerts_reminder_title">Reminder</string>
+    <string name="phone_alerts_locked">You have a reminder</string>
+    <string name="phone_alerts_channel_reminders">Reminders</string>
+    <string name="phone_alerts_channel_reminders_description">New reminders in your inbox</string>
+    <string name="phone_alerts_channel_messages">Messages</string>
+    <string name="phone_alerts_channel_messages_description">How many messages are unread</string>
+    <plurals name="phone_alerts_unread_messages">
+        <item quantity="one">You have %1$d unread message</item>
+        <item quantity="other">You have %1$d unread messages</item>
+    </plurals>
 </resources>

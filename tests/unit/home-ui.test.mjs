@@ -117,6 +117,10 @@ async function fixture(context, options = {}) {
     window.fetch = async (input, config = {}) => {
       const url = new URL(String(input), 'https://offline.invalid');
       const method = config.method ?? 'GET';
+      if (url.pathname === '/api/live' && method === 'GET') {
+        // The live connection every signed-in page opens (DEC-019) stays open without hints and closes when the page aborts it.
+        return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+      }
       state.calls.push(`${method} ${url.pathname}`);
       if (url.pathname === '/api/me' && method === 'GET') {
         return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });

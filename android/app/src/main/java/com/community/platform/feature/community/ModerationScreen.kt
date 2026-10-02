@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -177,7 +178,7 @@ private fun QueueItem(item: ModerationQueueDto, state: ModerationState, actions:
     val draft = state.draft(item)
     Column(Modifier.fillMaxWidth().testTag("moderation-item-${item.key}"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
         Preview(item.preview, item.pageName, item.targetType)
-        Text(stringResource(R.string.moderation_report_count, item.reportCount))
+        Text(pluralStringResource(R.plurals.moderation_report_count, item.reportCount, item.reportCount))
         item.reasons.forEach { entry -> Text(stringResource(R.string.moderation_reason_count, moderationReasonLabel(entry.reason), entry.count)) }
         Text(stringResource(R.string.moderation_first_reported, time.showModerationTime(item.firstReportedAt)), style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.moderation_decision), style = MaterialTheme.typography.titleSmall)
@@ -195,9 +196,9 @@ private fun QueueItem(item: ModerationQueueDto, state: ModerationState, actions:
         NoteInput(draft.note, !state.working, false, "moderation-note-${item.targetId}") { actions.editDecision(item, draft.action, draft.reason, it) }
         draft.error?.let { ModerationFailure(it) }
         Button(onClick = { actions.decide(item) }, enabled = !state.busy && draft.action != null && draft.note.codePointLength() <= 1000,
-            shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-record-${item.targetId}")) {
+            shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-record-${item.targetId}")) {
             Icon(Icons.Default.Check, null)
-            Text(stringResource(R.string.moderation_record), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+            Text(stringResource(R.string.moderation_record), Modifier.weight(1f, fill = false).padding(start = DesignTokens.SpaceUnit * 2))
         }
         HorizontalDivider()
     }
@@ -249,12 +250,12 @@ private fun AppealReviewItem(item: ModerationAppealReviewDto, state: ModerationS
             OutlinedButton(onClick = { actions.resolve(item, "upheld") }, enabled = !state.busy && draft.note.codePointLength() <= 1000 && (draft.outcome == null || draft.outcome == "upheld"),
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-uphold-${item.appeal.id}")) {
                 Icon(Icons.Default.Check, null)
-                Text(stringResource(R.string.moderation_keep), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+                Text(stringResource(R.string.moderation_keep), Modifier.weight(1f, fill = false).padding(start = DesignTokens.SpaceUnit * 2))
             }
             Button(onClick = { actions.resolve(item, "overturned") }, enabled = !state.busy && draft.note.codePointLength() <= 1000 && (draft.outcome == null || draft.outcome == "overturned"),
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-restore-${item.appeal.id}")) {
                 Icon(Icons.Default.Refresh, null)
-                Text(stringResource(R.string.moderation_restore), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+                Text(stringResource(R.string.moderation_restore), Modifier.weight(1f, fill = false).padding(start = DesignTokens.SpaceUnit * 2))
             }
         }
         HorizontalDivider()
@@ -326,12 +327,12 @@ internal fun ModerationAppealDialog(state: ModerationState, actions: ModerationA
             TextButton(onClick = { actions.sendAppeal(notice) }, enabled = !state.busy && draft.note.isNotBlank() && draft.note.codePointLength() <= 1000,
                 modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-appeal-send")) {
                 Icon(Icons.AutoMirrored.Filled.Send, null)
-                Text(stringResource(R.string.moderation_send_appeal), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+                Text(stringResource(R.string.moderation_send_appeal), Modifier.weight(1f, fill = false).padding(start = DesignTokens.SpaceUnit * 2))
             }
         }, dismissButton = {
             TextButton(onClick = { actions.selectAppeal(null) }, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-appeal-cancel")) {
                 Icon(Icons.Default.Close, null)
-                Text(stringResource(R.string.community_cancel), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+                Text(stringResource(R.string.community_cancel), Modifier.weight(1f, fill = false).padding(start = DesignTokens.SpaceUnit * 2))
             }
         })
 }

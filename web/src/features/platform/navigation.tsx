@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, House, MessageSquare, UserRound, UsersRound } from "lucide-react";
+import { useText } from "@/features/i18n/i18n";
+import type { MessageId } from "@/features/i18n/messages";
 
 // Styles are in globals.css (.main-nav, .app-frame), because every screen's header uses this navigation.
 
@@ -17,6 +19,9 @@ export const mainSections = [
 ] as const;
 
 export type MainSection = (typeof mainSections)[number]["label"];
+const sectionMessages: Record<MainSection, MessageId> = {
+  Home: "nav.home", Spaces: "nav.spaces", Messages: "nav.messages", Discover: "nav.discover", Profile: "nav.profile",
+};
 
 export function currentSection(pathname: string): MainSection | null {
   const matches = (path: string) => path === "/app" ? pathname === "/app" : pathname === path || pathname.startsWith(`${path}/`);
@@ -24,10 +29,11 @@ export function currentSection(pathname: string): MainSection | null {
 }
 
 export function MainNavigation() {
+  const t = useText();
   const current = currentSection(usePathname() ?? "");
-  return <nav className="main-nav" aria-label="Main">
+  return <nav className="main-nav" aria-label={t("nav.main")}>
     {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} aria-current={current === label ? "page" : undefined}>
-      <Icon size={20} aria-hidden /><span>{label}</span>
+      <Icon size={20} aria-hidden /><span>{t(sectionMessages[label])}</span>
     </Link>)}
   </nav>;
 }

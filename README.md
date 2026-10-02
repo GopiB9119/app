@@ -54,7 +54,7 @@ See the [local runbook](docs/runbooks/README.md) for setup, verification and cur
 
 ## Checks
 
-`npm run verify` runs every offline check one after another (structure, design tokens, the web type check and tests, the backend and Android JVM tests) and writes each log and one summary to `.local\verify\`; `npm run verify -- -Suite live` runs the live journeys against the local preview. See [Verification Commands](docs/runbooks/README.md#verification-commands).
+`npm run verify` runs every offline check one after another (structure, design tokens, the web type check and tests, the backend and Android JVM tests) and writes each log and one summary to `.local\verify\`; `npm run verify -- -Suite live` runs the live journeys against the local preview, and `npm run verify -- -Suite device` runs the Android device tests on an emulator it starts and stops, with the network off. See [Verification Commands](docs/runbooks/README.md#verification-commands).
 
 ## Structure Checks
 

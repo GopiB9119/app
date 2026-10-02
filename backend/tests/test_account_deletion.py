@@ -19,6 +19,7 @@ from tests.test_identity import PASSWORD, account, auth
 from tests.test_live_updates import Hints, change
 from tests.test_messaging import admit, open_chat, send
 from tests.test_reminder_delivery_guards import preview_reminder
+from tests.test_space_directory import ask as ask_to_join, group
 from tests.test_spaces import create_space
 from tests.test_tasks import create_task
 
@@ -26,7 +27,7 @@ NAME = "Alexandria Quill"
 GONE = (
     "alex@example.test", NAME, "Alex chat 4471", "Alex direct 4471", "Alex comment 4471", "Alex post 4471",
     "Alex Walks 4471", "Alex report 4471", "Synthetic Medicine A", "plumber comes on Fridays", "Alex solo 4471",
-    "Alex private task 4471", "Alex diary 4471",
+    "Alex private task 4471", "Alex diary 4471", "Alex group 4471", "Alex group story 4471",
 )
 
 
@@ -98,6 +99,11 @@ def lived_in_account(client, app):
     reported = client.post("/v1/reports", headers=auth(alex),
                            json={"target_type": "post", "target_id": sam_post["id"], "reason": "spam", "details": "Alex report 4471"})
     assert reported.status_code == 201, reported.text
+    # A public group only Alex is in, which Sam asked to join: the request keeps a copy of the group's name.
+    alone_group = group(client, alex, name="Alex group 4471", description="Alex group story 4471")
+    assert alone_group.status_code == 201, alone_group.text
+    asked = ask_to_join(client, sam, alone_group.json()["data"]["id"], note="Sam asks 5582")
+    assert asked.status_code == 201, asked.text
     app.state.clock.now += timedelta(minutes=2)
     app.state.reminders.dispatch_due(limit=20)
     return alex, sam, {"shared": shared, "solo": solo, "chat": chat, "direct": direct, "kept": kept.json()["data"],
@@ -176,7 +182,7 @@ def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
     after = stored_text(app)
     assert [value for value in GONE if value in after] == []
     assert password_hash not in after
-    for kept in ("Sam stays 5582", "Kept chore 5582", "Sam picnic 5582", "Sam post 5582", "Shared family"):
+    for kept in ("Sam stays 5582", "Kept chore 5582", "Sam picnic 5582", "Sam post 5582", "Shared family", "Sam asks 5582"):
         assert kept in after, kept
     with app.state.sessions() as database:
         user = database.get(User, alex["user"]["id"])

@@ -414,6 +414,8 @@
     <string name="groups_requests_private">यह ग्रुप निजी है, इसलिए कोई जुड़ने का अनुरोध नहीं कर सकता।</string>
     <string name="groups_approve">मंज़ूरी दें</string>
     <string name="groups_decline">ठुकराएँ</string>
+    <string name="groups_keep">रहने दें</string>
+    <string name="groups_confirm_decline">ठुकराने की पुष्टि करें</string>
     <string name="groups_status_pending">जाँच का इंतज़ार</string>
     <string name="groups_status_approved">मंज़ूरी मिली</string>
     <string name="groups_status_declined">ठुकराया गया</string>
@@ -600,11 +602,11 @@
     <string name="moderation_reports">रिपोर्ट</string>
     <string name="moderation_appeals">अपीलें</string>
     <string name="moderation_only">केवल प्लैटफ़ॉर्म मॉडरेटर यह पेज खोल सकते हैं।</string>
-    <string name="moderation_loading">मॉडरेशन लोड हो रहा है...</string>
-    <string name="moderation_loading_reports">रिपोर्ट लोड हो रही हैं...</string>
-    <string name="moderation_loading_appeals">अपीलें लोड हो रही हैं...</string>
-    <string name="moderation_loading_notices">निर्णय लोड हो रहे हैं...</string>
-    <string name="moderation_loading_your_reports">आपकी रिपोर्ट लोड हो रही हैं...</string>
+    <string name="moderation_loading">मॉडरेशन लोड हो रहा है&#8230;</string>
+    <string name="moderation_loading_reports">रिपोर्ट लोड हो रही हैं&#8230;</string>
+    <string name="moderation_loading_appeals">अपीलें लोड हो रही हैं&#8230;</string>
+    <string name="moderation_loading_notices">निर्णय लोड हो रहे हैं&#8230;</string>
+    <string name="moderation_loading_your_reports">आपकी रिपोर्ट लोड हो रही हैं&#8230;</string>
     <string name="moderation_reports_empty">कोई रिपोर्ट प्रतीक्षा में नहीं है।</string>
     <string name="moderation_appeals_empty">कोई अपील प्रतीक्षा में नहीं है।</string>
     <string name="moderation_notices_title">आपकी सामग्री के बारे में निर्णय</string>
@@ -637,7 +639,10 @@
     <string name="moderation_report_action">जाँच हुई: कार्रवाई की गई</string>
     <string name="moderation_report_no_action">जाँच हुई: कोई कार्रवाई नहीं</string>
     <string name="moderation_first_reported">पहली रिपोर्ट %1$s</string>
-    <string name="moderation_report_count">%1$d रिपोर्ट</string>
+    <plurals name="moderation_report_count">
+        <item quantity="one">%1$d रिपोर्ट</item>
+        <item quantity="other">%1$d रिपोर्ट</item>
+    </plurals>
     <string name="moderation_reason_count">%1$s: %2$d</string>
     <string name="moderation_summary">%1$s / %2$s</string>
     <string name="moderation_comment">कमेंट</string>
@@ -1089,4 +1094,17 @@
     <string name="home_read_item">%1$s पढ़ें</string>
     <string name="home_read_from">%1$s की पोस्ट पढ़ें</string>
     <string name="account_blocked">ब्लॉक किए गए</string>
+    <string name="phone_alerts_label">नए रिमाइंडर और संदेशों के लिए फ़ोन अलर्ट</string>
+    <string name="phone_alerts_explain">नेटवर्क होने पर लगभग हर 15 मिनट में जाँच होती है। संदेशों के लिए केवल यह दिखता है कि कितने अपठित हैं।</string>
+    <string name="phone_alerts_refused">Android ने सूचनाओं की अनुमति नहीं दी। फ़ोन अलर्ट बंद हैं।</string>
+    <string name="phone_alerts_reminder_title">रिमाइंडर</string>
+    <string name="phone_alerts_locked">आपके लिए एक रिमाइंडर है</string>
+    <string name="phone_alerts_channel_reminders">रिमाइंडर</string>
+    <string name="phone_alerts_channel_reminders_description">आपके इनबॉक्स में नए रिमाइंडर</string>
+    <string name="phone_alerts_channel_messages">संदेश</string>
+    <string name="phone_alerts_channel_messages_description">कितने संदेश अपठित हैं</string>
+    <plurals name="phone_alerts_unread_messages">
+        <item quantity="one">आपका %1$d अपठित संदेश है</item>
+        <item quantity="other">आपके %1$d अपठित संदेश हैं</item>
+    </plurals>
 </resources>

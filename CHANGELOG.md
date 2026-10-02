@@ -2,6 +2,21 @@
 
 Notable changes to requirements, documentation structure and the product, newest first. Each entry says what changed and links to the decision or evidence.
 
+## 2026-10-02
+
+### Product (the owner's ten critical gaps)
+
+Built under [DEC-019 to DEC-024](docs/DECISIONS.md#accepted-decisions), all provisional until you review them ([checkpoint](docs/BUILD_STATUS.md#owners-critical-gaps-checkpoint)).
+
+- **Live updates** ([T65](docs/TASKS.md#owners-critical-gaps)): messages and reminders now appear at once on web and Android through one live connection per open app; the old timers stay as a slower fallback. Leaving or being removed from a Space now shows in an open chat at once ([T86](docs/TASKS.md#defects-that-break-approved-requirements)).
+- **Alerts without a push provider** ([T66](docs/TASKS.md#owners-critical-gaps)): browser alerts for new reminders on the web, and on Android phone alerts for new reminders and unread messages, checked about every 15 minutes after you turn them on. Message alerts show only a count.
+- **Unsent messages survive on Android** ([T67](docs/TASKS.md#owners-critical-gaps)): a message the server has not confirmed is kept encrypted on the phone and sent again with the same key. New dependencies from the local cache: Room 2.6.1 and WorkManager 2.9.0.
+- **Delete your account and download your data** ([T68](docs/TASKS.md#owners-critical-gaps)): "Your data" on web and Android, a 7-day grace period you can cancel by signing in, and two new background services, `export-worker` and `account-deletion-worker`.
+- **Moderation** ([T69](docs/TASKS.md#owners-critical-gaps)): screens on web and Android for moderators (reports and appeals), decisions and appeals in Safety, "Your reports", and author-only "Hidden by moderators" marks. The report confirmation on the web now says moderators will review it.
+- **Telugu and Hindi** ([T70](docs/TASKS.md#owners-critical-gaps)): Android in both languages; on the web a Language choice in the footer with the shell, navigation and account-entry screens translated. The remaining web screens are [T98](docs/TASKS.md#owners-critical-gaps). All translations are machine drafts until a native speaker reviews them.
+- **Still blocked:** end-to-end encryption (T71: Q11, no reviewed library can be installed), push through Firebase or Apple and other integrations (DEC-005, no credentials), and an AI model for the agent (Q17, none installed).
+- **Changed tests** ([Article 7](docs/PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): the offline fixtures of `home-ui`, `agents-ui`, `care-ui` and `documents-ui` now answer the live connection that DEC-019 adds to every signed-in page; `reminder-ui` and `care-ui` click a save-backed checkbox and wait for the saved state instead of Playwright's `check()`, which failed under load; `reminder-ui` names the in-app reminder checkbox by state because a second switch now exists. No assertion was weakened.
+
 ## 2026-10-01
 
 ### Product (page rules and pinned posts)
@@ -49,6 +64,8 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ### Product (audit session)
 
+- **`npm run verify -- -Suite device` runs the Android device tests** (T96): on an emulator it starts and stops itself, with the network off, a screen 320 dp wide and the font scale checked after each class. Its first runs found a device test that tapped a button it had not scrolled into view on a Pixel 5–shaped screen; the test now scrolls to the button first.
+- **Android device tests for checklists and group Spaces; declining a join request asks first** (T95, T97): 25 tests. On Android, Decline was sent at once, although a declined person must wait 7 days to ask again; it now asks "Keep" or "Confirm decline", as the web does. The join note's counter now counts an emoji once.
 - **Android device tests for care, events, the calendar and repeating reminders; confirmation dialogs scroll** (T93): 33 tests on an emulator with the network off, including 320 dp at 200% text. They found that the questions before stopping a medicine, cancelling an event, and cancelling, acknowledging, pausing, resuming, skipping or cancelling reminders cut their explanation off at large text sizes; their text now scrolls.
 - **Android account settings keep an unsaved name or timezone when the phone rotates** (T94): the draft and the version it started from survive rotation and a restarted app, and only a save replaces them. T50 had fixed this for the sign-in fields only.
 - **Offline tests for repeating reminders and snooze on the web; a refused snooze closes its dialog** (T92): 29 tests cover creating, confirming, retrying and refusing series changes and snoozes, and the layout at 320 px with 200% text. They found that a refused snooze left its dialog open on the old reminder; it now closes, shows the reason and reloads the inbox.

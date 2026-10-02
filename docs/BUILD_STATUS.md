@@ -1403,6 +1403,67 @@ Builds [T94](TASKS.md#defects-that-break-approved-requirements), audit A12. T50 
 | --- | --- |
 | Before the fix | A source copy with the original screen and the new test: 6 of 7 passed. The new test failed because, after recreation, the name field showed the refreshed "Server update" instead of the draft (`.local/t94/before-IdentityScreenTest.txt`). |
 | After the fix | The same copy with only the fix: **7 of 7**; on one build of the shared tree with T93, 52 of 52 (`.local/t94/after-IdentityScreenTest.txt`, `.local/t94/shared-IdentityScreenTest.txt`). On a read-only API 36 emulator started by the audit session, with the network off at 320 dp and the font scale restored; it was shut down afterwards. The JVM identity tests passed, 23 of 23. |
+## Owner's Critical Gaps Checkpoint
+
+Builds [T65–T70 and T86](TASKS.md#owners-critical-gaps) from the owner's list of ten gaps, under the provisional decisions [DEC-019 to DEC-024](DECISIONS.md#accepted-decisions). Evidence files are under `.local/gaps/`.
+
+- **Live updates (T65, T86, [ADR-0006](adr/0006-live-updates.md)).** `GET /v1/live` is a server-sent event stream: `ready`, `change` (kind `conversation` or `notifications`, identifiers only), `resync` and `end`, with a comment every 15 s. Services send hints with `pg_notify` inside the changing transaction, so a rolled-back change tells nobody; one listening connection per API process fans them out. Limits: 5 streams per account, 100 queued hints per stream, 30 minutes per stream. Ending a membership now tells the person about each chat they lose, and the other person in each direct chat (T86).
+- **Alerts without a push provider (T66).** Web: "Browser alerts for new reminders" in the inbox. Android: "Phone alerts for new reminders and messages" next to the in-app reminder setting; a WorkManager check about every 15 minutes with a network; reminders name the task, the lock screen says only "You have a reminder", messages show only a count. Turning off, signing out or another account stops the checks.
+- **Unsent messages on Android (T67).** Room table `unsent_messages` in `community-unsent.db`, bodies sealed with AES-GCM under the Keystore alias `community.messaging.outbox.v1`, excluded from backups like everything else; resent by a WorkManager job with the original key, at most 5 times.
+- **Deleting an account and the data download (T68).** Migration `0027`; `POST /v1/me/deletion`, `POST /v1/auth/cancel-deletion`; the purge (`app.deletion_worker`) erases the person's own data in one transaction per account and keeps what others share, shown as "Deleted account". Screens: web `/app/settings/data`, Android "Your data". The `export-worker` and `account-deletion-worker` services were started on 2026-10-02 next to the running stack.
+- **Moderation (T69).** Migration `0028`; web `/app/moderation`, Safety notices and appeals on web and Android, author-only marks.
+- **Languages (T70).** Android complete in Telugu and Hindi; web language choice with the shell, navigation and account-entry screens translated; the rest is T98.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Backend | `test_live_updates`, `test_account_deletion`, `test_spaces`, `test_messaging`, `test_moderation`, `test_exports`: **172 passed**. Injected defects: live updates 6 of 6 and account deletion 12 of 12 made a test fail (`.local/gaps/live-defects.txt`, `.local/gaps/deletion-defects.txt`). |
+| Web | Type check passes; client tests **150 passed**; the offline screen tests for data, moderation, i18n, account, identity, community, home, agents, care and documents pass (the full run before the fixture fixes below: 136 of 161, every failure the missing live endpoint). |
+| Android JVM | All 29 classes, **446 tests**, 0 failures (`.local/android-jvm-all.txt`). Mutations caught: account data retry key, moderation retry key, outbox network-error removal, phone alert repeat. |
+| Android device | `ModerationScreenTest` **7 of 7** on a read-only API 36 emulator at 320 dp, 200% font scale, network off, font scale restored, emulator stopped afterwards. `AccountDataScreenTest` compiles but was not run on a device. Lint and both APKs build. |
+
+**Tests changed** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): DEC-019 makes every signed-in page open the live connection, so the offline fixtures of `home-ui`, `agents-ui`, `care-ui` and `documents-ui` now answer `/api/live` with an open stream that is not counted as a call; no assertion changed. `reminder-ui` (T87's inbox test) and `care-ui` (dose alerts) used Playwright `check()`/`uncheck()` on checkboxes that change only when the save answers, which failed under load; they now click and wait for the saved state, with the same assertions. `reminder-ui` finds the in-app reminder checkbox by its unchecked state because the inbox now has a second switch. `MessagingLiveTest` (new in T65) waits 5.5 s instead of 5 s for the next poll, because the wait starts when the previous poll finishes.
+
+**Not done:** end-to-end encryption (T71, blocked), push through a provider, external integrations and an AI model (blocked as before), the remaining web translations (T98), and running `AccountDataScreenTest` on a device.
+## Android Checklist And Group Device Tests Checkpoint
+
+Builds [T95](TASKS.md#defects-that-break-approved-requirements) and [T97](TASKS.md#defects-that-break-approved-requirements). Written by a background agent on Claude Opus 5.5, then checked by the audit session, which fixed the two defects the group tests found.
+
+- **New device tests:** 25 in two classes, on a read-only API 36 emulator with the network off at 320 dp.
+  - `ChecklistScreenTest` (11): loading, failed, empty and denied states; ticked items and only the actions the person may use; a tick sent once and shown only once confirmed; a lost tick never shown as done, with Retry sending the same change; removing asks first and names the item, and Keep sends nothing; renaming starts from the item's title, and Cancel sends nothing; an unconfirmed add keeps the draft locked; a refused change keeps the draft, and reloading asks before discarding it; leaving asks first when a change is unconfirmed or a draft would be lost; every control waits while a change is in flight; 320 dp at 200% text.
+  - `GroupScreenTest` (14): the loading, empty and failed searches of Find groups; what each group lets the person do; the join note; lost, refused and in-flight join requests; withdrawing; approving; declining; the visibility question and a lost visibility change; the note counter; 320 dp at 200% text. `GroupScreen` takes its real view model, so these tests answer through a stand-in `GroupApi` on the device that records each request and can hold, refuse or lose it. No app code was changed for testing.
+- **Defects found (T97), fixed by the audit session** in `android/app/src/main/java/com/community/platform/feature/spaces/GroupScreen.kt`, whose files had not changed since 2026-10-01:
+  - Decline was sent the moment it was tapped, although a declined person must wait 7 days to ask again. It now asks first, with "Keep" or "Confirm decline" and Approve hidden meanwhile, as the web does.
+  - The note counter counted an emoji twice (200 emoji showed "400/280"). It now counts characters, as the view model, the server and the web do.
+  - The two new strings have draft Hindi and Telugu translations, as [DEC-023](DECISIONS.md#accepted-decisions) allows.
+- **Noticed, not changed:** on the group screen, Back looks enabled but does nothing while a request or visibility change is unconfirmed, and Back or a new search clears a typed note without asking. The checklist's leave question fits 320 dp at 200% text with little room to spare.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fix | Checklist 11 of 11; group 12 of 14: "A decline was sent without asking first", and the counter showed "400/280" for 200 emoji. The existing `SpaceScreenTest` 19 of 19 (`.local/t95/final-*.txt`). |
+| The tests can fail | 23 deliberate breakages in a source copy, never in the shared tree, each made the intended test fail: a question skipped or Keep and Cancel sending, a lost answer shown as done, controls enabled while unconfirmed, a retry with a new command or key, a draft blanked while unconfirmed, and text cut off at large text (`.local/t95/T95-EVIDENCE.txt`). |
+| After the fix | `GroupScreenTest` **14 of 14** in both runs of the new device suite and on the clean build that passed all 135 device tests ([device suite checkpoint](#android-device-tests-in-one-command-checkpoint)). |
+
+## Android Device Tests In One Command Checkpoint
+
+Builds [T96](TASKS.md#defects-that-break-approved-requirements): `npm run verify` ran every suite except the Android device tests, which each session ran by hand with its own script and emulator.
+
+- **New:** `npm run verify -- -Suite device` runs [verify-android-device.ps1](../scripts/verify-android-device.ps1).
+  - It starts its own read-only emulator on the first free port from 5584 and builds while the emulator starts.
+  - It waits a minute for Android to settle, switches the network off, sets a screen 320 dp wide, and installs copies of the two APKs.
+  - It runs each class that needs no local services, checks the font scale after each class, and shuts the emulator down, also after a failure. It never uses or stops an emulator it did not start.
+  - `verify.ps1` counts the tests from the instrumentation status codes. A test that starts and never finishes counts as failed, and the summary names any class with a problem.
+  - The suite runs only when asked for, like `live`. The [runbook](runbooks/README.md#verification-commands) describes it.
+- **What its first runs found:**
+  - Just after start, Android stopped the first class's process as not responding (`bg anr`), as it did with three of its own apps in the same minute, so no test of `AgentScreenTest` ran. The script now waits 60 seconds after start. It runs a class once more only when no test of it started; a failed test is never run again.
+  - With that fixed, `AgentScreenTest.anUnconfirmedApprovalOffersOnlyApproveAgainWithTheSameCommand` failed 3 of 3 on the Pixel 5–shaped virtual device, and passed with the same APKs on the Pixel 4–shaped one. Its scroll step reached the run's list item but left the "Approve again" button below the screen's edge, where a tap reaches nothing; the Pixel 5's camera cutout takes more height. The test now scrolls to each button before tapping it, and its assertions are unchanged. A person can scroll to the button, so the app was not at fault.
+  - The Pixel 4–shaped virtual device has no telephony, so `svc data disable` fails there. The script now accepts that one answer, and still checks that airplane mode is on, Wi-Fi is off and mobile data is 0.
+  - From 05:26 the shared tree did not build, because another session's work in progress adds Room and WorkManager and does not compile yet. The last run therefore used a clean build: the last commit plus the audit session's own changes.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| First run, `npm run verify -- -Suite device`, 04:47 to 05:07 | 136 of 136 tests that started passed in 17 classes; no test of `AgentScreenTest` started (`.local/verify/device-1`). |
+| Second run, with the wait after start, 05:08 to 05:25 | 141 of 142: the `AgentScreenTest` failure above (`.local/verify/device-2`). It failed 3 of 3 again on the same APKs, and passed 6 of 6 on the Pixel 4 shape (`.local/t96-agent-repeat.txt`, `.local/t96-agent-membership-avd.txt`). |
+| Clean build with the test fix, 05:51 to 06:08 | **135 of 135 in 16 classes** on the Pixel 5 shape, including `AgentScreenTest` 6 of 6, `ChecklistScreenTest` 11 of 11 and `GroupScreenTest` 14 of 14 (`.local/t96-device-head.txt`). The other session's new `ModerationScreenTest`, not committed yet, passed 7 of 7 in both earlier runs. |
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

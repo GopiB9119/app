@@ -27,7 +27,8 @@ import javax.inject.Inject
 
 enum class SendState { SENDING, UNKNOWN, FAILED }
 
-data class PendingSend(val intent: SendIntent, val state: SendState, val error: String? = null)
+/** [kept]: also kept sealed on the phone (DEC-021), so leaving the chat or closing the app does not lose it. */
+data class PendingSend(val intent: SendIntent, val state: SendState, val error: String? = null, val kept: Boolean = false)
 
 data class ChatState(
     val conversation: ConversationDto,
@@ -43,8 +44,8 @@ data class ChatState(
     val denied: Boolean = false,
     val error: String? = null,
 ) {
-    /** Leaving loses the retry identity of these sends. */
-    val unconfirmed: Boolean get() = pending.any { it.state != SendState.FAILED }
+    /** Leaving loses the retry identity of these sends: the ones not kept on the phone. */
+    val unconfirmed: Boolean get() = pending.any { it.state != SendState.FAILED && !it.kept }
     val working: Boolean get() = loading || polling || loadingEarlier || deleting != null || pending.any { it.state == SendState.SENDING }
 }
 
@@ -82,6 +83,7 @@ class MessagingViewModel @Inject constructor(
     private val repository: MessagingRepository,
     private val spaces: SpaceRepository,
     private val live: LiveSignals = LiveSignals.None,
+    private val outbox: MessageOutbox = MessageOutbox.None,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(MessagingState())
     val state = mutableState.asStateFlow()
@@ -358,7 +360,20 @@ class MessagingViewModel @Inject constructor(
         chatJob.cancel(); chatJob = SupervisorJob(accountJob)
         markedThrough = conversation.readPosition.toLong()
         mutableState.update { it.copy(chat = ChatState(conversation)) }
-        pollNow(first = true)
+        val expectedChat = chatGeneration
+        // Kept messages come back before the first read, which may already show some of them as confirmed.
+        chatScope().launch { restoreKept(expectedChat, conversation.id); poll(first = true) }
+    }
+
+    /** Messages kept on the phone for this chat return as unconfirmed; nothing is sent until the person retries. */
+    private suspend fun restoreKept(expectedChat: Long, conversationId: String) {
+        val account = mutableState.value.accountId ?: return
+        val kept = try { outbox.kept(account, conversationId) } catch (error: CancellationException) { throw error } catch (_error: Exception) { return }
+        if (kept.isEmpty()) return
+        updateChat(expectedChat) { chat ->
+            val known = chat.pending.map { it.intent.key }.toSet()
+            chat.copy(pending = chat.pending + kept.filter { it.intent.key !in known }.map { PendingSend(it.intent, SendState.UNKNOWN, kept = true) })
+        }
     }
 
     fun closeChat() {
@@ -419,22 +434,27 @@ class MessagingViewModel @Inject constructor(
     private fun chatFailure(expected: Long, expectedChat: Long, error: Exception, fallback: String) {
         if (sessionLost(error)) { lose(expected); return }
         if ((error as? IdentityFailure)?.status == 404) {
-            // Access ended: drop every private message, draft and pending send for this conversation.
+            // Access ended: drop every private message, draft and pending send for this conversation, also those kept on the phone.
+            val conversationId = mutableState.value.chat?.conversation?.id?.takeIf { chatGeneration == expectedChat }
             updateChat(expectedChat) { ChatState(it.conversation.copy(unreadCount = 0), loading = false, denied = true, error = "You no longer have access to this conversation.") }
+            conversationId?.let(::forgetConversation)
             refreshList(quiet = true)
             return
         }
         updateChat(expectedChat) { it.copy(error = describe(error, fallback)) }
     }
 
-    private fun absorb(expectedChat: Long, incoming: List<MessageDto>) {
+    private suspend fun absorb(expectedChat: Long, incoming: List<MessageDto>) {
+        val confirmed = incoming.filter { it.mine }.mapNotNull { it.clientMessageId }.toSet()
+        // A kept message the server shows is confirmed, so it is no longer kept.
+        val settled = mutableState.value.chat?.pending.orEmpty().filter { it.kept && it.intent.key in confirmed && it.state != SendState.SENDING }
         updateChat(expectedChat) { chat ->
-            val confirmed = incoming.filter { it.mine }.mapNotNull { it.clientMessageId }.toSet()
             chat.copy(
                 messages = mergeMessages(chat.messages, incoming),
                 pending = chat.pending.filterNot { it.intent.key in confirmed && it.state != SendState.SENDING },
             )
         }
+        forgetKept(settled.map { it.intent.key })
     }
 
     fun loadEarlier() {
@@ -489,18 +509,26 @@ class MessagingViewModel @Inject constructor(
         val expectedChat = chatGeneration
         chatScope().launch {
             try {
+                // Kept before it is sent, so closing the app or losing the network does not lose it (DEC-021).
+                if (keep(intent)) updateChat(expectedChat) { chat -> chat.copy(pending = chat.pending.map { if (it.intent.key == intent.key) it.copy(kept = true) else it }) }
                 val message = repository.send(intent)
+                forgetKept(listOf(intent.key))
                 absorb(expectedChat, listOf(message))
                 updateChat(expectedChat) { chat -> chat.copy(pending = chat.pending.filterNot { it.intent.key == intent.key }) }
                 refreshList(quiet = true)
-            } catch (error: CancellationException) { throw error }
-            catch (error: Exception) {
+            } catch (error: CancellationException) {
+                // The chat went away before the answer, so a kept message is sent in the background.
+                scheduleKept(intent.accountId)
+                throw error
+            } catch (error: Exception) {
                 val failure = error as? IdentityFailure
                 if (sessionLost(error) || failure?.status == 404) { chatFailure(expected, expectedChat, error, "The message was not confirmed."); return@launch }
                 val definite = failure != null && failure.status in 400..499 && failure.status != 408
+                // A refused message stays on screen to edit but is no longer kept; any other failure is retried in the background.
+                if (definite) forgetKept(listOf(intent.key)) else scheduleKept(intent.accountId)
                 updateChat(expectedChat) { chat ->
                     chat.copy(pending = chat.pending.map {
-                        if (it.intent.key == intent.key) it.copy(state = if (definite) SendState.FAILED else SendState.UNKNOWN, error = describe(error, "The message was not confirmed.")) else it
+                        if (it.intent.key == intent.key) it.copy(state = if (definite) SendState.FAILED else SendState.UNKNOWN, error = describe(error, "The message was not confirmed."), kept = it.kept && !definite) else it
                     })
                 }
                 if (failure?.code == "CONVERSATION_READ_ONLY") pollNow()
@@ -509,7 +537,31 @@ class MessagingViewModel @Inject constructor(
     }
 
     fun stopTracking(key: String) {
-        updateChat(chatGeneration) { chat -> chat.copy(pending = chat.pending.filterNot { it.intent.key == key && it.state == SendState.UNKNOWN }) }
+        val chat = mutableState.value.chat ?: return
+        if (chat.pending.none { it.intent.key == key && it.state == SendState.UNKNOWN }) return
+        updateChat(chatGeneration) { state -> state.copy(pending = state.pending.filterNot { it.intent.key == key && it.state == SendState.UNKNOWN }) }
+        accountScope().launch { forgetKept(listOf(key)) }
+    }
+
+    // The kept copy never decides what the screen shows: when keeping or removing fails, the chat goes on as before.
+    private suspend fun keep(intent: SendIntent): Boolean =
+        try { outbox.keep(intent) } catch (error: CancellationException) { throw error } catch (_error: Exception) { false }
+
+    private suspend fun forgetKept(keys: List<String>) {
+        if (keys.isEmpty()) return
+        try { outbox.forget(keys) } catch (error: CancellationException) { throw error } catch (_error: Exception) { }
+    }
+
+    private fun forgetConversation(conversationId: String) {
+        val account = mutableState.value.accountId ?: return
+        accountScope().launch {
+            val kept = try { outbox.kept(account, conversationId) } catch (error: CancellationException) { throw error } catch (_error: Exception) { return@launch }
+            forgetKept(kept.map { it.intent.key })
+        }
+    }
+
+    private fun scheduleKept(accountId: String) {
+        try { outbox.schedule(accountId) } catch (_error: Exception) { }
     }
 
     fun editFailed(key: String) {

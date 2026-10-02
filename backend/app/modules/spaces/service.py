@@ -288,28 +288,40 @@ class SpaceService:
                             aggregate_id=space.id, schema_version=1, created_at=now),
             ])
             database.flush()
-            self.announce_lost_access(database, space.id, target.account_id)
+            self.announce_lost_access(database, space.id, target.account_id, target.admission_id)
             database.add(SpaceMembershipCommand(id=identifier, space_id=space.id, actor_id=caller.id,
                 actor_admission_id=actor.admission_id, target_id=target.account_id,
                 target_admission_id=target.admission_id, action=action, request_key=key, request_digest=digest))
             return MembershipOutcome(space_id=space.id, account_id=target.account_id)
 
     @staticmethod
-    def announce_lost_access(database, space_id, account_id):
+    def announce_lost_access(database, space_id, account_id, admission_id):
         """Live hints for each chat the person could see in this Space (T86): open chats then read again and show the change.
 
-        The person who left is told about the Space chat and their direct chats; the other person in each direct chat is
-        told too, because that chat can no longer take new messages. Hints carry identifiers only.
+        The person who left is told about the Space chat and their direct chats from the admission that ended; the other
+        person in each of those direct chats is told too, only while they are still in the Space with the admission the
+        chat belongs to, because the chat can no longer take new messages. Hints carry identifiers only.
         """
+        current = dict(database.execute(
+            select(SpaceMembership.account_id, SpaceMembership.admission_id)
+            .where(SpaceMembership.space_id == space_id, SpaceMembership.status == "active")
+        ).all())
         rows = database.execute(
-            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id)
+            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id,
+                   Conversation.first_admission_id, Conversation.second_admission_id)
             .where(Conversation.space_id == space_id, or_(
                 Conversation.kind == "space",
-                Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
+                and_(Conversation.first_account_id == account_id, Conversation.first_admission_id == admission_id),
+                and_(Conversation.second_account_id == account_id, Conversation.second_admission_id == admission_id),
             )).order_by(Conversation.id)
         ).all()
         for row in rows:
-            accounts = [account_id] if row.kind == "space" else [row.first_account_id, row.second_account_id]
+            accounts = [account_id]
+            if row.kind == "direct":
+                other, other_admission = ((row.second_account_id, row.second_admission_id) if row.first_account_id == account_id
+                                          else (row.first_account_id, row.first_admission_id))
+                if current.get(other) == other_admission:
+                    accounts.append(other)
             signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="access")
 
     def member_view(self, database, membership):

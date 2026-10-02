@@ -128,6 +128,7 @@ def test_ending_a_membership_tells_each_chat_it_changes_at_once(client, app):
     chat = open_chat(client, owner, space_id).json()["data"]
     direct = open_chat(client, member, space_id, owner["user"]["id"]).json()["data"]
     others = open_chat(client, owner, space_id, third["user"]["id"]).json()["data"]
+    between = open_chat(client, member, space_id, third["user"]["id"]).json()["data"]
     hints = {name: Hints(app, person) for name, person in (("owner", owner), ("member", member), ("third", third))}
     for collected in hints.values():
         collected.since_last()
@@ -135,14 +136,15 @@ def test_ending_a_membership_tells_each_chat_it_changes_at_once(client, app):
     removed = leave_or_remove(client, owner, space_id, member, "remove")
     assert removed.status_code == 200, removed.text
     by_id = lambda items: sorted(items, key=lambda item: item["conversation_id"])
-    assert by_id(hints["member"].since_last()) == by_id([change(chat, "access"), change(direct, "access")])
+    assert by_id(hints["member"].since_last()) == by_id([change(chat, "access"), change(direct, "access"), change(between, "access")])
     assert hints["owner"].since_last() == [change(direct, "access")]
-    assert hints["third"].since_last() == []
+    assert hints["third"].since_last() == [change(between, "access")]
 
     left = leave_or_remove(client, third, space_id, third, "leave")
     assert left.status_code == 200, left.text
-    assert by_id(hints["third"].since_last()) == by_id([change(chat, "access"), change(others, "access")])
+    assert by_id(hints["third"].since_last()) == by_id([change(chat, "access"), change(others, "access"), change(between, "access")])
     assert hints["owner"].since_last() == [change(others, "access")]
+    # The former member is no longer told anything about this Space, even about a chat they were in.
     assert hints["member"].since_last() == []
     # A refused command tells nobody.
     assert leave_or_remove(client, owner, space_id, owner, "leave").status_code == 409

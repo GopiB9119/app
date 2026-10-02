@@ -11,6 +11,10 @@ import com.community.platform.feature.identity.IdentityApi
 import com.community.platform.feature.identity.KeystoreSessionStore
 import com.community.platform.feature.identity.SessionStore
 import com.community.platform.feature.messaging.MessagingApi
+import com.community.platform.feature.messaging.Outbox
+import com.community.platform.feature.messaging.OutboxSessionStore
+import com.community.platform.feature.scheduling.AlertSessionStore
+import com.community.platform.feature.scheduling.AlertSwitch
 import com.community.platform.feature.planning.TaskApi
 import com.community.platform.feature.planning.CalendarApi
 import com.community.platform.feature.planning.ChecklistApi
@@ -41,7 +45,9 @@ object IdentityModule {
     private val COMMUNITY_DRAFTS = Regex("/v1/pages/[a-f0-9-]{36}/drafts")
 
     @Provides @Singleton fun gson(): Gson = Gson()
-    @Provides @Singleton fun store(implementation: KeystoreSessionStore): SessionStore = implementation
+    // Signing out, an ended session and a different account delete the kept chat messages (DEC-021) and turn phone alerts off (DEC-020).
+    @Provides @Singleton fun store(implementation: KeystoreSessionStore, outbox: Outbox, alerts: AlertSwitch): SessionStore =
+        OutboxSessionStore(AlertSessionStore(implementation, alerts), outbox)
     // The live stream stays open for up to 30 minutes with a keep-alive every 15 seconds, so it has no
     // response-size cap and no call deadline; three missed keep-alives end it.
     @Provides @Singleton @LiveClient fun liveHttp(): OkHttpClient = OkHttpClient.Builder()

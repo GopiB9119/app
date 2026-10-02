@@ -115,6 +115,10 @@ async function fixture(context, options = {}) {
     window.fetch = async (input, config = {}) => {
       const url = new URL(String(input), 'http://offline.invalid');
       const method = config.method ?? 'GET';
+      if (url.pathname === '/api/live' && method === 'GET') {
+        // The live connection every signed-in page opens (DEC-019) stays open without hints and closes when the page aborts it.
+        return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+      }
       const body = config.body ? JSON.parse(config.body) : null;
       const headers = Object.fromEntries(new Headers(config.headers));
       state.calls.push({ route: url.pathname, query: url.search, method, body, rawBody: config.body ?? null, headers });
@@ -565,7 +569,8 @@ test('care: dose alerts change only after confirmation and failed saves keep the
     const checkbox = card(page).getByRole('checkbox', { name: 'Alert me in this app at these times', exact: true });
     await checkbox.waitFor();
     assert.equal(await checkbox.isChecked(), false);
-    await checkbox.check();
+    // The checkbox shows the saved setting, so it changes only when the save answers; click and wait for that.
+    await checkbox.click();
     await page.waitForFunction(() => document.querySelector('input[name="care_dose_alert"]').checked);
     assert.equal(await page.evaluate(id => window.careFixture.alerts[id], instructionId), true);
     await page.evaluate(() => { window.careFixture.rejectAlerts = true; });

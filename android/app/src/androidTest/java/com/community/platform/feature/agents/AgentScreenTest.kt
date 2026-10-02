@@ -94,9 +94,11 @@ class AgentScreenTest {
         compose.onNodeWithTag("agent-ask").assertIsNotEnabled()
         compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag("agent-approve-$runId"))
         compose.onNodeWithTag("agent-reject-$runId").assertIsNotEnabled()
-        compose.onNodeWithTag("agent-approve-$runId").assertTextContains("Approve again").performClick()
+        // Scrolling to the run's list item can leave its buttons below the screen's edge (as on a Pixel 5, whose camera
+        // cutout takes more height), and a tap there reaches nothing; scroll to each button itself before tapping it.
+        compose.onNodeWithTag("agent-approve-$runId").performScrollTo().assertTextContains("Approve again").performClick()
         compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag("agent-discard-$runId"))
-        compose.onNodeWithTag("agent-discard-$runId").performClick()
+        compose.onNodeWithTag("agent-discard-$runId").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, retries); assertEquals(1, discards); assertTrue(decisions.isEmpty()) }
     }
 

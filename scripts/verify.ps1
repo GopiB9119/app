@@ -11,9 +11,10 @@ The script changes nothing in the repository. It writes only under the output fo
 tools already use, and it restores the environment variables it sets.
 
 .PARAMETER Suite
-The suites to run, separated by commas: structure, tokens, typecheck, client, unit, backend, android, live.
-The default is every suite except live, which needs the web preview and the local services (COMMUNITY_WEB_URL,
-by default http://127.0.0.1:3000).
+The suites to run, separated by commas: structure, tokens, typecheck, client, unit, backend, android, device, live.
+The default is every suite except two: live, which needs the web preview and the local services (COMMUNITY_WEB_URL,
+by default http://127.0.0.1:3000), and device, which starts its own Android emulator for about half an hour
+(scripts\verify-android-device.ps1).
 
 .PARAMETER Output
 The folder for the logs and the summary. The default is .local\verify\<date-time>.
@@ -35,7 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
-$order = @('structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android', 'live')
+$order = @('structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
 $suites = @{
     structure = @{ Title = 'Structure'; Kind = 'node'; Commands = @('npm run test:structure', 'npm run check:structure') }
     tokens    = @{ Title = 'Design tokens'; Kind = 'node'; Commands = @('npm run test:tokens', 'npm run check:tokens') }
@@ -45,6 +46,7 @@ $suites = @{
     backend   = @{ Title = 'Backend'; Kind = 'pytest'; Commands = @('docker compose -f infra/compose.yaml --profile test run --rm tests pytest -q -p no:cacheprovider') }
     # --rerun runs the tests even when Gradle considers them up to date, so every result is from this run.
     android   = @{ Title = 'Android JVM'; Kind = 'junit'; Commands = @('android\gradlew.bat -p android :app:testDebugUnitTest --offline --console=plain --rerun') }
+    device    = @{ Title = 'Android device'; Kind = 'instrument'; Commands = @('powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-android-device.ps1') }
     live      = @{ Title = 'Web live journeys'; Kind = 'node'; Commands = @('npm --prefix web run test:e2e') }
 }
 
@@ -90,6 +92,19 @@ function Read-Counts([string]$Kind, [string]$Text, [datetime]$Since) {
                 $report.Load($file.FullName)
                 foreach ($name in 'tests', 'failures', 'errors', 'skipped') { $counts[$name] += [int]$report.DocumentElement.GetAttribute($name) }
             }
+        }
+    } elseif ($Kind -eq 'instrument') {
+        # am instrument -r reports each test as started (1), then passed (0), failed (-2), errored (-1), skipped by an
+        # assumption (-3) or ignored (-4). A test that started and never finished, as when the app crashes, failed.
+        $codes = @([regex]::Matches($Text, '(?m)^INSTRUMENTATION_STATUS_CODE: (-?\d+)') | ForEach-Object { [int]$_.Groups[1].Value })
+        if ($codes.Count -gt 0) {
+            $passed = @($codes | Where-Object { $_ -eq 0 }).Count
+            $failed = @($codes | Where-Object { $_ -eq -1 -or $_ -eq -2 }).Count
+            $skipped = @($codes | Where-Object { $_ -eq -3 -or $_ -eq -4 }).Count
+            $failed += [Math]::Max(0, @($codes | Where-Object { $_ -eq 1 }).Count - $passed - $failed - $skipped)
+            $counts['tests'] = $passed + $failed + $skipped
+            $counts['failures'] = $failed
+            $counts['skipped'] = $skipped
         }
     }
     return $counts
@@ -142,6 +157,18 @@ function Get-Blocker([string]$Name) {
         if (-not $env:JAVA_HOME) { return 'JAVA_HOME is not set and Android Studio''s runtime was not found.' }
         if (-not (Test-Path (Join-Path $root 'android\gradlew.bat'))) { return 'android\gradlew.bat is missing.' }
     }
+    if ($Name -eq 'device') {
+        if (-not $env:JAVA_HOME) { return 'JAVA_HOME is not set and Android Studio''s runtime was not found.' }
+        $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\sdk' }
+        $emulator = Join-Path $sdk 'emulator\emulator.exe'
+        if (-not (Test-Path $emulator) -or -not (Test-Path (Join-Path $sdk 'platform-tools\adb.exe'))) { return "The Android emulator or adb is missing from $sdk." }
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $devices = @(& $emulator -list-avds 2>$null | ForEach-Object { "$_".Trim() })
+        $ErrorActionPreference = $previous
+        # The virtual device the device tests were written for; verify-android-device.ps1 uses it by default.
+        if ($devices -notcontains 'community_platform_m0_768f91e4') { return 'The virtual device community_platform_m0_768f91e4 is missing.' }
+    }
     if ($Name -eq 'live') {
         try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Uri ($env:COMMUNITY_WEB_URL.TrimEnd('/') + '/login') | Out-Null }
         catch { return "The web preview at $env:COMMUNITY_WEB_URL did not answer. Start it and the local services first." }
@@ -185,6 +212,11 @@ function Invoke-Suite([string]$Name) {
     # A runner that exits 0 while reporting failures still failed.
     if ($tally -and $tally.failed -gt 0) { $result = 'failed' }
     $counted = Format-Tally $tally
+    if ($definition.Kind -eq 'instrument' -and $result -eq 'failed') {
+        # A class whose process stopped before any test started adds no counts, so name it.
+        $classes = [regex]::Match([IO.File]::ReadAllText($log), '(?m)^Classes with problems: (.+?)\s*$')
+        if ($classes.Success) { $counted = (@($counted, "problems in $($classes.Groups[1].Value)") | Where-Object { $_ }) -join '; ' }
+    }
     $entry = [ordered]@{
         suite = $Name; title = $definition.Title; result = $result; tally = $tally; counts = $totals; summary = $counted
         seconds = [math]::Round($watch.Elapsed.TotalSeconds); log = $log; note = $blocker
@@ -221,7 +253,7 @@ try {
             ForEach-Object { Join-Path $_.FullName 'chrome-win64\chrome.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
         if ($chromium) { Set-RunVariable 'COMMUNITY_CHROMIUM_PATH' $chromium }
     }
-    if ($selected -contains 'android') {
+    if ($selected -contains 'android' -or $selected -contains 'device') {
         # Gradle 8.13 cannot run on the newest JDKs; Android Studio's own runtime can.
         $studio = Join-Path $env:ProgramFiles 'Android\Android Studio\jbr'
         if (Test-Path $studio) { Set-RunVariable 'JAVA_HOME' $studio }

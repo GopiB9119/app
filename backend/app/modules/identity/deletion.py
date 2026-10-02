@@ -77,6 +77,8 @@ ERASE = (
     ("invitations", "UPDATE space_invitations SET status = 'revoked', resolved_at = :now WHERE status = 'pending' AND (inviter_id = :a OR recipient_id = :a OR space_id = ANY(:alone))"),
     ("join_requests", "UPDATE space_join_requests SET status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END, resolved_at = COALESCE(resolved_at, :now), note = '' WHERE account_id = :a"),
     ("join_requests_alone", "UPDATE space_join_requests SET status = 'closed', resolved_at = :now WHERE status = 'pending' AND space_id = ANY(:alone)"),
+    # Requests keep a copy of the name they asked to join; for a Space being erased that copy goes too.
+    ("alone_request_names", "UPDATE space_join_requests SET space_name = 'Deleted Space' WHERE space_id = ANY(:alone)"),
     ("ownership_offers", "UPDATE space_ownership_transfers SET status = 'cancelled', resolved_at = :now WHERE status = 'pending' AND (from_account_id = :a OR to_account_id = :a)"),
     # A Space where the person was the only current member is closed and its contents erased.
     ("alone_messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL WHERE deleted_at IS NULL AND conversation_id IN (SELECT id FROM conversations WHERE space_id = ANY(:alone))"),
@@ -173,21 +175,27 @@ class AccountDeletionService:
     @staticmethod
     def announce_departure(database, space_id, account_id):
         """Live hints for the people still in a shared Space: its chat shows the erased messages, and each direct chat
-        with the erased account can no longer take messages. Sent inside the purge, so only a committed purge sends them."""
-        members = database.scalars(select(SpaceMembership.account_id).where(
-            SpaceMembership.space_id == space_id, SpaceMembership.status == "active")).all()
+        with the erased account can no longer take messages. Only current members are told, and in a direct chat only
+        while they are still there with the admission the chat belongs to. Sent inside the purge, so only a committed
+        purge sends them."""
+        current = dict(database.execute(select(SpaceMembership.account_id, SpaceMembership.admission_id).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.status == "active")).all())
         rows = database.execute(
-            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id)
+            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id,
+                   Conversation.first_admission_id, Conversation.second_admission_id)
             .where(Conversation.space_id == space_id, or_(
                 Conversation.kind == "space", Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
             )).order_by(Conversation.id)
         ).all()
         for row in rows:
             if row.kind == "space":
-                accounts = members
+                accounts = list(current)
             else:
-                accounts = [row.second_account_id if row.first_account_id == account_id else row.first_account_id]
-            signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="member_left")
+                other, admission = ((row.second_account_id, row.second_admission_id) if row.first_account_id == account_id
+                                    else (row.first_account_id, row.first_admission_id))
+                accounts = [other] if current.get(other) == admission else []
+            if accounts:
+                signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="member_left")
 
     def purge_due(self, limit=5):
         """Erases accounts whose grace period has ended, one transaction each, and returns counts only."""

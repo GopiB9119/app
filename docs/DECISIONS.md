@@ -82,7 +82,7 @@ None of these orders is approved.
 
 ## Architecture Decision Records
 
-The code follows ADR-0001, ADR-0002 and ADR-0004 as local choices. That is not approval.
+The code follows ADR-0001, ADR-0002, ADR-0004 and ADR-0006 as local choices. That is not approval.
 
 | ADR | Topic | Status | Code today |
 | --- | --- | --- | --- |

@@ -264,6 +264,12 @@ test('Ready and resync re-read all keys; conversation and notification hints inv
     stream.send('change', conversationHint); await flush();
     assert.deepEqual(fixture.invalidations.splice(0), [['conversations', accountId]]);
     assert.deepEqual(events.splice(0), [{ ...conversationHint, accountId }]);
+    // Lost access (T86) and an erased member (T68) reach the open chat like any other change.
+    for (const reason of ['access', 'member_left']) {
+      stream.send('change', { ...conversationHint, reason }); await flush();
+      assert.deepEqual(fixture.invalidations.splice(0), [['conversations', accountId]], reason);
+      assert.deepEqual(events.splice(0), [{ ...conversationHint, reason, accountId }], reason);
+    }
     stream.send('change', { kind: 'notifications', reason: 'delivered' }); await flush();
     assert.deepEqual(fixture.invalidations.splice(0), [['notifications', accountId], ['home', accountId]]);
     assert.deepEqual(events.splice(0), [{ kind: 'notifications', reason: 'delivered', accountId }]);

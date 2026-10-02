@@ -40,6 +40,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -70,6 +73,8 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
     val back: () -> Unit = { if (!state.busy) { if (state.asking != null && state.pendingAsk == null) viewModel.cancelAsk() else if (!state.locked) onBack() } }
     BackHandler(onBack = back)
     val shape = RoundedCornerShape(6.dp)
+    // The request whose decline is waiting for confirmation: a declined person must wait 7 days to ask again, so ask first, as the web does.
+    var declining by remember { mutableStateOf<String?>(null) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -116,8 +121,13 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
                                     Text(review.displayName, style = MaterialTheme.typography.titleMedium)
                                     if (review.note.isNotBlank()) Text(review.note, style = MaterialTheme.typography.bodyMedium)
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedButton(onClick = { viewModel.decide(review, approve = false) }, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.groups_decline)) }
-                                        Button(onClick = { viewModel.decide(review, approve = true) }, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp).testTag("group-approve-${review.id}")) { Text(stringResource(R.string.groups_approve)) }
+                                        if (declining == review.id) {
+                                            TextButton(onClick = { declining = null }, enabled = !state.locked, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.groups_keep)) }
+                                            Button(onClick = { declining = null; viewModel.decide(review, approve = false) }, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.groups_confirm_decline)) }
+                                        } else {
+                                            OutlinedButton(onClick = { declining = review.id }, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.groups_decline)) }
+                                            Button(onClick = { viewModel.decide(review, approve = true) }, enabled = !state.locked, shape = shape, modifier = Modifier.heightIn(min = 48.dp).testTag("group-approve-${review.id}")) { Text(stringResource(R.string.groups_approve)) }
+                                        }
                                     }
                                     HorizontalDivider()
                                 }
@@ -149,7 +159,8 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
                                         }
                                         state.asking?.id == entry.id -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedTextField(value = state.pendingAsk?.note ?: state.note, onValueChange = viewModel::note, label = { Text(stringResource(R.string.groups_note)) }, enabled = state.pendingAsk == null && !state.busy, minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth().testTag("group-note"))
-                                            Text("${(state.pendingAsk?.note ?: state.note).length}/280", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.End))
+                                            // Counted in characters, as the view model, the server and the web count them; an emoji is one.
+                                            Text("${(state.pendingAsk?.note ?: state.note).let { it.codePointCount(0, it.length) }}/280", style = MaterialTheme.typography.bodySmall, modifier = Modifier.align(Alignment.End))
                                             if (state.pendingAsk != null && !state.busy) Text(stringResource(R.string.groups_unconfirmed))
                                             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 TextButton(onClick = viewModel::cancelAsk, enabled = !state.locked, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.cancel)) }

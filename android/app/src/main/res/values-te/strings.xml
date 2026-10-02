@@ -414,6 +414,8 @@
     <string name="groups_requests_private">ఈ గ్రూప్ ప్రైవేట్, కాబట్టి ఎవరూ చేరాలని కోరలేరు.</string>
     <string name="groups_approve">ఆమోదించండి</string>
     <string name="groups_decline">తిరస్కరించండి</string>
+    <string name="groups_keep">అలాగే ఉంచండి</string>
+    <string name="groups_confirm_decline">తిరస్కరణను నిర్ధారించండి</string>
     <string name="groups_status_pending">పరిశీలన కోసం వేచి ఉంది</string>
     <string name="groups_status_approved">ఆమోదించారు</string>
     <string name="groups_status_declined">తిరస్కరించారు</string>
@@ -600,11 +602,11 @@
     <string name="moderation_reports">రిపోర్ట్‌లు</string>
     <string name="moderation_appeals">అప్పీళ్లు</string>
     <string name="moderation_only">ప్లాట్‌ఫారమ్ మోడరేటర్లు మాత్రమే ఈ పేజీని తెరవగలరు.</string>
-    <string name="moderation_loading">మోడరేషన్ లోడ్ అవుతోంది...</string>
-    <string name="moderation_loading_reports">రిపోర్ట్‌లు లోడ్ అవుతున్నాయి...</string>
-    <string name="moderation_loading_appeals">అప్పీళ్లు లోడ్ అవుతున్నాయి...</string>
-    <string name="moderation_loading_notices">నిర్ణయాలు లోడ్ అవుతున్నాయి...</string>
-    <string name="moderation_loading_your_reports">మీ రిపోర్ట్‌లు లోడ్ అవుతున్నాయి...</string>
+    <string name="moderation_loading">మోడరేషన్ లోడ్ అవుతోంది&#8230;</string>
+    <string name="moderation_loading_reports">రిపోర్ట్‌లు లోడ్ అవుతున్నాయి&#8230;</string>
+    <string name="moderation_loading_appeals">అప్పీళ్లు లోడ్ అవుతున్నాయి&#8230;</string>
+    <string name="moderation_loading_notices">నిర్ణయాలు లోడ్ అవుతున్నాయి&#8230;</string>
+    <string name="moderation_loading_your_reports">మీ రిపోర్ట్‌లు లోడ్ అవుతున్నాయి&#8230;</string>
     <string name="moderation_reports_empty">వేచి ఉన్న రిపోర్ట్‌లు లేవు.</string>
     <string name="moderation_appeals_empty">వేచి ఉన్న అప్పీళ్లు లేవు.</string>
     <string name="moderation_notices_title">మీ కంటెంట్‌పై నిర్ణయాలు</string>
@@ -637,7 +639,10 @@
     <string name="moderation_report_action">పరిశీలించబడింది: చర్య తీసుకోబడింది</string>
     <string name="moderation_report_no_action">పరిశీలించబడింది: చర్య లేదు</string>
     <string name="moderation_first_reported">మొదటి రిపోర్ట్ %1$s</string>
-    <string name="moderation_report_count">%1$d రిపోర్ట్‌లు</string>
+    <plurals name="moderation_report_count">
+        <item quantity="one">%1$d రిపోర్ట్</item>
+        <item quantity="other">%1$d రిపోర్ట్‌లు</item>
+    </plurals>
     <string name="moderation_reason_count">%1$s: %2$d</string>
     <string name="moderation_summary">%1$s / %2$s</string>
     <string name="moderation_comment">కామెంట్</string>
@@ -1089,4 +1094,17 @@
     <string name="home_read_item">%1$s చదవండి</string>
     <string name="home_read_from">%1$s పోస్ట్ చదవండి</string>
     <string name="account_blocked">బ్లాక్ చేసినవి</string>
+    <string name="phone_alerts_label">కొత్త రిమైండర్లు మరియు సందేశాల కోసం ఫోన్ హెచ్చరికలు</string>
+    <string name="phone_alerts_explain">నెట్‌వర్క్ ఉన్నప్పుడు సుమారు ప్రతి 15 నిమిషాలకు తనిఖీ చేస్తుంది. సందేశాల కోసం చదవనివి ఎన్ని ఉన్నాయో మాత్రమే చూపిస్తుంది.</string>
+    <string name="phone_alerts_refused">Android నోటిఫికేషన్‌లను అనుమతించలేదు. ఫోన్ హెచ్చరికలు ఆఫ్‌లో ఉన్నాయి.</string>
+    <string name="phone_alerts_reminder_title">రిమైండర్</string>
+    <string name="phone_alerts_locked">మీకు ఒక రిమైండర్ ఉంది</string>
+    <string name="phone_alerts_channel_reminders">రిమైండర్లు</string>
+    <string name="phone_alerts_channel_reminders_description">మీ ఇన్‌బాక్స్‌లో కొత్త రిమైండర్లు</string>
+    <string name="phone_alerts_channel_messages">సందేశాలు</string>
+    <string name="phone_alerts_channel_messages_description">ఎన్ని సందేశాలు చదవలేదు</string>
+    <plurals name="phone_alerts_unread_messages">
+        <item quantity="one">మీకు %1$d చదవని సందేశం ఉంది</item>
+        <item quantity="other">మీకు %1$d చదవని సందేశాలు ఉన్నాయి</item>
+    </plurals>
 </resources>
