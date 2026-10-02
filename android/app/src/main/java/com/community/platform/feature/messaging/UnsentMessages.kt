@@ -83,13 +83,21 @@ class KeystoreMessageSealer(private val key: SessionKey) : MessageSealer {
         val sealed = try {
             encrypt(plain, binding)
         } catch (error: Exception) {
-            if (error !is GeneralSecurityException && error !is ProviderException) throw error
-            // A key that can no longer be used is replaced once; what it sealed could not be opened anyway.
-            key.replace()
-            encrypt(plain, binding)
+            if (!keyError(error)) throw error
+            try {
+                // A Keystore error can pass, and this key sealed every other kept message: try it once more first (T104).
+                encrypt(plain, binding)
+            } catch (again: Exception) {
+                if (!keyError(again)) throw again
+                // A key that still cannot be used is replaced once; what it sealed could not be opened anyway.
+                key.replace()
+                encrypt(plain, binding)
+            }
         }
         return Base64.getEncoder().encodeToString(sealed)
     }
+
+    private fun keyError(error: Exception) = error is GeneralSecurityException || error is ProviderException
 
     override fun open(sealed: String, binding: String): String? {
         val bytes = try { Base64.getDecoder().decode(sealed) } catch (_error: IllegalArgumentException) { return null }

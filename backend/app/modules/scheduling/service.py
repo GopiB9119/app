@@ -199,6 +199,11 @@ class ReminderService:
         return self.view(reminder, task)
 
     def cursor(self, value, kind, account_id, task_id=None):
+        position = self.position(value, kind, account_id, task_id)
+        return position[1] if position else None
+
+    def position(self, value, kind, account_id, task_id=None):
+        """The creation time (None for lists ordered by identifier only) and identifier after which a page continues."""
         if value is None:
             return None
         try:
@@ -209,12 +214,15 @@ class ReminderService:
             raise DomainError(400, "CURSOR_INVALID", "Reload this list.")
         if cursor.expires_at <= self.clock():
             raise DomainError(410, "CURSOR_EXPIRED", "Reload this list.")
-        return str(cursor.after_id)
+        return cursor.after_created_at, str(cursor.after_id)
 
-    def pagination(self, has_more, last_id, kind, account_id, task_id=None):
+    def pagination(self, has_more, last_id, kind, account_id, task_id=None, last_created_at=None):
         cursor = None
         if has_more:
-            cursor = self.security.seal(ReminderCursor(kind=kind, account_id=account_id, task_id=task_id, after_id=last_id, expires_at=self.clock() + timedelta(minutes=15)).model_dump_json())
+            cursor = self.security.seal(ReminderCursor(
+                kind=kind, account_id=account_id, task_id=task_id, after_id=last_id, after_created_at=last_created_at,
+                expires_at=self.clock() + timedelta(minutes=15),
+            ).model_dump_json())
         return Pagination(next_cursor=cursor, has_more=has_more)
 
     def list_reminders(self, token, limit, cursor=None, task_id=None):

@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
@@ -58,20 +58,27 @@ class NotificationService:
             caller, _session = self.identity.authenticate(database, token)
             statement = self.reminders.visible(caller.id).add_columns(InAppNotification).join(InAppNotification, InAppNotification.reminder_id == Reminder.id)
             unread = database.scalar(select(func.count()).select_from(statement.where(InAppNotification.read_at.is_(None)).subquery()))
-            after = self.reminders.cursor(cursor, "notifications", caller.id)
+            # Newest first, so a new reminder is always on the first page (T102); identifiers are random and only break ties.
+            after = self.reminders.position(cursor, "notifications", caller.id)
             if after:
-                statement = statement.where(InAppNotification.id > after)
+                created_at, identifier = after
+                if created_at is None:
+                    raise DomainError(400, "CURSOR_INVALID", "Reload this list.")
+                statement = statement.where(tuple_(InAppNotification.created_at, InAppNotification.id) < tuple_(created_at, identifier))
             follow_up = aliased(Reminder)
             next_at = next_occurrence_at(Reminder.series_id).correlate(Reminder).scalar_subquery()
             statement = statement.add_columns(follow_up, next_at).outerjoin(
                 follow_up, and_(follow_up.follow_up_of == Reminder.id, follow_up.account_id == Reminder.account_id),
             )
-            rows = database.execute(statement.order_by(InAppNotification.id).limit(limit + 1)).all()
+            rows = database.execute(statement.order_by(InAppNotification.created_at.desc(), InAppNotification.id.desc()).limit(limit + 1)).all()
             page = rows[:limit]
             enabled = self.reminders.preference(database, caller.id).in_app_reminders_enabled
             return (
                 [self.view(row[3], row[0], row[1], row[4], row[5], enabled) for row in page],
-                self.reminders.pagination(len(rows) > limit, page[-1][3].id if page else None, "notifications", caller.id),
+                self.reminders.pagination(
+                    len(rows) > limit, page[-1][3].id if page else None, "notifications", caller.id,
+                    last_created_at=page[-1][3].created_at if page else None,
+                ),
                 unread,
             )
 

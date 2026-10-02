@@ -576,3 +576,12 @@ def test_queue_counts_and_reasons_share_one_snapshot_while_reports_close(client,
     assert queued["report_count"] == 2
     assert queued["reasons"] == [{"reason": "privacy", "count": 1}, {"reason": "spam", "count": 1}]
     assert client.get("/v1/moderation/queue", headers=auth(reviewer)).json()["data"] == []
+
+def test_an_appeal_needs_a_note(client, content):
+    # T103: DEC-024 has the author appeal "with a short note", and both apps show an appeal only with one.
+    owner, _reader, reviewer, _page, post, _remark = content
+    decision = decide(client, reviewer, "post", post["id"]).json()["data"]
+    for note in ("", "   ", "\n"):
+        response = appeal(client, owner, decision["id"], note=note)
+        assert response.status_code == 422, (note, response.text)
+    assert appeal(client, owner, decision["id"]).status_code == 201

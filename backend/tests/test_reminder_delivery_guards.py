@@ -3,12 +3,12 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Event
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.modules.identity.models import AccountSession, OutboxEvent, User
@@ -1019,3 +1019,35 @@ def test_separate_worker_process_recovers_persisted_due_work_without_duplicate(c
     with app.state.sessions() as database:
         assert database.get(Reminder, reminder["id"]).status == "available"
         assert database.scalar(select(func.count()).select_from(InAppNotification)) == 1
+
+def test_the_inbox_lists_the_newest_reminder_first_across_pages(client, app):
+    # T102: the inbox was listed in the order of its random identifiers, so a new reminder landed at a random place.
+    actor, task_id = reminder_source(client, app)
+    delivered = []
+    for minute in (31, 33, 35):
+        preview = preview_reminder(client, actor, task_id, f"2026-09-19T15:{minute}:00")
+        assert preview.status_code == 200, preview.text
+        created = client.post(
+            "/v1/reminders", headers={**auth(actor), "Idempotency-Key": str(uuid4())},
+            json={"preview_token": preview.json()["data"]["options"][0]["preview_token"]},
+        )
+        assert created.status_code == 201, created.text
+        app.state.clock.now = datetime.fromisoformat(created.json()["data"]["scheduled_at"].replace("Z", "+00:00")) + timedelta(seconds=30)
+        assert app.state.reminders.dispatch_due() == {"available": 1}
+        delivered.append(created.json()["data"]["id"])
+    # Give the notifications identifiers that sort oldest first, so their order cannot pass for newest first by chance.
+    with app.state.sessions.begin() as database:
+        for index, reminder_id in enumerate(delivered, start=1):
+            database.execute(
+                update(InAppNotification).where(InAppNotification.reminder_id == reminder_id)
+                .values(id=f"00000000-0000-4000-8000-{index:012d}")
+            )
+    first = client.get("/v1/notifications?limit=2", headers=auth(actor))
+    assert first.status_code == 200, first.text
+    assert [row["reminder_id"] for row in first.json()["data"]] == [delivered[2], delivered[1]]
+    assert first.json()["unread_count"] == 3
+    cursor = first.json()["pagination"]["next_cursor"]
+    second = client.get("/v1/notifications", params={"limit": 2, "cursor": cursor}, headers=auth(actor))
+    assert second.status_code == 200, second.text
+    assert [row["reminder_id"] for row in second.json()["data"]] == [delivered[0]]
+    assert second.json()["pagination"] == {"next_cursor": None, "has_more": False}

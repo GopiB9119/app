@@ -91,6 +91,37 @@ class OutboxTest {
         idle(current)
     }
 
+    /** A software AES key in place of the Keystore, which can fail once as the Keystore sometimes does. */
+    class FlakyKey : com.community.platform.feature.identity.SessionKey {
+        private val generator = javax.crypto.KeyGenerator.getInstance("AES").apply { init(256) }
+        private var key = generator.generateKey()
+        var failures = 0
+        var replaced = 0
+        override fun current(): javax.crypto.SecretKey {
+            if (failures > 0) { failures -= 1; throw java.security.ProviderException("synthetic Keystore error") }
+            return key
+        }
+        override fun replace() { replaced += 1; key = generator.generateKey() }
+    }
+
+    // T104: one Keystore error while keeping a message must not replace the key that sealed every other kept message.
+    @Test fun aKeystoreErrorWhileKeepingOneMessageLosesNoOtherKeptMessage() = runBlocking {
+        val key = FlakyKey()
+        val sealed = Outbox(store, KeystoreMessageSealer(key), work, Dispatchers.Unconfined) { 1_000L }
+        assertTrue(sealed.keep(SendIntent(fixture.accountId, "c1", "k1", "First")))
+        key.failures = 1
+        assertTrue(sealed.keep(SendIntent(fixture.accountId, "c1", "k2", "Second")))
+        assertEquals(listOf("First", "Second"), sealed.kept(fixture.accountId, "c1").map { it.intent.body })
+        assertEquals(0, key.replaced)
+    }
+    @Test fun aKeyThatStillFailsIsReplacedOnceSoNewMessagesCanBeKept() = runBlocking {
+        val key = FlakyKey()
+        val sealed = Outbox(store, KeystoreMessageSealer(key), work, Dispatchers.Unconfined) { 1_000L }
+        key.failures = 2
+        assertTrue(sealed.keep(SendIntent(fixture.accountId, "c1", "k1", "First")))
+        assertEquals(1, key.replaced)
+        assertEquals(listOf("First"), sealed.kept(fixture.accountId, "c1").map { it.intent.body })
+    }
     @Test fun aMessageIsKeptSealedBeforeItIsSentAndForgottenOnceConfirmed() = runBlocking {
         val current = openChat()
         send(current, "Bring water")

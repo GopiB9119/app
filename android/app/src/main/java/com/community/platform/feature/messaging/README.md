@@ -9,3 +9,5 @@ Source chapters: 1, 4, 19.
 Feature inventory: direct-conversations, group-conversations, messages, offline-outbox, history-sync, delivery-read-receipts, unread-counts, typing-presence, edits-deletion, threads-replies, attachments, encryption-modes, devices-keys, key-recovery, calls.
 
 See the [complete feature catalog](../../../../../../../../../../packages/feature-catalog/features.json). Future implementation files belong here as each feature is built.
+
+After a long absence the chat fetches the missing messages forward, at most 10 pages at a time, and until it reaches the newest page shows and marks read only messages that follow on without a hole (T101). A Keystore error while keeping an unsent message is tried once more with the same key, so it cannot cost the other kept messages; only a key that fails again is replaced (T104).

@@ -255,8 +255,22 @@ class MessagingTest {
         api.pages.clear()
         current.pollNow(); idle(current)
         assertEquals((1..43).map { it.toString() }, current.state.value.chat!!.messages.map { it.position })
-        assertEquals(listOf(null to null, null to "3", null to "33"), api.pages)
+        // T101: the gap after 3 (4 to 33) already joins the newest page (14 to 43), so no further page is asked for.
+        assertEquals(listOf(null to null, null to "3"), api.pages)
         assertEquals(listOf("3", "43"), api.reads)
+    }
+
+    // T101: a backlog longer than one catch-up can fetch is shown without a hole, and only what is shown is marked read.
+    @Test fun aLongBacklogIsShownWithoutAHoleAndOnlyWhatIsShownIsMarkedRead() = runBlocking {
+        api.add(message(1))
+        val current = ready()
+        (2..332).forEach { api.add(message(it)) }
+        current.pollNow(); idle(current)
+        assertEquals((1..301).map { it.toString() }, current.state.value.chat!!.messages.map { it.position })
+        assertEquals("301", api.reads.last())
+        current.pollNow(); idle(current)
+        assertEquals((1..332).map { it.toString() }, current.state.value.chat!!.messages.map { it.position })
+        assertEquals("332", api.reads.last())
     }
 
     @Test fun hiddenChatIsNotMarkedRead() = runBlocking {

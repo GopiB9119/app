@@ -112,6 +112,8 @@ class ReminderCursor(Input):
     account_id: UUID
     task_id: UUID | None = None
     after_id: UUID
+    # The inbox is listed newest first, so its cursor also holds the creation time of the last item shown (T102).
+    after_created_at: AwareDatetime | None = None
     expires_at: AwareDatetime
 
 

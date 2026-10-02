@@ -400,14 +400,22 @@ class MessagingViewModel @Inject constructor(
             val latest = repository.messages(account, conversationId)
             var incoming = latest.items
             val known = mutableState.value.chat?.messages?.lastOrNull()?.position?.toLong()
-            // More than one page may have arrived since the previous poll; fetch the gap forward.
+            // More than one page may have arrived since the previous poll; fetch the gap forward. Until the gap is closed,
+            // only messages that follow on without a hole are shown, so none is skipped or marked read unseen (as T41 on the web).
             if (known != null && latest.items.isNotEmpty() && latest.items.first().position.toLong() > known + 1) {
+                val gap = mutableListOf<MessageDto>()
                 var after = known.toString()
-                for (page in 0 until 10) {
-                    val gap = repository.messages(account, conversationId, after = after)
-                    incoming = incoming + gap.items
-                    after = gap.nextCursor ?: break
+                var closed = false
+                var page = 0
+                while (page < 10 && !closed) {
+                    val next = repository.messages(account, conversationId, after = after)
+                    gap += next.items
+                    val joined = gap.isNotEmpty() && gap.last().position.toLong() >= latest.items.first().position.toLong() - 1
+                    val cursor = next.nextCursor
+                    if (joined || cursor == null) closed = true else after = cursor
+                    page += 1
                 }
+                incoming = if (closed) gap + latest.items else gap
             }
             if (chatGeneration != expectedChat) return
             absorb(expectedChat, incoming)

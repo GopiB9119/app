@@ -9,6 +9,7 @@ from app.db import Base
 from app.modules.identity import deletion
 from app.modules.identity.models import AccountSession, User
 from app.modules.scheduling.models import Reminder, ReminderSeries
+from app.modules.safety.models import ModerationAppeal
 from app.modules.spaces.models import Space
 from tests.test_agents import approve, ask, rename
 from tests.test_care import create_instruction
@@ -19,6 +20,7 @@ from tests.test_exports import request_export
 from tests.test_identity import PASSWORD, account, auth
 from tests.test_live_updates import Hints, change
 from tests.test_messaging import admit, open_chat, send
+from tests.test_moderation import appeal, content, decide, moderator, resolve
 from tests.test_reminder_delivery_guards import preview_reminder
 from tests.test_reminder_series import create_series, source_for
 from tests.test_space_directory import ask as ask_to_join, group
@@ -270,3 +272,25 @@ def test_deletion_routes_need_a_session_and_strict_input(client, app):
     operations = app.openapi()["paths"]
     assert operations["/v1/me/deletion"]["post"]["security"]
     assert "security" not in operations["/v1/auth/cancel-deletion"]["post"]
+
+def test_purge_ends_open_appeals_and_keeps_resolved_ones_readable(client, app, content):
+    # T103: the purge blanked an appeal's note and left it open, and the apps refuse an appeal without a note,
+    # so one deleted account made every moderator's Appeals list fail to load.
+    owner, _reader, reviewer, _page, post, remark = content
+    second = moderator(client, app, "second-moderator@example.test")
+    hidden_post = decide(client, reviewer, "post", post["id"]).json()["data"]
+    hidden_comment = decide(client, reviewer, "comment", remark["id"]).json()["data"]
+    open_appeal = appeal(client, owner, hidden_post["id"]).json()["data"]
+    resolved = appeal(client, owner, hidden_comment["id"]).json()["data"]
+    assert resolve(client, second, resolved["id"], outcome="upheld").status_code == 200
+    assert request_deletion(client, owner).status_code == 202
+    app.state.clock.now += timedelta(days=7, minutes=1)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    # A week has passed, so the moderator signs in again.
+    reviewer = login(client, "moderator@example.test").json()["data"]
+    waiting = client.get("/v1/moderation/appeals", params={"status": "open"}, headers=auth(reviewer))
+    assert waiting.status_code == 200 and waiting.json()["data"] == []
+    upheld = client.get("/v1/moderation/appeals", params={"status": "upheld"}, headers=auth(reviewer)).json()["data"]
+    assert [(item["appeal"]["id"], item["appeal"]["note"]) for item in upheld] == [(resolved["id"], "Removed when the account was deleted.")]
+    with app.state.sessions() as database:
+        assert database.get(ModerationAppeal, open_appeal["id"]) is None

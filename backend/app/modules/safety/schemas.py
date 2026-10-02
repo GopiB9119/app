@@ -31,6 +31,12 @@ class CreateDecision(OptionalNote):
 class CreateAppeal(OptionalNote):
     note: str = Field(max_length=1000)
 
+    @field_validator("note")
+    @classmethod
+    def valid_note(cls, value: str) -> str:
+        # DEC-024: the author appeals "with a short note", and both apps show an appeal only with one (T103).
+        return clean_text(value, 1000, multiline=True, empty=False)
+
 
 class ResolveAppeal(OptionalNote):
     outcome: Literal["upheld", "overturned"]

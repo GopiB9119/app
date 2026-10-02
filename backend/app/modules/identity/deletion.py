@@ -69,7 +69,10 @@ ERASE = (
     ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
     ("reports", "UPDATE content_reports SET details = '' WHERE reporter_id = :a"),
     ("moderator", "DELETE FROM platform_moderators WHERE account_id = :a"),
-    ("appeal_notes", "UPDATE moderation_appeals SET note = '' WHERE account_id = :a"),
+    # An open appeal is about content the purge erases, so it ends; a resolved one stays in the moderation record,
+    # with a note that says why it is gone, because an appeal is always shown with a note (T103).
+    ("open_appeals", "DELETE FROM moderation_appeals WHERE account_id = :a AND status = 'open'"),
+    ("appeal_notes", "UPDATE moderation_appeals SET note = 'Removed when the account was deleted.' WHERE account_id = :a"),
     ("resolution_notes", "UPDATE moderation_appeals SET resolution_note = '' WHERE resolved_by = :a AND resolution_note IS NOT NULL"),
     ("decision_notes", "UPDATE moderation_decisions SET moderator_note = '' WHERE decided_by = :a"),
     # Private Spaces: their own messages and answers go; shared tasks stop being assigned to them.

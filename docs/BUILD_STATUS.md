@@ -710,6 +710,13 @@ Not changed: the 3 dp space that holds the place of the loading bar (a size, not
 
 **Check:** `npm run check:tokens` now also fails when one of these screens or Home (the `spacingScreens` list) types a padding, gap or spacer in dp instead of using the space unit; comments are ignored. On the saved copies of the four files from before the change it reports 29 distinct typed values; on the changed files, none. Each changed file is exactly the mechanical conversion of its saved copy, so nothing but spacing changed (`.local/t37/android-spacing/verify-change.mjs`).
 
+| Check | Result |
+| --- | --- |
+| Token tests | `npm run test:tokens`: **10 passed** (2026-10-01), including a new test that the six screens pass, and that an injected screen with typed spacing in paddings, a `spacedBy` and a spacer reports exactly those values, while space units (also in `PaddingValues` and `spacedBy`), `0.dp`, a size such as `Modifier.size(18.dp)`, the loading bar's 3 dp spacer and a comment are not reported. Run again on 2026-10-02 at 08:00, after other sessions had changed the account, care and events screens overnight (account data, deletion and scrollable dialogs): **10 passed**, and `npm run check:tokens` passes. |
+| Builds | On a copy of the shared tree (2026-10-01, `.local/t38/gates-7.txt`): lint **0 errors**, 20 warnings, 8 of them new, all missing Hindi and Telugu texts for another session's new community strings; the debug app and test app build. |
+| JVM and device tests | The change went into the shared tree's commit `c0f15e5`. The device suite that another session ran on 2026-10-02 on commit `338fb90` (read-only API 36 emulator, network off, 320 dp; `.local/verify/device-1/`, `.local/verify/device-2/`) passed the four screens' tests twice: `IdentityScreenTest` **7 of 7**, `TaskScreenTest` **6 of 6**, `CareScreenTest` **10 of 10** and `EventsScreenTest` **7 of 7**, the last two new since part 3. All Android JVM tests on 2026-10-02: 446 of 446 ([checkpoint](#owners-critical-gaps-checkpoint)). |
+| Device, before and after | One boot of the read-only API 36 emulator on 2026-10-02, network off, 320 dp (`.local/t37/android-spacing/spacing-device-20261002-031304-94d24d/`). The app built before the change and the app built after it each passed `IdentityScreenTest` **6 of 6** and `TaskScreenTest` **6 of 6**, and the emulator shut down normally. Of the 5 screenshots the tests take, compared pixel by pixel, the task editor at 200% text is identical. On the sign-in screen the header is 8 px taller and the gap after its icon 4 px wider, which is 4 dp and 2 dp at 2 px per dp, and everything below it moves down; the account and the unchecked sign-in at 200% text change from the header down in the same way. In the task list nothing changes above the filter row, which starts 4 px lower, and the lines of the task row are further apart. |
+
 ## Audit Fixes Checkpoint
 
 Builds [T39, T40 and T51](TASKS.md#defects-that-break-approved-requirements), found by the [engineering audit](ENGINEERING_AUDIT_2026-10-01.md#4-confirmed-defects-in-the-built-code).
@@ -1065,6 +1072,7 @@ Built and tested on a copy of the shared Android tree (`.local/t38/android-copy`
 | Token checks | `npm run test:tokens` **9 passed** with the two new screens on the list; `npm run check:tokens` passes. |
 | Device, first full run | One boot of the read-only API 36 emulator (`.local/t38/android/home-device-20261001-152034-29276a/`), with the APKs from the lint and build row. Offline (airplane mode, Wi-Fi off, mobile data 0) at 320 dp: `IdentityScreenTest` **6 of 6**, `CommunityScreenTest` **4 of 4** and `HomeScreenTest` **4 of 5**. The fifth, the 200% text test, failed on its own check, not on the screen: it read `didOverflowWidth` from the text layout that the semantics action builds again at the full width offered, which is true whenever a label is narrower than its slot. Its screenshot shows all five labels whole. Live, against the local API: the new Home journey **passed** (Home shows the invitation, the task due today, the Space and the empty pages section from the real service; the task opens and Back returns to Home; the invitation opens Spaces), with the account, search and agent journeys: `AccountJourneyTest` **4 of 8**. The four others stopped after the steps T38 changed: three waited for a Space's notice ("Member removed.", "Invitation created.") that at 640 dp tall had scrolled out of the lazy list they read, while the database showed that the removal and the new invitation had happened; the ownership journey looked for the offer before it had loaded. `ReminderRequestJourneyTest` **0 of 1**: it starts at the sign-in form, and the journey before it had left a session. The two boots before this one did not reach the tests (Android took over 600 seconds to boot, then lost its phone service after airplane mode was turned on, with the computer's processor fully used by other sessions' builds). |
 | Found and fixed | The cut-off check now compares each label's laid-out width with the width its text needs, and a new control test shows that a label squeezed into 20 dp counts as cut off. The same screenshot showed the bell's unread count cut off by the round clip of the icon button at 200% text; the bell is now a 48 dp button with the same ripple and no clip. In the tests: the ownership journey now waits for the members and offers to load, as the membership journey does, and the device run gives the reminder journey fresh app data and runs the live journeys at the emulator's own screen size. |
+| Device, after the fixes | Both fixes went into the shared tree's commit `c0f15e5`. The device suite that another session ran on 2026-10-02 (`npm run verify -- -Suite device`, on commit `338fb90` with its uncommitted changes, read-only API 36 emulator, network off, 320 dp) ran `HomeScreenTest` **6 of 6** twice, from 04:47 to 05:07 and from 05:08 to 05:25 (`.local/verify/device-1/`, `.local/verify/device-2/`): the 200% text test with the corrected check, and the new control test. |
 
 ## Lock Wait Proofs Checkpoint
 
@@ -1499,6 +1507,62 @@ Builds [T99](TASKS.md#defects-that-break-approved-requirements): the web calenda
 | Before the fixes | 20 of 24 (`.local/t99/before-fixes.log`). |
 | The tests can fail | 13 deliberate breakages, each served by a throwaway copy of the test file so the shared source was not changed, each made the intended test fail: a new key or body on a retry, no `If-Match`, a refused tick shown as done, removal without confirmation, the month, timezone or Space changing on a refresh, the heading or the dates cut off, an oversized dialog, and a server-valid emoji title refused (`.local/t99/mutation-results.json`). |
 | After the fixes | 24 of 24, and the existing `planning-ui` 6 of 6, by the agent; the audit session's complete web run is in the [evaluations](EVALUATIONS.md#test-suites). |
+
+## Page Moderators, Handover and Lifecycle Checkpoint
+
+Builds [T84](TASKS.md#community-management) and [T85](TASKS.md#community-management) under [DEC-025](DECISIONS.md#accepted-decisions) parts 3, 4, and 5.
+
+- **Scope & Features Built:**
+  - **Page Moderators (T84, DEC-025 part 3):**
+    - Owner can invite moderators by account ID (up to 10 moderators per page, 72-hour expiry).
+    - Owner can withdraw pending invitations or remove active moderators.
+    - Active moderators can pin published posts (up to 3 pins) or step down from moderator role.
+  - **Page Handover (T84, DEC-025 part 4):**
+    - Owner can offer page ownership to an active moderator (15-minute expiry, single pending offer).
+    - Offeree can accept or decline the handover offer.
+    - Owner can withdraw a pending handover offer before it is accepted or expires.
+  - **Page Lifecycle: Archive, Delete & Restore (T85, DEC-025 part 5):**
+    - Archive: Owner can archive active page into `read_only` status (all write operations disabled, read access preserved).
+    - Restore: Owner can restore an archived or soft-deleted page back to `active`.
+    - Delete: Owner can delete page by explicitly typing the exact normalized page handle/name. Soft deletion sets status to `deleted` with a 7-day grace period countdown before permanent purge by `account-deletion-worker`.
+- **Cross-Platform Implementation:**
+  - **Backend:** Database migration `0031_page_moderators_and_lifecycle.py`, 16 authenticated endpoints, `PageLifecycleService`, purge tasks, audit events.
+  - **Web Client & UI:** `web/src/features/community/client.ts`, Next.js BFF proxy `[...path]/route.ts`, UI components `PageStateNotice`, `ModeratorPin`, `PageManagement`, and `PageRoles` integrated into `page-screen.tsx` and `pages-screen.tsx`. Fully localized with Telugu and Hindi keys in `web/src/features/i18n/areas/community.ts`.
+  - **Android:** Retrofit routes and DTOs in `CommunityRepository.kt`, state flows and actions in `CommunityViewModel.kt`, and Compose components in `CommunityScreen.kt` with 48dp minimum touch targets.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Backend unit & lifecycle tests | **92 passed** across `test_page_moderators.py`, `test_page_lifecycle.py`, and community suites; migration `0031` applied in dev DB. |
+| Web client library & proxy | `tests/community-client.test.mjs` **163 of 163 passed**. |
+| Web UI component tests | `tests/unit/community-ui.test.mjs` **6 of 6 passed**. |
+| Web i18n & layout tests | `tests/unit/i18n-community-ui.test.mjs` **22 of 22 passed** across English, Telugu, and Hindi at 320 px and 200% text scale. |
+| Android JVM tests | `com.community.platform.feature.community.CommunityTest` **72 of 72 passed**, `ModerationTest` **24 of 24 passed**, `AccountRepositoryTest` passed. |
+
+## Review Of The Finished Critical Gaps Checkpoint
+
+The gaps session finished T65 to T69 on 2026-10-02: live updates, phone and browser alerts, unsent messages on Android, account deletion with the data download, and moderation. The audit session then had three read-only reviews check them against their decisions, one each on Claude Opus 5.5, GPT-6.1 Sol and GPT-6 Astra. Each reviewer reported only defects it could trace through the code with a confidence of at least 8 out of 10, each with a scenario and the smallest test that would fail. The audit session read the code behind every finding it acted on, and wrote each test first.
+
+- **19 findings:** 6 on live updates, 5 on the outbox and phone alerts, 8 on deletion and moderation. Two more lists turned up while checking them: the inbox order (T102) and the order of other lists (T111). T86 was confirmed fixed by the gaps session.
+- **Fixed by the audit session (T101 to T104):**
+  - **T101, Android chat backlog:** after a long absence the catch-up joined the newest page to at most 10 fetched pages and marked everything read, so with more than about 330 new messages some were never shown. It now behaves as the web does since T41 (`MessagingViewModel.kt`).
+  - **T102, the inbox order:** the inbox was listed in the order of its random identifiers, so a new reminder could land on any page. Android's phone alerts read only the first page and so missed most new reminders once the inbox held more than 20. The inbox is now newest first, and its cursor holds the creation time as well (`notifications/service.py`, `scheduling/service.py`, `scheduling/schemas.py`). Neither app checked the order, so neither changed.
+  - **T103, appeals after account deletion:** the purge blanked the person's appeal notes and left their appeals open, and both apps refuse an appeal without a note, so one deleted account made every moderator's Appeals list fail to load. The purge now ends their open appeals, whose content it erases anyway, and gives their resolved appeals the note "Removed when the account was deleted.". An appeal now needs a note, as DEC-024 ("with a short note") and both apps expect (`identity/deletion.py`, `safety/schemas.py`).
+  - **T104, the outbox key:** any Keystore error while keeping one message replaced the key, so every other kept message could no longer be read and was deleted. The sealer now tries once more with the same key and replaces it only when it fails again (`UnsentMessages.kt`).
+- **Recorded for their owners:**
+  - [T106](TASKS.md#defects-that-break-approved-requirements): live updates, for the gaps session.
+  - [T107](TASKS.md#defects-that-break-approved-requirements): the outbox and phone alerts, for the gaps session.
+  - [T108](TASKS.md#defects-that-break-approved-requirements): a conflict inside DEC-020 about the lock screen, which needs a decision.
+  - [T109](TASKS.md#defects-that-break-approved-requirements): moderation with page handover and archive, for the building session.
+  - [T110](TASKS.md#defects-that-break-approved-requirements): deletion and moderation, for the gaps session.
+  - [T111](TASKS.md#defects-that-break-approved-requirements): the order of the other lists, which needs a decision on each list's order.
+  - The reports are in `.local/t101/review-*.txt`.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| T101 | Before: `MessagingTest` 18 of 19; the new test found message 302 missing and 332 marked read. After: messaging JVM 37 of 37, in a source copy of the shared tree, whose messaging and identity files were checked identical to the shared ones. Another session's builds had twice replaced the shared build's classes mid-run. One existing test, `visiblePollFillsGapsAndMarksNewestRead`, now expects one page request fewer, because the gap after message 3 already reaches the newest page; the messages shown and the read positions it checks are unchanged (`.local/t101/`). |
+| T102 | Before: the new test found the oldest reminder first. After: `test_reminder_delivery_guards.py`, `test_reminder_series.py`, `test_live_updates.py`, `test_alerts.py` and `test_security_sweep.py`, **133 of 133** (`.local/t102/`). |
+| T103 | Before: an empty appeal note was accepted (201), and the purged person's appeal stayed in the open list. After: `test_moderation.py` and `test_account_deletion.py`, **42 of 42** (`.local/t103/`). |
+| T104 | Before: the new test kept only "Second"; "First" was deleted. After: messaging JVM **37 of 37**, including a second new test showing that a key that fails twice is still replaced (`.local/t104/`). |
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.
