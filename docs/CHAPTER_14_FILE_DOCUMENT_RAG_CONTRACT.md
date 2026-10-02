@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, FILE PROCESSING, RETRIEVAL AND SECURITY REVIEW. This 
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) and [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) drafts. It develops C13-T12 into file and derivative ownership, bounded processing, retrieval, citation and deletion contracts.
 
-- [Chapter 14](../Chapter14.md) owns the source requirements. [Chapter 16](../Chapter16.md), [Chapter 19](../Chapter19.md) and [Chapter 20](../Chapter20.md) remain dependencies for trust operations, encryption and external delivery. Their presence does not authorize a new provider, model, cloud account or live-data operation.
+- [Chapter 14](Chapter14.md) owns the source requirements. [Chapter 16](Chapter16.md), [Chapter 19](Chapter19.md) and [Chapter 20](Chapter20.md) remain dependencies for trust operations, encryption and external delivery. Their presence does not authorize a new provider, model, cloud account or live-data operation.
 - Keep storage, file/version metadata, ingestion, extraction, search and answer generation distinct. PostgreSQL owns durable state and authority; private object storage holds immutable original/derived objects; authorized indexes accelerate retrieval rather than create access rights.
 - M1 remains the synthetic ordinary family task and confirmed one-time in-app reminder. A later synthetic file/retrieval demonstration is a separate slice, not an added M1 prerequisite or proof of the complete MVP. Public media, complex Office/audio/video processing, external models and care documents retain their own release gates.
 - A scanned upload is not necessarily searchable; an extracted passage is not a confirmed medical instruction; a citation is not proof that an answer is supported. The MVP Agent's health-record and external-action restrictions remain in force even when a document can technically be processed.
@@ -20,36 +20,36 @@ All thirty numbered topic titles and their source anchors are retained.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C14-S01 | Purpose | [14.1](../Chapter14.md#L5) |
-| C14-S02 | High-Level Architecture | [14.2](../Chapter14.md#L75) |
-| C14-S03 | File Storage Design | [14.3](../Chapter14.md#L113) |
-| C14-S04 | Upload Workflow | [14.4](../Chapter14.md#L209) |
-| C14-S05 | File Validation | [14.5](../Chapter14.md#L290) |
-| C14-S06 | Malware Scanning | [14.6](../Chapter14.md#L354) |
-| C14-S07 | Document Processing Pipeline | [14.7](../Chapter14.md#L382) |
-| C14-S08 | PDF Processing | [14.8](../Chapter14.md#L437) |
-| C14-S09 | Recommended Open-Source Extraction Tools | [14.9](../Chapter14.md#L513) |
-| C14-S10 | OCR Architecture | [14.10](../Chapter14.md#L640) |
-| C14-S11 | Text Normalization | [14.11](../Chapter14.md#L706) |
-| C14-S12 | Document Structure | [14.12](../Chapter14.md#L750) |
-| C14-S13 | Chunking Strategy | [14.13](../Chapter14.md#L796) |
-| C14-S14 | Search Architecture | [14.14](../Chapter14.md#L863) |
-| C14-S15 | RAG Retrieval Pipeline | [14.15](../Chapter14.md#L949) |
-| C14-S16 | Citation Architecture | [14.16](../Chapter14.md#L1021) |
-| C14-S17 | Secure Agent File Access | [14.17](../Chapter14.md#L1084) |
-| C14-S18 | File Sharing and Access | [14.18](../Chapter14.md#L1147) |
-| C14-S19 | File Versioning | [14.19](../Chapter14.md#L1210) |
-| C14-S20 | Deletion and Retention | [14.20](../Chapter14.md#L1249) |
-| C14-S21 | Processing Events | [14.21](../Chapter14.md#L1299) |
-| C14-S22 | Processing Reliability | [14.22](../Chapter14.md#L1337) |
-| C14-S23 | Performance and Scaling | [14.23](../Chapter14.md#L1405) |
-| C14-S24 | Android Screens | [14.24](../Chapter14.md#L1490) |
-| C14-S25 | Web/Desktop Screens | [14.25](../Chapter14.md#L1540) |
-| C14-S26 | APIs | [14.26](../Chapter14.md#L1576) |
-| C14-S27 | Security Requirements | [14.27](../Chapter14.md#L1666) |
-| C14-S28 | Recommended Technology Choices | [14.28](../Chapter14.md#L1708) |
-| C14-S29 | Final Architecture Decision | [14.29](../Chapter14.md#L1882) |
-| C14-S30 | Acceptance Criteria | [14.30](../Chapter14.md#L1946) |
+| C14-S01 | Purpose | [14.1](Chapter14.md#L5) |
+| C14-S02 | High-Level Architecture | [14.2](Chapter14.md#L75) |
+| C14-S03 | File Storage Design | [14.3](Chapter14.md#L113) |
+| C14-S04 | Upload Workflow | [14.4](Chapter14.md#L209) |
+| C14-S05 | File Validation | [14.5](Chapter14.md#L290) |
+| C14-S06 | Malware Scanning | [14.6](Chapter14.md#L354) |
+| C14-S07 | Document Processing Pipeline | [14.7](Chapter14.md#L382) |
+| C14-S08 | PDF Processing | [14.8](Chapter14.md#L437) |
+| C14-S09 | Recommended Open-Source Extraction Tools | [14.9](Chapter14.md#L513) |
+| C14-S10 | OCR Architecture | [14.10](Chapter14.md#L640) |
+| C14-S11 | Text Normalization | [14.11](Chapter14.md#L706) |
+| C14-S12 | Document Structure | [14.12](Chapter14.md#L750) |
+| C14-S13 | Chunking Strategy | [14.13](Chapter14.md#L796) |
+| C14-S14 | Search Architecture | [14.14](Chapter14.md#L863) |
+| C14-S15 | RAG Retrieval Pipeline | [14.15](Chapter14.md#L949) |
+| C14-S16 | Citation Architecture | [14.16](Chapter14.md#L1021) |
+| C14-S17 | Secure Agent File Access | [14.17](Chapter14.md#L1084) |
+| C14-S18 | File Sharing and Access | [14.18](Chapter14.md#L1147) |
+| C14-S19 | File Versioning | [14.19](Chapter14.md#L1210) |
+| C14-S20 | Deletion and Retention | [14.20](Chapter14.md#L1249) |
+| C14-S21 | Processing Events | [14.21](Chapter14.md#L1299) |
+| C14-S22 | Processing Reliability | [14.22](Chapter14.md#L1337) |
+| C14-S23 | Performance and Scaling | [14.23](Chapter14.md#L1405) |
+| C14-S24 | Android Screens | [14.24](Chapter14.md#L1490) |
+| C14-S25 | Web/Desktop Screens | [14.25](Chapter14.md#L1540) |
+| C14-S26 | APIs | [14.26](Chapter14.md#L1576) |
+| C14-S27 | Security Requirements | [14.27](Chapter14.md#L1666) |
+| C14-S28 | Recommended Technology Choices | [14.28](Chapter14.md#L1708) |
+| C14-S29 | Final Architecture Decision | [14.29](Chapter14.md#L1882) |
+| C14-S30 | Acceptance Criteria | [14.30](Chapter14.md#L1946) |
 
 ## 3. Exact Source Decisions and Acceptance
 
@@ -703,4 +703,4 @@ Record expected versus observed bytes/version/generation/coverage, actor/context
 - Temporary shares and public caches have real bearer/in-flight/download exposure limits. True E2E plaintext availability, sensitive care/guardian authority, legal holds and provider/backup deletion remain separate decisions; no silent weakening of the earlier security or MVP Agent boundaries.
 - Known critical scan bypass, unauthorized disclosure, invalid source substitution or deletion resurrection blocks the affected release. Unrun tests and absent retrieval-quality evidence are not passes, and a residual-risk sign-off cannot waive mandatory permissions or legal duties.
 
-Next is [Chapter 15](../Chapter15.md): public community/page discovery, content publication and interaction workflows, using these file/media/privacy boundaries. Carry [Chapter 16](../Chapter16.md) for moderation/trust operations, [Chapter 19](../Chapter19.md) for encryption and [Chapter 20](../Chapter20.md) for notification delivery. Continue design and developer handoff, preserving source conflicts and open decisions without inferring implementation authorization.
+Next is [Chapter 15](Chapter15.md): public community/page discovery, content publication and interaction workflows, using these file/media/privacy boundaries. Carry [Chapter 16](Chapter16.md) for moderation/trust operations, [Chapter 19](Chapter19.md) for encryption and [Chapter 20](Chapter20.md) for notification delivery. Continue design and developer handoff, preserving source conflicts and open decisions without inferring implementation authorization.

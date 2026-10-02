@@ -16,7 +16,7 @@ Code status reflects the repository at 2026-10-01 00:12. Other agent sessions we
 | TBD | Not decided anywhere yet. |
 | CONFLICTING | Your statement disagrees with the repository or documents, or the documents disagree with each other. |
 
-Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a standing instruction from earlier sessions. **Sources** = [idea.md](../idea.md) and Chapter1–20. **Drafts** = planning contracts and ADRs in `docs/`. **Code** = the repository. **Shared** = the text you shared on 2026-10-01 on how experienced designers and engineers make a product feel polished and consistent. **Part A** = the text you shared on 2026-10-01, "A. Community and Public Content — End-to-End Engineering Deep Dive", on the global community platform, public community pages, posts, discovery, news and ads; it calls news and ads "the two additional content types you mentioned". Part A also covers its follow-up, "Additional features and missing requirements", which you shared next: 102 more entries in nine areas and nine open decisions (see the [Part A inventory](#part-a-inventory)). "Built", "Partly built" and "Not built" describe the code, not the requirement.
+Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a standing instruction from earlier sessions. **Sources** = [idea.md](idea.md) and Chapter1–20. **Drafts** = planning contracts and ADRs in `docs/`. **Code** = the repository. **Shared** = the text you shared on 2026-10-01 on how experienced designers and engineers make a product feel polished and consistent. **Part A** = the text you shared on 2026-10-01, "A. Community and Public Content — End-to-End Engineering Deep Dive", on the global community platform, public community pages, posts, discovery, news and ads; it calls news and ads "the two additional content types you mentioned". Part A also covers its follow-up, "Additional features and missing requirements", which you shared next: 102 more entries in nine areas and nine open decisions (see the [Part A inventory](#part-a-inventory)). "Built", "Partly built" and "Not built" describe the code, not the requirement.
 
 ## Change Control
 
@@ -75,7 +75,7 @@ Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a s
 - **PROPOSED** Account, profile, relationship, follow, Space membership, conversation membership, consent and agent delegation are separate concepts. (Sources: idea.md, Chapter 18)
 - **PROPOSED** Each period of membership is recorded separately; rejoining starts a new one and does not restore old access. (Drafts: Space contract) Code: built.
 - **PROPOSED** A user has a public profile, a personal space, public pages, private spaces and agent workspaces, which "should share one consistent model". (Sources: idea.md section 24)
-- **CONFLICTING** The sources disagree on public versus private. [idea.md](../idea.md) lists public pages and private spaces separately; [Chapter 3](../Chapter3.md) treats Spaces as private; [Chapter 6](../Chapter6.md) section 6.8 allows public and discoverable Spaces. (Sources)
+- **CONFLICTING** The sources disagree on public versus private. [idea.md](idea.md) lists public pages and private spaces separately; [Chapter 3](Chapter3.md) treats Spaces as private; [Chapter 6](Chapter6.md) section 6.8 allows public and discoverable Spaces. (Sources)
 
 ## 6. Space types
 
@@ -228,7 +228,7 @@ You have not described moderation yet.
 - **CONFIRMED** Agents support conversations, task assistance, scheduling, notifications, memory, retrieval and other authorized workflows. (You)
 - **CONFIRMED** Agents assist; they are never the source of truth. (You)
 - **PROPOSED** One shared agent engine configured per scope, not a separately trained model or always-running process per group. (Sources: idea.md, Chapters 5, 12)
-- **PROPOSED** First-release limits: answers, summaries, drafts, confirmed personal reminders and group tasks. No external messages or calls, no health-record access, no permission changes, no member removal, no financial actions. (Sources: [Chapter 1](../Chapter1.md) section 33.3) See D4.
+- **PROPOSED** First-release limits: answers, summaries, drafts, confirmed personal reminders and group tasks. No external messages or calls, no health-record access, no permission changes, no member removal, no financial actions. (Sources: [Chapter 1](Chapter1.md) section 33.3) See D4.
 - **ASSUMED** The human product is built first and the agent by a separate workstream. (Earlier instruction recorded in the feature documents; please re-confirm.)
 - **TBD** What "other authorized workflows" covers.
 - **TBD** AI model provider and budget. None approved.

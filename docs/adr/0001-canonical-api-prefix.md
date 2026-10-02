@@ -8,9 +8,9 @@ Date: 2026-09-19
 
 The source and planning documents disagree on the public API prefix:
 
-- [Chapter 18](../../Chapter18.md) §18.23 and the [identity contract](../CHAPTER_18_IDENTITY_CONTRACT.md) §9 use `/api/v1`.
-- [Chapter 7](../../Chapter7.md) §7.9, [Chapter 3](../../Chapter3.md) §3.25 and the [API contract](../CHAPTER_07_API_REALTIME_CONTRACT.md) C7-D01 use `/v1` at the public boundary.
-- [Chapter 1](../../Chapter1.md) examples use `/api/v1` inconsistently.
+- [Chapter 18](../Chapter18.md) §18.23 and the [identity contract](../CHAPTER_18_IDENTITY_CONTRACT.md) §9 use `/api/v1`.
+- [Chapter 7](../Chapter7.md) §7.9, [Chapter 3](../Chapter3.md) §3.25 and the [API contract](../CHAPTER_07_API_REALTIME_CONTRACT.md) C7-D01 use `/v1` at the public boundary.
+- [Chapter 1](../Chapter1.md) examples use `/api/v1` inconsistently.
 
 C1-D06, C3-D11, C7-D01 and C7-D14 require route reconciliation before dependent clients or OpenAPI artifacts are generated. C18-D06 concerns account/membership/invitation states, not API-prefix approval. Two live prefixes would double the client-generation surface and create ambiguous error/redirect semantics.
 

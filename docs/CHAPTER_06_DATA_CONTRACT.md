@@ -8,7 +8,7 @@ Source-of-truth role: the [documentation map](README.md) names this contract as 
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md) and [private Space contract](CHAPTER_03_SPACE_CONTRACT.md). It develops the C18-T02 and C3-T02 data handoffs and the C1-T05 foundation for the family-task/reminder milestone.
 
-- [Chapter 6](../Chapter6.md) provides principles, example SQL and a document/RAG model. Preserve its examples as source evidence, not ready-to-run migrations. Source titles and table names are indexed below.
+- [Chapter 6](Chapter6.md) provides principles, example SQL and a document/RAG model. Preserve its examples as source evidence, not ready-to-run migrations. Source titles and table names are indexed below.
 - The source ends at section 6.18. It does not contain a complete migration set, retention schedule, recovery plan or final acceptance list. Added constraints, workflows and tests here are explicitly design proposals.
 - M1 remains verified accounts, private family membership, ordinary tasks and a one-time in-app reminder. Public community, messaging and controlled Agent capabilities remain full-MVP work; health records, E2E choices, advanced files/RAG and external delivery need their approved milestones.
 - Proposed product choices in the earlier drafts remain pending. This document must not resolve partner replacement, old-history access, legal retention, initial authentication providers or external consent merely by choosing a SQL default.
@@ -17,7 +17,7 @@ This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contrac
 
 ## 2. Exact Source Principles
 
-All four principle titles from [section 6.2](../Chapter6.md#L33) are retained verbatim. They apply to APIs, database operations, derived projections and workers together.
+All four principle titles from [section 6.2](Chapter6.md#L33) are retained verbatim. They apply to APIs, database operations, derived projections and workers together.
 
 | ID | Source principle |
 | --- | --- |
@@ -34,24 +34,24 @@ All 18 numbered topics are retained with their exact titles and anchors. Coverag
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C6-S01 | Purpose of This Chapter | [6.1](../Chapter6.md#L3) |
-| C6-S02 | Core Data Principles | [6.2](../Chapter6.md#L33) |
-| C6-S03 | Logical Data Domains | [6.3](../Chapter6.md#L236) |
-| C6-S04 | Recommended Technology Architecture | [6.4](../Chapter6.md#L311) |
-| C6-S05 | Identifier Strategy | [6.5](../Chapter6.md#L481) |
-| C6-S06 | Common Table Conventions | [6.6](../Chapter6.md#L507) |
-| C6-S07 | Identity and User Tables | [6.7](../Chapter6.md#L550) |
-| C6-S08 | Space and Group Data Model | [6.8](../Chapter6.md#L633) |
-| C6-S09 | Community Page and Post Tables | [6.9](../Chapter6.md#L772) |
-| C6-S10 | Conversation and Message Data Model | [6.10](../Chapter6.md#L864) |
-| C6-S11 | Tasks, Events, Reminders, and Notifications | [6.11](../Chapter6.md#L1018) |
-| C6-S12 | Agent Data Architecture | [6.12](../Chapter6.md#L1135) |
-| C6-S13 | Agent Approval Model | [6.13](../Chapter6.md#L1274) |
-| C6-S14 | Agent Checkpoints | [6.14](../Chapter6.md#L1323) |
-| C6-S15 | Agent Memory Architecture | [6.15](../Chapter6.md#L1361) |
-| C6-S16 | File and Object Storage Architecture | [6.16](../Chapter6.md#L1447) |
-| C6-S17 | Document Processing and RAG Data Model | [6.17](../Chapter6.md#L1535) |
-| C6-S18 | Permission-Aware RAG Retrieval | [6.18](../Chapter6.md#L1641) |
+| C6-S01 | Purpose of This Chapter | [6.1](Chapter6.md#L3) |
+| C6-S02 | Core Data Principles | [6.2](Chapter6.md#L33) |
+| C6-S03 | Logical Data Domains | [6.3](Chapter6.md#L236) |
+| C6-S04 | Recommended Technology Architecture | [6.4](Chapter6.md#L311) |
+| C6-S05 | Identifier Strategy | [6.5](Chapter6.md#L481) |
+| C6-S06 | Common Table Conventions | [6.6](Chapter6.md#L507) |
+| C6-S07 | Identity and User Tables | [6.7](Chapter6.md#L550) |
+| C6-S08 | Space and Group Data Model | [6.8](Chapter6.md#L633) |
+| C6-S09 | Community Page and Post Tables | [6.9](Chapter6.md#L772) |
+| C6-S10 | Conversation and Message Data Model | [6.10](Chapter6.md#L864) |
+| C6-S11 | Tasks, Events, Reminders, and Notifications | [6.11](Chapter6.md#L1018) |
+| C6-S12 | Agent Data Architecture | [6.12](Chapter6.md#L1135) |
+| C6-S13 | Agent Approval Model | [6.13](Chapter6.md#L1274) |
+| C6-S14 | Agent Checkpoints | [6.14](Chapter6.md#L1323) |
+| C6-S15 | Agent Memory Architecture | [6.15](Chapter6.md#L1361) |
+| C6-S16 | File and Object Storage Architecture | [6.16](Chapter6.md#L1447) |
+| C6-S17 | Document Processing and RAG Data Model | [6.17](Chapter6.md#L1535) |
+| C6-S18 | Permission-Aware RAG Retrieval | [6.18](Chapter6.md#L1641) |
 
 ## 4. Source SQL Inventory
 
@@ -59,33 +59,33 @@ These are all 27 `CREATE TABLE` relations in the source, in source order. Other 
 
 | ID | Source table | Source SQL |
 | --- | --- | --- |
-| C6-B01 | users | [definition](../Chapter6.md#L559) |
-| C6-B02 | user_profiles | [definition](../Chapter6.md#L587) |
-| C6-B03 | user_consents | [definition](../Chapter6.md#L606) |
-| C6-B04 | spaces | [definition](../Chapter6.md#L656) |
-| C6-B05 | space_policies | [definition](../Chapter6.md#L701) |
-| C6-B06 | space_members | [definition](../Chapter6.md#L723) |
-| C6-B07 | pages | [definition](../Chapter6.md#L779) |
-| C6-B08 | posts | [definition](../Chapter6.md#L812) |
-| C6-B09 | comments | [definition](../Chapter6.md#L851) |
-| C6-B10 | conversations | [definition](../Chapter6.md#L882) |
-| C6-B11 | conversation_members | [definition](../Chapter6.md#L907) |
-| C6-B12 | messages | [definition](../Chapter6.md#L923) |
-| C6-B13 | tasks | [definition](../Chapter6.md#L1025) |
-| C6-B14 | events | [definition](../Chapter6.md#L1049) |
-| C6-B15 | reminders | [definition](../Chapter6.md#L1072) |
-| C6-B16 | notification_deliveries | [definition](../Chapter6.md#L1094) |
-| C6-B17 | agent_configs | [definition](../Chapter6.md#L1162) |
-| C6-B18 | agent_runs | [definition](../Chapter6.md#L1181) |
-| C6-B19 | agent_steps | [definition](../Chapter6.md#L1219) |
-| C6-B20 | agent_tool_calls | [definition](../Chapter6.md#L1243) |
-| C6-B21 | agent_approvals | [definition](../Chapter6.md#L1281) |
-| C6-B22 | memory_items | [definition](../Chapter6.md#L1393) |
-| C6-B23 | files | [definition](../Chapter6.md#L1466) |
-| C6-B24 | documents | [definition](../Chapter6.md#L1566) |
-| C6-B25 | document_pages | [definition](../Chapter6.md#L1588) |
-| C6-B26 | document_chunks | [definition](../Chapter6.md#L1604) |
-| C6-B27 | embeddings | [definition](../Chapter6.md#L1628) |
+| C6-B01 | users | [definition](Chapter6.md#L559) |
+| C6-B02 | user_profiles | [definition](Chapter6.md#L587) |
+| C6-B03 | user_consents | [definition](Chapter6.md#L606) |
+| C6-B04 | spaces | [definition](Chapter6.md#L656) |
+| C6-B05 | space_policies | [definition](Chapter6.md#L701) |
+| C6-B06 | space_members | [definition](Chapter6.md#L723) |
+| C6-B07 | pages | [definition](Chapter6.md#L779) |
+| C6-B08 | posts | [definition](Chapter6.md#L812) |
+| C6-B09 | comments | [definition](Chapter6.md#L851) |
+| C6-B10 | conversations | [definition](Chapter6.md#L882) |
+| C6-B11 | conversation_members | [definition](Chapter6.md#L907) |
+| C6-B12 | messages | [definition](Chapter6.md#L923) |
+| C6-B13 | tasks | [definition](Chapter6.md#L1025) |
+| C6-B14 | events | [definition](Chapter6.md#L1049) |
+| C6-B15 | reminders | [definition](Chapter6.md#L1072) |
+| C6-B16 | notification_deliveries | [definition](Chapter6.md#L1094) |
+| C6-B17 | agent_configs | [definition](Chapter6.md#L1162) |
+| C6-B18 | agent_runs | [definition](Chapter6.md#L1181) |
+| C6-B19 | agent_steps | [definition](Chapter6.md#L1219) |
+| C6-B20 | agent_tool_calls | [definition](Chapter6.md#L1243) |
+| C6-B21 | agent_approvals | [definition](Chapter6.md#L1281) |
+| C6-B22 | memory_items | [definition](Chapter6.md#L1393) |
+| C6-B23 | files | [definition](Chapter6.md#L1466) |
+| C6-B24 | documents | [definition](Chapter6.md#L1566) |
+| C6-B25 | document_pages | [definition](Chapter6.md#L1588) |
+| C6-B26 | document_chunks | [definition](Chapter6.md#L1604) |
+| C6-B27 | embeddings | [definition](Chapter6.md#L1628) |
 
 ## 5. Storage Responsibilities
 
@@ -455,6 +455,6 @@ First database demonstration, once implementation is authorized: initialize the 
 | Storing permissions, secrets and business truth only in JSON/Redis | Superficially flexible implementation. | Weak constraints, hidden authority changes, lost durable work and sensitive logs; use scoped relational truth and protected limited metadata. |
 | Treating a schema check or backup file as readiness | Easy but misleading progress numbers. | Missing race/restore/security evidence; distinguish this document's structural validation from actual PostgreSQL and product tests. |
 
-Next: [Chapter 7](../Chapter7.md), where the identity, Space and data drafts become one canonical REST/error/event/WebSocket contract with explicit authorization, pagination, concurrency, retry and recovery semantics. Carry [Chapter 10 operations](../Chapter10.md), [Chapter 11 security](../Chapter11.md), [Chapter 13 scheduling](../Chapter13.md), [Chapter 14 files](../Chapter14.md), [Chapter 19 encryption](../Chapter19.md) and [Chapter 20 delivery](../Chapter20.md) alongside affected operations.
+Next: [Chapter 7](Chapter7.md), where the identity, Space and data drafts become one canonical REST/error/event/WebSocket contract with explicit authorization, pagination, concurrency, retry and recovery semantics. Carry [Chapter 10 operations](Chapter10.md), [Chapter 11 security](Chapter11.md), [Chapter 13 scheduling](Chapter13.md), [Chapter 14 files](Chapter14.md), [Chapter 19 encryption](Chapter19.md) and [Chapter 20 delivery](Chapter20.md) alongside affected operations.
 
 This completes the proposed data-design handoff, not database implementation. The source examples are preserved and mapped, policy decisions remain visible, and all runtime acceptance evidence must be produced in the authorized build phase.

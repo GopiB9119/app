@@ -6,11 +6,11 @@ Status: DRAFT FOR PRODUCT, DISCOVERY, TRUST AND PRIVACY REVIEW. This is a design
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) and [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) drafts. It develops C14-T12 into public-content eligibility and search/feed/moderation contracts.
 
-- [Chapter 15](../Chapter15.md) owns search, discovery, candidate generation, ranking, personalization, reporting and related client surfaces. Content/identity/Space/file domains remain authoritative for their actual objects and grants; this chapter does not create a competing page/post database or complete every publication/interaction CRUD contract.
-- [Chapter 16](../Chapter16.md) owns the adjacent trust/operations detail; [Chapter 19](../Chapter19.md) and [Chapter 20](../Chapter20.md) remain encryption and notification dependencies. Search, recommendations and moderation can share infrastructure without sharing unrestricted data or authority.
+- [Chapter 15](Chapter15.md) owns search, discovery, candidate generation, ranking, personalization, reporting and related client surfaces. Content/identity/Space/file domains remain authoritative for their actual objects and grants; this chapter does not create a competing page/post database or complete every publication/interaction CRUD contract.
+- [Chapter 16](Chapter16.md) owns the adjacent trust/operations detail; [Chapter 19](Chapter19.md) and [Chapter 20](Chapter20.md) remain encryption and notification dependencies. Search, recommendations and moderation can share infrastructure without sharing unrestricted data or authority.
 - Private family/couple/solo conversations, files, care records, calendar data, direct messages and Agent memory are not public-discovery training, feature or candidate sources. Authorized private search is a separate scoped experience. Membership or permission to read privately does not imply permission to distribute publicly.
 - M1 remains the synthetic ordinary family task and one-time in-app reminder. A later public-discovery demonstration is a separate slice, not an added M1 prerequisite or evidence that the full MVP exists.
-- The source ends at [15.38](../Chapter15.md#L2704) after the main architecture diagram and the sentence promising an independent integrated moderation pipeline. No final pipeline or final acceptance list follows. New workflows/acceptance below are proposed refinements, not recovered source text.
+- The source ends at [15.38](Chapter15.md#L2704) after the main architecture diagram and the sentence promising an independent integrated moderation pipeline. No final pipeline or final acceptance list follows. New workflows/acceptance below are proposed refinements, not recovered source text.
 - Preserve all original sources and prior drafts. Continued planning does not approve policy proposals or authorize code, package installs, live queries/crawling, user profiling, moderation actions, provider/model calls, devices, spending, provisioning or deployment.
 - All search/index/ranking/recommendation/moderation/client/security/load tests are NOT RUN. Document checks and explicitly synthetic fixture arithmetic are not evidence of runtime privacy, model quality, staffing readiness or production capacity.
 
@@ -20,44 +20,44 @@ All thirty-eight numbered topic titles and their source anchors are retained, in
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C15-S01 | Purpose and Scope | [15.1](../Chapter15.md#L3) |
-| C15-S02 | Core Architectural Principles | [15.2](../Chapter15.md#L47) |
-| C15-S03 | Content Visibility Model | [15.3](../Chapter15.md#L171) |
-| C15-S04 | Content Eligibility States | [15.4](../Chapter15.md#L398) |
-| C15-S05 | Global Discovery Model | [15.5](../Chapter15.md#L432) |
-| C15-S06 | Feed Architecture | [15.6](../Chapter15.md#L470) |
-| C15-S07 | Feed Candidate Generation | [15.7](../Chapter15.md#L650) |
-| C15-S08 | Search Architecture | [15.8](../Chapter15.md#L710) |
-| C15-S09 | Search Technology Decision | [15.9](../Chapter15.md#L817) |
-| C15-S10 | Search Index Document | [15.10](../Chapter15.md#L870) |
-| C15-S11 | Ranking Architecture | [15.11](../Chapter15.md#L909) |
-| C15-S12 | Ranking Constraints | [15.12](../Chapter15.md#L1015) |
-| C15-S13 | Ranking Explainability | [15.13](../Chapter15.md#L1051) |
-| C15-S14 | Recommendation Architecture | [15.14](../Chapter15.md#L1083) |
-| C15-S15 | Cold-Start Strategy | [15.15](../Chapter15.md#L1127) |
-| C15-S16 | Trending Architecture | [15.16](../Chapter15.md#L1165) |
-| C15-S17 | Hashtags, Topics, and Categories | [15.17](../Chapter15.md#L1223) |
-| C15-S18 | Multilingual Search and Discovery | [15.18](../Chapter15.md#L1301) |
-| C15-S19 | Search Suggestions and Autocomplete | [15.19](../Chapter15.md#L1351) |
-| C15-S20 | Moderation Pipeline | [15.20](../Chapter15.md#L1399) |
-| C15-S21 | Human Review and Appeals | [15.21](../Chapter15.md#L1450) |
-| C15-S22 | Spam, Abuse, Fraud, and Bot Detection | [15.22](../Chapter15.md#L1506) |
-| C15-S23 | Community Reporting | [15.23](../Chapter15.md#L1549) |
-| C15-S24 | Data Model | [15.24](../Chapter15.md#L1616) |
-| C15-S25 | Cache Architecture | [15.25](../Chapter15.md#L1785) |
-| C15-S26 | Fanout Strategy | [15.26](../Chapter15.md#L1824) |
-| C15-S27 | Realtime Feed Updates | [15.27](../Chapter15.md#L1885) |
-| C15-S28 | Ranking and Discovery APIs | [15.28](../Chapter15.md#L1917) |
-| C15-S29 | Event Contracts | [15.29](../Chapter15.md#L2016) |
-| C15-S30 | Android Screens | [15.30](../Chapter15.md#L2066) |
-| C15-S31 | Web/Desktop Screens | [15.31](../Chapter15.md#L2156) |
-| C15-S32 | Personalization Controls | [15.32](../Chapter15.md#L2228) |
-| C15-S33 | Metrics and Observability | [15.33](../Chapter15.md#L2276) |
-| C15-S34 | Failure Handling | [15.34](../Chapter15.md#L2384) |
-| C15-S35 | Security and Privacy Requirements | [15.35](../Chapter15.md#L2458) |
-| C15-S36 | Repository Structure | [15.36](../Chapter15.md#L2524) |
-| C15-S37 | Testing Strategy | [15.37](../Chapter15.md#L2614) |
-| C15-S38 | Final Architecture Decision | [15.38](../Chapter15.md#L2704) |
+| C15-S01 | Purpose and Scope | [15.1](Chapter15.md#L3) |
+| C15-S02 | Core Architectural Principles | [15.2](Chapter15.md#L47) |
+| C15-S03 | Content Visibility Model | [15.3](Chapter15.md#L171) |
+| C15-S04 | Content Eligibility States | [15.4](Chapter15.md#L398) |
+| C15-S05 | Global Discovery Model | [15.5](Chapter15.md#L432) |
+| C15-S06 | Feed Architecture | [15.6](Chapter15.md#L470) |
+| C15-S07 | Feed Candidate Generation | [15.7](Chapter15.md#L650) |
+| C15-S08 | Search Architecture | [15.8](Chapter15.md#L710) |
+| C15-S09 | Search Technology Decision | [15.9](Chapter15.md#L817) |
+| C15-S10 | Search Index Document | [15.10](Chapter15.md#L870) |
+| C15-S11 | Ranking Architecture | [15.11](Chapter15.md#L909) |
+| C15-S12 | Ranking Constraints | [15.12](Chapter15.md#L1015) |
+| C15-S13 | Ranking Explainability | [15.13](Chapter15.md#L1051) |
+| C15-S14 | Recommendation Architecture | [15.14](Chapter15.md#L1083) |
+| C15-S15 | Cold-Start Strategy | [15.15](Chapter15.md#L1127) |
+| C15-S16 | Trending Architecture | [15.16](Chapter15.md#L1165) |
+| C15-S17 | Hashtags, Topics, and Categories | [15.17](Chapter15.md#L1223) |
+| C15-S18 | Multilingual Search and Discovery | [15.18](Chapter15.md#L1301) |
+| C15-S19 | Search Suggestions and Autocomplete | [15.19](Chapter15.md#L1351) |
+| C15-S20 | Moderation Pipeline | [15.20](Chapter15.md#L1399) |
+| C15-S21 | Human Review and Appeals | [15.21](Chapter15.md#L1450) |
+| C15-S22 | Spam, Abuse, Fraud, and Bot Detection | [15.22](Chapter15.md#L1506) |
+| C15-S23 | Community Reporting | [15.23](Chapter15.md#L1549) |
+| C15-S24 | Data Model | [15.24](Chapter15.md#L1616) |
+| C15-S25 | Cache Architecture | [15.25](Chapter15.md#L1785) |
+| C15-S26 | Fanout Strategy | [15.26](Chapter15.md#L1824) |
+| C15-S27 | Realtime Feed Updates | [15.27](Chapter15.md#L1885) |
+| C15-S28 | Ranking and Discovery APIs | [15.28](Chapter15.md#L1917) |
+| C15-S29 | Event Contracts | [15.29](Chapter15.md#L2016) |
+| C15-S30 | Android Screens | [15.30](Chapter15.md#L2066) |
+| C15-S31 | Web/Desktop Screens | [15.31](Chapter15.md#L2156) |
+| C15-S32 | Personalization Controls | [15.32](Chapter15.md#L2228) |
+| C15-S33 | Metrics and Observability | [15.33](Chapter15.md#L2276) |
+| C15-S34 | Failure Handling | [15.34](Chapter15.md#L2384) |
+| C15-S35 | Security and Privacy Requirements | [15.35](Chapter15.md#L2458) |
+| C15-S36 | Repository Structure | [15.36](Chapter15.md#L2524) |
+| C15-S37 | Testing Strategy | [15.37](Chapter15.md#L2614) |
+| C15-S38 | Final Architecture Decision | [15.38](Chapter15.md#L2704) |
 
 The four principle titles from section 15.2 are preserved verbatim.
 
@@ -769,4 +769,4 @@ Record exact artifacts, policies/versions/configuration, candidate eligibility b
 - Privacy-safe activity use/reset/deletion, query URLs/logging, reviewer retention/holds and private-message/E2E reporting remain linked Chapter 11/16/19 decisions. No Agent/provider or public-ranker shortcut overrides them.
 - Critical observed leakage, required-gate bypass, stale restoration or authorization failure blocks the dependent feature. Unrun tests, missing labels and unknown operating capacity are not passing evidence; a risk sign-off cannot waive mandatory duties.
 
-Next is [Chapter 16](../Chapter16.md): trust, safety, moderation/admin operations, case access, audit, support and incident controls. Carry [Chapter 19](../Chapter19.md) for encryption and [Chapter 20](../Chapter20.md) for notification delivery. Continue design/developer handoff, preserving the incomplete source ending and prior contracts without inferring implementation or policy approval.
+Next is [Chapter 16](Chapter16.md): trust, safety, moderation/admin operations, case access, audit, support and incident controls. Carry [Chapter 19](Chapter19.md) for encryption and [Chapter 20](Chapter20.md) for notification delivery. Continue design/developer handoff, preserving the incomplete source ending and prior contracts without inferring implementation or policy approval.

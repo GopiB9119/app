@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, COMMUNITY, IDENTITY, SECURITY AND DATA-RIGHTS REVIEW.
 
 Own page creation/profile/roles/lifecycle and post/comment/reaction/follow/share/save commands. Public event admission, search/ranking, moderation cases, identity, files, Agent execution and delivery retain their existing owners. A shared component is not permission to merge their data or authorities.
 
-- [Chapter 2 source](../Chapter2.md) remains unchanged. The [reconciliation index](CONTRACT_RECONCILIATION.md) preserves its 22 topic anchors, 32 acceptance criteria and 36 source operations as COV2-A01 through COV2-A32 and COV2-P01 through COV2-P36. Those are index-local IDs, not definitions in this file.
+- [Chapter 2 source](Chapter2.md) remains unchanged. The [reconciliation index](CONTRACT_RECONCILIATION.md) preserves its 22 topic anchors, 32 acceptance criteria and 36 source operations as COV2-A01 through COV2-A32 and COV2-P01 through COV2-P36. Those are index-local IDs, not definitions in this file.
 - [Data](CHAPTER_06_DATA_CONTRACT.md) C6-E07 owns typed page/post/comment constraints; [API](CHAPTER_07_API_REALTIME_CONTRACT.md) C7-W03 owns transport policy. This document supplies the missing domain behavior, not a second database or envelope.
 - [Identity](CHAPTER_18_IDENTITY_CONTRACT.md) C18-W07/C18-W10 supplies intended admission, ownership and actual human/page attribution; [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) owns immutable media and safe processing.
 - [Discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) owns eligible projections/ranking; [trust and safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) owns case-scoped enforcement/appeals. Page moderation does not grant platform operator powers.
@@ -36,7 +36,7 @@ Every direction below is a proposal. OPEN rows identify choices that cannot be s
 
 ## 3. Page Authority and Field Audiences
 
-Source [2.5](../Chapter2.md#L268) names owner, administrators, moderators and authorized editors. The matrix is a conservative proposed capability assignment, not a hierarchy inferred from role names. A target's scope, membership, resource revision, account restriction, source audience and policy still apply to every allowed cell. Multiple approved roles may combine capabilities, never bypass a denial or ownership protection.
+Source [2.5](Chapter2.md#L268) names owner, administrators, moderators and authorized editors. The matrix is a conservative proposed capability assignment, not a hierarchy inferred from role names. A target's scope, membership, resource revision, account restriction, source audience and policy still apply to every allowed cell. Multiple approved roles may combine capabilities, never bypass a denial or ownership protection.
 
 | ID | Action | Proposed allowed actor | Target and restriction boundary |
 | --- | --- | --- | --- |

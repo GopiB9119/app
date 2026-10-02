@@ -6,8 +6,8 @@ Status: DRAFT FOR PRODUCT, EVENT PLANNING, DATA AND SECURITY REVIEW. This is a d
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) and [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) drafts. It develops C16-T12 into event ownership, attendance, polls, tasks, budgets and collaborative workflow contracts.
 
-- [Chapter 17](../Chapter17.md) is the source owner. The event domain is durable truth even when the Agent is unavailable. Existing identity, Space, conversation, file, scheduling, notification and safety domains keep their responsibilities; an event workspace is not a duplicate implementation of them.
-- [Chapter 19](../Chapter19.md) and [Chapter 20](../Chapter20.md) remain encryption and external-delivery dependencies. Event membership, Space membership, invitation, attendance, financial visibility and Agent delegation are separate authorities.
+- [Chapter 17](Chapter17.md) is the source owner. The event domain is durable truth even when the Agent is unavailable. Existing identity, Space, conversation, file, scheduling, notification and safety domains keep their responsibilities; an event workspace is not a duplicate implementation of them.
+- [Chapter 19](Chapter19.md) and [Chapter 20](Chapter20.md) remain encryption and external-delivery dependencies. Event membership, Space membership, invitation, attendance, financial visibility and Agent delegation are separate authorities.
 - M1 remains the synthetic ordinary family task and confirmed one-time in-app reminder. A later event/collaboration demonstration is a separate slice, not an added M1 prerequisite or proof of the complete MVP.
 - Planning estimates, contribution requests/pledges, expense assertions, payment evidence and actual money movement are distinct. No event role, poll result, Agent suggestion or generic approval enables an unapproved payment provider or prohibited MVP financial action.
 - The source has complete final decisions and acceptance criteria. Preserve them below; added transaction, state, privacy, concurrency and operating rules are proposed refinements, not approved product policy or accounting/legal advice.
@@ -20,44 +20,44 @@ All thirty-eight numbered topic titles and source anchors are retained, includin
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C17-S01 | Purpose and Scope | [17.1](../Chapter17.md#L3) |
-| C17-S02 | Core Architectural Principles | [17.2](../Chapter17.md#L55) |
-| C17-S03 | Event Types | [17.3](../Chapter17.md#L173) |
-| C17-S04 | Event Lifecycle | [17.4](../Chapter17.md#L293) |
-| C17-S05 | Event Ownership and Roles | [17.5](../Chapter17.md#L358) |
-| C17-S06 | Event Visibility | [17.6](../Chapter17.md#L613) |
-| C17-S07 | Event Data Model | [17.7](../Chapter17.md#L653) |
-| C17-S08 | Event Creation Workflow | [17.8](../Chapter17.md#L757) |
-| C17-S09 | Event Agent Integration | [17.9](../Chapter17.md#L803) |
-| C17-S10 | Agent Event Workflow | [17.10](../Chapter17.md#L846) |
-| C17-S11 | Event Discussions | [17.11](../Chapter17.md#L907) |
-| C17-S12 | Poll Architecture | [17.12](../Chapter17.md#L947) |
-| C17-S13 | Poll Lifecycle | [17.13](../Chapter17.md#L989) |
-| C17-S14 | Poll Data Model | [17.14](../Chapter17.md#L1019) |
-| C17-S15 | Shared Budget Architecture | [17.15](../Chapter17.md#L1064) |
-| C17-S16 | Budget Lifecycle | [17.16](../Chapter17.md#L1112) |
-| C17-S17 | Budget Data Model | [17.17](../Chapter17.md#L1146) |
-| C17-S18 | Contribution Privacy | [17.18](../Chapter17.md#L1226) |
-| C17-S19 | Payment Integration Boundary | [17.19](../Chapter17.md#L1264) |
-| C17-S20 | Task and Checklist Architecture | [17.20](../Chapter17.md#L1305) |
-| C17-S21 | Task Dependencies | [17.21](../Chapter17.md#L1368) |
-| C17-S22 | Collaborative Workspace | [17.22](../Chapter17.md#L1394) |
-| C17-S23 | Event Files | [17.23](../Chapter17.md#L1473) |
-| C17-S24 | Event Notifications | [17.24](../Chapter17.md#L1510) |
-| C17-S25 | Reminder Rules | [17.25](../Chapter17.md#L1556) |
-| C17-S26 | Event Cancellation and Postponement | [17.26](../Chapter17.md#L1594) |
-| C17-S27 | Event Versioning | [17.27](../Chapter17.md#L1642) |
-| C17-S28 | Event APIs | [17.28](../Chapter17.md#L1693) |
-| C17-S29 | Event Realtime Events | [17.29](../Chapter17.md#L1821) |
-| C17-S30 | Conflict Resolution | [17.30](../Chapter17.md#L1846) |
-| C17-S31 | Android Screens | [17.31](../Chapter17.md#L1916) |
-| C17-S32 | Web/Desktop Screens | [17.32](../Chapter17.md#L1986) |
-| C17-S33 | Event Metrics | [17.33](../Chapter17.md#L2044) |
-| C17-S34 | Failure Handling | [17.34](../Chapter17.md#L2110) |
-| C17-S35 | Security Requirements | [17.35](../Chapter17.md#L2174) |
-| C17-S36 | Repository Structure | [17.36](../Chapter17.md#L2206) |
-| C17-S37 | Final Architecture Decision | [17.37](../Chapter17.md#L2294) |
-| C17-S38 | Acceptance Criteria | [17.38](../Chapter17.md#L2354) |
+| C17-S01 | Purpose and Scope | [17.1](Chapter17.md#L3) |
+| C17-S02 | Core Architectural Principles | [17.2](Chapter17.md#L55) |
+| C17-S03 | Event Types | [17.3](Chapter17.md#L173) |
+| C17-S04 | Event Lifecycle | [17.4](Chapter17.md#L293) |
+| C17-S05 | Event Ownership and Roles | [17.5](Chapter17.md#L358) |
+| C17-S06 | Event Visibility | [17.6](Chapter17.md#L613) |
+| C17-S07 | Event Data Model | [17.7](Chapter17.md#L653) |
+| C17-S08 | Event Creation Workflow | [17.8](Chapter17.md#L757) |
+| C17-S09 | Event Agent Integration | [17.9](Chapter17.md#L803) |
+| C17-S10 | Agent Event Workflow | [17.10](Chapter17.md#L846) |
+| C17-S11 | Event Discussions | [17.11](Chapter17.md#L907) |
+| C17-S12 | Poll Architecture | [17.12](Chapter17.md#L947) |
+| C17-S13 | Poll Lifecycle | [17.13](Chapter17.md#L989) |
+| C17-S14 | Poll Data Model | [17.14](Chapter17.md#L1019) |
+| C17-S15 | Shared Budget Architecture | [17.15](Chapter17.md#L1064) |
+| C17-S16 | Budget Lifecycle | [17.16](Chapter17.md#L1112) |
+| C17-S17 | Budget Data Model | [17.17](Chapter17.md#L1146) |
+| C17-S18 | Contribution Privacy | [17.18](Chapter17.md#L1226) |
+| C17-S19 | Payment Integration Boundary | [17.19](Chapter17.md#L1264) |
+| C17-S20 | Task and Checklist Architecture | [17.20](Chapter17.md#L1305) |
+| C17-S21 | Task Dependencies | [17.21](Chapter17.md#L1368) |
+| C17-S22 | Collaborative Workspace | [17.22](Chapter17.md#L1394) |
+| C17-S23 | Event Files | [17.23](Chapter17.md#L1473) |
+| C17-S24 | Event Notifications | [17.24](Chapter17.md#L1510) |
+| C17-S25 | Reminder Rules | [17.25](Chapter17.md#L1556) |
+| C17-S26 | Event Cancellation and Postponement | [17.26](Chapter17.md#L1594) |
+| C17-S27 | Event Versioning | [17.27](Chapter17.md#L1642) |
+| C17-S28 | Event APIs | [17.28](Chapter17.md#L1693) |
+| C17-S29 | Event Realtime Events | [17.29](Chapter17.md#L1821) |
+| C17-S30 | Conflict Resolution | [17.30](Chapter17.md#L1846) |
+| C17-S31 | Android Screens | [17.31](Chapter17.md#L1916) |
+| C17-S32 | Web/Desktop Screens | [17.32](Chapter17.md#L1986) |
+| C17-S33 | Event Metrics | [17.33](Chapter17.md#L2044) |
+| C17-S34 | Failure Handling | [17.34](Chapter17.md#L2110) |
+| C17-S35 | Security Requirements | [17.35](Chapter17.md#L2174) |
+| C17-S36 | Repository Structure | [17.36](Chapter17.md#L2206) |
+| C17-S37 | Final Architecture Decision | [17.37](Chapter17.md#L2294) |
+| C17-S38 | Acceptance Criteria | [17.38](Chapter17.md#L2354) |
 
 The four principle titles in section 17.2 remain verbatim.
 
@@ -861,4 +861,4 @@ Record exact event/module/configuration/library versions, actors/roles, currency
 - Postponement/cancellation is not one atomic transaction with calendars, messages or money. Current stop gates, stable logical effects, unknown outcome reconciliation and isolated restore are required; downloaded/in-flight data has honest limits.
 - Critical observed disclosure, duplicate financial effect, ballot-identity leak, over-capacity admission, stale approval or cancellation bypass blocks the affected feature. Unrun tests and document arithmetic are not passes; residual-risk approval cannot waive required permissions or law.
 
-The [Chapter 18 identity contract](CHAPTER_18_IDENTITY_CONTRACT.md) was drafted earlier in the dependency sequence. Next is [Chapter 19](../Chapter19.md): conversations, reliable messaging, end-to-end encryption, presence, delivery, attachments and scoped offline/realtime recovery. Carry the [Agent](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [file](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [trust](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [notification](../Chapter20.md) boundaries. Continue design/developer handoff, not implementation, provider calls or financial actions.
+The [Chapter 18 identity contract](CHAPTER_18_IDENTITY_CONTRACT.md) was drafted earlier in the dependency sequence. Next is [Chapter 19](Chapter19.md): conversations, reliable messaging, end-to-end encryption, presence, delivery, attachments and scoped offline/realtime recovery. Carry the [Agent](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [file](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [trust](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [notification](Chapter20.md) boundaries. Continue design/developer handoff, not implementation, provider calls or financial actions.

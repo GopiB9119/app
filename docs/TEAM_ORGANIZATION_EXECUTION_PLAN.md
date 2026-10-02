@@ -6,14 +6,14 @@ Planning baseline: 2026-09-19. This document proposes responsibilities, staffing
 
 ## 1. Scope and Corrections
 
-Use this operating plan alongside the [release plan](CHAPTER_01_RELEASE_PLAN.md), [developer task standard](../idea.md#L3725), [operating cadence](../idea.md#L3800) and [Astra development workflow](../idea.md#L3911). Existing sources and chapter drafts remain unchanged. Conflicting requirements require an explicit decision in the owning contract, not an informal instruction in a ticket.
+Use this operating plan alongside the [release plan](CHAPTER_01_RELEASE_PLAN.md), [developer task standard](idea.md#L3725), [operating cadence](idea.md#L3800) and [Astra development workflow](idea.md#L3911). Existing sources and chapter drafts remain unchanged. Conflicting requirements require an explicit decision in the owning contract, not an informal instruction in a ticket.
 
 The supplied organization proposal needs these adjustments:
 
 | Area | Aligned planning baseline |
 | --- | --- |
 | Headcount | Teams A-E are responsibility areas, not five fully staffed departments. Filling every listed specialist position separately would exceed 25 people. Section 2 gives non-overlapping headcounts. |
-| Current documentation | There are 16 chapter drafts at this snapshot. The [Chapter 19 contract](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) already exists; review its open decisions rather than draft it again. [Chapter 20](../Chapter20.md) exists as source material but has no separate contract draft yet. |
+| Current documentation | There are 16 chapter drafts at this snapshot. The [Chapter 19 contract](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) already exists; review its open decisions rather than draft it again. [Chapter 20](Chapter20.md) exists as source material but has no separate contract draft yet. |
 | M1 behavior | Manual forms, synthetic accounts, an ordinary family task, a one-time reminder and durable in-app notification on Android and core web. No Agent code or Agent drafting is required. In-app history does not prove background push. |
 | Unapproved decisions | C1-D01, C1-D02 and C1-D04 are PROPOSED; C1-D03, C1-D05 and C1-D06 are OPEN. Email/password-first in C18-D01 and the API recommendations are proposals, not accepted decisions. |
 | Existing ADRs | Five ADR drafts are present and all are PROPOSED. Their Decision sections are recommendations pending approval, not evidence that the chapter decision registers are closed. Section 8 links the actual files. |
@@ -92,14 +92,14 @@ Each epic has one accountable owner. Supporting teams contribute through the sam
 | Spaces, membership, roles, invitation admission and lifecycle | C: Spaces lead | Identity provides verified actor/destination evidence; A designs flows and B implements clients. | [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
 | Schema, migrations and durable data integrity | C: Data lead | Domain owners define invariants; E operates migration tooling. No competing team-owned source of truth. | [Data](CHAPTER_06_DATA_CONTRACT.md) |
 | API, events, synchronization and generated contracts | C: Backend lead | B and D are required consumers/reviewers. Each domain owns its operation semantics. | [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
-| Messaging, ordering, receipts and conversation authority | C: Messaging lead | B owns client reconciliation; E reviews privacy and cryptographic claims. | [Chapter 4](../Chapter4.md), [Messaging/encryption](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
+| Messaging, ordering, receipts and conversation authority | C: Messaging lead | B owns client reconciliation; E reviews privacy and cryptographic claims. | [Chapter 4](Chapter4.md), [Messaging/encryption](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
 | Tasks, scheduling, occurrences and reminder cancellation | C: Planning lead | D later drafts through the same services; B presents confirmed state. | [Scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
-| Notification policy, delivery history and provider adapters | C: Notifications lead | E owns operational/provider-risk review; scheduler owns due intent, not transport results. | [Chapter 20 source](../Chapter20.md), [Delivery review draft](CHAPTER_20_DELIVERY_CONTRACT.md) |
+| Notification policy, delivery history and provider adapters | C: Notifications lead | E owns operational/provider-risk review; scheduler owns due intent, not transport results. | [Chapter 20 source](Chapter20.md), [Delivery review draft](CHAPTER_20_DELIVERY_CONTRACT.md) |
 | File custody, scanning, extraction and retrieval storage | C: Files/data lead | D consumes authorized retrieval; E reviews isolation and data rights. | [Files/documents](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
 | Agent retrieval, context assembly and RAG evaluations | D: Agent lead | C retains file/index authority; E reviews permitted context and providers. | [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [Files/documents](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
-| Public community, feeds, search and discovery | C: Community lead | A owns feed UX; E owns moderation policy; private data cannot enter public discovery. | [Chapter 2](../Chapter2.md), [Discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
+| Public community, feeds, search and discovery | C: Community lead | A owns feed UX; E owns moderation policy; private data cannot enter public discovery. | [Chapter 2](Chapter2.md), [Discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
 | Events, polls, collaborative tasks and record-only budgets | C: Planning lead | A/B own workflows; D assistance is later. Recording expenses does not authorize payments. | [Event collaboration](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
-| Agent runtime, tools, memory and exact approvals | D: Agent lead | C owns domain effects; E owns safety gates. No separate permission implementation in tools. | [Chapter 5](../Chapter5.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
+| Agent runtime, tools, memory and exact approvals | D: Agent lead | C owns domain effects; E owns safety gates. No separate permission implementation in tools. | [Chapter 5](Chapter5.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
 | Trust operations, moderation and appeals | E: Trust/safety owner | A/product and qualified policy reviewers define policy; C implements enforcement; D handles Agent abuse controls. | [Trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
 | Security, privacy policy and data-rights coordination | E: Security/data-rights owner | Each C domain implements its export, deletion and revocation obligations. Role labels do not confer access to user data. | [Security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
 | Infrastructure, CI/CD, observability and disaster recovery | E: Platform/SRE owner | C owns application health, durable jobs and restore reconciliation; both rehearse recovery. | [Backend operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |

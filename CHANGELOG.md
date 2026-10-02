@@ -4,6 +4,10 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ## 2026-10-02
 
+### Source Documents Moved To docs
+
+- **The original sources are now in `docs/`**: `idea.md` and `Chapter1.md` to `Chapter20.md` moved from the repository root with their history; their content is unchanged. The 856 links to them in 33 documents and the feature catalog's source paths now point to the new place.
+
 ### Web Event Workflow
 
 - **Event drafts are protected at more exits** ([T121](docs/TASKS.md#defects-that-break-approved-requirements)). Closing, switching Space/event/view and same-window links ask before discarding changes or an unconfirmed create; saving blocks those exits, and reload warns. Temporary detail-refresh failures keep the draft and its original version; denied access hides it. Refresh no longer switches a draft's destination when Spaces are listed in a new order, and a missing Space's draft is never copied into another. Confirmed discard still works. Drafts remain in memory only.

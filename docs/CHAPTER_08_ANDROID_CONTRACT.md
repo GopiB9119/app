@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, ANDROID, DESIGN AND SECURITY REVIEW. This is a design
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md), [Space contract](CHAPTER_03_SPACE_CONTRACT.md), [data contract](CHAPTER_06_DATA_CONTRACT.md) and [API/realtime contract](CHAPTER_07_API_REALTIME_CONTRACT.md). It develops C1-T08 and C7-T09/C7-T12 into native Android workflows and ownership rules.
 
-- [Chapter 8](../Chapter8.md) is the owning Android source. Preserve its architecture, navigation and acceptance requirements, while treating Kotlin snippets and suggested module names as illustrative rather than compiling code.
+- [Chapter 8](Chapter8.md) is the owning Android source. Preserve its architecture, navigation and acceptance requirements, while treating Kotlin snippets and suggested module names as illustrative rather than compiling code.
 - M1 remains an ordinary synthetic family/task/one-time in-app-reminder workflow. Messaging, public community and controlled Agent capabilities retain their full-MVP milestones; health, external calls, advanced documents and other future capabilities are not silently added to M1.
 - Keep the broader Android and core web product aligned through shared domain/API contracts, not shared native UI code. Chapter 9 owns the web implementation architecture.
 - Product/provider/identity/encryption/policy choices from earlier drafts remain unresolved where marked. No original chapter or prior draft is changed; no application scaffold, SDK install, build, emulator, personal device, live push/provider or deployment is authorized here.
@@ -18,49 +18,49 @@ All 39 numbered source topics are retained with their exact titles and line anch
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C8-S01 | Purpose | [8.1](../Chapter8.md#L3) |
-| C8-S02 | Android Architecture Decision | [8.2](../Chapter8.md#L65) |
-| C8-S03 | Recommended Android Project Structure | [8.3](../Chapter8.md#L101) |
-| C8-S04 | Dependency Direction | [8.4](../Chapter8.md#L184) |
-| C8-S05 | Application Startup | [8.5](../Chapter8.md#L216) |
-| C8-S06 | Navigation Architecture | [8.6](../Chapter8.md#L252) |
-| C8-S07 | Navigation Security | [8.7](../Chapter8.md#L320) |
-| C8-S08 | UI State Model | [8.8](../Chapter8.md#L346) |
-| C8-S09 | ViewModel Responsibilities | [8.9](../Chapter8.md#L397) |
-| C8-S10 | Compose Screen Pattern | [8.10](../Chapter8.md#L453) |
-| C8-S11 | Design System | [8.11](../Chapter8.md#L514) |
-| C8-S12 | Main Home Screen | [8.12](../Chapter8.md#L557) |
-| C8-S13 | Discovery Screen | [8.13](../Chapter8.md#L586) |
-| C8-S14 | Space Overview Screen | [8.14](../Chapter8.md#L647) |
-| C8-S15 | Family and Custom Space Screens | [8.15](../Chapter8.md#L677) |
-| C8-S16 | Chat Screen Architecture | [8.16](../Chapter8.md#L720) |
-| C8-S17 | Local Message Database | [8.17](../Chapter8.md#L769) |
-| C8-S18 | Sending a Message Offline | [8.18](../Chapter8.md#L833) |
-| C8-S19 | WebSocket Manager | [8.19](../Chapter8.md#L870) |
-| C8-S20 | Realtime Event Handling | [8.20](../Chapter8.md#L904) |
-| C8-S21 | Offline-First Repository | [8.21](../Chapter8.md#L940) |
-| C8-S22 | Android WorkManager | [8.22](../Chapter8.md#L989) |
-| C8-S23 | Agent Screen Architecture | [8.23](../Chapter8.md#L1042) |
-| C8-S24 | Agent UI State | [8.24](../Chapter8.md#L1085) |
-| C8-S25 | Agent Approval Screen | [8.25](../Chapter8.md#L1128) |
-| C8-S26 | Memory Management Screen | [8.26](../Chapter8.md#L1176) |
-| C8-S27 | File Upload UI | [8.27](../Chapter8.md#L1219) |
-| C8-S28 | Permissions and Consent UI | [8.28](../Chapter8.md#L1252) |
-| C8-S29 | Notification Architecture | [8.29](../Chapter8.md#L1286) |
-| C8-S30 | Android Security | [8.30](../Chapter8.md#L1324) |
-| C8-S31 | Local Database Security | [8.31](../Chapter8.md#L1360) |
-| C8-S32 | Compose Performance | [8.32](../Chapter8.md#L1390) |
-| C8-S33 | Error Handling | [8.33](../Chapter8.md#L1428) |
-| C8-S34 | Accessibility | [8.34](../Chapter8.md#L1472) |
-| C8-S35 | Localization | [8.35](../Chapter8.md#L1506) |
-| C8-S36 | Analytics and Privacy | [8.36](../Chapter8.md#L1532) |
-| C8-S37 | Testing Android Screens | [8.37](../Chapter8.md#L1563) |
-| C8-S38 | Android Data Flow Summary | [8.38](../Chapter8.md#L1643) |
-| C8-S39 | Final Android Architecture Decision | [8.39](../Chapter8.md#L1677) |
+| C8-S01 | Purpose | [8.1](Chapter8.md#L3) |
+| C8-S02 | Android Architecture Decision | [8.2](Chapter8.md#L65) |
+| C8-S03 | Recommended Android Project Structure | [8.3](Chapter8.md#L101) |
+| C8-S04 | Dependency Direction | [8.4](Chapter8.md#L184) |
+| C8-S05 | Application Startup | [8.5](Chapter8.md#L216) |
+| C8-S06 | Navigation Architecture | [8.6](Chapter8.md#L252) |
+| C8-S07 | Navigation Security | [8.7](Chapter8.md#L320) |
+| C8-S08 | UI State Model | [8.8](Chapter8.md#L346) |
+| C8-S09 | ViewModel Responsibilities | [8.9](Chapter8.md#L397) |
+| C8-S10 | Compose Screen Pattern | [8.10](Chapter8.md#L453) |
+| C8-S11 | Design System | [8.11](Chapter8.md#L514) |
+| C8-S12 | Main Home Screen | [8.12](Chapter8.md#L557) |
+| C8-S13 | Discovery Screen | [8.13](Chapter8.md#L586) |
+| C8-S14 | Space Overview Screen | [8.14](Chapter8.md#L647) |
+| C8-S15 | Family and Custom Space Screens | [8.15](Chapter8.md#L677) |
+| C8-S16 | Chat Screen Architecture | [8.16](Chapter8.md#L720) |
+| C8-S17 | Local Message Database | [8.17](Chapter8.md#L769) |
+| C8-S18 | Sending a Message Offline | [8.18](Chapter8.md#L833) |
+| C8-S19 | WebSocket Manager | [8.19](Chapter8.md#L870) |
+| C8-S20 | Realtime Event Handling | [8.20](Chapter8.md#L904) |
+| C8-S21 | Offline-First Repository | [8.21](Chapter8.md#L940) |
+| C8-S22 | Android WorkManager | [8.22](Chapter8.md#L989) |
+| C8-S23 | Agent Screen Architecture | [8.23](Chapter8.md#L1042) |
+| C8-S24 | Agent UI State | [8.24](Chapter8.md#L1085) |
+| C8-S25 | Agent Approval Screen | [8.25](Chapter8.md#L1128) |
+| C8-S26 | Memory Management Screen | [8.26](Chapter8.md#L1176) |
+| C8-S27 | File Upload UI | [8.27](Chapter8.md#L1219) |
+| C8-S28 | Permissions and Consent UI | [8.28](Chapter8.md#L1252) |
+| C8-S29 | Notification Architecture | [8.29](Chapter8.md#L1286) |
+| C8-S30 | Android Security | [8.30](Chapter8.md#L1324) |
+| C8-S31 | Local Database Security | [8.31](Chapter8.md#L1360) |
+| C8-S32 | Compose Performance | [8.32](Chapter8.md#L1390) |
+| C8-S33 | Error Handling | [8.33](Chapter8.md#L1428) |
+| C8-S34 | Accessibility | [8.34](Chapter8.md#L1472) |
+| C8-S35 | Localization | [8.35](Chapter8.md#L1506) |
+| C8-S36 | Analytics and Privacy | [8.36](Chapter8.md#L1532) |
+| C8-S37 | Testing Android Screens | [8.37](Chapter8.md#L1563) |
+| C8-S38 | Android Data Flow Summary | [8.38](Chapter8.md#L1643) |
+| C8-S39 | Final Android Architecture Decision | [8.39](Chapter8.md#L1677) |
 
 ## 3. Exact Source Acceptance Ledger
 
-All 18 criteria from [Chapter 8 Acceptance Criteria](../Chapter8.md#L1727) are retained verbatim. Every criterion currently has status NOT RUN; planned tests are not executed evidence.
+All 18 criteria from [Chapter 8 Acceptance Criteria](Chapter8.md#L1727) are retained verbatim. Every criterion currently has status NOT RUN; planned tests are not executed evidence.
 
 | ID | Source acceptance criterion |
 | --- | --- |
@@ -89,22 +89,22 @@ The ten category titles and anchors from section 8.39 are retained. The interpre
 
 | ID | Source decision category | Source reference | Contract interpretation |
 | --- | --- | --- | --- |
-| C8-R01 | UI | [decision](../Chapter8.md#L1679) | Compose and reusable design components; no service calls from visual content. |
-| C8-R02 | State | [decision](../Chapter8.md#L1683) | ViewModel/StateFlow with lifecycle-aware observation and explicit operation outcomes. |
-| C8-R03 | Local persistence | [decision](../Chapter8.md#L1687) | Room owns rendered cached records, permitted pending operations and sync positions. |
-| C8-R04 | Networking | [decision](../Chapter8.md#L1691) | One chosen typed REST client and managed realtime connection implementation, not competing networking stacks per feature. |
-| C8-R05 | Background work | [decision](../Chapter8.md#L1695) | WorkManager handles eligible durable retries/sync; it is not an exact reminder clock or unrestricted background Agent. |
-| C8-R06 | Architecture | [decision](../Chapter8.md#L1699) | Route/UI -> ViewModel -> use case/repository interface -> local/remote adapters at runtime, with dependency inversion. |
-| C8-R07 | Realtime | [decision](../Chapter8.md#L1711) | One application-managed connection per active account context; events pass through repositories and Room. |
-| C8-R08 | Offline-first | [decision](../Chapter8.md#L1715) | Render allowed cache, persist only eligible queued writes and reconcile canonical server state; sensitive actions are not blindly queued. |
-| C8-R09 | Security | [decision](../Chapter8.md#L1719) | Keystore-backed protection, reviewed local encryption/token handling and explicit sensitive-action consent. |
-| C8-R10 | Agent integration | [decision](../Chapter8.md#L1723) | Backend Agent APIs/events only; no unrestricted provider credentials or autonomous scheduling engine inside the app. |
+| C8-R01 | UI | [decision](Chapter8.md#L1679) | Compose and reusable design components; no service calls from visual content. |
+| C8-R02 | State | [decision](Chapter8.md#L1683) | ViewModel/StateFlow with lifecycle-aware observation and explicit operation outcomes. |
+| C8-R03 | Local persistence | [decision](Chapter8.md#L1687) | Room owns rendered cached records, permitted pending operations and sync positions. |
+| C8-R04 | Networking | [decision](Chapter8.md#L1691) | One chosen typed REST client and managed realtime connection implementation, not competing networking stacks per feature. |
+| C8-R05 | Background work | [decision](Chapter8.md#L1695) | WorkManager handles eligible durable retries/sync; it is not an exact reminder clock or unrestricted background Agent. |
+| C8-R06 | Architecture | [decision](Chapter8.md#L1699) | Route/UI -> ViewModel -> use case/repository interface -> local/remote adapters at runtime, with dependency inversion. |
+| C8-R07 | Realtime | [decision](Chapter8.md#L1711) | One application-managed connection per active account context; events pass through repositories and Room. |
+| C8-R08 | Offline-first | [decision](Chapter8.md#L1715) | Render allowed cache, persist only eligible queued writes and reconcile canonical server state; sensitive actions are not blindly queued. |
+| C8-R09 | Security | [decision](Chapter8.md#L1719) | Keystore-backed protection, reviewed local encryption/token handling and explicit sensitive-action consent. |
+| C8-R10 | Agent integration | [decision](Chapter8.md#L1723) | Backend Agent APIs/events only; no unrestricted provider credentials or autonomous scheduling engine inside the app. |
 
 The source's dependency arrow is conceptual. Domain repository interfaces must not import concrete Room/Retrofit implementations to make that drawing literal. Its SpaceRoute example refers to state/retry members not declared by the preceding ViewModel snippet; it demonstrates separation, not a compiling implementation to copy unchanged.
 
 ## 5. Exact Navigation Inventory
 
-All 30 leaf destinations in [section 8.6](../Chapter8.md#L252) are retained, including repeated labels in different graphs. This is a navigation inventory, not a complete screen implementation or an authorization map. Detail/editor/confirmation screens needed by a workflow are specified later as additions.
+All 30 leaf destinations in [section 8.6](Chapter8.md#L252) are retained, including repeated labels in different graphs. This is a navigation inventory, not a complete screen implementation or an authorization map. Detail/editor/confirmation screens needed by a workflow are specified later as additions.
 
 | ID | Source graph | Source destination |
 | --- | --- | --- |
@@ -406,7 +406,7 @@ The following light-theme token pairs are proposed examples for normal text; min
 
 ### Source Component Inventory
 
-All 16 common component names in [section 8.11](../Chapter8.md#L514) are retained. Behavior below is a proposed component contract, not existing composables.
+All 16 common component names in [section 8.11](Chapter8.md#L514) are retained. Behavior below is a proposed component contract, not existing composables.
 
 | ID | Source component | Reuse and state contract |
 | --- | --- | --- |
@@ -561,6 +561,6 @@ The demo is not a medical workflow, exact-alarm proof, push/provider certificati
 | Promise timing from WorkManager or push acceptance. | False reassurance about reminders, particularly in care situations. | Backend durable scheduling, distinct delivery/ack states and disclosed platform limits. |
 | Finish UI only at normal font size on one phone. | Controls become unreadable/unreachable or overlap on real devices. | Responsive constraints, translated/mixed-script text, large-scale/RTL/TalkBack and keyboard tests from the component level. |
 
-Next: [Chapter 9](../Chapter9.md), translating the same product/API/state rules into Next.js/TypeScript web routes, layouts, secure sessions, server/client rendering, cache isolation, realtime recovery and accessible responsive workflows. Keep [Chapter 11 security](../Chapter11.md), [Chapter 19 encryption](../Chapter19.md), [Chapter 13 scheduling](../Chapter13.md) and [Chapter 20 delivery](../Chapter20.md) attached to their dependent client features.
+Next: [Chapter 9](Chapter9.md), translating the same product/API/state rules into Next.js/TypeScript web routes, layouts, secure sessions, server/client rendering, cache isolation, realtime recovery and accessible responsive workflows. Keep [Chapter 11 security](Chapter11.md), [Chapter 19 encryption](Chapter19.md), [Chapter 13 scheduling](Chapter13.md) and [Chapter 20 delivery](Chapter20.md) attached to their dependent client features.
 
 This completes the proposed Android design handoff. It preserves the source and earlier contracts, labels new decisions and missing screens, and does not claim compiled code, visual approval, device tests or a runnable application.
