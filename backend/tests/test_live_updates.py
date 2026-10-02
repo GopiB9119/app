@@ -236,7 +236,10 @@ def test_a_real_server_streams_hints_as_server_sent_events(client, app):
                 except httpx.TransportError:
                     pass
                 if server.poll() is not None or time.monotonic() >= deadline:
-                    raise AssertionError("The server did not start.")
+                    # Say whether the server exited (for example on a file another session was writing) or was slow to start.
+                    server.terminate()
+                    errors = server.communicate(timeout=30)[1]
+                    raise AssertionError(f"The server did not start (exit code {server.returncode}):\n{errors[-3000:]}")
                 time.sleep(0.25)
             assert http.get("/v1/live").status_code == 401
             with http.stream("GET", "/v1/live", headers=auth(owner)) as response:
