@@ -1598,7 +1598,7 @@ Builds [T105](TASKS.md#defects-that-break-approved-requirements), found by the d
   - The calendar did not have the problem: an error there hides the entries, so it stays in view. The change was kept for consistency.
 - **New device tests:** `theMessageAfterAnActionFurtherDownComesIntoView` in each screen's device test class. Each test acts on the last item of a long list, then checks that the message is displayed.
 - **Not fixed, recorded as [T117](TASKS.md#defects-that-break-approved-requirements):** "Appeal sent." under Blocked is in the middle of the list; the error of a failed "Load more" under Your pages sits above the followed pages; the Community, Events, Checklist and Calendar messages have no live region for TalkBack; and the same message twice in a row does not scroll again.
-- **Found on the way:** `CommunityScreenTest.largeTextNarrowModeratorPinsButHasNoOwnerControlsAndReadOnlyHidesThem`, added in `642e47b`, fails before and after this change; recorded as part 5 of [T115](TASKS.md#defects-that-break-approved-requirements).
+- **Found on the way:** `CommunityScreenTest.largeTextNarrowModeratorPinsButHasNoOwnerControlsAndReadOnlyHidesThem`, added in `642e47b`, fails before and after this change; recorded as part 5 of [T115](TASKS.md#defects-that-break-approved-requirements), a part that never reached T115's row; it became [T119](TASKS.md#defects-that-break-approved-requirements) ([checkpoint](#android-moderator-test-repaired-checkpoint)).
 - **Committed separately from other work:** another session was changing `CommunityScreen.kt` and `CommunityScreenTest.kt` for read-only pages at the same time, so only this change's hunks of those two files were committed.
 
 | Class (API 36 emulator, network off, 320 dp) | Before the fix | After |
@@ -1615,6 +1615,23 @@ Builds [T105](TASKS.md#defects-that-break-approved-requirements), found by the d
 | `GroupScreenTest` | 14 of 15 | 15 of 15 |
 
 Every new test that failed before failed with "The component is not displayed!" at its final check. The before runs used a source copy with the committed screens and the new tests; `scripts/verify-android-device.ps1` ran both. Android JVM after the fix, in the care, community, events, planning, scheduling and spaces packages: **333 of 333**. Evidence: `.local/t105/`.
+
+## Android Moderator Test Repaired Checkpoint
+
+Builds [T119](TASKS.md#defects-that-break-approved-requirements), found by the audit session. `CommunityScreenTest.largeTextNarrowModeratorPinsButHasNoOwnerControlsAndReadOnlyHidesThem`, added with page moderators in `642e47b`, had failed in every device run since. At 200% text on a screen 320 dp wide and 640 dp high, the page's header is taller than the screen. After the test showed the Follow button in the header, the list had let go of the post below it, so pressing the post's Pin button found no node.
+
+- **What the failure hid:** just before that, the test checked that a moderator has no Edit or Delete on the post and none of the owner's sections, by counting nodes. The post was not on screen, so those checks would have passed with the controls shown. The check that a read-only page offers no Pin had the same gap.
+- **Fix, in the test only:** a new `absent(tag)` looks for a tag through the whole list. Compose's `performScrollToNode` scrolls to the top of a lazy list and then one screen at a time to its end, and fails with "No node found that matches" when no item has the tag; `absent` expects exactly that failure. The moderator test uses it for every control that must be missing, shows the post on the read-only page before checking it has no Pin, and scrolls back to Pin before pressing it. The screen did not change.
+- **Why it had no task:** the [T105 checkpoint](#android-messages-brought-into-view-checkpoint) recorded the failure as part 5 of T115, but that part never reached T115's row, so T115 was finished without it.
+- **Committed separately from other work:** the completion session's uncommitted tests for read-only posts (T114) are in the same file; only this change's hunks were committed.
+
+| Check (2026-10-02, a copy of commit `83e9068`, read-only API 36 emulator, network off) | Result |
+| --- | --- |
+| `CommunityScreenTest` with two tests kept in the copy only | **13 of 14** passed in 329 s (`.local/t119/device.txt`): the repaired test and the other 11. |
+| The test as it was (copy only) | Failed as in every earlier run: `performScrollTo()` found no node with the post's Pin tag. |
+| Can a count miss a control? (copy only) | Yes. After the Follow button was shown, a count of the post's Pin found none while the Pin was in the list; `absent` failed for that Pin and for Follow, as it should, and passed for the owner's Edit page button, which a moderator does not have. |
+
+**Boundary.** Only this test changed. Whether other device tests count nodes after scrolling in the same way was not checked here.
 
 ## Remaining Gates
 

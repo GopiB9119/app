@@ -35,6 +35,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -287,6 +288,12 @@ class CommunityScreenTest {
         }
     }
 
+    /** No item of the list has [tag]. The list composes only the items near the screen, so a count of nodes cannot show this. */
+    private fun absent(tag: String) {
+        val error = assertThrows("$tag is in the list", AssertionError::class.java) { reveal(tag) }
+        assertTrue(error.message.orEmpty(), error.message.orEmpty().contains("No node found that matches"))
+    }
+
     @Test fun largeTextNarrowOwnerManagesModeratorsHandoverAndPageState() {
         val owned = page.copy(canManage = true, etag = "\"p1\"")
         val active = ModeratorDto(activeId, pageId, inviteeId, "Sam", "active", stamp, null, stamp, "\"m1\"")
@@ -413,13 +420,14 @@ class CommunityScreenTest {
         val pins = mutableListOf<PostDto>()
         largeNarrow { CommunityScreen(state, CommunityActions(pin = { pins += it }), "UTC", {}) }
         insideAndShown("pin-$postId", "page-follow")
-        for (tag in listOf("edit-$postId", "delete-$postId", "page-moderators", "page-state", "page-edit")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("edit-$postId", "delete-$postId", "page-moderators", "page-state", "page-edit")) absent(tag)
+        reveal("pin-$postId")
         compose.onNodeWithTag("pin-$postId").performScrollTo().assertTextContains("Pin to top").performClick()
         assertEquals(listOf(post), pins)
-        // On a read-only page nothing can be pinned or followed, and the page says why.
+        // On a read-only page the post stays, but nothing can be pinned or followed, and the page says why.
         state = state.copy(page = page.copy(status = "read_only"))
-        insideAndShown("page-read-only")
-        for (tag in listOf("pin-$postId", "page-follow")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        insideAndShown("page-read-only", "post-$postId")
+        for (tag in listOf("pin-$postId", "page-follow")) absent(tag)
         // Someone who already follows it can still unfollow.
         state = state.copy(page = page.copy(status = "read_only", following = true, followerCount = 1))
         insideAndShown("page-follow")
