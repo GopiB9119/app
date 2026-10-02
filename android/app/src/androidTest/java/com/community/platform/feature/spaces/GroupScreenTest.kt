@@ -251,6 +251,22 @@ class GroupScreenTest {
         compose.onNodeWithText(note).assertIsDisplayed()
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        api.groups = listOf(hikers, walkers, choir, books, chess, garden, quilters)
+        api.mine = listOf(waiting) + answered
+        open()
+        settle()
+        reveal("group-ask-$quiltersId")
+        compose.onNodeWithTag("group-ask-$quiltersId").performClick()
+        reveal("group-note")
+        compose.onNodeWithTag("group-note").performTextReplacement(note)
+        reveal("group-send")
+        compose.onNodeWithTag("group-send").performClick()
+        settle()
+        // The message is the list's first item, far above the group that was asked.
+        compose.onNodeWithText("Request sent to Quilting circle. The owner or an admin will review it.").assertIsDisplayed()
+    }
+
     @Test fun aLostJoinRequestIsNotShownAsSentKeepsTheNoteAndRetrySendsTheSameRequest() {
         api.groups = listOf(hikers, quilters)
         open()

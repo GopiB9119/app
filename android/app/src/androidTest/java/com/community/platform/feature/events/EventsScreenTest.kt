@@ -247,6 +247,17 @@ class EventsScreenTest {
         compose.runOnIdle { assertEquals(1, edits) }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val events = (1..5).map { event.copy(id = "7a3e5c1d-2b4f-4a6e-8c0d-1e2f3a4b5c7$it", title = "Picnic $it") }
+        val offline = "No connection. Nothing new is confirmed."
+        var current by mutableStateOf(state().copy(events = events, nextCursor = "synthetic-next"))
+        compose.setContent { CommunityTheme { EventsScreen(current, EventsActions(more = { current = current.copy(error = offline) }), "Morgan family") } }
+        reveal(hasText("Show more"))
+        compose.onNodeWithText("Show more").performClick()
+        // Loading more failed and the events stay: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithTag("events-error").assertIsDisplayed().assertTextEquals(offline)
+    }
+
     @DeviceFontScale(2f)
     @Test fun narrowLargeTextKeepsTheListDetailFormAndCancelQuestionUsable() {
         assertNarrowScreen()

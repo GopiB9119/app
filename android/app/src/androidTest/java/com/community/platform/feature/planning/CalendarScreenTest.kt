@@ -165,6 +165,17 @@ class CalendarScreenTest {
         compose.runOnIdle { assertEquals(listOf(other.id), spaces); assertEquals(3, months.size) }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val entries = (1..6).map { due.copy(id = "c2302436-0dd7-4d99-a7c3-ead390fd08f$it", title = "Errand $it") }
+        val offline = "No connection. The calendar is unavailable."
+        var current by mutableStateOf(state().copy(loaded = true, entries = entries, nextCursor = "synthetic-next"))
+        compose.setContent { CommunityTheme { CalendarScreen(current, actions(more = { current = current.copy(entries = emptyList(), nextCursor = null, error = offline) }), {}, {}) } }
+        reveal("Load more entries")
+        compose.onNodeWithText("Load more entries").performClick()
+        // Loading more failed: the error follows the controls and replaces the entries, so it must be on screen.
+        compose.onNodeWithText(offline).assertIsDisplayed()
+    }
+
     @DeviceFontScale(2f)
     @Test fun narrowLargeTextKeepsTheControlsAndEntriesReachable() {
         assertNarrowScreen()

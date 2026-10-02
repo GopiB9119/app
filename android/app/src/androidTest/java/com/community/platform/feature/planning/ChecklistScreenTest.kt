@@ -458,6 +458,17 @@ class ChecklistScreenTest {
         compose.runOnIdle { assertTrue(calls.toString(), calls.isEmpty()); assertEquals(0, leaves) }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val items = (1..8).map { milk.copy(id = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a6$it", title = "Buy item $it") }
+        var current by mutableStateOf(state(basis.copy(items = items)).copy(title = "Buy batteries"))
+        val callbacks = actions(save = { current = current.copy(pending = intent(ChecklistChangeDto("add", title = "Buy batteries"), "original-add-key"), error = offline) })
+        compose.setContent { CommunityTheme { ChecklistScreen(current, callbacks, {}) } }
+        reveal("checklist-save")
+        compose.onNodeWithTag("checklist-save").performClick()
+        // The answer was lost: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithText(offline).assertIsDisplayed()
+    }
+
     @DeviceFontScale(2f)
     @Test fun narrowLargeTextKeepsItemsTheEditorAndBothQuestionsUsable() {
         assertNarrowScreen()

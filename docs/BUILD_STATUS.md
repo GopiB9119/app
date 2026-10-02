@@ -1587,6 +1587,35 @@ Builds [T113](TASKS.md#documentation), from [audit M6](ENGINEERING_AUDIT_2026-10
 | On the incident | `node scripts/records-check.mjs --range a4a71bc..642e47b` reports all **20** losses: 7 tasks, 6 statuses back from Done, 2 checkpoints, 5 changelog records. Before the restoring commit, the working copy against HEAD reported nothing lost and the last commit reported the same 20. |
 | After the restoring commit | The working copy against HEAD and the last commit against its parent report no lost record. |
 
+## Android Messages Brought Into View Checkpoint
+
+Builds [T105](TASKS.md#defects-that-break-approved-requirements), found by the design session: on nine Android screens the message about the last action is the first item of a scrolling list, and a lazy list leaves out what is scrolled off screen, so after an action further down the person did not see the message and TalkBack did not announce it. Done by a background agent on Claude Opus 5.5, then checked by the audit session.
+
+- **Fix:** each screen keeps its list state, passes it to its list, and scrolls to the message when one appears, as `SpaceScreen.kt` does: care, community, moderation, events, calendar, checklists, tasks, reminders and group Spaces (`feature/*/…Screen.kt`).
+  - Community scrolls only when its top error is the one shown: under Your pages an error about the person's own or followed pages is shown with that list.
+  - Moderation also scrolls for the shown tab's list error, such as a failed "Load more".
+  - Task and Reminder reuse the list states they already had.
+  - The calendar did not have the problem: an error there hides the entries, so it stays in view. The change was kept for consistency.
+- **New device tests:** `theMessageAfterAnActionFurtherDownComesIntoView` in each screen's device test class. Each test acts on the last item of a long list, then checks that the message is displayed.
+- **Not fixed, recorded as [T117](TASKS.md#defects-that-break-approved-requirements):** "Appeal sent." under Blocked is in the middle of the list; the error of a failed "Load more" under Your pages sits above the followed pages; the Community, Events, Checklist and Calendar messages have no live region for TalkBack; and the same message twice in a row does not scroll again.
+- **Found on the way:** `CommunityScreenTest.largeTextNarrowModeratorPinsButHasNoOwnerControlsAndReadOnlyHidesThem`, added in `642e47b`, fails before and after this change; recorded as part 5 of [T115](TASKS.md#defects-that-break-approved-requirements).
+- **Committed separately from other work:** another session was changing `CommunityScreen.kt` and `CommunityScreenTest.kt` for read-only pages at the same time, so only this change's hunks of those two files were committed.
+
+| Class (API 36 emulator, network off, 320 dp) | Before the fix | After |
+| --- | --- | --- |
+| `CareScreenTest` | 10 of 11; the new test failed | 11 of 11 |
+| `CommunityScreenTest` | 10 of 12; the new test and the T115 test failed | 11 of 12; the T115 test fails as before |
+| `ModerationScreenTest` | 7 of 8 | 8 of 8 |
+| `EventsScreenTest` | 7 of 8 | 8 of 8 |
+| `CalendarScreenTest` | 7 of 7 | 7 of 7 |
+| `ChecklistScreenTest` | 11 of 12 | 12 of 12 |
+| `TaskScreenTest` | 6 of 7 | 7 of 7 |
+| `ReminderScreenTest` | 12 of 12 | 12 of 12 |
+| `ReminderSeriesScreenTest` | 10 of 11 | 11 of 11 |
+| `GroupScreenTest` | 14 of 15 | 15 of 15 |
+
+Every new test that failed before failed with "The component is not displayed!" at its final check. The before runs used a source copy with the committed screens and the new tests; `scripts/verify-android-device.ps1` ran both. Android JVM after the fix, in the care, community, events, planning, scheduling and spaces packages: **333 of 333**. Evidence: `.local/t105/`.
+
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -141,6 +142,12 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
     BackHandler(onBack = back)
     val ask: (Confirmation) -> Unit = { confirmation = it }
     val report: (ReportTarget) -> Unit = { reporting = it }
+    // Under Your pages, an error about your own or followed pages is shown with that list instead of at the top.
+    val topError = state.error?.takeUnless { state.destination == Destination.MyPages && (it == state.ownedError || it == state.followedError) }
+    val list = rememberLazyListState()
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as saving a post, bring it into view to be seen.
+    LaunchedEffect(topError, state.notice) { if (topError != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -159,8 +166,8 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("community-content"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    state.error?.takeUnless { state.destination == Destination.MyPages && (it == state.ownedError || it == state.followedError) }?.let {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("community-content"), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    topError?.let {
                         item("error") { Text(pageMessage(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("community-error")) }
                     }
                     state.notice?.let { item("notice") { Text(pageMessage(it), color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("community-notice")) } }

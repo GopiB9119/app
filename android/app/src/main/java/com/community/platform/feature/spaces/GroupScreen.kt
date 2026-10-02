@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -75,6 +76,10 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
     val shape = RoundedCornerShape(6.dp)
     // The request whose decline is waiting for confirmation: a declined person must wait 7 days to ask again, so ask first, as the web does.
     var declining by remember { mutableStateOf<String?>(null) }
+    val list = rememberLazyListState()
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as asking to join a group, bring it into view to be seen and announced.
+    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -85,7 +90,7 @@ fun GroupScreen(state: GroupState, viewModel: GroupViewModel, onBack: () -> Unit
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("group-workspace"), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(20.dp)) {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("group-workspace"), state = list, verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(20.dp)) {
                     state.error?.let { item("error") { GroupMessage(it, true) } }
                     state.notice?.let { item("notice") { GroupMessage(it, false) } }
                     if (state.managing) {

@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
@@ -173,6 +174,18 @@ class TaskScreenTest {
         compose.onNodeWithText("Reload latest task").performClick()
         compose.onNodeWithTag("task-local-confirm").performClick()
         compose.runOnIdle { assertEquals(1, reloads) }
+    }
+
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val fields = TaskFields("Groceries", "Fruit", "2026-09-21", memberId)
+        val offline = "No connection. Changes are not confirmed."
+        var state by mutableStateOf(workspace().copy(editor = TaskEditor(fields = fields), assignees = listOf(TaskAssigneeDto(memberId, "Sam Example"))))
+        val callbacks = actions(save = { state = state.copy(pendingCommand = CreateTaskCommand(accountId, space.id, "preserved-request", fields), error = offline) })
+        compose.setContent { CommunityTheme { TaskScreen(state, callbacks, {}) } }
+        reveal(hasTestTag("task-save"))
+        compose.onNodeWithTag("task-save").performScrollTo().performClick()
+        // The answer was lost: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithText(offline).assertIsDisplayed()
     }
 
     @Test fun largeTextNarrowEditorRemainsScrollableWithoutLosingTheDraft() {

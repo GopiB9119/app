@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -128,6 +129,10 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
         }
     }
     BackHandler(onBack = back)
+    val list = rememberLazyListState()
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as Show more or cancelling, bring it into view to be seen.
+    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(unit * 2), verticalAlignment = Alignment.CenterVertically) {
@@ -141,7 +146,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("events-content"), contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("events-content"), state = list, contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
                     state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("events-error")) } }
                     state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("events-notice")) } }
                     when (state.mode) {

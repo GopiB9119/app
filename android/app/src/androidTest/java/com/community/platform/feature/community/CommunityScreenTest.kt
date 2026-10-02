@@ -171,6 +171,18 @@ class CommunityScreenTest {
         assertEquals(listOf(followed), unfollowed)
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val posts = (1..5).map { post.copy(id = "4e1a4c1f-6d6c-4b5f-8b62-1d5a4a3c2b1$it", title = "Walk $it") }
+        val last = posts.last()
+        var state by mutableStateOf(CommunityState(accountId = accountId, posts = posts))
+        val actions = CommunityActions(save = { state = state.copy(error = "No connection. Nothing new is confirmed.") })
+        compose.setContent { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
+        reveal("save-${last.id}")
+        compose.onNodeWithTag("save-${last.id}").performScrollTo().performClick()
+        // Saving the last post failed: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithTag("community-error").assertIsDisplayed().assertTextContains("No connection. Nothing new is confirmed.")
+    }
+
     @Test fun largeTextNarrowPageEditorKeepsFieldsAndCommandsReachable() {
         val owned = page.copy(canManage = true, etag = "\"p1\"")
         var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = owned))

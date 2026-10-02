@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -47,6 +48,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -128,6 +130,11 @@ fun ModerationScreen(state: ModerationState, actions: ModerationActions, timezon
                 state.accessError != null -> Column(Modifier.padding(DesignTokens.SpaceUnit * 4)) { ModerationFailure(state.accessError, !state.busy, actions.refresh) }
                 state.moderator != true -> Text(stringResource(R.string.moderation_only), Modifier.padding(DesignTokens.SpaceUnit * 4).testTag("moderation-denied"))
                 else -> {
+                    val list = rememberLazyListState()
+                    val listError = if (state.tab == ModerationTab.REPORTS) state.queue.error else state.appeals.error
+                    // The message about the last action and a failed load are the list's first items. A lazy list leaves out items
+                    // scrolled off screen, so after an action further down, such as recording a decision, bring them into view.
+                    LaunchedEffect(state.message, listError) { if (state.message != null || listError != null) list.scrollToItem(0) }
                     TabRow(selectedTabIndex = state.tab.ordinal) {
                         ModerationTab.entries.forEach { tab ->
                             Tab(selected = state.tab == tab, onClick = { actions.tab(tab) }, enabled = !state.working,
@@ -136,7 +143,7 @@ fun ModerationScreen(state: ModerationState, actions: ModerationActions, timezon
                         }
                     }
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("moderation-content"),
+                    LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("moderation-content"), state = list,
                         contentPadding = PaddingValues(DesignTokens.SpaceUnit * 4), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 4)) {
                         state.message?.let { message -> item("message") { ModerationSuccess(message) } }
                         if (state.tab == ModerationTab.REPORTS) {
