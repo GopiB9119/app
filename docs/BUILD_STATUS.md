@@ -1507,6 +1507,86 @@ Builds [T99](TASKS.md#defects-that-break-approved-requirements): the web calenda
 | Before the fixes | 20 of 24 (`.local/t99/before-fixes.log`). |
 | The tests can fail | 13 deliberate breakages, each served by a throwaway copy of the test file so the shared source was not changed, each made the intended test fail: a new key or body on a retry, no `If-Match`, a refused tick shown as done, removal without confirmation, the month, timezone or Space changing on a refresh, the heading or the dates cut off, an oversized dialog, and a server-valid emoji title refused (`.local/t99/mutation-results.json`). |
 | After the fixes | 24 of 24, and the existing `planning-ui` 6 of 6, by the agent; the audit session's complete web run is in the [evaluations](EVALUATIONS.md#test-suites). |
+
+## Page Moderators, Handover and Lifecycle Checkpoint
+
+Builds [T84](TASKS.md#community-management) and [T85](TASKS.md#community-management) under [DEC-025](DECISIONS.md#accepted-decisions) parts 3, 4, and 5.
+
+- **Scope & Features Built:**
+  - **Page Moderators (T84, DEC-025 part 3):**
+    - Owner can invite moderators by account ID (up to 10 moderators per page, 72-hour expiry).
+    - Owner can withdraw pending invitations or remove active moderators.
+    - Active moderators can pin published posts (up to 3 pins) or step down from moderator role.
+  - **Page Handover (T84, DEC-025 part 4):**
+    - Owner can offer page ownership to an active moderator (15-minute expiry, single pending offer).
+    - Offeree can accept or decline the handover offer.
+    - Owner can withdraw a pending handover offer before it is accepted or expires.
+  - **Page Lifecycle: Archive, Delete & Restore (T85, DEC-025 part 5):**
+    - Archive: Owner can archive active page into `read_only` status (all write operations disabled, read access preserved).
+    - Restore: Owner can restore an archived or soft-deleted page back to `active`.
+    - Delete: Owner can delete page by explicitly typing the exact normalized page handle/name. Soft deletion sets status to `deleted` with a 7-day grace period countdown before permanent purge by `account-deletion-worker`.
+- **Cross-Platform Implementation:**
+  - **Backend:** Database migration `0031_page_moderators_and_lifecycle.py`, 16 authenticated endpoints, `PageLifecycleService`, purge tasks, audit events.
+  - **Web Client & UI:** `web/src/features/community/client.ts`, Next.js BFF proxy `[...path]/route.ts`, UI components `PageStateNotice`, `ModeratorPin`, `PageManagement`, and `PageRoles` integrated into `page-screen.tsx` and `pages-screen.tsx`. Fully localized with Telugu and Hindi keys in `web/src/features/i18n/areas/community.ts`.
+  - **Android:** Retrofit routes and DTOs in `CommunityRepository.kt`, state flows and actions in `CommunityViewModel.kt`, and Compose components in `CommunityScreen.kt` with 48dp minimum touch targets.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Backend unit & lifecycle tests | **92 passed** across `test_page_moderators.py`, `test_page_lifecycle.py`, and community suites; migration `0031` applied in dev DB. |
+| Web client library & proxy | `tests/community-client.test.mjs` **163 of 163 passed**. |
+| Web UI component tests | `tests/unit/community-ui.test.mjs` **6 of 6 passed**. |
+| Web i18n & layout tests | `tests/unit/i18n-community-ui.test.mjs` **22 of 22 passed** across English, Telugu, and Hindi at 320 px and 200% text scale. |
+| Android JVM tests | `com.community.platform.feature.community.CommunityTest` **72 of 72 passed**, `ModerationTest` **24 of 24 passed**, `AccountRepositoryTest` passed. |
+
+## Review Of The Finished Critical Gaps Checkpoint
+
+The gaps session finished T65 to T69 on 2026-10-02: live updates, phone and browser alerts, unsent messages on Android, account deletion with the data download, and moderation. The audit session then had three read-only reviews check them against their decisions, one each on Claude Opus 5.5, GPT-6.1 Sol and GPT-6 Astra. Each reviewer reported only defects it could trace through the code with a confidence of at least 8 out of 10, each with a scenario and the smallest test that would fail. The audit session read the code behind every finding it acted on, and wrote each test first.
+
+- **19 findings:** 6 on live updates, 5 on the outbox and phone alerts, 8 on deletion and moderation. Two more lists turned up while checking them: the inbox order (T102) and the order of other lists (T111). T86 was confirmed fixed by the gaps session.
+- **Fixed by the audit session (T101 to T104):**
+  - **T101, Android chat backlog:** after a long absence the catch-up joined the newest page to at most 10 fetched pages and marked everything read, so with more than about 330 new messages some were never shown. It now behaves as the web does since T41 (`MessagingViewModel.kt`).
+  - **T102, the inbox order:** the inbox was listed in the order of its random identifiers, so a new reminder could land on any page. Android's phone alerts read only the first page and so missed most new reminders once the inbox held more than 20. The inbox is now newest first, and its cursor holds the creation time as well (`notifications/service.py`, `scheduling/service.py`, `scheduling/schemas.py`). Neither app checked the order, so neither changed.
+  - **T103, appeals after account deletion:** the purge blanked the person's appeal notes and left their appeals open, and both apps refuse an appeal without a note, so one deleted account made every moderator's Appeals list fail to load. The purge now ends their open appeals, whose content it erases anyway, and gives their resolved appeals the note "Removed when the account was deleted.". An appeal now needs a note, as DEC-024 ("with a short note") and both apps expect (`identity/deletion.py`, `safety/schemas.py`).
+  - **T104, the outbox key:** any Keystore error while keeping one message replaced the key, so every other kept message could no longer be read and was deleted. The sealer now tries once more with the same key and replaces it only when it fails again (`UnsentMessages.kt`).
+- **Recorded for their owners:**
+  - [T106](TASKS.md#defects-that-break-approved-requirements): live updates, for the gaps session.
+  - [T107](TASKS.md#defects-that-break-approved-requirements): the outbox and phone alerts, for the gaps session.
+  - [T108](TASKS.md#defects-that-break-approved-requirements): a conflict inside DEC-020 about the lock screen, which needs a decision.
+  - [T109](TASKS.md#defects-that-break-approved-requirements): moderation with page handover and archive, for the building session.
+  - [T110](TASKS.md#defects-that-break-approved-requirements): deletion and moderation, for the gaps session.
+  - [T111](TASKS.md#defects-that-break-approved-requirements): the order of the other lists, which needs a decision on each list's order.
+  - The reports are in `.local/t101/review-*.txt`.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| T101 | Before: `MessagingTest` 18 of 19; the new test found message 302 missing and 332 marked read. After: messaging JVM 37 of 37, in a source copy of the shared tree, whose messaging and identity files were checked identical to the shared ones. Another session's builds had twice replaced the shared build's classes mid-run. One existing test, `visiblePollFillsGapsAndMarksNewestRead`, now expects one page request fewer, because the gap after message 3 already reaches the newest page; the messages shown and the read positions it checks are unchanged (`.local/t101/`). |
+| T102 | Before: the new test found the oldest reminder first. After: `test_reminder_delivery_guards.py`, `test_reminder_series.py`, `test_live_updates.py`, `test_alerts.py` and `test_security_sweep.py`, **133 of 133** (`.local/t102/`). |
+| T103 | Before: an empty appeal note was accepted (201), and the purged person's appeal stayed in the open list. After: `test_moderation.py` and `test_account_deletion.py`, **42 of 42** (`.local/t103/`). |
+| T104 | Before: the new test kept only "Second"; "First" was deleted. After: messaging JVM **37 of 37**, including a second new test showing that a key that fails twice is still replaced (`.local/t104/`). |
+## Records Lost To A Stale Write Checkpoint
+
+Builds [T113](TASKS.md#documentation), from [audit M6](ENGINEERING_AUDIT_2026-10-01.md#m6-sessions-disturb-each-other). Found and fixed by the audit session.
+
+- **What happened:** commit `642e47b` ("feat: add page management and roles features", 2026-10-02 10:54) changed the shared records only by taking text away. It wrote older copies of `docs/TASKS.md`, `docs/BUILD_STATUS.md` and `CHANGELOG.md` over newer ones. Lost:
+  - tasks T105 to T111;
+  - the Done status of T84, T85 and T101 to T104;
+  - the "Page Moderators, Handover and Lifecycle" checkpoint and changelog section (the building session's T84 and T85);
+  - the "Review Of The Finished Critical Gaps" checkpoint and changelog entry (the audit session's).
+
+  Later, a rewrite of the task list in the working copy brought most of these back from another session's copy, but dropped T112 before it was committed. Code was not affected: every fix the audit session made since T88 is still in place.
+- **Restored:** each lost record word for word from `a4a71bc`, the commit before, in front of the heading that followed it there. Edits other sessions had made since were kept: T37 and T38, the T38 checkpoint, and the Android device and design token results. Their uncommitted edits were left out of the restoring commit: it was staged from `a4a71bc` plus the audit session's own changes, so it contains no other session's work.
+- **Check:** `scripts/records-check.mjs` reads the task list, decisions, build status, evaluations and changelog. It reports:
+  - a record that disappears: a task, decision, checkpoint, changelog section, titled changelog entry or evaluation row;
+  - a task whose status goes back from "Done" without starting with "Reopened".
+
+  It compares the working copy with HEAD, which catches a stale write before it is committed, and the last commit with its parent; `--range a..b` checks any two commits. `npm run verify` runs it first, as the `records` suite. Rewording a record is fine; only a record's disappearance is reported.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Tests | `scripts/records-check.test.mjs`: **5 of 5**: a lost or reordered task row, Done going back and "Reopened", decisions, checkpoints, evaluation rows, changelog sections and titled entries, and duplicate headings. |
+| On the incident | `node scripts/records-check.mjs --range a4a71bc..642e47b` reports all **20** losses: 7 tasks, 6 statuses back from Done, 2 checkpoints, 5 changelog records. Before the restoring commit, the working copy against HEAD reported nothing lost and the last commit reported the same 20. |
+| After the restoring commit | The working copy against HEAD and the last commit against its parent report no lost record. |
+
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

@@ -11,7 +11,7 @@ The script changes nothing in the repository. It writes only under the output fo
 tools already use, and it restores the environment variables it sets.
 
 .PARAMETER Suite
-The suites to run, separated by commas: structure, tokens, typecheck, client, unit, backend, android, device, live.
+The suites to run, separated by commas: records, structure, tokens, typecheck, client, unit, backend, android, device, live.
 The default is every suite except two: live, which needs the web preview and the local services (COMMUNITY_WEB_URL,
 by default http://127.0.0.1:3000), and device, which starts its own Android emulator for about half an hour
 (scripts\verify-android-device.ps1).
@@ -29,15 +29,17 @@ The folder for the logs and the summary. The default is .local\verify\<date-time
 npm run verify -- -Suite live
 #>
 param(
-    [string[]]$Suite = @('structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android'),
+    [string[]]$Suite = @('records', 'structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android'),
     [string]$Output
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
-$order = @('structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
+$order = @('records', 'structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
 $suites = @{
+    # Records only grow: no task, decision, checkpoint or changelog section may disappear, in the working copy or the last commit.
+    records   = @{ Title = 'Records kept'; Kind = 'node'; Commands = @('npm run test:records', 'npm run check:records') }
     structure = @{ Title = 'Structure'; Kind = 'node'; Commands = @('npm run test:structure', 'npm run check:structure') }
     tokens    = @{ Title = 'Design tokens'; Kind = 'node'; Commands = @('npm run test:tokens', 'npm run check:tokens') }
     typecheck = @{ Title = 'Web type check'; Kind = 'none'; Commands = @('npm --prefix web run typecheck') }
@@ -216,6 +218,10 @@ function Invoke-Suite([string]$Name) {
         # A class whose process stopped before any test started adds no counts, so name it.
         $classes = [regex]::Match([IO.File]::ReadAllText($log), '(?m)^Classes with problems: (.+?)\s*$')
         if ($classes.Success) { $counted = (@($counted, "problems in $($classes.Groups[1].Value)") | Where-Object { $_ }) -join '; ' }
+    }
+    if ($Name -eq 'records' -and $result -eq 'failed') {
+        $lost = [regex]::Match([IO.File]::ReadAllText($log), '(?m)^Records check: (\d+ records? lost or reverted)\.')
+        if ($lost.Success) { $counted = (@($counted, $lost.Groups[1].Value) | Where-Object { $_ }) -join '; ' }
     }
     $entry = [ordered]@{
         suite = $Name; title = $definition.Title; result = $result; tally = $tally; counts = $totals; summary = $counted
