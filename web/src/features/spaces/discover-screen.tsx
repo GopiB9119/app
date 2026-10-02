@@ -58,7 +58,7 @@ function FindGroups({ user }: { user: Account }) {
     retry: false, networkMode: "always", mutationFn: askToJoin,
     onSuccess: async request => {
       setIntent(null); setAsking(null); setNote("");
-      setNotice(`Request sent to ${request.space_name}. The owner will review it.`);
+      setNotice({ id: "spaces.groups.sent", values: { name: request.space_name } });
       await refresh();
     },
     onError: error => {
@@ -68,7 +68,7 @@ function FindGroups({ user }: { user: Account }) {
   });
   const withdraw = useMutation({
     retry: false, networkMode: "always", mutationFn: (requestId: string) => cancelJoinRequest(user.id, requestId),
-    onSuccess: async request => { setNotice(`Request to ${request.space_name} withdrawn.`); await refresh(); },
+    onSuccess: async request => { setNotice({ id: "spaces.groups.withdrawn", values: { name: request.space_name } }); await refresh(); },
   });
   const problem = ask.error ?? withdraw.error ?? groups.error ?? requests.error;
   useEffect(() => {
@@ -90,75 +90,76 @@ function FindGroups({ user }: { user: Account }) {
     event.preventDefault();
     if (!asking || busy || (!intent && noteProblem !== null)) return;
     const pending = intent ?? { accountId: user.id, spaceId: asking.id, note: note.trim(), key: crypto.randomUUID() };
-    setIntent(pending); setNotice(""); ask.mutate(pending);
+    setIntent(pending); setNotice(null); ask.mutate(pending);
   }
+  const [emptyStart, emptyEnd = ""] = t("spaces.groups.emptyText").split("{link}");
   return <Shell account>
     <main className={styles.main}>
-      <nav className={styles.navigation} aria-label="Workspace">
-        <Link href="/app/spaces"><ArrowLeft size={18} aria-hidden />Your Spaces</Link>
-        <span aria-current="page"><Globe size={18} aria-hidden />Find groups</span>
+      <nav className={styles.navigation} aria-label={t("spaces.workspace")}>
+        <Link href="/app/spaces"><ArrowLeft size={18} aria-hidden />{t("spaces.yours")}</Link>
+        <span aria-current="page"><Globe size={18} aria-hidden />{t("spaces.findGroups")}</span>
       </nav>
       <div className={styles.heading}>
-        <div><span className="section-kicker">PUBLIC GROUPS</span><h1>Find groups</h1>
-          <p className={styles.description}>Groups whose owners made them public. You see only a group&apos;s name, description and size; its chats, events and members stay private to its members.</p></div>
+        <div><span className="section-kicker">{t("spaces.groups.kicker")}</span><h1>{t("spaces.findGroups")}</h1>
+          <p className={styles.description}>{t("spaces.groups.intro")}</p></div>
       </div>
-      {notice && <div className="message success" role="status"><Check size={18} aria-hidden />{notice}</div>}
+      {notice && <div className="message success" role="status"><Check size={18} aria-hidden />{t(notice.id, notice.values)}</div>}
       {problem && !(problem instanceof ApiError && problem.status === 401) && <div className="message error" role="alert">{problem.message}</div>}
-      <form className={styles.searchForm} role="search" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setNotice(""); }}>
-        <label>Search by name or description<input type="search" name="group_search" maxLength={80} value={draft} onChange={event => setDraft(event.target.value)} placeholder="For example: hiking, book club" /></label>
-        <button className="primary-button" type="submit" disabled={groups.isFetching}><Search size={17} aria-hidden />Search</button>
+      <form className={styles.searchForm} role="search" onSubmit={event => { event.preventDefault(); setQuery(draft.trim()); setNotice(null); }}>
+        <label>{t("spaces.groups.search")}<input type="search" name="group_search" maxLength={80} value={draft} onChange={event => setDraft(event.target.value)} placeholder={t("spaces.groups.searchPlaceholder")} /></label>
+        <button className="primary-button" type="submit" disabled={groups.isFetching}><Search size={17} aria-hidden />{t("spaces.groups.searchAction")}</button>
       </form>
       <section aria-labelledby="results-title">
         <div className={styles.sectionHeading}>
-          <h2 id="results-title">{query ? `Groups matching "${query}"` : "Newest public groups"}</h2>
-          <button className="icon-button" title="Refresh groups" aria-label="Refresh groups" disabled={groups.isFetching} onClick={() => groups.refetch()}><RefreshCw size={18} className={groups.isFetching ? "spin" : ""} aria-hidden /></button>
+          <h2 id="results-title">{query ? t("spaces.groups.matching", { query }) : t("spaces.groups.newest")}</h2>
+          <button className="icon-button" title={t("spaces.groups.refresh")} aria-label={t("spaces.groups.refresh")} disabled={groups.isFetching} onClick={() => groups.refetch()}><RefreshCw size={18} className={groups.isFetching ? "spin" : ""} aria-hidden /></button>
         </div>
-        {groups.isPending && <p role="status" aria-busy="true">Loading groups...</p>}
-        {groups.isSuccess && entries.length === 0 && <div className={styles.empty}><Globe size={32} strokeWidth={1.5} aria-hidden /><h3>{query ? "No public groups match that search." : "No public groups yet."}</h3>
-          <p>Create a group on <Link href="/app/spaces">Your Spaces</Link> and make it public to let people find it.</p></div>}
+        {groups.isPending && <p role="status" aria-busy="true">{t("spaces.groups.loading")}</p>}
+        {groups.isSuccess && entries.length === 0 && <div className={styles.empty}><Globe size={32} strokeWidth={1.5} aria-hidden /><h3>{query ? t("spaces.groups.noMatch") : t("spaces.groups.none")}</h3>
+          <p>{emptyStart}<Link href="/app/spaces">{t("spaces.yours")}</Link>{emptyEnd}</p></div>}
         {entries.length > 0 && <ul className={styles.groupGrid}>{entries.map(entry => <li key={entry.id} className={styles.groupCard}>
           <h3>{entry.name}</h3>
           {entry.description && <p>{entry.description}</p>}
           <div className={styles.groupMeta}>
-            <span><UsersRound size={15} aria-hidden />{entry.member_count === 1 ? "1 member" : `${entry.member_count} members`}</span>
-            {entry.viewer_role && <span className={styles.chip}>{entry.viewer_role === "owner" ? "You own this group" : entry.viewer_role === "admin" ? "You are an admin" : "You are a member"}</span>}
-            {entry.pending_request_id && <span className={styles.chip}>Request sent</span>}
-            {!entry.viewer_role && !entry.pending_request_id && !entry.can_request && <span>Not accepting your request right now</span>}
+            <span><UsersRound size={15} aria-hidden />{entry.member_count === 1 ? t("spaces.groups.memberOne") : t("spaces.groups.memberOther", { count: entry.member_count })}</span>
+            {entry.viewer_role && <span className={styles.chip}>{t(entry.viewer_role === "owner" ? "spaces.groups.youOwn" : entry.viewer_role === "admin" ? "spaces.groups.youAdmin" : "spaces.groups.youMember")}</span>}
+            {entry.pending_request_id && <span className={styles.chip}>{t("spaces.groups.requestSent")}</span>}
+            {!entry.viewer_role && !entry.pending_request_id && !entry.can_request && <span>{t("spaces.groups.notAccepting")}</span>}
           </div>
           {asking?.id === entry.id ? <form className={styles.noteForm} onSubmit={send}>
-            <label>Note to the owner (optional)<textarea className={styles.textArea} name="join_note" maxLength={NOTE_LIMIT * 2} value={intent?.note ?? note} disabled={intent !== null} onChange={event => { setNote(event.target.value); ask.reset(); }} placeholder="Say who you are and why you would like to join." /></label>
+            <label>{t("spaces.groups.note")}<textarea className={styles.textArea} name="join_note" maxLength={NOTE_LIMIT * 2} value={intent?.note ?? note} disabled={intent !== null} onChange={event => { setNote(event.target.value); ask.reset(); }} placeholder={t("spaces.groups.notePlaceholder")} /></label>
             <span className={styles.counter}>{characters(intent?.note ?? note)}/{NOTE_LIMIT}</span>
             {!intent && noteProblem && <span className="field-error">{noteProblem}</span>}
-            {intent && !ask.isPending && ask.isError && <p role="status">The request was not confirmed. Retrying sends exactly the same request.</p>}
+            {intent && !ask.isPending && ask.isError && <p role="status">{t("spaces.groups.unconfirmed")}</p>}
             <div className={styles.groupActions}>
-              <button type="button" className="secondary-button" disabled={ask.isPending} onClick={() => { setAsking(null); setIntent(null); setNote(""); ask.reset(); }}>Cancel</button>
+              <button type="button" className="secondary-button" disabled={ask.isPending} onClick={() => { setAsking(null); setIntent(null); setNote(""); ask.reset(); }}>{t("spaces.cancel")}</button>
               <button type="submit" className="primary-button" disabled={ask.isPending || (!intent && noteProblem !== null)}>
-                {ask.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Send size={17} aria-hidden />}{intent && !ask.isPending ? "Retry request" : "Send request"}
+                {ask.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Send size={17} aria-hidden />}{intent && !ask.isPending ? t("spaces.groups.retryRequest") : t("spaces.groups.sendRequest")}
               </button>
             </div>
           </form> : <div className={styles.groupActions}>
-            {entry.viewer_role && <Link className="secondary-button" href="/app/spaces">Open in Your Spaces</Link>}
-            {entry.can_request && <button className="primary-button" disabled={busy || asking !== null} onClick={() => { setAsking(entry); setNote(""); setIntent(null); setNotice(""); ask.reset(); }}><Send size={17} aria-hidden />Ask to join</button>}
+            {entry.viewer_role && <Link className="secondary-button" href="/app/spaces">{t("spaces.groups.openInSpaces")}</Link>}
+            {entry.can_request && <button className="primary-button" disabled={busy || asking !== null} onClick={() => { setAsking(entry); setNote(""); setIntent(null); setNotice(null); ask.reset(); }}><Send size={17} aria-hidden />{t("spaces.groups.ask")}</button>}
             {entry.pending_request_id && <button className="secondary-button" disabled={busy} onClick={() => withdraw.mutate(entry.pending_request_id!)}>
-              {withdraw.isPending && withdraw.variables === entry.pending_request_id ? <LoaderCircle size={17} className="spin" aria-hidden /> : <UndoDot size={17} aria-hidden />}Withdraw request
+              {withdraw.isPending && withdraw.variables === entry.pending_request_id ? <LoaderCircle size={17} className="spin" aria-hidden /> : <UndoDot size={17} aria-hidden />}{t("spaces.groups.withdrawRequest")}
             </button>}
           </div>}
         </li>)}</ul>}
         {groups.hasNextPage && <div className={styles.loadMore}><button className="secondary-button" disabled={groups.isFetchingNextPage} onClick={() => groups.fetchNextPage()}>
-          {groups.isFetchingNextPage ? <LoaderCircle size={17} className="spin" aria-hidden /> : null}Show more groups</button></div>}
+          {groups.isFetchingNextPage ? <LoaderCircle size={17} className="spin" aria-hidden /> : null}{t("spaces.groups.more")}</button></div>}
       </section>
       <section className={styles.invitationSection} aria-labelledby="my-requests-title">
-        <div className={styles.sectionHeading}><h2 id="my-requests-title">Your join requests</h2></div>
-        {requests.isSuccess && requests.data.length === 0 && <p className={styles.emptyNote}>You have not asked to join any group.</p>}
+        <div className={styles.sectionHeading}><h2 id="my-requests-title">{t("spaces.groups.myRequests")}</h2></div>
+        {requests.isSuccess && requests.data.length === 0 && <p className={styles.emptyNote}>{t("spaces.groups.noRequests")}</p>}
         {requests.data && requests.data.length > 0 && <ul className={styles.invitationList}>{requests.data.map(request => <li key={request.id}>
           <div className={styles.invitationDetails}>
             <p><strong>{request.space_name}</strong></p>
-            <span>{joinStatusLabels[request.status]} · asked {dateFormat.format(new Date(request.created_at))}</span>
+            <span>{t("spaces.groups.asked", { status: t(statusLabels[request.status]), date: dateFormat.format(new Date(request.created_at)) })}</span>
             {request.note && <blockquote className={styles.requestNote}>{request.note}</blockquote>}
           </div>
           <div className={styles.invitationActions}>
-            {request.status === "approved" && <Link className="secondary-button" href="/app/spaces">Open</Link>}
-            {request.status === "pending" && <button className="secondary-button" disabled={busy} onClick={() => withdraw.mutate(request.id)}><UndoDot size={17} aria-hidden />Withdraw</button>}
+            {request.status === "approved" && <Link className="secondary-button" href="/app/spaces">{t("spaces.groups.open")}</Link>}
+            {request.status === "pending" && <button className="secondary-button" disabled={busy} onClick={() => withdraw.mutate(request.id)}><UndoDot size={17} aria-hidden />{t("spaces.groups.withdraw")}</button>}
           </div>
         </li>)}</ul>}
       </section>

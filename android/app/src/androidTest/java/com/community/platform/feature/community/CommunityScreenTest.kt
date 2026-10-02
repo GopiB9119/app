@@ -435,6 +435,70 @@ class CommunityScreenTest {
         compose.onNodeWithTag("page-follow").assertTextContains("Unfollow")
     }
 
+    @Test fun readOnlyFeedPostHidesNewReactionsButKeepsComments() {
+        val archived = post.copy(pageStatus = "read_only")
+        val opened = mutableListOf<Destination>()
+        val state = CommunityState(accountId = accountId, posts = listOf(archived))
+        largeNarrow { CommunityScreen(state, CommunityActions(open = { opened += it }), "UTC", {}) }
+        insideAndShown("comments-$postId")
+        compose.onAllNodesWithTag("like-$postId").assertCountEquals(0)
+        compose.onAllNodesWithTag("save-$postId").assertCountEquals(0)
+        compose.onNodeWithText("Archived, read only", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Report").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("comments-$postId").performScrollTo().performClick()
+        assertEquals(listOf<Destination>(Destination.Post(postId)), opened)
+    }
+
+    @Test fun activeFeedPostKeepsLikeAndSave() {
+        val state = CommunityState(accountId = accountId, posts = listOf(post.copy(pageStatus = "active")))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("like-$postId", "save-$postId", "comments-$postId")
+        compose.onAllNodesWithText("Archived, read only", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun readOnlyFeedPostKeepsUnlikeAndUnsave() {
+        val archived = post.copy(pageStatus = "read_only", liked = true, saved = true, likeCount = 1)
+        val likes = mutableListOf<PostDto>()
+        val saves = mutableListOf<PostDto>()
+        val state = CommunityState(accountId = accountId, posts = listOf(archived))
+        largeNarrow { CommunityScreen(state, CommunityActions(like = { likes += it }, save = { saves += it }), "UTC", {}) }
+        insideAndShown("like-$postId", "save-$postId", "comments-$postId")
+        compose.onNodeWithTag("like-$postId").performScrollTo().performClick()
+        compose.onNodeWithTag("save-$postId").performScrollTo().performClick()
+        assertEquals(listOf(archived), likes)
+        assertEquals(listOf(archived), saves)
+    }
+
+    @Test fun readOnlyPostScreenHidesComposersAndReplyAtLargeText() {
+        val archived = post.copy(pageStatus = "read_only")
+        val comment = CommentDto("5f2b5d20-7e7d-4c60-9c73-2e6b5b4d3c03", postId, null, "Sam", "Count me in", "visible", stamp, false, false)
+        val reply = comment.copy(id = "6a3c6e31-8f8e-4d71-8d84-3f7c6c5e4d05", parentId = comment.id, authorName = "Kim", body = "Bring water")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Post(postId), post = archived, comments = listOf(comment, reply)))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("post-read-only")
+        compose.onNodeWithTag("post-read-only").assertTextContains("This page is archived.", substring = true)
+        compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
+        insideAndShown("comment-${comment.id}")
+        compose.onNodeWithText("Count me in").assertIsDisplayed()
+        compose.onAllNodesWithText("Reply").assertCountEquals(0)
+        compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
+        compose.onNodeWithText("Block person").performScrollTo().assertIsDisplayed()
+        insideAndShown("comment-${reply.id}")
+        compose.onNodeWithText("Bring water").assertIsDisplayed()
+
+        state = state.copy(post = archived.copy(pageStatus = "active"))
+        insideAndShown("comment-text")
+        reveal("comment-${comment.id}")
+        compose.onNodeWithText("Reply").performScrollTo().performClick()
+        insideAndShown("reply-text")
+        state = state.copy(post = archived)
+        insideAndShown("comment-${comment.id}")
+        compose.onAllNodesWithText("Reply").assertCountEquals(0)
+        compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
+        insideAndShown("post-read-only")
+        compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
+    }
+
     private fun capture(name: String) {
         val image = compose.onRoot().captureToImage().asAndroidBitmap()
         val context = InstrumentationRegistry.getInstrumentation().targetContext

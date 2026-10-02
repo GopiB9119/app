@@ -3,7 +3,7 @@ import { ApiError, api, chars } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
-const localTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+const localTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/).refine(validLocalTime);
 export const RESPONSES = ["going", "maybe", "not_going"] as const;
 export type EventResponse = (typeof RESPONSES)[number];
 export const RESPONSE_LABELS: Record<EventResponse, string> = { going: "Going", maybe: "Maybe", not_going: "Not going" };
@@ -18,7 +18,7 @@ export const attendeeSchema = z.object({
 });
 export const eventSchema = z.object({
   id: uuid, space_id: uuid, space_name: chars(1, 80),
-  title: z.string().min(1).max(MAX_TITLE * 2), description: z.string().max(MAX_DESCRIPTION * 2), location: z.string().max(MAX_LOCATION * 2),
+  title: chars(1, MAX_TITLE), description: chars(0, MAX_DESCRIPTION), location: chars(0, MAX_LOCATION),
   timezone: z.string().min(1).max(64), local_start: localTime, local_end: localTime.nullable(),
   starts_at: timestamp, ends_at: timestamp.nullable(), status: z.enum(["scheduled", "cancelled"]), ended: z.boolean(),
   created_by_name: chars(0, 80), created_at: timestamp, updated_at: timestamp,
@@ -38,6 +38,7 @@ export const eventSchema = z.object({
 });
 export type SpaceEvent = z.infer<typeof eventSchema>;
 export type EventForm = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string };
+export type EventFormProblems = Partial<Record<keyof EventForm, string>>;
 export type CreateIntent = { accountId: string; spaceId: string; key: string; body: EventBody };
 type EventBody = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string | null };
 
@@ -56,14 +57,16 @@ export function browserZone() {
   }
 }
 
-export function zoneOptions(current: string) {
-  let zones: string[] = [];
+export function eventTimezone(current: string, available: readonly string[]) {
+  if (available.includes(current)) return current;
   try {
-    zones = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
+    const resolved = new Intl.DateTimeFormat("en", { timeZone: current }).resolvedOptions().timeZone;
+    return available.find(name => {
+      try { return new Intl.DateTimeFormat("en", { timeZone: name }).resolvedOptions().timeZone === resolved; } catch { return false; }
+    }) ?? "";
   } catch {
-    zones = [];
+    return "";
   }
-  return [...new Set([current, ...zones, "UTC"])].filter(Boolean).sort();
 }
 
 export function eventBody(form: EventForm): EventBody {
@@ -76,17 +79,34 @@ export function eventBody(form: EventForm): EventBody {
 
 const controls = /[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
 
-export function formProblem(form: EventForm) {
+function validLocalTime(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) || Number(value.slice(0, 4)) < 1) return false;
+  const parsed = new Date(`${value}:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 16) === value;
+}
+
+export function eventFormProblems(form: EventForm): EventFormProblems {
   const body = eventBody(form);
-  if (!body.title) return "Enter a title.";
-  if ([...body.title].length > MAX_TITLE) return `Titles can have up to ${MAX_TITLE} characters.`;
-  if ([...body.location].length > MAX_LOCATION) return `Locations can have up to ${MAX_LOCATION} characters.`;
-  if ([...body.description].length > MAX_DESCRIPTION) return `Details can have up to ${MAX_DESCRIPTION} characters.`;
-  if ([body.title, body.location, body.description].some(text => controls.test(text))) return "Remove control characters.";
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(body.local_start)) return "Choose a start date and time.";
-  if (body.local_end && body.local_end <= body.local_start) return "The end must be after the start.";
-  if (!body.timezone) return "Choose a time zone.";
-  return null;
+  const problems: EventFormProblems = {};
+  if (!body.title) problems.title = "Enter a title.";
+  else if ([...body.title].length > MAX_TITLE) problems.title = `Titles can have up to ${MAX_TITLE} characters.`;
+  if ([...body.location].length > MAX_LOCATION) problems.location = `Locations can have up to ${MAX_LOCATION} characters.`;
+  if ([...body.description].length > MAX_DESCRIPTION) problems.description = `Details can have up to ${MAX_DESCRIPTION} characters.`;
+  for (const field of ["title", "location", "description"] as const) {
+    if (!problems[field] && controls.test(body[field])) problems[field] = "Remove control characters.";
+  }
+  if (!body.local_start) problems.local_start = "Choose a start date and time.";
+  else if (!validLocalTime(body.local_start)) problems.local_start = "Choose a valid start date and time.";
+  if (body.local_end) {
+    if (!validLocalTime(body.local_end)) problems.local_end = "Choose a valid end date and time.";
+    else if (!problems.local_start && body.local_end <= body.local_start) problems.local_end = "The end must be after the start.";
+  }
+  if (!body.timezone) problems.timezone = "Choose a time zone.";
+  return problems;
+}
+
+export function formProblem(form: EventForm) {
+  return Object.values(eventFormProblems(form))[0] ?? null;
 }
 
 export function sameBody(left: EventBody, right: EventBody) {
@@ -100,20 +120,22 @@ export function formFromEvent(event: SpaceEvent): EventForm {
   };
 }
 
-export function formatWhen(event: Pick<SpaceEvent, "local_start" | "local_end" | "timezone" | "starts_at">, viewerZone: string) {
+export function formatWhen(event: Pick<SpaceEvent, "local_start" | "local_end" | "timezone" | "starts_at">, viewerZone: string,
+  display: { locale?: string; range?: (start: string, end: string) => string; own?: (time: string) => string } = {}) {
   const wall = (value: string) => {
     const [date, time] = value.split("T");
     const [year, month, day] = date.split("-").map(Number);
-    const label = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    const label = new Intl.DateTimeFormat(display.locale, { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
       .format(new Date(Date.UTC(year, month - 1, day)));
     return `${label}, ${time}`;
   };
   const start = wall(event.local_start);
   const end = event.local_end ? (event.local_end.slice(0, 10) === event.local_start.slice(0, 10) ? event.local_end.slice(11) : wall(event.local_end)) : null;
-  const main = `${start}${end ? ` to ${end}` : ""} (${event.timezone})`;
-  if (event.timezone === viewerZone) return { main, yours: null };
-  const yours = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: viewerZone }).format(new Date(event.starts_at));
-  return { main, yours: `Starts ${yours} your time` };
+  const range = end ? display.range?.(start, end) ?? `${start} to ${end}` : start;
+  const main = `${range} (${event.timezone})`;
+  if (eventTimezone(viewerZone, [event.timezone]) === event.timezone) return { main, yours: null };
+  const yours = new Intl.DateTimeFormat(display.locale, { dateStyle: "medium", timeStyle: "short", timeZone: viewerZone }).format(new Date(event.starts_at));
+  return { main, yours: display.own?.(yours) ?? `Starts ${yours} your time` };
 }
 
 export async function listEvents(accountId: string, spaceId: string, when: "upcoming" | "past", cursor?: string | null, signal?: AbortSignal) {

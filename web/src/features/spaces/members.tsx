@@ -172,12 +172,14 @@ function OwnershipOffers({ user, space, members, disabled, onLocked, onDenied }:
   user: Account; space: FamilySpace; members: SpaceMember[]; disabled: boolean;
   onLocked: (locked: boolean) => void; onDenied: (error: Error) => void;
 }) {
+  const t = useText();
+  const { language } = useLanguage();
   const client = useQueryClient();
   const titleId = useId();
   const [recipientId, setRecipientId] = useState("");
   const [selection, setSelection] = useState<OwnershipSelection | null>(null);
   const [intent, setIntent] = useState<OwnershipIntent | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<MessageId | null>(null);
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const offers = useInfiniteQuery({
     queryKey: ["ownershipOffers", user.id, space.id], initialPageParam: null as string | null,
@@ -189,7 +191,7 @@ function OwnershipOffers({ user, space, members, disabled, onLocked, onDenied }:
     mutationFn: changeOwnership,
     onSuccess: async result => {
       setIntent(null); setSelection(null); setRecipientId("");
-      setNotice(`Ownership offer ${ownershipLabels[result.status].toLowerCase()}.`);
+      setNotice(ownershipNotices[result.status]);
       await client.invalidateQueries({ predicate: query => query.queryKey.includes(user.id) });
     },
     onError: error => {
@@ -216,8 +218,9 @@ function OwnershipOffers({ user, space, members, disabled, onLocked, onDenied }:
   const rows = [...new Map(offers.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
   const pending = rows.some(item => item.status === "pending");
   const reauthentication = change.error instanceof ApiError && change.error.code === "REAUTHENTICATION_REQUIRED";
-  const title = selection?.action === "offer" ? "Offer family ownership?" : selection?.action === "accept" ? "Accept family ownership?" : selection?.action === "decline" ? "Decline ownership offer?" : "Withdraw ownership offer?";
-  const actionLabel = selection?.action === "offer" ? "Send ownership offer" : selection?.action === "accept" ? "Accept ownership" : selection?.action === "decline" ? "Decline offer" : "Withdraw offer";
+  const step = selection?.action ?? "cancel";
+  const title = t(`spaces.ownership.confirm.${step}`);
+  const actionLabel = t(`spaces.ownership.action.${step}`);
   const senderName = selection?.action === "offer" ? user.display_name : selection?.transfer.from_name;
   const senderId = selection?.action === "offer" ? user.id : selection?.transfer.from_account_id;
   const recipientName = selection?.action === "offer" ? selection.member.display_name : selection?.transfer.to_name;
@@ -225,58 +228,58 @@ function OwnershipOffers({ user, space, members, disabled, onLocked, onDenied }:
 
   function review(value: OwnershipSelection) {
     if (disabled || locked || selection) return;
-    change.reset(); setNotice(""); setSelection(value);
+    change.reset(); setNotice(null); setSelection(value);
   }
 
   return <section className={styles.invitationSection} aria-labelledby={titleId}>
-    <div className={styles.sectionHeading}><Crown size={20} aria-hidden /><h2 id={titleId}>Ownership offers</h2>
-      <button className="icon-button" aria-label="Refresh ownership offers" title="Refresh ownership offers" disabled={disabled || locked || !!selection || offers.isFetching}
+    <div className={styles.sectionHeading}><Crown size={20} aria-hidden /><h2 id={titleId}>{t("spaces.ownership.title")}</h2>
+      <button className="icon-button" aria-label={t("spaces.ownership.refresh")} title={t("spaces.ownership.refresh")} disabled={disabled || locked || !!selection || offers.isFetching}
         onClick={() => { change.reset(); offers.refetch(); }}><RefreshCw size={18} className={offers.isFetching ? "spin" : ""} /></button>
     </div>
-    {notice && <p className="message success" role="status"><Check size={17} />{notice}</p>}
-    {(offers.error || (change.error && !selection)) && <p className="message error" role="alert">{offers.error?.message ?? change.error?.message}{reauthentication && <> <a href="/login">Sign in again</a></>}</p>}
+    {notice && <p className="message success" role="status"><Check size={17} />{t(notice)}</p>}
+    {(offers.error || (change.error && !selection)) && <p className="message error" role="alert">{offers.error?.message ?? change.error?.message}{reauthentication && <> <a href="/login">{t("spaces.ownership.signInAgain")}</a></>}</p>}
     {own?.role === "owner" && <form className={styles.ownershipForm} onSubmit={event => {
       event.preventDefault();
       const member = eligible.find(item => item.account_id === recipientId);
       if (member && !pending) review({ action: "offer", member });
     }}>
-      <label htmlFor={`${titleId}-recipient`}>Next owner</label>
+      <label htmlFor={`${titleId}-recipient`}>{t("spaces.ownership.nextOwner")}</label>
       <select id={`${titleId}-recipient`} value={recipientId} disabled={disabled || locked || !!selection || pending || offers.isPending || offers.isError}
         onChange={event => setRecipientId(event.target.value)}>
-        <option value="">Choose a current member</option>
+        <option value="">{t("spaces.ownership.choose")}</option>
         {eligible.map(member => <option key={member.account_id} value={member.account_id}>{member.display_name} ({member.account_id})</option>)}
       </select>
-      <button type="submit" className="secondary-button" disabled={disabled || locked || !!selection || pending || !recipientId || offers.isPending || offers.isError}><Crown size={17} />Review ownership offer</button>
+      <button type="submit" className="secondary-button" disabled={disabled || locked || !!selection || pending || !recipientId || offers.isPending || offers.isError}><Crown size={17} />{t("spaces.ownership.reviewOffer")}</button>
     </form>}
-    {offers.isPending && <p role="status">Loading ownership offers...</p>}
-    {!offers.isPending && !offers.isError && rows.length === 0 && <p>No ownership offers.</p>}
+    {offers.isPending && <p role="status">{t("spaces.ownership.loading")}</p>}
+    {!offers.isPending && !offers.isError && rows.length === 0 && <p>{t("spaces.ownership.none")}</p>}
     {!offers.isError && <ul className={styles.invitationList}>{rows.map(transfer => <li key={transfer.id}>
-      <div className={styles.invitationDetails}><h3>{transfer.from_name} to {transfer.to_name}</h3><span>{ownershipLabels[transfer.status]}</span>
-        <span>Expires {new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone }).format(new Date(transfer.expires_at))} ({user.timezone})</span>
+      <div className={styles.invitationDetails}><h3>{t("spaces.ownership.parties", { from: transfer.from_name, to: transfer.to_name })}</h3><span>{t(ownershipLabels[transfer.status])}</span>
+        <span>{t("spaces.ownership.expires", { date: formatDateTime(language, transfer.expires_at, { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone }), timezone: user.timezone })}</span>
       </div>
       {transfer.status === "pending" && <div className={styles.invitationActions}>
-        {transfer.to_account_id === user.id ? <><button className="primary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "accept", transfer })}><Crown size={17} />Review ownership</button>
-          <button className="secondary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "decline", transfer })}><X size={17} />Decline offer</button></>
-          : <button className="secondary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "cancel", transfer })}><X size={17} />Withdraw offer</button>}
+        {transfer.to_account_id === user.id ? <><button className="primary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "accept", transfer })}><Crown size={17} />{t("spaces.ownership.review")}</button>
+          <button className="secondary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "decline", transfer })}><X size={17} />{t("spaces.ownership.action.decline")}</button></>
+          : <button className="secondary-button" disabled={disabled || locked || !!selection} onClick={() => review({ action: "cancel", transfer })}><X size={17} />{t("spaces.ownership.action.cancel")}</button>}
       </div>}
     </li>)}</ul>}
-    {offers.hasNextPage && <button className="text-button" disabled={disabled || locked || !!selection || offers.isFetching} onClick={() => offers.fetchNextPage()}>More ownership offers</button>}
+    {offers.hasNextPage && <button className="text-button" disabled={disabled || locked || !!selection || offers.isFetching} onClick={() => offers.fetchNextPage()}>{t("spaces.ownership.more")}</button>}
     {selection && <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={`${titleId}-review`}
       onCancel={event => { if (locked) event.preventDefault(); else setSelection(null); }}>
-      <div className="dialog-heading"><h2 id={`${titleId}-review`}>{title}</h2><button className="icon-button" aria-label="Close ownership review" title="Close ownership review" disabled={locked} onClick={() => setSelection(null)}><X size={18} /></button></div>
-      <dl className={styles.reviewFacts}><dt>Space</dt><dd>{space.name}</dd><dt>Current owner</dt><dd>{senderName}<span className={styles.accountCode}>{senderId}</span></dd><dt>Next owner</dt><dd>{recipientName}<span className={styles.accountCode}>{reviewedRecipient}</span></dd></dl>
-      {selection.action === "offer" || selection.action === "accept" ? <p>After acceptance, the next owner can manage members and invitations. The current owner becomes a member. Existing task history and private-data permissions stay unchanged. Pending invitations from the current owner will be revoked.</p> : <p>This ends the offer without changing either membership role.</p>}
-      {selection.action === "offer" ? <p>The offer expires after 15 minutes. Signing out of this session before acceptance invalidates it.</p>
-        : <p>Offer expires {selection.transfer.expires_at.replace("T", " ")}.</p>}
+      <div className="dialog-heading"><h2 id={`${titleId}-review`}>{title}</h2><button className="icon-button" aria-label={t("spaces.ownership.close")} title={t("spaces.ownership.close")} disabled={locked} onClick={() => setSelection(null)}><X size={18} /></button></div>
+      <dl className={styles.reviewFacts}><dt>{t("spaces.members.space")}</dt><dd>{space.name}</dd><dt>{t("spaces.ownership.currentOwner")}</dt><dd>{senderName}<span className={styles.accountCode}>{senderId}</span></dd><dt>{t("spaces.ownership.nextOwner")}</dt><dd>{recipientName}<span className={styles.accountCode}>{reviewedRecipient}</span></dd></dl>
+      {selection.action === "offer" || selection.action === "accept" ? <p>{t("spaces.ownership.effect")}</p> : <p>{t("spaces.ownership.endEffect")}</p>}
+      {selection.action === "offer" ? <p>{t("spaces.ownership.offerExpiry")}</p>
+        : <p>{t("spaces.ownership.offerExpires", { time: selection.transfer.expires_at.replace("T", " ") })}</p>}
       {change.error && <p className="message error" role="alert">{change.error.message}</p>}
-      {intent && !change.isPending && <p role="status">The result is unconfirmed.</p>}
-      <div className={`dialog-actions ${styles.membershipActions}`}><button className="secondary-button" disabled={locked} onClick={() => setSelection(null)}>Not now</button>
+      {intent && !change.isPending && <p role="status">{t("spaces.members.unconfirmed")}</p>}
+      <div className={`dialog-actions ${styles.membershipActions}`}><button className="secondary-button" disabled={locked} onClick={() => setSelection(null)}>{t("spaces.ownership.notNow")}</button>
         <button className="primary-button" disabled={change.isPending} onClick={() => {
           const command: OwnershipIntent = intent ?? (selection.action === "offer"
             ? { action: "offer", accountId: user.id, spaceId: space.id, recipientId: selection.member.account_id, etag: selection.member.etag, key: crypto.randomUUID() }
             : { action: selection.action, accountId: user.id, transfer: selection.transfer });
           setIntent(command); change.mutate(command);
-        }}>{change.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Crown size={17} />}{intent && !change.isPending ? "Retry original ownership change" : actionLabel}</button>
+        }}>{change.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Crown size={17} />}{intent && !change.isPending ? t("spaces.ownership.retry") : actionLabel}</button>
       </div>
     </dialog>}
   </section>;

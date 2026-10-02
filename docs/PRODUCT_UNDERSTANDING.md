@@ -116,7 +116,7 @@ Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a s
 - **CONFIRMED** Retrieval respects permissions. (You)
 - **PROPOSED** Every read and write checks the current account, the current membership and access to that specific item. (Sources: Chapter 11) Code: built.
 - **PROPOSED** Per-item audiences: whole Space, members only, chosen roles, owner only, author only, agent only. (Sources: Chapter 3) Code: not built.
-- **TBD** Per-Space permission settings, such as who may create tasks or events. Code: fixed rules.
+- **TBD** Per-Space permission settings, such as who may create tasks or events. Code: fixed rules, except who can invite people, which the owner of a family or group Space chooses since [DEC-026](DECISIONS.md#accepted-decisions) (provisional).
 
 ## 10. Community
 
@@ -377,7 +377,7 @@ Approved by you on 2026-10-01 ([DEC-001](DECISIONS.md#accepted-decisions)). The 
 | ID | Requirement | Code today |
 | --- | --- | --- |
 | R1 | Users can belong to many Spaces. | Built |
-| R2 | Each Space has its own membership, roles, permissions and resources. | Partly built: owner, admin and member roles (admin under [DEC-018](DECISIONS.md#accepted-decisions), provisional); no per-Space permission settings |
+| R2 | Each Space has its own membership, roles, permissions and resources. | Partly built: owner, admin and member roles (admin under [DEC-018](DECISIONS.md#accepted-decisions), provisional); one per-Space permission setting, who can invite people ([DEC-026](DECISIONS.md#accepted-decisions), provisional) |
 | R3 | Public communities and private Spaces both exist. | Built; the public side is Pages (see D1) |
 | R4 | The public side has posts, comments, reactions, follows, discovery and search. | Partly built |
 | R5 | The private side has conversations, tasks, events and documents. | Partly built: text documents (T14; [DEC-015](DECISIONS.md#accepted-decisions), provisional); PDF, images and office files wait for the scanner decision |
@@ -516,7 +516,7 @@ Conflicts are recorded and resolved as [Article 5 of the Product Constitution](P
 | G1 | R11: retrieval respects membership | Fixed on 2026-10-01 (T02): a new member no longer sees a chat message or event created at the same moment they joined. History now compares admission order numbers instead of timestamps. |
 | G2 | R12: security | Fixed on 2026-10-01: a direct message sent after the other person left (T03), changes saved after sign-in expired during a wait (T04), and one sign-in limit shared by all web users when the web app runs behind a trusted proxy (T10). Since T11, the encryption key can be replaced in stages without signing anyone out or losing stored data. Still open: production key custody (C11-D08); the lookup key itself is not rotated. |
 | G3 | R12: observability | Since 2026-10-01: request logs without private data, trace IDs from the web proxy to the API and a key-protected metrics endpoint (T09), which also shows how much background work waits, for how long, and how much failed (T32). Missing: a collector, dashboards, alerts (targets, Q19), database server metrics, and traces into workers. |
-| G4 | R2: roles and permissions | Owner, admin and member roles (admin since [DEC-018](DECISIONS.md#accepted-decisions), provisional); no per-Space permission settings yet. |
+| G4 | R2: roles and permissions | Owner, admin and member roles (admin since [DEC-018](DECISIONS.md#accepted-decisions), provisional); one per-Space permission setting, who can invite people ([DEC-026](DECISIONS.md#accepted-decisions), provisional); others not decided. |
 | G5 | R5 and R10: documents and retrieval | Since 2026-10-01: text documents in private Spaces and search by words over documents, tasks and events, without a model (T14, T15). Missing: other file types and virus scanning (the scanner decision), and embeddings (Q17). |
 | G6 | R6: couple and custom Spaces | Built: custom groups (T22, [DEC-011](DECISIONS.md#accepted-decisions)) and couple Spaces (T12, [DEC-017](DECISIONS.md#accepted-decisions)), both provisional until you review them. |
 | G7 | R7 and R8: agents | Since 2026-10-01: an agent without an AI model, limited to the person's own access, with exact approvals and memory, on backend, web and Android (T33–T35). Missing: conversation with a model (Q17) and the owner's review of DEC-012. |

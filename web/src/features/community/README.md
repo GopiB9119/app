@@ -11,7 +11,7 @@ Moderators, handing a page over, and archive, delete and restore (T84, T85; `pag
 - Under Your pages, **Pages you help moderate** lists pages offered to you (Take over asks first), invitations (Accept asks first, Decline does not) and the pages you moderate (Step down asks first). Taking over adds the page to Pages you own.
 - Someone who moderates a page sees "You moderate this page" and Pin to top or Unpin on its published posts, and removes comments where the post says they can; owner-only controls stay hidden, and public views never say who moderates.
 
-Evidence: [public community checkpoint](../../../../docs/BUILD_STATUS.md#public-community-checkpoint), [page rules and pinned posts checkpoint](../../../../docs/BUILD_STATUS.md#page-rules-and-pinned-posts-checkpoint), [page moderators, handover and page states checkpoint](../../../../docs/BUILD_STATUS.md#page-moderators-handover-and-page-states-checkpoint).
+Evidence: [public community checkpoint](../../../../docs/BUILD_STATUS.md#public-community-checkpoint), [page rules and pinned posts checkpoint](../../../../docs/BUILD_STATUS.md#page-rules-and-pinned-posts-checkpoint), [page moderators, handover and lifecycle checkpoint](../../../../docs/BUILD_STATUS.md#page-moderators-handover-and-lifecycle-checkpoint).
 
 Source chapters: 1, 2, 15.
 

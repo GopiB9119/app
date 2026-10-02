@@ -14,7 +14,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -32,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNarrowScreen
+import com.community.platform.feature.spaces.DeviceFontScale
+import com.community.platform.feature.spaces.EmulatorFontScaleRule
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,11 +44,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TaskScreenTest {
-    @get:Rule val compose = createComposeRule()
+    val compose = createComposeRule()
+    @get:Rule val rules: TestRule = RuleChain.outerRule(EmulatorFontScaleRule()).around(compose)
     private val accountId = "62f3da14-12e9-4575-9541-caf8b98e2dfd"
     private val memberId = "0f97b948-9800-432f-9d15-407df739d08e"
     private val space = FamilySpaceDto("c2937183-70fb-4d7a-b0b6-b1bc9c499444", "Morgan family", "owner")
@@ -214,5 +222,23 @@ class TaskScreenTest {
         val file = File(context.getExternalFilesDir("test-evidence"), name)
         file.outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         assertTrue(file.length() > 1000)
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
+        assertNarrowScreen()
+        val tasks = (1..20).map { record.copy(task = task.copy(id = "synthetic-task-$it", title = "Task $it")) }
+        val offline = "No connection. Changes are not confirmed."
+        var current by mutableStateOf(workspace().copy(tasks = tasks, nextCursor = "synthetic-next"))
+        val callbacks = actions().copy(loadMore = { current = current.copy(error = offline, messageId = current.messageId + 1) })
+        compose.setContent { CommunityTheme { TaskScreen(current, callbacks, {}) } }
+        repeat(2) {
+            reveal(hasText("Load more tasks"))
+            compose.onNodeWithText("Load more tasks").performScrollTo()
+            compose.onNodeWithText(offline).assertIsNotDisplayed()
+            compose.onNodeWithText("Load more tasks").performClick()
+            compose.onNodeWithText(offline).assertIsDisplayed().assertTextEquals(offline)
+        }
+        compose.runOnIdle { assertEquals(2L, current.messageId) }
     }
 }

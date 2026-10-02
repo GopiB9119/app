@@ -199,6 +199,7 @@ class PostView(ModeratedView):
     page_id: str
     page_handle: str
     page_name: str
+    page_status: Literal["active", "read_only", "deleted"]
     title: str | None
     body: str
     status: Literal["draft", "published"]

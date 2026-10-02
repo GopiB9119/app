@@ -90,6 +90,38 @@ def test_archiving_keeps_a_page_readable_and_restoring_opens_it_again(client, ap
             CommunityAuditEvent.action.in_(("public.page_archived", "public.page_restored")))) == 2
 
 
+def test_posts_and_comments_on_an_archived_page_say_so_and_offer_no_changes(client, app):
+    owner = account(client, app)
+    reader = account(client, app, "reader@example.test")
+    page = create_page(client, owner).json()["data"]
+    post = published(client, owner, page["id"])
+    assert client.post(f"/v1/posts/{post['id']}/pin", headers=auth(owner), json={}).status_code == 200
+    assert comment(client, reader, post["id"]).status_code == 201
+    assert client.post(f"/v1/pages/{page['id']}/follow", headers=auth(reader), json={}).status_code == 200
+    assert client.post(f"/v1/posts/{post['id']}/save", headers=auth(reader), json={}).status_code == 200
+
+    def check(state):
+        # Every way a post reaches a reader carries its page's state (T114).
+        found = [
+            client.get(f"/v1/posts/{post['id']}", headers=auth(reader)).json()["data"],
+            *client.get(f"/v1/pages/{page['handle']}/posts", headers=auth(reader)).json()["data"],
+            *client.get(f"/v1/pages/{page['handle']}/pinned-posts", headers=auth(reader)).json()["data"],
+            *client.get("/v1/feed", headers=auth(reader)).json()["data"],
+            *client.get("/v1/me/saved-posts", headers=auth(reader)).json()["data"],
+        ]
+        assert len(found) == 5 and {view["page_status"] for view in found} == {state}
+        for person in (reader, owner):
+            comments = client.get(f"/v1/posts/{post['id']}/comments", headers=auth(person)).json()["data"]
+            assert [item["can_remove"] for item in comments] == [state == "active"]
+
+    check("active")
+    archived = archive(client, owner, page, page["etag"])
+    assert archived.status_code == 200, archived.text
+    check("read_only")
+    assert restore(client, owner, page, archived.json()["data"]["etag"]).status_code == 200
+    check("active")
+
+
 def test_deleting_needs_the_name_and_hides_everything_until_the_owner_restores_it(client, app):
     owner = account(client, app)
     reader = account(client, app, "reader@example.test")
@@ -207,5 +239,38 @@ def test_a_page_the_account_deletion_marks_archived_stays_hidden(client, app):
     headers = {**auth(owner), "If-Match": page["etag"]}
     assert client.post(f"/v1/pages/{page['id']}/restore", headers=headers, json={}).status_code == 404
     assert client.post(f"/v1/pages/{page['id']}/archive", headers=headers, json={}).status_code == 404
+
+
+def test_a_comment_or_like_waiting_for_its_post_is_refused_when_the_page_was_archived_meanwhile(client, app):
+    # T115 (2): the page was read from the snapshot taken before waiting for the post's lock, so the write still went through.
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import text
+
+    from tests.test_messaging import wait_until_blocked
+
+    owner = account(client, app)
+    reader = account(client, app, "reader@example.test")
+    page = create_page(client, owner).json()["data"]
+    post = published(client, owner, page["id"])
+    for name, request in (
+        ("comment", lambda: comment(client, reader, post["id"])),
+        ("like", lambda: client.post(f"/v1/posts/{post['id']}/like", headers=auth(reader), json={})),
+    ):
+        current = client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]
+        with ThreadPoolExecutor(max_workers=1) as pool, app.state.engine.connect() as holder:
+            held = holder.begin()
+            holder.execute(text("SELECT 1 FROM public_posts WHERE id = :id FOR UPDATE"), {"id": post["id"]})
+            pending = pool.submit(request)
+            wait_until_blocked(app, pending)
+            archived = archive(client, owner, page, current["etag"])
+            assert archived.status_code == 200, archived.text
+            held.commit()
+            late = pending.result(timeout=10)
+        assert late.status_code == 409 and late.json()["error"]["code"] == "PAGE_READ_ONLY", (name, late.text)
+        assert restore(client, owner, page, archived.json()["data"]["etag"]).status_code == 200
+    with app.state.sessions() as database:
+        stored = database.get(PublicPost, post["id"])
+        assert (stored.comment_count, stored.like_count) == (0, 0)
 
 

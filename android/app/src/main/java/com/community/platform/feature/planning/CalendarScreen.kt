@@ -50,7 +50,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -134,7 +136,7 @@ fun CalendarScreen(state: CalendarState, actions: CalendarActions, onBack: () ->
                     }
                 }
                 if (state.error != null) item("error") {
-                    Text(state.error, color = MaterialTheme.colorScheme.error)
+                    Text(state.error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     TextButton(onClick = actions.refresh, enabled = !state.busy) { Text(stringResource(R.string.calendar_retry)) }
                 }
                 if (state.loaded && !state.busy && state.error == null) {

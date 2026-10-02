@@ -46,8 +46,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -85,7 +87,7 @@ fun ChecklistScreen(state: ChecklistState, actions: ChecklistActions, onBack: ()
     val list = rememberLazyListState()
     // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
     // so after an action further down, such as adding an item, bring it into view to be seen.
-    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
+    LaunchedEffect(state.error, state.notice, state.messageId) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -95,8 +97,8 @@ fun ChecklistScreen(state: ChecklistState, actions: ChecklistActions, onBack: ()
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().align(Alignment.CenterHorizontally).testTag("task-checklist"), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error) } }
-                state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary) } }
+                state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }
+                state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }
                 val basis = state.basis
                 if (basis != null && !state.denied) {
                     item("heading") {

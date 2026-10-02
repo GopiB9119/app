@@ -60,16 +60,17 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
     </PostCard>
     {current.status === "published" && <section className={styles.stack} aria-labelledby="comments-heading">
       <h2 id="comments-heading"><MessageCircle size={20} aria-hidden /> {t("community.comments")}</h2>
-      {viewer ? <CommentForm account={viewer} postId={current.id} onSaved={refresh} /> : <p className={styles.notice}><Link href="/login">{t("community.signIn")}</Link>{t("community.signInToCommentAfter")}</p>}
+      {current.page_status !== "active" ? <p className={styles.notice} role="status">{t("community.manage.readOnly")}</p>
+        : viewer ? <CommentForm account={viewer} postId={current.id} onSaved={refresh} /> : <p className={styles.notice}><Link href="/login">{t("community.signIn")}</Link>{t("community.signInToCommentAfter")}</p>}
       {comments.isPending && <p role="status" aria-busy="true">{t("community.loadingComments")}</p>}
       {comments.isError && !sessionLost(comments.error) && <Failure error={comments.error} retry={() => comments.refetch()} />}
       {!comments.isPending && !comments.isError && all.length === 0 && <p className={styles.empty}>{t("community.noComments")}</p>}
       <ul className={styles.comments} aria-label={t("community.comments")}>
         {topLevel.map(item => <li key={item.id}>
-          <CommentItem comment={item} account={viewer} postId={current.id} onChanged={refresh} onReport={setReport} />
+          <CommentItem comment={item} account={viewer} postId={current.id} canReply={current.page_status === "active"} onChanged={refresh} onReport={setReport} />
           {replies(item.id).length > 0 && <ul className={styles.comments} aria-label={t("community.repliesTo", { name: item.author_name })}>
             {replies(item.id).map(reply => <li key={reply.id} className={styles.reply}>
-              <CommentItem comment={reply} account={viewer} postId={current.id} onChanged={refresh} onReport={setReport} />
+              <CommentItem comment={reply} account={viewer} postId={current.id} canReply={false} onChanged={refresh} onReport={setReport} />
             </li>)}
           </ul>}
         </li>)}
@@ -80,8 +81,8 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
   </CommunityFrame>;
 }
 
-function CommentItem({ comment, account, postId, onChanged, onReport }: {
-  comment: PostComment; account: Account | null; postId: string; onChanged: () => void; onReport: (target: ReportTarget) => void;
+function CommentItem({ comment, account, postId, canReply, onChanged, onReport }: {
+  comment: PostComment; account: Account | null; postId: string; canReply: boolean; onChanged: () => void; onReport: (target: ReportTarget) => void;
 }) {
   const t = useText();
   const time = useCommunityTime();
@@ -107,7 +108,7 @@ function CommentItem({ comment, account, postId, onChanged, onReport }: {
       : <p className={styles.removed}>{t(comment.status === "removed" ? "community.commentRemoved" : "community.commentDeleted")}</p>}
     {comment.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${comment.moderation.reason}`) })}</p>}
     {account && visible && mode === "idle" && <div className={styles.actions}>
-      {comment.parent_id === null && <button className="text-button" onClick={() => setMode("reply")}><Reply size={16} aria-hidden />{t("community.reply")}</button>}
+      {canReply && comment.parent_id === null && <button className="text-button" onClick={() => setMode("reply")}><Reply size={16} aria-hidden />{t("community.reply")}</button>}
       {comment.can_remove && <button className="text-button" onClick={() => setMode("remove")}><Trash2 size={16} aria-hidden />{t(comment.mine ? "community.delete" : "community.remove")}</button>}
       {!comment.mine && <button className="text-button" onClick={() => setMode("block")}><Ban size={16} aria-hidden />{t("community.blockAuthor")}</button>}
       {!comment.mine && <button className="text-button" onClick={() => onReport({ type: "comment", id: comment.id, label: t("community.commentBy", { name: comment.author_name }) })}><Flag size={16} aria-hidden />{t("community.report")}</button>}

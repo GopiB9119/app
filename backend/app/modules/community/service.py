@@ -47,6 +47,8 @@ MAX_FOLLOWS = 1000
 MAX_SAVED = 1000
 MAX_PINNED_POSTS = 3
 MAX_MODERATORS = 10
+# Archived pages stay readable by everyone, so what is on them can still be reported and hidden (T109).
+PUBLIC_PAGE_STATES = ("active", "read_only")
 CURSOR_MINUTES = 15
 MODERATOR_INVITE_LIFETIME = timedelta(hours=72)
 HANDOVER_OFFER_LIFETIME = timedelta(minutes=15)
@@ -244,11 +246,9 @@ class CommunityService:
         public = model.moderation_hidden_at.is_(None)
         if viewer is None:
             return public
+        # Hidden content stays visible only to its author, so a page's later owner does not see an earlier owner's hidden post (T109).
         author = model.owner_id if model is PublicPage else model.author_id
-        owners = [author == viewer.id]
-        if model is PublicPost:
-            owners.append(PublicPage.owner_id == viewer.id)
-        return or_(public, *owners)
+        return or_(public, author == viewer.id)
 
     @staticmethod
     def can_view_moderated(target, viewer, page=None):
@@ -257,7 +257,7 @@ class CommunityService:
         if viewer is None:
             return False
         author_id = target.owner_id if isinstance(target, PublicPage) else target.author_id
-        return author_id == viewer.id or (isinstance(target, PublicPost) and page is not None and page.owner_id == viewer.id)
+        return author_id == viewer.id
 
     @staticmethod
     def is_pinned(post):
@@ -309,7 +309,8 @@ class CommunityService:
         for post, page in rows:
             manager = viewer is not None and page.owner_id == viewer.id
             views.append(PostView(
-                id=post.id, page_id=page.id, page_handle=page.handle, page_name=page.name, title=post.title,
+                id=post.id, page_id=page.id, page_handle=page.handle, page_name=page.name, page_status=page.status,
+                title=post.title,
                 body=post.body, status=post.status, like_count=post.like_count,
                 comment_count=post.comment_count - hidden_counts.get(post.id, 0),
                 created_at=post.created_at, published_at=post.published_at, edited_at=post.edited_at,
@@ -341,6 +342,9 @@ class CommunityService:
         if row is None:
             raise not_found("Post")
         post, page = row
+        if lock:
+            # The joined page comes from the snapshot taken before waiting for the post's lock; read the one committed since (T115).
+            page = database.scalar(select(PublicPage).where(PublicPage.id == post.page_id).execution_options(populate_existing=True))
         manager = viewer is not None and page.owner_id == viewer.id
         hidden = not self.can_view_page(page, viewer) or post.status == "deleted" or (post.status == "draft" and not (drafts and manager))
         hidden = hidden or not self.can_view_moderated(page, viewer) or not self.can_view_moderated(post, viewer, page)
@@ -521,6 +525,9 @@ class CommunityService:
                 select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id)
                 .where(PublicPost.id == post_id).with_for_update(of=PublicPost).execution_options(populate_existing=True)
             ).first()
+            if row is not None:
+                # The joined page is from before the wait for the post's lock; read it again, as visible_post does (T115).
+                database.refresh(row[1])
             if row is None or row[1].status != "active":
                 raise not_found("Post")
             post, page = row
@@ -729,7 +736,8 @@ class CommunityService:
         return CommentView(
             id=comment.id, post_id=comment.post_id, parent_id=parent_id, author_name=author.display_name,
             body=comment.body, status=comment.status, created_at=comment.created_at, mine=mine,
-            can_remove=comment.status == "visible" and (mine or manager or moderator),
+            # Removing is a change, so only an active page allows it (T114).
+            can_remove=comment.status == "visible" and page.status == "active" and (mine or manager or moderator),
             moderation=self.moderation_mark(database, comment, viewer),
         )
 
@@ -838,7 +846,7 @@ class CommunityService:
             elif body.target_type == "post":
                 post = database.scalar(select(PublicPost).where(PublicPost.id == target_id).with_for_update())
                 page = database.get(PublicPage, post.page_id) if post else None
-                if post is None or page is None or post.status != "published" or page.status != "active" or not (
+                if post is None or page is None or post.status != "published" or page.status not in PUBLIC_PAGE_STATES or not (
                     self.can_view_moderated(page, user) and self.can_view_moderated(post, user, page)
                 ):
                     raise not_found("Post")
@@ -849,7 +857,7 @@ class CommunityService:
                 if comment is not None:
                     database.refresh(comment, with_for_update=True)
                 page = database.get(PublicPage, post.page_id) if post else None
-                if comment is None or post is None or page is None or comment.status != "visible" or post.status != "published" or page.status != "active" or not (
+                if comment is None or post is None or page is None or comment.status != "visible" or post.status != "published" or page.status not in PUBLIC_PAGE_STATES or not (
                     self.can_view_moderated(page, user) and self.can_view_moderated(post, user, page) and self.can_view_moderated(comment, user)
                 ):
                     raise not_found("Comment")
@@ -1022,8 +1030,7 @@ class CommunityService:
     def resolve_moderator(self, token, page_id, moderator_id, action, expected):
         outcome = {"accept": "active", "decline": "declined", "withdraw": "withdrawn", "remove": "removed", "step-down": "stepped_down"}[action]
         recorded = {"accept": "accepted", "decline": "declined", "withdraw": "withdrawn", "remove": "removed", "step-down": "stepped_down"}[action]
-        with self.sessions.begin() as database:
-            caller, _session = self.identity.authenticate(database, token)
+        with self.identity.signed_in_write(token) as (database, caller):
             row = database.scalar(select(PageModerator).where(PageModerator.id == moderator_id)
                                   .with_for_update().execution_options(populate_existing=True))
             if row is None or row.page_id != page_id:
@@ -1150,15 +1157,13 @@ class CommunityService:
 
     def respond_handover(self, token, page_id, identifier, action, expected):
         outcome = {"accept": "accepted", "decline": "declined", "cancel": "cancelled"}[action]
-        with self.sessions.begin() as database:
-            caller, _session = self.identity.authenticate(database, token)
-            offer = database.scalar(select(PageHandover).where(PageHandover.id == identifier)
-                                    .with_for_update().execution_options(populate_existing=True))
-            if offer is None or offer.page_id != page_id:
-                raise not_found("Handover offer")
+        with self.identity.signed_in_write(token) as (database, caller):
+            # The page is locked before the offer, as offering and deleting do, so an answer cannot deadlock with them.
             page = database.scalar(select(PublicPage).where(PublicPage.id == page_id)
                                    .with_for_update().execution_options(populate_existing=True))
-            if page is None:
+            offer = database.scalar(select(PageHandover).where(PageHandover.id == identifier)
+                                    .with_for_update().execution_options(populate_existing=True))
+            if offer is None or page is None or offer.page_id != page_id:
                 raise not_found("Handover offer")
             expected_actor = offer.from_account_id if action == "cancel" else offer.to_account_id
             if caller.id != expected_actor:
@@ -1212,6 +1217,13 @@ class CommunityService:
                     waiting.expires_at = None
                     waiting.version += 1
                     self.record(database, caller.id, page.id, waiting.id, "public.moderator_invalidated")
+                # Hidden posts are visible only to their author, so the new owner could neither see nor free a pin on one they did not write (T109).
+                for hidden in database.scalars(select(PublicPost).where(
+                    PublicPost.page_id == page.id, PublicPost.pinned_at.is_not(None),
+                    PublicPost.moderation_hidden_at.is_not(None), PublicPost.author_id != offer.to_account_id,
+                ).with_for_update()).all():
+                    hidden.pinned_at = None
+                    self.record(database, caller.id, page.id, hidden.id, "public.post_unpinned")
                 database.flush()
             offer.status = outcome
             offer.resolved_at = self.clock()

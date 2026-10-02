@@ -71,6 +71,7 @@ data class ReminderWorkspaceState(
     val seriesPreview: ReminderSeriesPreviewDto? = null, val seriesRule: PreviewReminderSeriesDto? = null,
     val series: List<ReminderSeriesDto> = emptyList(), val seriesCursor: String? = null,
     val snoozing: InboxNotificationDto? = null, val snoozeMinutes: Int? = null,
+    val messageId: Long = 0,
 ) {
     val locked: Boolean get() = busy || pending != null
     val reviewing: Boolean get() = preview != null || requestReview != null || confirmation != null || seriesPreview != null || snoozing != null
@@ -133,15 +134,15 @@ class ReminderViewModel @Inject constructor(
             catch (error: IdentityFailure) {
                 update(expected) {
                     when {
-                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> ReminderWorkspaceState(accountId = it.accountId, error = error.message, requiresSignIn = true)
-                        error.status in setOf(403, 404) -> it.copy(taskTitle = "", taskOpen = false, assignee = null, canRequest = false, requestForAssignee = false, requests = emptyList(), requestCursor = null, requestReview = null, reminders = emptyList(), reminderCursor = null, inbox = emptyList(), inboxCursor = null, unreadCount = 0, preferences = null, preview = null, confirmation = null, pending = null, series = emptyList(), seriesCursor = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message)
-                        error.status in 400..499 && error.status != 408 -> it.copy(preview = null, requestReview = null, selectedOption = null, confirmation = null, pending = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message)
-                        else -> it.copy(error = error.message)
+                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> ReminderWorkspaceState(accountId = it.accountId, error = error.message, requiresSignIn = true, messageId = it.messageId + 1)
+                        error.status in setOf(403, 404) -> it.copy(taskTitle = "", taskOpen = false, assignee = null, canRequest = false, requestForAssignee = false, requests = emptyList(), requestCursor = null, requestReview = null, reminders = emptyList(), reminderCursor = null, inbox = emptyList(), inboxCursor = null, unreadCount = 0, preferences = null, preview = null, confirmation = null, pending = null, series = emptyList(), seriesCursor = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message, messageId = it.messageId + 1)
+                        error.status in 400..499 && error.status != 408 -> it.copy(preview = null, requestReview = null, selectedOption = null, confirmation = null, pending = null, seriesPreview = null, seriesRule = null, snoozing = null, snoozeMinutes = null, error = error.message, messageId = it.messageId + 1)
+                        else -> it.copy(error = error.message, messageId = it.messageId + 1)
                     }
                 }
             }
-            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.") } }
-            catch (_error: Exception) { update(expected) { it.copy(error = "The reminder service returned an unexpected response. Changes are not confirmed.") } }
+            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.", messageId = it.messageId + 1) } }
+            catch (_error: Exception) { update(expected) { it.copy(error = "The reminder service returned an unexpected response. Changes are not confirmed.", messageId = it.messageId + 1) } }
             finally { update(expected) { it.copy(busy = false) } }
         }
     }
@@ -215,7 +216,7 @@ class ReminderViewModel @Inject constructor(
         val frequency = current.repeat.wireValue ?: return
         if (current.locked || current.reviewing || !current.taskOpen || current.requestForAssignee || current.preferences?.value?.enabled != true) return
         val rule = seriesRule(current, taskId, frequency) ?: run {
-            mutableState.update { it.copy(error = "Check the time, how often it repeats, the weekdays and the dates.") }; return
+            mutableState.update { it.copy(error = "Check the time, how often it repeats, the weekdays and the dates.", messageId = it.messageId + 1) }; return
         }
         action { accountId, expected ->
             val result = repository.previewSeries(accountId, rule)
@@ -288,7 +289,7 @@ class ReminderViewModel @Inject constructor(
         if (current.requestForAssignee && (!current.canRequest || current.assignee == null)) return
         if (!current.requestForAssignee && current.preferences?.value?.enabled != true) return
         val local = try { LocalDateTime.parse("${current.date}T${current.time}:00") } catch (_error: java.time.DateTimeException) {
-            mutableState.update { it.copy(error = "Select a valid date and time.") }; return
+            mutableState.update { it.copy(error = "Select a valid date and time.", messageId = it.messageId + 1) }; return
         }
         action { accountId, expected ->
             val result = if (current.requestForAssignee) repository.previewRequest(accountId, PreviewReminderRequestDto(taskId, requireNotNull(current.assignee).accountId, local.toString(), current.timezone))
@@ -378,17 +379,17 @@ class ReminderViewModel @Inject constructor(
                     if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
                     val saved = repository.saveRequest(command.intent)
                     update(expected) { it.copy(requests = if (it.requestDirection == ReminderRequestDirection.SENT) listOf(saved) + it.requests.filterNot { item -> item.id == saved.id } else it.requests,
-                        preview = null, selectedOption = null, pending = null, date = "", time = "", notice = requestNotice(saved.status)) }
+                        preview = null, selectedOption = null, pending = null, date = "", time = "", notice = requestNotice(saved.status), messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.RespondRequest -> {
                     if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
                     val result = repository.respondRequest(command.intent)
-                    update(expected) { it.copy(requests = it.requests.map { item -> if (item.id == result.id) result else item }, pending = null, requestReview = null, notice = requestNotice(result.status)) }
+                    update(expected) { it.copy(requests = it.requests.map { item -> if (item.id == result.id) result else item }, pending = null, requestReview = null, notice = requestNotice(result.status), messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.Save -> {
                     if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
                     val saved = repository.save(command.intent)
-                    update(expected) { it.copy(reminders = listOf(saved) + it.reminders.filterNot { existing -> existing.id == saved.id }, preview = null, selectedOption = null, pending = null, date = "", time = "", notice = "Reminder saved.") }
+                    update(expected) { it.copy(reminders = listOf(saved) + it.reminders.filterNot { existing -> existing.id == saved.id }, preview = null, selectedOption = null, pending = null, date = "", time = "", notice = "Reminder saved.", messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.Cancel -> {
                     val result = repository.cancel(accountId, command.reminder.id)
@@ -399,7 +400,7 @@ class ReminderViewModel @Inject constructor(
                         "expired" -> "Reminder expired."
                         else -> "Reminder status updated."
                     }
-                    update(expected) { it.copy(reminders = it.reminders.map { item -> if (item.id == result.id) result else item }, pending = null, notice = notice) }
+                    update(expected) { it.copy(reminders = it.reminders.map { item -> if (item.id == result.id) result else item }, pending = null, notice = notice, messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.Read -> {
                     val result = repository.read(accountId, command.notification.id)
@@ -407,17 +408,17 @@ class ReminderViewModel @Inject constructor(
                 }
                 is ReminderCommand.Acknowledge -> {
                     val result = repository.acknowledge(accountId, command.notification.id)
-                    update(expected) { it.copy(inbox = it.inbox.map { item -> if (item.id == result.id) result else item }, reminders = it.reminders.map { item -> if (item.id == result.reminderId) item.copy(acknowledgedAt = result.acknowledgedAt) else item }, pending = null, notice = "Reminder acknowledged.") }
+                    update(expected) { it.copy(inbox = it.inbox.map { item -> if (item.id == result.id) result else item }, reminders = it.reminders.map { item -> if (item.id == result.reminderId) item.copy(acknowledgedAt = result.acknowledgedAt) else item }, pending = null, notice = "Reminder acknowledged.", messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.Preference -> {
                     val result = repository.setPreferences(accountId, command.enabled, command.etag)
-                    update(expected) { it.copy(preferences = result, pending = null, preview = null, selectedOption = null, notice = "Notification preference saved.") }
+                    update(expected) { it.copy(preferences = result, pending = null, preview = null, selectedOption = null, notice = "Notification preference saved.", messageId = it.messageId + 1) }
                 }
                 is ReminderCommand.SaveSeries -> {
                     if (command.intent.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again.", 401)
                     val saved = repository.saveSeries(command.intent)
                     update(expected) { it.copy(series = listOf(saved) + it.series.filterNot { item -> item.id == saved.id }, seriesPreview = null, seriesRule = null, pending = null,
-                        repeat = RepeatMode.ONCE, seriesTime = "", notice = "Repeating reminder saved.") }
+                        repeat = RepeatMode.ONCE, seriesTime = "", notice = "Repeating reminder saved.", messageId = it.messageId + 1) }
                     reloadReminders(accountId, expected)
                 }
                 is ReminderCommand.Series -> {
@@ -429,7 +430,7 @@ class ReminderViewModel @Inject constructor(
                         SeriesOperation.RESUME -> "Repeating reminder resumed."
                         SeriesOperation.CANCEL -> "Repeating reminder cancelled."
                     }
-                    update(expected) { it.copy(series = it.series.map { item -> if (item.id == result.id) result else item }, pending = null, notice = notice) }
+                    update(expected) { it.copy(series = it.series.map { item -> if (item.id == result.id) result else item }, pending = null, notice = notice, messageId = it.messageId + 1) }
                     reloadReminders(accountId, expected)
                 }
                 is ReminderCommand.Snooze -> {
@@ -440,7 +441,7 @@ class ReminderViewModel @Inject constructor(
                     } ?: "Reminder snoozed."
                     val wasUnread = command.intent.notification.readAt == null && result.readAt != null
                     update(expected) { it.copy(inbox = it.inbox.map { item -> if (item.id == result.id) result else item }, unreadCount = (it.unreadCount - if (wasUnread) 1 else 0).coerceAtLeast(0),
-                        snoozing = null, snoozeMinutes = null, pending = null, notice = notice) }
+                        snoozing = null, snoozeMinutes = null, pending = null, notice = notice, messageId = it.messageId + 1) }
                     reloadReminders(accountId, expected)
                 }
             }

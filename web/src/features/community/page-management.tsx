@@ -59,7 +59,7 @@ export function ModeratorPin({ account, post, onChanged }: { account: Account; p
 }
 
 /** The owner's moderators, handover offer, and archive, delete and restore. Nobody else sees who moderates a page. */
-export function PageManagement({ account, page, onChanged }: { account: Account; page: PublicPage; onChanged: () => void }) {
+export function PageManagement({ account, page, onChanged }: { account: Account; page: PublicPage; onChanged: (updated?: PublicPage) => void }) {
   const t = useText();
   const time = useCommunityTime();
   const queryClient = useQueryClient();
@@ -99,6 +99,8 @@ export function PageManagement({ account, page, onChanged }: { account: Account;
       refresh();
     } finally { setBusy(false); }
   }
+  // Archive, restore and delete answer with the page's new version; showing it at once keeps the next action current.
+  const changeState = (action: () => Promise<PublicPage>, done: string) => run(async () => onChanged(await action()), done);
   // An invitation or offer whose answer was lost keeps its key, so Retry cannot make a second one.
   async function send<Intent>(intent: Intent, keep: (value: Intent | null) => void, action: (value: Intent) => Promise<unknown>, done: string) {
     keep(intent);
@@ -120,7 +122,7 @@ export function PageManagement({ account, page, onChanged }: { account: Account;
       <p className={styles.notice}>{t("community.manage.deleted", { date: page.purge_after ? time.format(new Date(page.purge_after)) : "" })}</p>
       {error && <div className="message error" role="alert">{error}</div>}
       <div className={styles.actions}>
-        <button className="primary-button" disabled={busy} onClick={() => run(() => restorePage(account.id, page), t("community.manage.restored"))}>
+        <button className="primary-button" disabled={busy} onClick={() => changeState(() => restorePage(account.id, page), t("community.manage.restored"))}>
           {busy ? <LoaderCircle size={17} className="spin" aria-hidden /> : <ArchiveRestore size={17} aria-hidden />}{t("community.manage.restore")}
         </button>
       </div>
@@ -220,7 +222,7 @@ export function PageManagement({ account, page, onChanged }: { account: Account;
       <h2 id="page-state-heading">{t("community.manage.archiveOrDelete")}</h2>
       <div className={styles.actions}>
         {page.status === "read_only"
-          ? <button className="primary-button" disabled={busy} onClick={() => run(() => restorePage(account.id, page), t("community.manage.restored"))}>
+          ? <button className="primary-button" disabled={busy} onClick={() => changeState(() => restorePage(account.id, page), t("community.manage.restored"))}>
             <ArchiveRestore size={17} aria-hidden />{t("community.manage.restore")}
           </button>
           : <button className="secondary-button" disabled={busy} onClick={() => setConfirm({ kind: "archive" })}><Archive size={17} aria-hidden />{t("community.manage.archive")}</button>}
@@ -229,14 +231,14 @@ export function PageManagement({ account, page, onChanged }: { account: Account;
       {confirm?.kind === "archive" && <div className={styles.notice} role="group" aria-label={t("community.manage.archive")}>
         <p>{t("community.manage.archiveQuestion", { name: page.name })}</p>
         <div className={styles.actions}>
-          <button className="primary-button" disabled={busy} onClick={() => run(() => archivePage(account.id, page), t("community.manage.archived"))}>{t("community.manage.archive")}</button>
+          <button className="primary-button" disabled={busy} onClick={() => changeState(() => archivePage(account.id, page), t("community.manage.archived"))}>{t("community.manage.archive")}</button>
           <button className="secondary-button" disabled={busy} onClick={() => setConfirm(null)}>{t("community.manage.keep")}</button>
         </div>
       </div>}
       {confirm?.kind === "delete" && <form className={styles.form} aria-label={t("community.manage.delete")} onSubmit={event => {
         event.preventDefault();
         if (busy || typed !== page.name) return;
-        void run(() => deletePage(account.id, page, typed), t("community.manage.deletedNotice"));
+        void changeState(() => deletePage(account.id, page, typed), t("community.manage.deletedNotice"));
       }}>
         <p>{t("community.manage.deleteQuestion", { name: page.name })}</p>
         <label>{t("community.manage.typeName")}<input value={name} maxLength={160} onChange={event => setName(event.target.value)} disabled={busy} autoComplete="off" /></label>

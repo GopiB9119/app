@@ -41,6 +41,7 @@ export const postSchema = z.object({
   like_count: z.number().int().nonnegative(), comment_count: z.number().int().nonnegative(),
   created_at: timestamp, published_at: timestamp.nullable(), edited_at: timestamp.nullable(),
   liked: z.boolean(), saved: z.boolean(), pinned: z.boolean().default(false), can_manage: z.boolean(), etag: etag.nullable(),
+  page_status: z.enum(PAGE_STATUSES).default("active"),
   moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => (value.status === "published") === (value.published_at !== null)
   && value.can_manage === (value.etag !== null) && (value.status === "published" || value.can_manage)

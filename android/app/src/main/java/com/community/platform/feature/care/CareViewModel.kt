@@ -99,22 +99,38 @@ class CareViewModel @Inject constructor(private val repository: CareRepository) 
         val account = current.accountId ?: return
         if (current.working) return
         val expected = generation
+        // A load still unanswered could answer after this change with what the server had before it,
+        // so it stops now and is sent again once the change is answered, unless the change loads again itself (T82).
+        val interrupted = loadJob?.takeIf { it.isActive }
+        interrupted?.cancel()
         mutableState.update { it.copy(working = true, error = null, notice = null) }
         viewModelScope.launch {
             try { work(account) }
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected, unknownMessage) }
-            finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
+            finally {
+                if (generation == expected) {
+                    if (interrupted != null && loadJob === interrupted) load(keepError = true)
+                    mutableState.update { it.copy(working = false) }
+                }
+            }
         }
     }
 
+    /** Loads the shown day or list again. Nothing is sent while a change is unanswered; that change loads what it needs once it is answered (T82). */
     fun reload() {
+        if (mutableState.value.working) return
+        load()
+    }
+
+    /** [keepError] keeps the message of the change that stopped this load, so sending the load again does not hide why the change failed. */
+    private fun load(keepError: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
         val expected = generation
         val ticket = ++loads
         loadJob?.cancel()
-        mutableState.update { it.copy(loading = true, error = null, today = todayIn(it.timezone, now())) }
+        mutableState.update { it.copy(loading = true, error = if (keepError) it.error else null, today = todayIn(it.timezone, now())) }
         loadJob = viewModelScope.launch {
             try {
                 when (current.view) {
@@ -132,7 +148,8 @@ class CareViewModel @Inject constructor(private val repository: CareRepository) 
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected) }
-            finally { if (generation == expected && loads == ticket) mutableState.update { it.copy(loading = false) } }
+            // A load stopped by a newer one must not say the newer one has finished; the check runs inside the update, so a newer load starting meanwhile is seen.
+            finally { mutableState.update { if (generation == expected && loads == ticket) it.copy(loading = false) else it } }
         }
     }
 
@@ -211,7 +228,7 @@ class CareViewModel @Inject constructor(private val repository: CareRepository) 
                 it.copy(pendingCreate = null, view = CareView.MEDICINES, stopped = false, draft = CareDraft(timezone = it.timezone, startDate = it.today),
                     notice = "${saved.medicineName} saved. It appears in your day plan from ${saved.startDate}.")
             }
-            reload()
+            load()
         } catch (error: IdentityFailure) {
             // A definite rejection releases the attempt; an unknown outcome keeps it for an exact retry.
             if (error.status in 400..499 && error.status != 408) mutableState.update { it.copy(pendingCreate = null) }
@@ -237,7 +254,7 @@ class CareViewModel @Inject constructor(private val repository: CareRepository) 
             } catch (error: IdentityFailure) {
                 if (error.status in 400..499 && error.status != 408) {
                     mutableState.update { it.copy(pendingReport = null) }
-                    reload()
+                    load()
                 }
                 throw error
             }
@@ -260,11 +277,11 @@ class CareViewModel @Inject constructor(private val repository: CareRepository) 
             try {
                 repository.stop(account, item, key)
                 mutableState.update { it.copy(pendingStop = null, notice = "Stopped tracking ${item.medicineName}. Notes you made are kept.") }
-                reload()
+                load()
             } catch (error: IdentityFailure) {
                 if (error.status in 400..499 && error.status != 408) {
                     mutableState.update { it.copy(pendingStop = null) }
-                    reload()
+                    load()
                 }
                 throw error
             }

@@ -1,10 +1,12 @@
 class DomainError(Exception):
-    def __init__(self, status: int, code: str, message: str, details: dict | None = None):
+    def __init__(self, status: int, code: str, message: str, details: dict | None = None, retry_after: int = 900):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.details = details
+        # Seconds a 429 asks the apps to wait.
+        self.retry_after = retry_after
 
 
 def authentication_required():

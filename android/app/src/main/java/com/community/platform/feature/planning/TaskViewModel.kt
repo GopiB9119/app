@@ -47,6 +47,7 @@ data class TaskWorkspaceState(
     val requiresSignIn: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
+    val messageId: Long = 0,
 ) {
     val navigationLocked: Boolean get() = busy || pendingCommand != null || editor != null
 }
@@ -87,17 +88,17 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
             } catch (error: IdentityFailure) {
                 update(expected) {
                     when {
-                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> TaskWorkspaceState(accountId = it.accountId, requiresSignIn = true, error = error.message)
-                        error.status in setOf(403, 404) -> TaskWorkspaceState(accountId = it.accountId, error = error.message)
-                        error.status == 412 -> it.copy(pendingCommand = null, confirmation = null, conflict = true, error = error.message)
-                        error.status in 400..499 && error.status != 408 -> it.copy(pendingCommand = null, confirmation = null, error = error.message)
-                        else -> it.copy(error = error.message)
+                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> TaskWorkspaceState(accountId = it.accountId, requiresSignIn = true, error = error.message, messageId = it.messageId + 1)
+                        error.status in setOf(403, 404) -> TaskWorkspaceState(accountId = it.accountId, error = error.message, messageId = it.messageId + 1)
+                        error.status == 412 -> it.copy(pendingCommand = null, confirmation = null, conflict = true, error = error.message, messageId = it.messageId + 1)
+                        error.status in 400..499 && error.status != 408 -> it.copy(pendingCommand = null, confirmation = null, error = error.message, messageId = it.messageId + 1)
+                        else -> it.copy(error = error.message, messageId = it.messageId + 1)
                     }
                 }
             } catch (_error: IOException) {
-                update(expected) { it.copy(error = "No connection. Changes are not confirmed.") }
+                update(expected) { it.copy(error = "No connection. Changes are not confirmed.", messageId = it.messageId + 1) }
             } catch (_error: Exception) {
-                update(expected) { it.copy(error = "The task service returned an unexpected response. Changes are not confirmed.") }
+                update(expected) { it.copy(error = "The task service returned an unexpected response. Changes are not confirmed.", messageId = it.messageId + 1) }
             } finally {
                 update(expected) { it.copy(busy = false) }
             }
@@ -228,13 +229,13 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
         if (current.busy || current.pendingCommand != null || current.conflict) return
         val fields = editor.fields.copy(title = editor.fields.title.trim())
         if (fields.title.codePointCount(0, fields.title.length) !in 1..200 || fields.description.codePointCount(0, fields.description.length) > 5000) {
-            mutableState.update { it.copy(error = "Use a title of 1 to 200 characters and notes of at most 5,000 characters.") }
+            mutableState.update { it.copy(error = "Use a title of 1 to 200 characters and notes of at most 5,000 characters.", messageId = it.messageId + 1) }
             return
         }
         try { fields.dueDate?.let { require(LocalDate.parse(it).toString() == it) } }
-        catch (_error: RuntimeException) { mutableState.update { it.copy(error = "Select a valid calendar date.") }; return }
+        catch (_error: RuntimeException) { mutableState.update { it.copy(error = "Select a valid calendar date.", messageId = it.messageId + 1) }; return }
         if ((editor.original == null || editor.changeAssignee) && fields.assigneeId != null && current.assignees.none { it.accountId == fields.assigneeId }) {
-            mutableState.update { it.copy(error = "Select an eligible task assignee.") }
+            mutableState.update { it.copy(error = "Select an eligible task assignee.", messageId = it.messageId + 1) }
             return
         }
         val key = UUID.randomUUID().toString()
@@ -283,6 +284,7 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
                     detail = saved, editor = null, assignees = emptyList(), pendingCommand = null,
                     confirmation = null, conflict = false, error = null,
                     notice = if (command is ChangeTaskStatusCommand) "Task status saved." else "Task saved.",
+                    messageId = current.messageId + 1,
                 )
             }
         }

@@ -21,8 +21,10 @@ import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasAnyAncestor
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNarrowScreen
 import com.community.platform.feature.assertNotInList
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -129,6 +132,37 @@ class SpaceScreenTest {
         reveal("invitation-row-${invitation.id}")
         compose.onNodeWithText("Accepted").assertIsDisplayed()
         compose.onNodeWithTag("invitation-revoke-${invitation.id}").assertDoesNotExist()
+    }
+
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        var state by mutableStateOf(workspace().copy(selectedSpace = space, spaces = listOf(space)))
+        val callbacks = actions(
+            recipient = { state = state.copy(recipientDraft = it) },
+            invite = { state = state.copy(recipientDraft = "", sent = listOf(invitation.copy(recipientAccountId = otherId)), notice = "Invitation created.") },
+        )
+        compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
+        reveal("space-recipient")
+        compose.onNodeWithTag("space-recipient").performTextReplacement(otherId)
+        reveal("space-invite")
+        compose.onNodeWithTag("space-invite").performClick()
+        compose.onNodeWithText("Invitation created.").assertIsDisplayed()
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
+        assertNarrowScreen()
+        val spaces = (1..20).map { space.copy(id = "synthetic-space-$it", name = "Family $it") }
+        val offline = "No connection. Changes are not confirmed."
+        var state by mutableStateOf(workspace().copy(spaces = spaces, spaceCursor = "synthetic-next"))
+        val callbacks = actions(moreSpaces = { state = state.copy(error = offline, messageId = state.messageId + 1) })
+        compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
+        repeat(2) {
+            revealText("More Spaces")
+            compose.onNodeWithText(offline).assertIsNotDisplayed()
+            compose.onNodeWithText("More Spaces").performClick()
+            compose.onNodeWithText(offline).assertIsDisplayed().assertTextEquals(offline)
+        }
+        compose.runOnIdle { assertEquals(2L, state.messageId) }
     }
 
     @Test fun recipientReviewsExactInvitationBeforeJoinAndThenOpensTheCorrectTasks() {
@@ -548,7 +582,8 @@ class SpaceScreenTest {
             compose.runOnIdle { state = state.copy(basis = basis.copy(memberInvites = enabled)) }
             compose.onNodeWithTag("space-settings-invite-policy").performScrollTo().assertIsDisplayed().performClick()
             val description = compose.onNodeWithTag("space-settings-invite-policy-description").performScrollTo().assertIsDisplayed()
-            description.assertTextContains(if (enabled) "Only you and admins will be able to invite people." else "Everyone in the Space will be able to invite people.")
+            // The description goes on after this first sentence.
+            description.assertTextContains(if (enabled) "Only you and admins will be able to invite people." else "Everyone in the Space will be able to invite people.", substring = true)
             val layouts = mutableListOf<TextLayoutResult>()
             description.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
             assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)

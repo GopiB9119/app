@@ -3,10 +3,14 @@ package com.community.platform.feature.events
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -256,6 +260,32 @@ class EventsScreenTest {
         compose.onNodeWithText("Show more").performClick()
         // Loading more failed and the events stay: the message is the list's first item, far above the button that was pressed.
         compose.onNodeWithTag("events-error").assertIsDisplayed().assertTextEquals(offline)
+    }
+
+    @Test fun errorAndNoticeArePoliteLiveRegions() {
+        val current = state().copy(error = "No connection. Nothing new is confirmed.", notice = "Event created.")
+        compose.setContent { CommunityTheme { EventsScreen(current, EventsActions(), "Morgan family") } }
+        for (tag in listOf("events-error", "events-notice")) {
+            compose.onNodeWithTag(tag).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion))
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        }
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
+        assertNarrowScreen()
+        val events = (1..20).map { event.copy(id = "synthetic-event-$it", title = "Picnic $it") }
+        val offline = "No connection. Nothing new is confirmed."
+        var current by mutableStateOf(state().copy(events = events, nextCursor = "synthetic-next"))
+        val actions = EventsActions(more = { current = current.copy(error = offline, messageId = current.messageId + 1) })
+        compose.setContent { CommunityTheme { EventsScreen(current, actions, "Morgan family") } }
+        repeat(2) {
+            reveal(hasText("Show more"))
+            compose.onNodeWithTag("events-error").assertIsNotDisplayed()
+            compose.onNodeWithText("Show more").performClick()
+            compose.onNodeWithTag("events-error").assertIsDisplayed().assertTextEquals(offline)
+        }
+        compose.runOnIdle { assertEquals(2L, current.messageId) }
     }
 
     @DeviceFontScale(2f)

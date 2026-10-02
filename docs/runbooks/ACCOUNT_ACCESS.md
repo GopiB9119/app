@@ -14,7 +14,7 @@ The account screen supports name/timezone changes, active-session review, sessio
 
 The [offline web component tests](../../tests/unit/identity-ui.test.mjs) run the actual account form in an isolated in-memory Chromium page. Esbuild bundles the component locally; API responses and Next Link are test doubles, and every outbound browser request is blocked. They do not visit the local application or replace the live browser/BFF/delivery journey.
 
-Set `COMMUNITY_CHROMIUM_PATH` to an installed isolated Chromium executable when the browser expected by the Playwright package is unavailable. This workstation used the existing Playwright `chromium-1228/chrome-win64/chrome.exe` installation. Then run:
+The tests use the Chromium that comes with the installed Playwright (build 1223 for Playwright 1.60). Set `COMMUNITY_CHROMIUM_PATH` to another installed Chromium only when that one is missing; `npm run verify` picks the newest installed one itself. The `chromium-1228` build used earlier is no longer installed on this workstation (2026-10-02). Then run:
 
 ```powershell
 npm --prefix web run test:unit

@@ -44,7 +44,6 @@ In the inbox, **Snooze** offers 10 minutes, 1 hour, 3 hours or 1 day; choices th
 Checks: `backend/tests/test_reminder_series.py`, `tests/scheduling-client.test.mjs`, Android `ReminderRepositoryTest` and `ReminderViewModelTest`, and the live journey below, which takes about 2.5 minutes because it waits for a real delivery. See the [checkpoint](../BUILD_STATUS.md#repeating-reminders-snooze-and-planned-times-checkpoint).
 
 ```powershell
-$env:COMMUNITY_CHROMIUM_PATH = Join-Path $env:LOCALAPPDATA 'ms-playwright/chromium-1228/chrome-win64/chrome.exe'
 node --test tests/e2e/scheduling.test.mjs
 ```
 

@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -211,17 +212,15 @@ def test_the_stream_sends_ready_then_hints_then_ends_when_the_session_ends(clien
     asyncio.run(scenario())
 
 
-def test_a_real_server_streams_hints_as_server_sent_events(client, app):
-    # The server process uses the real clock, so these sessions must be valid now.
-    app.state.clock.now = datetime.now(timezone.utc)
-    owner, member, space_id = family(client, app)
-    chat = open_chat(client, owner, space_id).json()["data"]
+@contextmanager
+def real_server(app, max_seconds):
+    """Runs the API in its own uvicorn process, the way it is served, and yields an HTTP client for it."""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     environment = {
         **os.environ, "COMMUNITY_SECRET_KEY": app.state.settings.secret_key,
-        "COMMUNITY_LIVE_HEARTBEAT_SECONDS": "1", "COMMUNITY_LIVE_RECHECK_SECONDS": "1", "COMMUNITY_LIVE_MAX_SECONDS": "60",
+        "COMMUNITY_LIVE_HEARTBEAT_SECONDS": "1", "COMMUNITY_LIVE_RECHECK_SECONDS": "1", "COMMUNITY_LIVE_MAX_SECONDS": str(max_seconds),
     }
     command = [sys.executable, "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "127.0.0.1", "--port", str(port),
                "--no-access-log", "--no-proxy-headers"]
@@ -241,30 +240,7 @@ def test_a_real_server_streams_hints_as_server_sent_events(client, app):
                     errors = server.communicate(timeout=30)[1]
                     raise AssertionError(f"The server did not start (exit code {server.returncode}):\n{errors[-3000:]}")
                 time.sleep(0.25)
-            assert http.get("/v1/live").status_code == 401
-            with http.stream("GET", "/v1/live", headers=auth(owner)) as response:
-                assert response.status_code == 200
-                assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-                assert response.headers["cache-control"] == "no-store"
-                lines = response.iter_lines()
-
-                def until(wanted):
-                    limit = time.monotonic() + 15
-                    for line in lines:
-                        if line.startswith(wanted):
-                            return line
-                        assert time.monotonic() < limit, f"No {wanted!r} line arrived."
-                    raise AssertionError("The stream closed early.")
-
-                assert until("event: ready") == "event: ready"
-                assert send(client, member, chat["id"], "From another process").status_code == 201
-                assert until("event: change") == "event: change"
-                data = until("data: ")
-                assert f'"conversation_id":"{chat["id"]}"' in data and '"reason":"message"' in data and "From another" not in data
-                assert until(": keep-alive") == ": keep-alive"
-                assert client.post("/v1/auth/logout", headers=auth(owner)).status_code == 200
-                assert until("event: end") == "event: end"
-                assert until("data: ") == 'data: {"reason":"signed_out"}'
+            yield http
     finally:
         server.terminate()
         try:
@@ -272,3 +248,95 @@ def test_a_real_server_streams_hints_as_server_sent_events(client, app):
         except subprocess.TimeoutExpired:
             server.kill()
             server.communicate(timeout=15)
+
+
+def test_a_real_server_streams_hints_as_server_sent_events(client, app):
+    # The server process uses the real clock, so these sessions must be valid now.
+    app.state.clock.now = datetime.now(timezone.utc)
+    owner, member, space_id = family(client, app)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    with real_server(app, max_seconds=60) as http:
+        assert http.get("/v1/live").status_code == 401
+        with http.stream("GET", "/v1/live", headers=auth(owner)) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+            assert response.headers["cache-control"] == "no-store"
+            lines = response.iter_lines()
+
+            def until(wanted):
+                limit = time.monotonic() + 15
+                for line in lines:
+                    if line.startswith(wanted):
+                        return line
+                    assert time.monotonic() < limit, f"No {wanted!r} line arrived."
+                raise AssertionError("The stream closed early.")
+
+            assert until("event: ready") == "event: ready"
+            assert send(client, member, chat["id"], "From another process").status_code == 201
+            assert until("event: change") == "event: change"
+            data = until("data: ")
+            assert f'"conversation_id":"{chat["id"]}"' in data and '"reason":"message"' in data and "From another" not in data
+            assert until(": keep-alive") == ": keep-alive"
+            assert client.post("/v1/auth/logout", headers=auth(owner)).status_code == 200
+            assert until("event: end") == "event: end"
+            assert until("data: ") == 'data: {"reason":"signed_out"}'
+
+
+def test_a_closed_stream_frees_its_place_at_once_on_a_real_server(client, app):
+    """T124: a tab that closes its stream gives its place back, so reloads and page changes never use up the limit.
+
+    The streams here could otherwise stay open for ten minutes; closing one must free its place within seconds.
+    """
+    app.state.clock.now = datetime.now(timezone.utc)
+    person = account(client, app)
+    limit = app.state.live.per_account
+
+    def opened(http):
+        response = http.send(http.build_request("GET", "/v1/live", headers=auth(person)), stream=True)
+        if response.status_code == 200:
+            # Reading "ready" proves the server has counted this stream. The line reader stays with the response:
+            # dropping a half-read reader would close the connection.
+            response.lines = response.iter_lines()
+            for line in response.lines:
+                if line.startswith("event:"):
+                    assert line == "event: ready"
+                    break
+        return response
+
+    def opened_soon(http):
+        deadline = time.monotonic() + 5
+        while True:
+            response = opened(http)
+            if response.status_code == 200 or time.monotonic() >= deadline:
+                return response
+            response.close()
+            time.sleep(0.1)
+
+    with real_server(app, max_seconds=600) as http:
+        streams = [opened(http) for _ in range(limit)]
+        try:
+            assert [stream.status_code for stream in streams] == [200] * limit
+            refused = opened(http)
+            refused.read()
+            assert refused.status_code == 429 and refused.json()["error"]["code"] == "LIVE_LIMIT_REACHED"
+
+            # A tab closes: its place is free again at once, not when the stream would have reached its time limit.
+            streams.pop(0).close()
+            replacement = opened_soon(http)
+            streams.append(replacement)
+            assert replacement.status_code == 200, "A closed stream kept its place in the limit."
+            again = opened(http)
+            again.read()
+            assert again.status_code == 429, "The limit no longer counts the open streams."
+            # A place frees as soon as another tab closes, so the wait is short (other 429 answers keep 15 minutes).
+            assert again.headers["retry-after"] == "30"
+
+            # Every tab closes, for example after several reloads: all places come back.
+            while streams:
+                streams.pop().close()
+            fresh = [opened_soon(http) for _ in range(limit)]
+            streams.extend(fresh)
+            assert [stream.status_code for stream in fresh] == [200] * limit
+        finally:
+            for stream in streams:
+                stream.close()

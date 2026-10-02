@@ -58,7 +58,7 @@ if ($LocalRequestJourney) {
     $expectedTests = 1
     $result = @(& $adb -s $serial shell am instrument -w -r -e community_local_integration true -e class com.community.platform.feature.scheduling.ReminderRequestJourneyTest com.community.platform.debug.test/androidx.test.runner.AndroidJUnitRunner)
 } else {
-    $expectedTests = 12
+    $expectedTests = 13
     $result = @(& $adb -s $serial shell am instrument -w -r -e community_disposable_ui_fixture true -e class com.community.platform.feature.scheduling.ReminderScreenTest com.community.platform.debug.test/androidx.test.runner.AndroidJUnitRunner)
 }
 $instrumentExit = $LASTEXITCODE

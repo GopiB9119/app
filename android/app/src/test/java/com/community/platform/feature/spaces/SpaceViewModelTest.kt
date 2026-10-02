@@ -43,6 +43,59 @@ class SpaceViewModelTest {
     private fun <Value> invitationNotFound(message: String = "Space not found."): Response<EnvelopeDto<Value>> =
         Response.error(404, """{"error":{"code":"NOT_FOUND","message":"$message"}}""".toResponseBody())
 
+    @Test fun identicalFailuresPublishDistinctOccurrencesIncludingStateResets() = runBlocking {
+        fixture.api.pagination = PaginationDto("next-spaces", true)
+        val value = ready()
+        val initial = value.state.value
+        fixture.api.failure = 503
+        value.moreSpaces(); idle(value)
+        val first = value.state.value
+        assertEquals("Synthetic failure", first.error)
+        assertEquals(initial.messageId + 1, first.messageId)
+        value.moreSpaces(); idle(value)
+        val second = value.state.value
+        assertEquals(first.error, second.error)
+        assertEquals(first.messageId + 1, second.messageId)
+        assertEquals(initial.spaces, second.spaces)
+        assertEquals(initial.spaceCursor, second.spaceCursor)
+
+        fixture.api.failure = 404
+        value.refresh(); idle(value)
+        val denied = value.state.value
+        assertTrue(denied.spaces.isEmpty())
+        assertEquals(second.messageId + 1, denied.messageId)
+        value.refresh(); idle(value)
+        assertEquals(denied.error, value.state.value.error)
+        assertEquals(denied.messageId + 1, value.state.value.messageId)
+    }
+
+    @Test fun identicalLocalValidationFailuresPublishDistinctOccurrences() = runBlocking {
+        val value = ready()
+        value.startCreate()
+        val initialMessageId = value.state.value.messageId
+        value.create()
+        val first = value.state.value
+        assertEquals("Enter a name of 1 to 80 characters without control characters.", first.error)
+        assertEquals(initialMessageId + 1, first.messageId)
+        value.create()
+        assertEquals(first.error, value.state.value.error)
+        assertEquals(first.messageId + 1, value.state.value.messageId)
+        assertTrue(fixture.api.creations.isEmpty())
+    }
+
+    @Test fun confirmedInvitationPublishesANewNoticeOccurrence() = runBlocking {
+        val value = ready()
+        fixture.api.invitation = fixture.invitation
+        value.open(fixture.spaceId); idle(value)
+        val initialMessageId = value.state.value.messageId
+        value.recipient(fixture.recipientId); value.invite(); idle(value)
+        assertEquals("Invitation created.", value.state.value.notice)
+        assertEquals(initialMessageId + 1, value.state.value.messageId)
+        assertEquals(fixture.invitation, value.state.value.sent.single())
+        assertEquals("", value.state.value.recipientDraft)
+        assertNull(value.state.value.pending)
+    }
+
     @Test fun memberCanDraftSendPaginateAndWithdrawInvitationsWhenEnabled(): Unit = runBlocking {
         fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
         val value = ready()

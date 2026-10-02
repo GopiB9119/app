@@ -2,9 +2,10 @@ import json
 from datetime import datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import func, select
 
-from app.modules.community.models import CommunityAuditEvent
+from app.modules.community.models import CommunityAuditEvent, PageHandover, PageModerator
 from tests.test_community import advance, comment, create_page, published
 from tests.test_identity import PASSWORD, account, auth
 
@@ -388,3 +389,72 @@ def test_handover_offers_can_be_declined_cancelled_expired_or_invalidated(client
     )
     assert expired.status_code == 410 and expired.json()["error"]["code"] == "HANDOVER_EXPIRED"
     assert offers(client, helper) == []
+
+
+@pytest.mark.parametrize("action", ["accept", "decline", "withdraw", "step-down", "remove"])
+def test_an_answer_that_waits_for_the_role_past_the_session_changes_nothing(client, app, action):
+    # T115 (3): the session was checked only before waiting for the invitation's row lock, as T89 found for agent requests.
+    from tests.test_messaging import expire_while_waiting
+
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    if action in ("step-down", "remove"):
+        row = moderating(client, owner, page, helper)
+    else:
+        row = invite(client, owner, page["id"], helper["user"]["id"]).json()["data"]
+    actor = owner if action in ("withdraw", "remove") else helper
+    late = expire_while_waiting(app, "page_moderators", row["id"], lambda: respond(client, actor, page["id"], row["id"], action, row["etag"]))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.get(PageModerator, row["id"]).status == row["status"]
+
+
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+def test_an_answer_to_a_handover_that_waits_past_the_session_changes_nothing(client, app, action):
+    # As T115 (3) for an offer: accepting signs in again after the wait, but declining and cancelling did not.
+    from tests.test_messaging import expire_while_waiting
+
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    moderating(client, owner, page, helper)
+    current = client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]
+    offer = offer_handover(client, owner, page, helper["user"]["id"], etag=current["etag"]).json()["data"]
+    actor = helper if action == "decline" else owner
+    late = expire_while_waiting(app, "page_handovers", offer["id"], lambda: client.post(
+        f"/v1/pages/{page['id']}/handover/{offer['id']}/{action}", headers={**auth(actor), "If-Match": offer["etag"]}, json={},
+    ))
+    assert late.status_code == 401, late.text
+    with app.state.sessions() as database:
+        assert database.get(PageHandover, offer["id"]).status == "pending"
+
+
+def test_an_answer_to_a_handover_locks_the_page_before_the_offer(client, app):
+    # Offering and deleting lock the page, then the offer; an answer that locked them the other way round could deadlock with them.
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import text
+
+    from tests.test_messaging import wait_until_blocked
+
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    moderating(client, owner, page, helper)
+    current = client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]
+    offer = offer_handover(client, owner, page, helper["user"]["id"], etag=current["etag"]).json()["data"]
+    with ThreadPoolExecutor(max_workers=1) as pool, app.state.engine.connect() as holder, app.state.engine.connect() as probe:
+        held = holder.begin()
+        holder.execute(text("SELECT 1 FROM public_pages WHERE id = :id FOR UPDATE"), {"id": page["id"]})
+        pending = pool.submit(lambda: client.post(
+            f"/v1/pages/{page['id']}/handover/{offer['id']}/decline", headers={**auth(helper), "If-Match": offer["etag"]}, json={},
+        ))
+        wait_until_blocked(app, pending)
+        probing = probe.begin()
+        free = probe.execute(text("SELECT 1 FROM page_handovers WHERE id = :id FOR UPDATE SKIP LOCKED"), {"id": offer["id"]}).first()
+        probing.rollback()
+        held.commit()
+        answered = pending.result(timeout=10)
+    assert free is not None, "The answer held the offer while it waited for the page."
+    assert answered.status_code == 200, answered.text

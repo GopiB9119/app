@@ -1,6 +1,10 @@
 package com.community.platform.feature.planning
 
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -174,6 +178,14 @@ class CalendarScreenTest {
         compose.onNodeWithText("Load more entries").performClick()
         // Loading more failed: the error follows the controls and replaces the entries, so it must be on screen.
         compose.onNodeWithText(offline).assertIsDisplayed()
+    }
+
+    @Test fun errorIsAPoliteLiveRegion() {
+        val offline = "No connection. The calendar is unavailable."
+        val current = state().copy(loaded = true, error = offline)
+        compose.setContent { CommunityTheme { CalendarScreen(current, actions(), {}, {}) } }
+        compose.onNodeWithText(offline).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion))
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
     }
 
     @DeviceFontScale(2f)

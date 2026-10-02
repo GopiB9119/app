@@ -114,6 +114,7 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
   }
   const heading = post.title ?? t("community.postBy", { name: post.page_name });
   const when = post.published_at ?? post.created_at;
+  const open = post.page_status === "active";
   return <article className={styles.card} aria-label={heading}>
     <div className={styles.cardHeader}>
       <Link href={`/pages/${post.page_handle}`}>{post.page_name}</Link>
@@ -121,6 +122,7 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
       <time dateTime={when}>{time.format(new Date(when))}</time>
       {post.edited_at && <span>{t("community.edited")}</span>}
       {pinnedMark && post.pinned && <span className={styles.badge}>{t("community.pinned")}</span>}
+      {post.page_status !== "active" && <span className={styles.badge}>{t("community.manage.status.read_only")}</span>}
       {post.status === "draft" && <span className={`${styles.badge} ${styles.draftBadge}`}>{t("community.privateDraft")}</span>}
     </div>
     {post.title && (linkTitle && post.status === "published"
@@ -128,12 +130,12 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
       : <h2 className={styles.title}>{post.title}</h2>)}
     <p className={styles.body}>{post.body}</p>
     {post.status === "published" && <div className={styles.actions}>
-      <button className={`text-button ${post.liked ? styles.toggled : ""}`} aria-pressed={post.liked} disabled={!account || busy}
+      {(open || post.liked) && <button className={`text-button ${post.liked ? styles.toggled : ""}`} aria-pressed={post.liked} disabled={!account || busy}
         onClick={() => toggle(post.liked ? "unlike" : "like")} title={account ? undefined : t("community.signInToLike")}>
         <Heart size={17} fill={post.liked ? "currentColor" : "none"} aria-hidden />{t("community.likePrefix")}<span className={styles.meta}>{post.like_count}</span>
-      </button>
+      </button>}
       <Link className="text-button" href={`/posts/${post.id}`}><MessageCircle size={17} aria-hidden />{t("community.commentsPrefix")}<span className={styles.meta}>{post.comment_count}</span></Link>
-      {account && <button className={`text-button ${post.saved ? styles.toggled : ""}`} aria-pressed={post.saved} disabled={busy} onClick={() => toggle(post.saved ? "unsave" : "save")}>
+      {account && (open || post.saved) && <button className={`text-button ${post.saved ? styles.toggled : ""}`} aria-pressed={post.saved} disabled={busy} onClick={() => toggle(post.saved ? "unsave" : "save")}>
         {post.saved ? <BookmarkCheck size={17} aria-hidden /> : <Bookmark size={17} aria-hidden />}{t(post.saved ? "community.saved" : "community.save")}
       </button>}
       {account && onReport && !post.can_manage && <button className="text-button" onClick={() => onReport({ type: "post", id: post.id, label: heading })}><Flag size={17} aria-hidden />{t("community.report")}</button>}

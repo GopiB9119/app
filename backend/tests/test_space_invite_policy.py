@@ -11,7 +11,7 @@ from app.modules.spaces.models import Space, SpaceAuditEvent
 from tests.test_identity import account, auth
 from tests.test_messaging import admit
 from tests.test_space_directory import group, settings
-from tests.test_space_roles import promote
+from tests.test_space_roles import change_role, promote
 from tests.test_spaces import create_space, invite_account
 
 
@@ -211,3 +211,21 @@ def test_a_member_who_invites_keeps_a_limited_number_waiting(client, app, monkey
     assert revoke(client, member, space_id, first).status_code == 200
     assert invite_account(client, member, space_id, guests[2]["user"]["id"]).status_code == 201
     assert invite_account(client, owner, space_id, guests[0]["user"]["id"]).status_code == 201
+
+
+def test_an_admin_made_a_member_loses_what_they_sent_even_while_members_may_invite(client, app):
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    guest = account(client, app, "guest@example.test")
+    space_id = create_space(client, owner).json()["data"]["id"]
+    admit(client, owner, space_id, helper)
+    view = promote(client, owner, space_id, helper)
+    let_members_invite(client, owner, space_id)
+    waiting = invited(client, helper, space_id, guest)
+    assert change_role(client, owner, space_id, helper["user"]["id"], "member", view["etag"]).status_code == 200
+    # A demotion ends what they sent as an admin (DEC-018), even though they may still invite as a member (DEC-026).
+    assert inbox(client, guest) == []
+    late = accept(client, guest, waiting)
+    assert late.status_code == 409 and late.json()["error"]["code"] == "INVITATION_CLOSED"
+    again = invited(client, helper, space_id, guest)
+    assert inbox(client, guest) == [again]

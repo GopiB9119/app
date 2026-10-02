@@ -355,6 +355,31 @@ class CommunityTest {
         assertEquals(post, repository.post(post))
     }
 
+    @Test fun postPageStatusAcceptsKnownStatesAndOnlyActiveIsWritable() = runBlocking {
+        for (status in listOf("active", "read_only", "deleted")) {
+            val json = Gson().toJsonTree(post).asJsonObject.apply { addProperty("page_status", status) }
+            api.feedPosts = listOf(Gson().fromJson(json, PostDto::class.java))
+            val returned = repository.feed(fixture.accountId, null).items.single()
+            assertEquals(status, returned.pageStatus)
+            assertEquals(status == "active", returned.pageWritable)
+        }
+    }
+
+    @Test fun missingPostPageStatusDecodesAsWritable() = runBlocking {
+        val json = Gson().toJsonTree(post).asJsonObject.apply { remove("page_status") }
+        api.feedPosts = listOf(Gson().fromJson(json, PostDto::class.java))
+        val returned = repository.feed(fixture.accountId, null).items.single()
+        assertNull(returned.pageStatus)
+        assertTrue(returned.pageWritable)
+    }
+
+    @Test fun unknownPostPageStatusIsRejectedAsInvalidResponse() = runBlocking {
+        val json = Gson().toJsonTree(post).asJsonObject.apply { addProperty("page_status", "unexpected") }
+        api.feedPosts = listOf(Gson().fromJson(json, PostDto::class.java))
+        val failure = assertThrows(IdentityFailure::class.java) { runBlocking { repository.feed(fixture.accountId, null) } }
+        assertEquals("INVALID_RESPONSE", failure.code)
+    }
+
     @Test fun unknownPageCreationRetriesTheSameKeyAndBody() = runBlocking {
         val current = ready()
         api.createFailure = 503
@@ -393,6 +418,146 @@ class CommunityTest {
         current.follow(current.state.value.pages.single()); idle(current)
         assertTrue(current.state.value.pages.single().following)
         assertEquals(listOf("like", "save", "follow"), api.actions)
+    }
+
+    @Test fun readOnlyAndDeletedPostsIgnoreNewLikesAndSaves() = runBlocking {
+        val current = ready()
+        for (status in listOf("read_only", "deleted")) {
+            api.feedPosts = listOf(post.copy(pageStatus = status))
+            current.reload(); idle(current)
+            val shown = current.state.value.posts.single()
+            current.like(shown); idle(current)
+            current.save(shown); idle(current)
+            assertTrue(api.actions.isEmpty())
+            assertEquals(listOf(shown), current.state.value.posts)
+            assertFalse(current.state.value.working)
+        }
+    }
+
+    @Test fun readOnlyPostsStillSendUnlikeAndUnsave() = runBlocking {
+        var archived = post.copy(pageStatus = "read_only", liked = true, saved = true, likeCount = 1)
+        api.feedPosts = listOf(archived)
+        val source = object : CommunityApi by api {
+            override suspend fun react(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
+                api.actions += action
+                archived = when (action) {
+                    "unlike" -> archived.copy(liked = false, likeCount = 0)
+                    "unsave" -> archived.copy(saved = false)
+                    else -> throw AssertionError("Unexpected action: $action")
+                }
+                return ok(archived)
+            }
+        }
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        current.like(current.state.value.posts.single()); idle(current)
+        assertFalse(current.state.value.posts.single().liked)
+        assertTrue(current.state.value.posts.single().saved)
+        current.save(current.state.value.posts.single()); idle(current)
+        assertFalse(current.state.value.posts.single().saved)
+        assertEquals("read_only", current.state.value.posts.single().pageStatus)
+        assertEquals(listOf("unlike", "unsave"), api.actions)
+    }
+
+    /**
+     * Reads the post when a list is asked for and can hold that answer, so a like sent later is answered first.
+     * Today the app-wide request lock keeps the like waiting instead; without it (T82) the older answer would arrive last.
+     */
+    private inner class LateAnswers : CommunityApi by api {
+        @Volatile var shown = post
+        @Volatile var hold: CompletableDeferred<Unit>? = null
+        @Volatile var holdLike: CompletableDeferred<Unit>? = null
+        @Volatile var likeFailure = 0
+        val read = CompletableDeferred<Unit>()
+        val liking = CompletableDeferred<Unit>()
+        val feeds: MutableList<String?> = Collections.synchronizedList(mutableListOf())
+        val commentPages: MutableList<String?> = Collections.synchronizedList(mutableListOf())
+        private suspend fun held() { hold?.let { gate -> read.complete(Unit); gate.await() } }
+        override suspend fun feed(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PostDto>>> {
+            feeds += cursor
+            val answer = listOf(shown)
+            held()
+            return ok(answer, PaginationDto(null, false))
+        }
+        override suspend fun post(authorization: String, postId: String) = ok(shown)
+        override suspend fun comments(authorization: String, postId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<CommentDto>>> {
+            commentPages += cursor
+            held()
+            return if (cursor == null) ok(listOf(comment), PaginationDto("c2", true)) else ok(listOf(otherComment), PaginationDto(null, false))
+        }
+        override suspend fun react(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
+            holdLike?.let { gate -> liking.complete(Unit); gate.await() }
+            api.actions += action
+            if (likeFailure != 0) return failed(likeFailure, "CONFLICT")
+            shown = shown.copy(liked = action == "like", likeCount = if (action == "like") 1 else 0)
+            return ok(shown)
+        }
+    }
+
+    @Test fun aLikeWhileTheFeedLoadsIsNotUndoneByTheFeedsOlderAnswer() = runBlocking {
+        val source = LateAnswers()
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.hold = gate
+        current.reload()
+        withTimeout(5000) { source.read.await() }
+        // The server has read the post as not liked; the like is sent and answered before that read's answer arrives.
+        current.like(current.state.value.posts.single())
+        withTimeout(5000) { current.state.first { !it.working } }
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertTrue(settled.posts.single().liked)
+        assertEquals(1, settled.posts.single().likeCount)
+        assertEquals(listOf("like"), api.actions)
+        // The first load, the one the like stopped, and that one sent again after the like.
+        assertEquals(listOf<String?>(null, null, null), source.feeds.toList())
+    }
+
+    @Test fun aLikeRefusedWhileTheFeedLoadsKeepsItsMessageAndTheFeedStillLoads() = runBlocking {
+        val source = LateAnswers().apply { likeFailure = 409 }
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.hold = gate
+        current.reload()
+        withTimeout(5000) { source.read.await() }
+        current.like(current.state.value.posts.single())
+        withTimeout(5000) { current.state.first { !it.working } }
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertEquals("Synthetic CONFLICT", settled.error)
+        assertFalse(settled.posts.single().liked)
+        assertEquals(listOf<String?>(null, null, null), source.feeds.toList())
+    }
+
+    @Test fun aLikeWhileMoreCommentsLoadKeepsThePostLikedAndStillAddsTheComments() = runBlocking {
+        val source = LateAnswers()
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        current.open(Destination.Post(postId)); idle(current)
+        val gate = CompletableDeferred<Unit>()
+        source.hold = gate
+        current.reload(more = true)
+        withTimeout(5000) { source.read.await() }
+        current.like(current.state.value.post!!)
+        withTimeout(5000) { current.state.first { !it.working } }
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertTrue(settled.post!!.liked)
+        assertEquals(listOf(commentId, otherCommentId), settled.comments.map(CommentDto::id))
+        // Load more, stopped by the like, is sent again for the same next page, not the first one.
+        assertEquals(listOf(null, "c2", "c2"), source.commentPages.toList())
+    }
+
+    @Test fun aRefreshWhileALikeIsUnansweredIsNotSent() = runBlocking {
+        val source = LateAnswers()
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.holdLike = gate
+        current.like(current.state.value.posts.single())
+        withTimeout(5000) { source.liking.await() }
+        current.reload()
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertTrue(settled.posts.single().liked)
+        assertEquals(listOf<String?>(null), source.feeds.toList())
     }
 
     @Test fun discoverSearchesPublicPostsWithTheSubmittedWords() = runBlocking {

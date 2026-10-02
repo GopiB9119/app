@@ -146,7 +146,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
     LaunchedEffect(state.tab, state.creating, state.selectedSpace?.id) { list.scrollToItem(0) }
     // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
     // so after an action further down, such as inviting or removing a member, bring it into view to be seen and announced.
-    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
+    LaunchedEffect(state.error, state.notice, state.messageId) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     val back: () -> Unit = {
         if (!state.busy) {
             when {
