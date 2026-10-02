@@ -95,6 +95,19 @@ test('Event BFF forwards only the reviewed routes, headers and list parameters',
   assert.equal(foreign.calls.length, 0);
 });
 
+test('Event timezone resolves aliases only to an equivalent API-listed name', () => {
+  const client = eventsClient();
+  const available = ['America/New_York', 'Asia/Kolkata', 'Europe/Kyiv', 'UTC'];
+  for (const [current, expected] of [
+    ['Asia/Calcutta', 'Asia/Kolkata'], ['Europe/Kiev', 'Europe/Kyiv'], ['US/Eastern', 'America/New_York'],
+    ['Asia/Kolkata', 'Asia/Kolkata'], ['UTC', 'UTC'], ['Not/AZone', ''],
+  ]) assert.equal(client.eventTimezone(current, available), expected, current);
+  assert.equal(client.eventTimezone('Asia/Calcutta', ['Asia/Calcutta', 'Asia/Kolkata']), 'Asia/Calcutta');
+  assert.equal(client.eventTimezone('Asia/Calcutta', ['Not/AZone', 'Asia/Kolkata']), 'Asia/Kolkata');
+  assert.equal(client.eventTimezone('America/Phoenix', ['America/Denver', 'UTC']), '');
+  assert.equal(client.eventTimezone('Asia/Calcutta', []), '');
+});
+
 test('Event schema rejects contradictory facts', () => {
   const client = eventsClient();
   assert.equal(client.eventSchema.safeParse(event()).success, true);
@@ -107,6 +120,38 @@ test('Event schema rejects contradictory facts', () => {
   ]) {
     assert.equal(client.eventSchema.safeParse(event(changes)).success, false, JSON.stringify(changes));
   }
+});
+
+test('Event quality: impossible local dates are refused without rejecting leap days', () => {
+  const client = eventsClient();
+  const form = { title: 'Dinner', description: '', location: '', timezone: 'UTC', local_start: '2028-02-29T18:30', local_end: '' };
+  assert.equal(client.formProblem(form), null);
+  for (const local_start of ['2026-02-29T18:30', '2026-02-30T18:30', '2026-13-01T18:30', '2026-10-01T24:00', '2026-10-01T18:60', '0000-01-01T12:00']) {
+    assert.equal(client.formProblem({ ...form, local_start }), 'Choose a valid start date and time.', local_start);
+  }
+  assert.equal(client.formProblem({ ...form, local_end: '2028-02-30T19:30' }), 'Choose a valid end date and time.');
+});
+
+test('Event quality: response text limits count characters and match the event API', () => {
+  const client = eventsClient();
+  for (const [field, limit] of [['title', 120], ['location', 200], ['description', 2000]]) {
+    assert.equal(client.eventSchema.safeParse(event({ [field]: '\u{1f642}'.repeat(limit) })).success, true, field);
+    assert.equal(client.eventSchema.safeParse(event({ [field]: 'x'.repeat(limit + 1) })).success, false, field);
+    assert.equal(client.eventSchema.safeParse(event({ [field]: '\u{1f642}'.repeat(limit + 1) })).success, false, field);
+  }
+});
+
+test('Event quality: dates use the requested language and equivalent viewer zones do not repeat the same time', () => {
+  const client = eventsClient();
+  assert.equal(client.formatWhen(event(), 'Asia/Calcutta').yours, null);
+  const date = new Date('2026-09-25T00:00:00Z');
+  const expected = new Intl.DateTimeFormat('hi-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
+  const formatted = client.formatWhen(event(), 'UTC', {
+    locale: 'hi-IN', range: (start, end) => `${start} -> ${end}`, own: time => `Local: ${time}`,
+  });
+  assert.ok(formatted.main.includes(expected));
+  assert.match(formatted.main, /18:30 -> 21:00 \(Asia\/Kolkata\)$/);
+  assert.match(formatted.yours, /^Local: /);
 });
 
 test('Create keeps one key and exact body, and responses are confirmed', async () => {

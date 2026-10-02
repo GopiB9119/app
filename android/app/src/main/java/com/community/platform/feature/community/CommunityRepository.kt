@@ -84,7 +84,10 @@ data class PostDto(
     @SerializedName("edited_at") val editedAt: String?, val liked: Boolean, val saved: Boolean,
     @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val pinned: Boolean = false,
     val moderation: ModerationMarkDto? = null,
-)
+    @SerializedName("page_status") val pageStatus: String? = null,
+) {
+    val pageWritable: Boolean get() = pageStatus == null || pageStatus == "active"
+}
 
 data class CommentDto(
     val id: String, @SerializedName("post_id") val postId: String, @SerializedName("parent_id") val parentId: String?,
@@ -222,6 +225,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         identifier(value.id); identifier(value.pageId)
         text(value.pageName, 80); value.title?.let { text(it, 120) }; text(value.body, 5000)
         require(value.status == "draft" || value.status == "published")
+        require(value.pageStatus == null || value.pageStatus in PAGE_STATES)
         require((value.status == "published") == (value.publishedAt != null) && (value.editedAt == null || value.status == "published"))
         require(value.canManage == (value.etag != null) && (value.status == "published" || value.canManage))
         require(!value.pinned || value.status == "published")

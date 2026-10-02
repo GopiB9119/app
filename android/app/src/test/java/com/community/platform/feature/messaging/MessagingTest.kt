@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Request
@@ -34,6 +35,7 @@ import retrofit2.Response
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MessagingTest {
@@ -329,6 +331,60 @@ class MessagingTest {
         assertNull(shown.body)
         current.askDelete(shown)
         assertNull(current.state.value.chat!!.confirmDelete)
+    }
+
+    // T82: without the app-wide request lock, a page read before a deletion can arrive after it.
+    @Test fun aPageReadBeforeADeletionDoesNotBringTheMessageBack() = runBlocking {
+        api.add(message(1)); api.add(message(2, mine = true))
+        val current = ready()
+        val before = api.stored.toList()
+        current.askDelete(current.state.value.chat!!.messages.last()); current.confirmDelete(); idle(current)
+        api.rawPage = before
+        current.pollNow(); idle(current)
+        val shown = current.state.value.chat!!.messages.last()
+        assertEquals("deleted", shown.status)
+        assertNull(shown.body)
+    }
+
+    @Test fun aDeletedCopyIsKeptWhicheverCopyArrivesLast() {
+        val sent = message(1, mine = true)
+        val deleted = sent.copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z")
+        val newer = message(2)
+        assertEquals(listOf(deleted), mergeMessages(listOf(deleted), listOf(sent)))
+        assertEquals(listOf(deleted), mergeMessages(listOf(sent), listOf(deleted)))
+        assertEquals(listOf(deleted, newer), mergeMessages(listOf(deleted), listOf(sent, newer)))
+    }
+
+    // T82: a list read that began before the open chat was marked read is read again, so the chat is not shown unread once more.
+    @Test fun aListReadFromBeforeTheChatWasMarkedReadIsReadAgain() = runBlocking {
+        (1..2).forEach { api.add(message(it)) }
+        api.conversation = api.conversation.copy(unreadCount = 2)
+        val holding = AtomicBoolean(false)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val marked = CompletableDeferred<Unit>()
+        val held = object : MessagingApi by api {
+            override suspend fun conversations(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<ConversationDto>>> {
+                val answer = api.conversations(authorization, cursor, limit)
+                if (holding.compareAndSet(true, false)) { entered.complete(Unit); release.await() }
+                return answer
+            }
+            override suspend fun markRead(authorization: String, conversationId: String, body: MarkReadDto): Response<EnvelopeDto<ConversationDto>> =
+                api.markRead(authorization, conversationId, body).also { marked.complete(Unit) }
+        }
+        val current = MessagingViewModel(MessagingRepository(held, fixture.accounts), fixture.repository); model = current
+        current.bind(fixture.accountId); current.resume(); idle(current)
+        assertEquals(2, current.state.value.unreadCount)
+        holding.set(true)
+        current.refreshList(quiet = true)
+        withTimeout(5000) { entered.await() }
+        current.select(current.state.value.conversations.single())
+        // Without the lock the chat is read and marked read meanwhile; with it, that waits for the list.
+        withTimeoutOrNull(1000) { marked.await() }
+        release.complete(Unit)
+        withTimeout(5000) { marked.await() }
+        idle(current)
+        assertEquals(listOf("2"), api.reads)
+        assertEquals(0, current.state.value.conversations.single().unreadCount)
+        assertEquals(0, current.state.value.unreadCount)
     }
 
     @Test fun readOnlyConversationRefusesDrafts() = runBlocking {

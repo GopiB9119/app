@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -18,6 +19,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -33,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNotInList
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -148,7 +151,7 @@ class CommunityScreenTest {
         compose.setContent { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
         reveal("followed-loading")
         compose.onNodeWithText("Loading pages you follow\u2026").assertIsDisplayed()
-        compose.onAllNodesWithText("You do not follow any pages.").assertCountEquals(0)
+        absent(hasText("You do not follow any pages."))
 
         state = state.copy(loading = false, followedStatus = ListStatus.LOADED)
         reveal("followed-empty")
@@ -169,6 +172,18 @@ class CommunityScreenTest {
         compose.onNodeWithText("@river-walkers / hobbies / 1 follower").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("unfollow-river-walkers").performScrollTo().assertIsDisplayed().performClick()
         assertEquals(listOf(followed), unfollowed)
+    }
+
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val posts = (1..5).map { post.copy(id = "4e1a4c1f-6d6c-4b5f-8b62-1d5a4a3c2b1$it", title = "Walk $it") }
+        val last = posts.last()
+        var state by mutableStateOf(CommunityState(accountId = accountId, posts = posts))
+        val actions = CommunityActions(save = { state = state.copy(error = "No connection. Nothing new is confirmed.") })
+        compose.setContent { CommunityTheme { CommunityScreen(state, actions, "UTC", {}) } }
+        reveal("save-${last.id}")
+        compose.onNodeWithTag("save-${last.id}").performScrollTo().performClick()
+        // Saving the last post failed: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithTag("community-error").assertIsDisplayed().assertTextContains("No connection. Nothing new is confirmed.")
     }
 
     @Test fun largeTextNarrowPageEditorKeepsFieldsAndCommandsReachable() {
@@ -245,7 +260,7 @@ class CommunityScreenTest {
         // Once unpinned, the post is back in the date list and offers Pin to top.
         val unpinned = pinned.copy(pinned = false)
         state = state.copy(posts = listOf(unpinned), pinned = emptyList())
-        compose.onAllNodesWithTag("pinned-heading").assertCountEquals(0)
+        absent("pinned-heading")
         reveal("pin-$postId")
         compose.onNodeWithTag("pin-$postId").assertTextContains("Pin to top").performClick()
         assertEquals(listOf(pinned, unpinned), pins)
@@ -275,6 +290,10 @@ class CommunityScreenTest {
         }
     }
 
+    /** Nothing in the list matches, wherever the list is scrolled to ([assertNotInList]). */
+    private fun absent(matcher: SemanticsMatcher) = compose.assertNotInList("community-content", matcher)
+    private fun absent(tag: String) = absent(hasTestTag(tag))
+
     @Test fun largeTextNarrowOwnerManagesModeratorsHandoverAndPageState() {
         val owned = page.copy(canManage = true, etag = "\"p1\"")
         val active = ModeratorDto(activeId, pageId, inviteeId, "Sam", "active", stamp, null, stamp, "\"m1\"")
@@ -292,7 +311,7 @@ class CommunityScreenTest {
         largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
         insideAndShown("page-moderators", "moderator-$activeId", "moderator-handover-$activeId", "moderator-remove-$activeId", "moderator-withdraw-$waitingId", "page-state", "page-archive", "page-delete")
         // While an invitation waits, no second one can be sent.
-        compose.onAllNodesWithTag("moderator-invite-id").assertCountEquals(0)
+        absent("moderator-invite-id")
         reveal("page-moderators")
         capture("community-page-moderators-large-text.png")
         // Handing over, removing and withdrawing each ask first, naming the person.
@@ -326,14 +345,15 @@ class CommunityScreenTest {
         // A read-only page says so, keeps its moderators listed, and offers only Restore and Delete.
         state = state.copy(page = owned.copy(status = "read_only"), handover = null)
         insideAndShown("page-read-only", "moderator-remove-$activeId", "page-restore", "page-delete")
-        for (tag in listOf("page-edit", "post-save-draft", "moderator-invite-id", "moderator-handover-$activeId", "page-archive")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("page-edit", "post-save-draft", "moderator-invite-id", "moderator-handover-$activeId", "page-archive")) absent(tag)
+        reveal("page-restore")
         compose.onNodeWithTag("page-restore").performScrollTo().performClick()
         assertEquals(1, restores)
 
         // A deleted page shows its owner only when it will be erased and how to restore it.
         state = state.copy(page = owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z"))
         insideAndShown("page-deleted", "page-restore")
-        for (tag in listOf("page-moderators", "page-state", "post-save-draft", "page-read-only")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("page-moderators", "page-state", "post-save-draft", "page-read-only")) absent(tag)
         reveal("page-deleted")
         capture("community-page-deleted-large-text.png")
         compose.onNodeWithTag("page-restore").performScrollTo().performClick()
@@ -371,7 +391,7 @@ class CommunityScreenTest {
         largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
         insideAndShown("offer-$offerId", "offer-accept-$offerId", "offer-decline-$offerId", "role-$waitingId", "role-accept-$waitingId", "role-decline-$waitingId",
             "role-$activeId", "role-open-$activeId", "role-step-down-$activeId")
-        compose.onAllNodesWithTag("moderating-none").assertCountEquals(0)
+        absent("moderating-none")
         reveal("offer-$offerId")
         capture("community-page-roles-large-text.png")
         // Taking over a page and agreeing to moderate ask first; declining does not.
@@ -401,17 +421,82 @@ class CommunityScreenTest {
         val pins = mutableListOf<PostDto>()
         largeNarrow { CommunityScreen(state, CommunityActions(pin = { pins += it }), "UTC", {}) }
         insideAndShown("pin-$postId", "page-follow")
-        for (tag in listOf("edit-$postId", "delete-$postId", "page-moderators", "page-state", "page-edit")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        for (tag in listOf("edit-$postId", "delete-$postId", "page-moderators", "page-state", "page-edit")) absent(tag)
+        reveal("pin-$postId")
         compose.onNodeWithTag("pin-$postId").performScrollTo().assertTextContains("Pin to top").performClick()
         assertEquals(listOf(post), pins)
-        // On a read-only page nothing can be pinned or followed, and the page says why.
+        // On a read-only page the post stays, but nothing can be pinned or followed, and the page says why.
         state = state.copy(page = page.copy(status = "read_only"))
-        insideAndShown("page-read-only")
-        for (tag in listOf("pin-$postId", "page-follow")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        insideAndShown("page-read-only", "post-$postId")
+        for (tag in listOf("pin-$postId", "page-follow")) absent(tag)
         // Someone who already follows it can still unfollow.
         state = state.copy(page = page.copy(status = "read_only", following = true, followerCount = 1))
         insideAndShown("page-follow")
         compose.onNodeWithTag("page-follow").assertTextContains("Unfollow")
+    }
+
+    @Test fun readOnlyFeedPostHidesNewReactionsButKeepsComments() {
+        val archived = post.copy(pageStatus = "read_only")
+        val opened = mutableListOf<Destination>()
+        val state = CommunityState(accountId = accountId, posts = listOf(archived))
+        largeNarrow { CommunityScreen(state, CommunityActions(open = { opened += it }), "UTC", {}) }
+        insideAndShown("comments-$postId")
+        compose.onAllNodesWithTag("like-$postId").assertCountEquals(0)
+        compose.onAllNodesWithTag("save-$postId").assertCountEquals(0)
+        compose.onNodeWithText("Archived, read only", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Report").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("comments-$postId").performScrollTo().performClick()
+        assertEquals(listOf<Destination>(Destination.Post(postId)), opened)
+    }
+
+    @Test fun activeFeedPostKeepsLikeAndSave() {
+        val state = CommunityState(accountId = accountId, posts = listOf(post.copy(pageStatus = "active")))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("like-$postId", "save-$postId", "comments-$postId")
+        compose.onAllNodesWithText("Archived, read only", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun readOnlyFeedPostKeepsUnlikeAndUnsave() {
+        val archived = post.copy(pageStatus = "read_only", liked = true, saved = true, likeCount = 1)
+        val likes = mutableListOf<PostDto>()
+        val saves = mutableListOf<PostDto>()
+        val state = CommunityState(accountId = accountId, posts = listOf(archived))
+        largeNarrow { CommunityScreen(state, CommunityActions(like = { likes += it }, save = { saves += it }), "UTC", {}) }
+        insideAndShown("like-$postId", "save-$postId", "comments-$postId")
+        compose.onNodeWithTag("like-$postId").performScrollTo().performClick()
+        compose.onNodeWithTag("save-$postId").performScrollTo().performClick()
+        assertEquals(listOf(archived), likes)
+        assertEquals(listOf(archived), saves)
+    }
+
+    @Test fun readOnlyPostScreenHidesComposersAndReplyAtLargeText() {
+        val archived = post.copy(pageStatus = "read_only")
+        val comment = CommentDto("5f2b5d20-7e7d-4c60-9c73-2e6b5b4d3c03", postId, null, "Sam", "Count me in", "visible", stamp, false, false)
+        val reply = comment.copy(id = "6a3c6e31-8f8e-4d71-8d84-3f7c6c5e4d05", parentId = comment.id, authorName = "Kim", body = "Bring water")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Post(postId), post = archived, comments = listOf(comment, reply)))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("post-read-only")
+        compose.onNodeWithTag("post-read-only").assertTextContains("This page is archived.", substring = true)
+        compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
+        insideAndShown("comment-${comment.id}")
+        compose.onNodeWithText("Count me in").assertIsDisplayed()
+        compose.onAllNodesWithText("Reply").assertCountEquals(0)
+        compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
+        compose.onNodeWithText("Block person").performScrollTo().assertIsDisplayed()
+        insideAndShown("comment-${reply.id}")
+        compose.onNodeWithText("Bring water").assertIsDisplayed()
+
+        state = state.copy(post = archived.copy(pageStatus = "active"))
+        insideAndShown("comment-text")
+        reveal("comment-${comment.id}")
+        compose.onNodeWithText("Reply").performScrollTo().performClick()
+        insideAndShown("reply-text")
+        state = state.copy(post = archived)
+        insideAndShown("comment-${comment.id}")
+        compose.onAllNodesWithText("Reply").assertCountEquals(0)
+        compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
+        insideAndShown("post-read-only")
+        compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
     }
 
     private fun capture(name: String) {

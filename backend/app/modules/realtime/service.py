@@ -38,7 +38,10 @@ class LiveService:
     def open(self, token):
         account_id = self.account(token)
         if self.hub.count(account_id) >= self.per_account:
-            raise DomainError(429, "LIVE_LIMIT_REACHED", "Too many live connections for this account. Close another tab or device.")
+            # A place frees as soon as another stream closes, so the apps need not wait long (T124).
+            raise DomainError(
+                429, "LIVE_LIMIT_REACHED", "Too many live connections for this account. Close another tab or device.", retry_after=30,
+            )
         if not self.hub.ready(timeout=5):
             raise DomainError(503, "SERVICE_UNAVAILABLE", "Live updates are temporarily unavailable.")
         return account_id

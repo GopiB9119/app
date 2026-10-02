@@ -114,6 +114,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     val state = mutableState.asStateFlow()
     private var generation = 0L
     private var loadJob: Job? = null
+    private var loadingMore = false
+    private var loads = 0L
 
     fun bind(accountId: String?) {
         if (mutableState.value.accountId == accountId) return
@@ -181,15 +183,24 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         reload()
     }
 
+    /** Loads the shown list again. Nothing is sent while a change is unanswered; that change loads what it needs once it is answered (T82). */
     fun reload(more: Boolean = false) {
+        if (mutableState.value.working) return
+        load(more)
+    }
+
+    /** [keepError] keeps the message of the change that stopped this load, so sending the load again does not hide why the change failed. */
+    private fun load(more: Boolean = false, keepError: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
         val cursor = if (more) (if (current.destination == Destination.MyPages) current.followedNextCursor else current.nextCursor) ?: return else null
         val destination = current.destination
         val expected = generation
+        val sequence = ++loads
         loadJob?.cancel()
+        loadingMore = more
         // A first page loads again from scratch; Load more keeps what is already shown.
-        mutableState.update { it.copy(loading = true, error = null, missing = false, ownedLoaded = it.ownedLoaded && more,
+        mutableState.update { it.copy(loading = true, error = if (keepError) it.error else null, missing = keepError && it.missing, ownedLoaded = it.ownedLoaded && more,
             followedStatus = if (more) it.followedStatus else ListStatus.LOADING,
             ownedError = if (destination == Destination.MyPages && !more) null else it.ownedError,
             followedError = if (destination == Destination.MyPages) null else it.followedError) }
@@ -272,7 +283,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                     }
                 }
             }
-            finally { if (generation == expected && mutableState.value.destination == destination) mutableState.update { it.copy(loading = false) } }
+            // A load stopped by a newer one must not say the newer one has finished; the check runs inside the update, so a newer load starting meanwhile is seen.
+            finally { mutableState.update { if (generation == expected && loads == sequence && it.destination == destination) it.copy(loading = false) else it } }
         }
     }
 
@@ -286,6 +298,11 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
         val account = current.accountId ?: return
         if (current.working) return
         val expected = generation
+        // A load still unanswered could answer after this change with what the server had before it,
+        // so it stops now and is sent again once the change is answered, unless the change loads again itself (T82).
+        val interrupted = loadJob?.takeIf { it.isActive }
+        val more = loadingMore
+        interrupted?.cancel()
         mutableState.update { it.copy(working = true, error = null, notice = null) }
         viewModelScope.launch {
             try {
@@ -293,7 +310,12 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                 if (generation == expected && onSuccess != null) mutableState.update { it.copy(notice = onSuccess) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected, subject) }
-            finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
+            finally {
+                if (generation == expected) {
+                    if (interrupted != null && loadJob === interrupted) load(more, keepError = true)
+                    mutableState.update { it.copy(working = false) }
+                }
+            }
         }
     }
 
@@ -319,8 +341,14 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     }
 
     fun retryFollowing() = reload(more = mutableState.value.followedStatus == ListStatus.LOADED && mutableState.value.followedNextCursor != null)
-    fun like(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
-    fun save(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
+    fun like(post: PostDto) {
+        if (!post.pageWritable && !post.liked) return
+        command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
+    }
+    fun save(post: PostDto) {
+        if (!post.pageWritable && !post.saved) return
+        command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
+    }
     /** Pins a published post to the top of the shown page, or unpins it, then reloads the page so the pinned list is the server's. The owner and the page's moderators may pin. */
     fun pin(post: PostDto) {
         if ((!post.canManage && !mutableState.value.moderating) || post.status != "published") return
@@ -384,7 +412,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                             CommunityState(accountId = it.accountId, destination = Destination.Page(handle), history = it.history + it.destination,
                                 working = true, notice = "Page created. Write your first post below.")
                         }
-                        reload()
+                        load()
                     }
                     is CreateIntent.Post -> { mutableState.update { it.copy(notice = "Draft saved. Only you can see it until you publish.") }; reloadAfterCommand() }
                     is CreateIntent.Comment -> reloadAfterCommand()
@@ -401,7 +429,7 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
 
     fun discardPending() = mutableState.update { if (it.working) it else it.copy(pending = null) }
 
-    private fun reloadAfterCommand() = reload()
+    private fun reloadAfterCommand() = load()
 
     fun publish(post: PostDto) = command("Published. Anyone can see this post now.", subject = post.id) { replacePost(repository.publish(it, post)); reloadAfterCommand() }
     fun startEdit(post: PostDto) = mutableState.update { if (it.working || !post.canManage) it else it.copy(editingPostId = post.id, editingPost = post, error = null, notice = null) }

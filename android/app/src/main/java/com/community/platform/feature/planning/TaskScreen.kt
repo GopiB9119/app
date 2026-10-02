@@ -132,6 +132,9 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
     val listState = rememberLazyListState()
     val viewKey = state.editor?.identity ?: state.detail?.task?.id ?: state.selectedSpace?.id ?: "spaces"
     LaunchedEffect(viewKey) { listState.scrollToItem(0) }
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as saving the editor, bring it into view to be seen and announced.
+    LaunchedEffect(state.error, state.notice, state.messageId) { if (state.error != null || state.notice != null) listState.scrollToItem(0) }
     val back: () -> Unit = {
         if (!state.busy) {
             when {

@@ -77,6 +77,7 @@ const delays = [1000, 2000, 5000, 10000, 30000];
 const listeners = new Set<(event: LiveUpdate) => void>();
 const connectionListeners = new Set<() => void>();
 const shownAlerts = new Map<string, Set<string>>();
+const retryDeadlines = new Map<string, number>();
 let connection: Connection | null = null;
 let connected = false;
 
@@ -176,12 +177,22 @@ function halt(owner: Connection) {
 
 function retry(owner: Connection, milliseconds?: number) {
   if (!current(owner) || navigator.onLine === false || owner.timer !== null) return;
-  const delay = milliseconds ?? delays[Math.min(owner.attempt++, delays.length - 1)];
-  owner.timer = window.setTimeout(() => { owner.timer = null; void connect(owner); }, delay + Math.floor(Math.random() * 250));
+  const delay = Math.max(milliseconds ?? delays[Math.min(owner.attempt++, delays.length - 1)], (retryDeadlines.get(owner.accountId) ?? 0) - Date.now());
+  owner.timer = window.setTimeout(() => { owner.timer = null; void connect(owner); }, Math.min(delay + Math.floor(Math.random() * 250), 2147483647));
+}
+
+function retryAfter(value: string | null) {
+  const text = value?.trim() ?? "";
+  if (/^\d+$/.test(text)) return Math.min(Number(text) * 1000, Number.MAX_SAFE_INTEGER - Date.now());
+  const timestamp = /^[A-Za-z]/.test(text) ? Date.parse(text) : NaN;
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 30000;
 }
 
 async function connect(owner: Connection) {
   if (!current(owner) || navigator.onLine === false || owner.controller || owner.timer !== null) return;
+  const remaining = (retryDeadlines.get(owner.accountId) ?? 0) - Date.now();
+  if (remaining > 0) { retry(owner, remaining); return; }
+  retryDeadlines.delete(owner.accountId);
   const controller = new AbortController();
   owner.controller = controller;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -197,7 +208,12 @@ async function connect(owner: Connection) {
       if (payload.error?.code === "ACCOUNT_CHANGED") halt(owner);
       return;
     }
-    if (response.status === 429) { wait = 30000; await response.body?.cancel(); return; }
+    if (response.status === 429) {
+      wait = retryAfter(response.headers.get("retry-after"));
+      retryDeadlines.set(owner.accountId, Date.now() + wait);
+      await response.body?.cancel();
+      return;
+    }
     if (!response.ok || !response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
       await response.body?.cancel();
       return;
@@ -245,6 +261,9 @@ function dispose(owner: Connection) {
 }
 
 function retain(accountId: string, client: QueryClient) {
+  for (const [account, deadline] of retryDeadlines) {
+    if (deadline <= Date.now()) retryDeadlines.delete(account);
+  }
   if (connection && connection.accountId !== accountId) dispose(connection);
   if (!connection) {
     const owner: Connection = {

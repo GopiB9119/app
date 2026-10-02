@@ -90,6 +90,7 @@ async function fixture(context, options = {}) {
     const state = window.liveFixture = {
       calls: [], unexpected: [], conversations, messages: { [chatId]: [], [otherChatId]: [] }, notifications: [], streams: [],
       connected: false, holdNext: false, holding: false, release: null, reads: [],
+      rateLimits: options.rateLimits ?? 0,
       permission: options.permission ?? 'default', permissionRequests: 0, alerts: [], storage,
     };
     Object.defineProperty(window, 'localStorage', { configurable: true, value: {
@@ -130,6 +131,12 @@ async function fixture(context, options = {}) {
       state.calls.push({ route: url.pathname, method, headers, body });
       if (url.pathname === '/api/live') {
         if (options.failLive) throw new TypeError('Synthetic unavailable live stream');
+        if (state.rateLimits > 0) {
+          state.rateLimits -= 1;
+          return new Response(JSON.stringify({ error: { code: 'LIVE_LIMIT_REACHED' } }), {
+            status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '900' },
+          });
+        }
         const stream = { controller: null, closed: false };
         const response = new Response(new ReadableStream({
           start(controller) { stream.controller = controller; }, cancel() { stream.closed = true; },
@@ -264,6 +271,37 @@ test('live fallback: failed streams retain the five-second pane poll and fifteen
     await page.clock.runFor(5000);
     await pane.getByText('A polling update', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.liveFixture.connected), false);
+    await assertQuiet(view);
+  } finally { await context.close(); }
+});
+
+test('live rate limit: a 15-minute cooldown survives remounting while chat polling works, then the stream reconnects', async () => {
+  const context = await browser.newContext();
+  try {
+    const view = await fixture(context, { rateLimits: 1 });
+    const { page, pane } = view;
+    await open(page, pane);
+    const liveCount = () => page.evaluate(() => window.liveFixture.calls.filter(call => call.route === '/api/live').length);
+    assert.equal(await liveCount(), 1);
+    assert.equal(await page.evaluate(() => window.liveFixture.connected), false);
+    await page.evaluate(() => window.liveFixture.addMessage('Arrived during the live cooldown'));
+    await page.clock.runFor(5000);
+    await pane.getByText('Arrived during the live cooldown', { exact: true }).waitFor();
+    await page.evaluate(() => { window.unmountLiveFixture(); window.renderLiveFixture(); });
+    await page.clock.runFor(0);
+    await page.getByRole('button', { name: /^Morgan family/ }).waitFor();
+    assert.equal(await liveCount(), 1, 'Remounting must not bypass Retry-After');
+    await page.evaluate(() => { window.dispatchEvent(new Event('offline')); window.dispatchEvent(new Event('online')); });
+    await page.clock.runFor(0);
+    assert.equal(await liveCount(), 1, 'Network events must not bypass Retry-After');
+    await page.clock.fastForward(894999);
+    assert.equal(await liveCount(), 1, 'The first 899,999 ms must make no live retry');
+    await page.clock.runFor(251);
+    await page.waitForFunction(() => window.liveFixture.streams.length === 1);
+    assert.equal(await liveCount(), 2);
+    await connect(page);
+    assert.equal(await page.evaluate(() => window.liveFixture.connected), true);
+    assert.equal(await page.evaluate(() => window.liveFixture.streams.filter(stream => !stream.closed).length), 1);
     await assertQuiet(view);
   } finally { await context.close(); }
 });

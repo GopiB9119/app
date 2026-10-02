@@ -242,7 +242,7 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Events | `space.created`, `space.renamed`, `space.description_changed`, `space.made_public`, `space.made_private`. |
 | Commands | Create; rename and describe; make a group public or private. |
 | Queries | List my Spaces; read a Space; read its settings; find public groups; preview one public group. |
-| APIs | `POST /v1/spaces` (Idempotency-Key), `GET /v1/spaces`, `GET /v1/spaces/{space_id}`, `GET /v1/spaces/{space_id}/settings`, `PATCH /v1/spaces/{space_id}/settings` (Idempotency-Key, If-Match), `POST /v1/spaces/{space_id}/visibility` (Idempotency-Key, If-Match), `GET /v1/discover/spaces`, `GET /v1/discover/spaces/{space_id}`. |
+| APIs | `POST /v1/spaces` (Idempotency-Key), `GET /v1/spaces`, `GET /v1/spaces/{space_id}`, `GET /v1/spaces/{space_id}/settings`, `PATCH /v1/spaces/{space_id}/settings` (Idempotency-Key, If-Match), `POST /v1/spaces/{space_id}/visibility` (Idempotency-Key, If-Match), `POST /v1/spaces/{space_id}/invite-policy` (Idempotency-Key, If-Match; [DEC-026](DECISIONS.md#accepted-decisions), provisional), `GET /v1/discover/spaces`, `GET /v1/discover/spaces/{space_id}`. |
 | Persistence | `spaces`, `space_settings_commands`. |
 | Retention | Built: kept indefinitely. **TBD** (U-09; C3-D09 OPEN). |
 | Audit requirements | Built: `space_audit_events` plus outbox. |
@@ -250,8 +250,8 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
 | Validation rules | Built: name 1–80 characters after trimming, without control characters; description up to 280 characters without control or text-direction characters (new lines allowed); type `family`, `couple`, `solo` or `group`; only a group can be public. The name and description cannot change while invitations, join requests or ownership offers are pending. |
-| Invariants | Built: exactly one active owner; a solo Space has only its owner, enforced by the database; a couple Space has at most two active members (the owner and one partner), checked when inviting and accepting under the Space lock and enforced by the database; only a group is ever public, enforced by the database; the type never changes, enforced by the database; `version > 0`; one creation per creator and request key. |
-| Failure modes | Built: non-members get 404, and a private Space looks exactly like a missing one in discovery; stale settings return 412; making a family, couple or solo Space public returns 409 PRIVATE_SPACE_TYPE; inviting or admitting a third person to a couple returns 409 COUPLE_FULL, and inviting a second person while the partner's invitation still waits returns 409 COUPLE_INVITATION_PENDING; creating more than 50 Spaces is refused. |
+| Invariants | Built: exactly one active owner; a solo Space has only its owner, enforced by the database; a couple Space has at most two active members (the owner and one partner), checked when inviting and accepting under the Space lock and enforced by the database; only a group is ever public, enforced by the database; only a family or group Space can let every member invite (`member_invites`, since [DEC-026](DECISIONS.md#accepted-decisions)), enforced by the database; the type never changes, enforced by the database; `version > 0`; one creation per creator and request key. |
+| Failure modes | Built: non-members get 404, and a private Space looks exactly like a missing one in discovery; stale settings return 412; making a family, couple or solo Space public returns 409 PRIVATE_SPACE_TYPE; letting members of a couple or solo Space invite returns 409 INVITE_POLICY_UNAVAILABLE; inviting or admitting a third person to a couple returns 409 COUPLE_FULL, and inviting a second person while the partner's invitation still waits returns 409 COUPLE_INVITATION_PENDING; creating more than 50 Spaces is refused. |
 | Dependencies | User, Membership. |
 
 ### 7. Membership
@@ -306,9 +306,9 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Allowed agent actions | None. **PROPOSED** no permission changes in the first release (P8). |
 | External side effects | None. |
 | Validation rules | Built: role from the fixed list; only the owner changes roles, never their own and never in solo or couple Spaces (409 ROLE_NOT_AVAILABLE). |
-| Invariants | Built: exactly one active owner per Space. An admin invites (always as a member), revokes invitations, removes ordinary members and decides join requests; never changes roles, removes the owner or another admin, edits settings or offers ownership. An invitation admits only while its sender is still the owner or an admin. |
+| Invariants | Built: exactly one active owner per Space. An admin invites (always as a member), revokes invitations, removes ordinary members and decides join requests; never changes roles, removes the owner or another admin, edits settings or offers ownership. An invitation admits only while its sender may still invite: the owner, an admin, or a member while the Space lets everyone invite ([DEC-026](DECISIONS.md#accepted-decisions)). When the sender stops being able to invite, their waiting invitations end. |
 | Failure modes | Built: a stale review returns 412, the same role again 409 NO_CHANGES, an admin removing an admin 409 OWNER_ONLY. |
-| Dependencies | Membership, Permission; P5 and T13. Per-Space permission settings are not decided (DEC-018). |
+| Dependencies | Membership, Permission; P5 and T13. One per-Space permission setting is built, who can invite ([DEC-026](DECISIONS.md#accepted-decisions), provisional); others are not decided. |
 
 ### 9. Permission
 
@@ -318,7 +318,7 @@ Page was added to the requested list because posts, follows, reports and blocks 
 | Purpose | **CONFIRMED** Each Space has its own permissions (R2); retrieval respects permissions (R11). |
 | Owner | Each module enforces its own rules under S1 and S2. |
 | Scope | One action on one item. |
-| Lifecycle | Built: rules change only when the code changes. Per-Space permission settings are **TBD** (T13; not decided by DEC-018). |
+| Lifecycle | Built: rules change only when the code changes, except one per-Space setting: the owner of a family or group Space chooses who can invite people, the owner and admins or everyone in the Space ([DEC-026](DECISIONS.md#accepted-decisions), provisional; stored as `spaces.member_invites`). Other per-Space permission settings are **TBD** (T13). |
 | States | None. |
 | Relationships | Uses the account's status, the Session, the Membership (admission), the Role, task access grants and, for care, the person described. |
 | Permissions | The rules as built are in the table below. |
@@ -344,8 +344,9 @@ Permission rules as built:
 | --- | --- |
 | Create a Space | Any signed-in account (up to 50) |
 | See a Space, its roster, its Space chat and its events | Its current members |
-| Rename a Space or change its visibility; change a member's role; remove an admin | The owner |
+| Rename a Space or change its visibility or who can invite; change a member's role; remove an admin | The owner |
 | Invite; withdraw an invitation; remove an ordinary member; approve or decline a request to join a group | The owner or an admin ([DEC-018](DECISIONS.md#accepted-decisions), provisional) |
+| Invite (as a member) and see or withdraw the invitations one sent | Any member of a family or group Space whose owner lets everyone invite ([DEC-026](DECISIONS.md#accepted-decisions), provisional) |
 | Offer ownership | The owner, signed in within the last 15 minutes |
 | Accept or decline an invitation or an ownership offer | The intended person |
 | Leave a Space | Any member or admin; not the owner |
@@ -373,14 +374,14 @@ Permission rules as built:
 | Purpose | Admit a person only with their explicit acceptance, or with the owner's explicit approval of their request. |
 | Owner | Module `spaces`. |
 | Scope | One Space and one recipient. |
-| Lifecycle | Built: an invitation is created by the owner as `pending`; then accepted (which creates a new admission), declined, revoked by the owner, or expired after 72 hours. A join request is created by the person as `pending` with an optional note; then approved by the owner (a new admission), declined, withdrawn by the person, closed when the group becomes private, or expired after 14 days. After a decline the person can ask again after 7 days. |
+| Lifecycle | Built: an invitation is created by the owner, an admin, or a member while the Space lets everyone invite ([DEC-026](DECISIONS.md#accepted-decisions)), as `pending`; then accepted (which creates a new admission), declined, revoked, or expired after 72 hours. It is also revoked when its sender stops being able to invite: an admin made a member, a member when the owner turns member invitations off, or a sender who leaves or is removed. A join request is created by the person as `pending` with an optional note; then approved by the owner (a new admission), declined, withdrawn by the person, closed when the group becomes private, or expired after 14 days. After a decline the person can ask again after 7 days. |
 | States | Built: invitations `pending, accepted, declined, revoked, expired`; join requests `pending, approved, declined, cancelled, closed, expired`. **PROPOSED** a fuller invitation state set (C18-D06 PROPOSED). |
-| Relationships | Space; inviter (the owner) or requester; recipient (a User); the admission it created. |
-| Permissions | Built: the owner creates, lists and revokes invitations, and lists, approves and declines join requests; only the recipient sees, accepts or declines an invitation; only the requester sees or withdraws their request. The owner sees a requester's display name and note, never their email. |
+| Relationships | Space; inviter (the owner, an admin or, since DEC-026, a member) or requester; recipient (a User); the admission it created. |
+| Permissions | Built: the owner and admins create, list and revoke invitations, and list, approve and decline join requests; a member of a Space that lets everyone invite creates invitations and lists and revokes only the ones they sent (DEC-026); only the recipient sees, accepts or declines an invitation; only the requester sees or withdraws their request. The owner sees a requester's display name and note, never their email. |
 | Privacy classification | Private (C11-C03). A join request keeps the group name the person saw, so a later rename of a group that went private never reaches them. |
 | Events | `space.invitation_created`, `space.invitation_revoked`, `space.invitation_<status>` when accepted or declined; `space.join_requested`, `space.join_request_approved`, `space.join_request_declined`, `space.join_request_cancelled`. |
 | Commands | Invite; revoke; accept; decline; ask to join; withdraw; approve; decline a request. |
-| Queries | List a Space's invitations (owner); list my invitations (recipient); list a group's waiting requests (owner); list my join requests. |
+| Queries | List a Space's invitations (owner and admins; a member sees only their own); list my invitations (recipient); list a group's waiting requests (owner and admins); list my join requests. |
 | APIs | `POST /v1/spaces/{space_id}/invitations` (Idempotency-Key), `GET /v1/spaces/{space_id}/invitations`, `POST /v1/spaces/{space_id}/invitations/{invitation_id}/revoke`, `GET /v1/invitations`, `POST /v1/invitations/{invitation_id}/accept`, `POST /v1/invitations/{invitation_id}/decline`, `POST /v1/spaces/{space_id}/join-requests` (Idempotency-Key), `GET /v1/spaces/{space_id}/join-requests`, `POST /v1/spaces/{space_id}/join-requests/{request_id}/approve` and `/decline`, `POST /v1/space-join-requests/{request_id}/cancel`, `GET /v1/me/space-join-requests`. |
 | Persistence | `space_invitations`, `space_join_requests`. |
 | Retention | Built: kept. **TBD** (Q19). |
@@ -388,7 +389,7 @@ Permission rules as built:
 | Agent access | **TBD** (D4). |
 | Allowed agent actions | **TBD** (D4). Built, not connected: the agent parser refuses invitation requests. |
 | External side effects | None. Invitations by email, phone, link or contacts are **TBD** (Product Understanding section 7; C18-D03 PROPOSED; C18-D12 OPEN). |
-| Validation rules | Built: the recipient is an existing verified account, entered by account ID, and not the inviter; at most one pending invitation per recipient per Space; at most 200 invitations per Space. A join request needs a public group the person is not in and has not blocked or been blocked by; its note is up to 280 characters; one pending request per person and group; at most 20 waiting requests per person and 100 per group. |
+| Validation rules | Built: the recipient is an existing verified account, entered by account ID, and not the inviter; at most one pending invitation per recipient per Space; at most 200 invitations per Space, and at most 10 waiting invitations per member who is not the owner or an admin (409 INVITATION_LIMIT_REACHED). A join request needs a public group the person is not in and has not blocked or been blocked by; its note is up to 280 characters; one pending request per person and group; at most 20 waiting requests per person and 100 per group. |
 | Invariants | Built: `recipient_id <> inviter_id`; `expires_at > created_at`; one pending invitation per Space and recipient; one pending join request per group and person; a request is resolved exactly when it is no longer pending; accepting or approving creates exactly one admission. |
 | Failure modes | Built: expired or revoked invitations cannot be accepted; a Space with 50 members admits nobody else (409 SPACE_FULL for requests); 409 JOIN_REQUEST_PENDING, 409 JOIN_REQUEST_COOLDOWN, 409 ALREADY_MEMBER, 409 JOIN_REQUEST_CLOSED, 410 JOIN_REQUEST_EXPIRED; a private or missing group returns the same 404. |
 | Dependencies | Space, Membership, User. |
@@ -513,24 +514,24 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Public communities exist (R3). **CONFLICTING** whether a public community is a Page or a Space (D1; conflict C1). DEC-011 keeps Pages as the public content model; a public group Space is findable but its content stays members-only. |
 | Owner | Module `community`; the page owner. |
 | Scope | Public. |
-| Lifecycle | Built: created as `active` and edited by its owner, including its rules since T83 ([DEC-025](DECISIONS.md#accepted-decisions), provisional). No route archives, transfers or deletes a page. DEC-025 decides them provisionally (handing over to a moderator, archive, delete with 7 days to restore) as T84 and T85, not built yet; until then they are **TBD** (U-10; C2-D02 and C2-D06, both PROPOSED). |
-| States | Built: `status IN ('active','archived')`; only `active` is reachable. |
-| Relationships | Owner (a User); Posts; Follows; the Blocks and Reports that target it. |
-| Permissions | Built: any signed-in account creates up to 5 pages; only the owner edits; anyone, signed out too, reads active pages, except people who blocked the page. Page roles are **PROPOSED** (C2-D01 PROPOSED). |
+| Lifecycle | Built: created as `active` and edited by its owner, including its rules since T83 ([DEC-025](DECISIONS.md#accepted-decisions), provisional). Since T84 the owner can hand the page over to one of its moderators, who becomes the owner while the old owner becomes a moderator. Since T85 the owner archives it (`read_only`) and restores it, or deletes it (`deleted`) after typing its name; for 7 days the owner can restore it as it was, and then the `account-deletion-worker` erases it and keeps its handle taken. |
+| States | Built: `status IN ('active','read_only','deleted','archived')`. `read_only`: readable by everyone, reportable and hideable by platform moderators, but nothing new is posted, edited, commented, liked, saved, followed or pinned (409 `PAGE_READ_ONLY`). `deleted`: visible to its owner only, with `purge_after` and `pre_delete_status`. `archived` is the state account deletion (T68) gives the pages it erases. |
+| Relationships | Owner (a User); Posts; Follows; Page moderators and handover offers (T84); the Blocks and Reports that target it. |
+| Permissions | Built: any signed-in account keeps up to 5 pages (archived and not yet erased deleted ones count); only the owner edits, manages moderators, hands over, archives, deletes and restores; the page's moderators pin posts and remove comments; anyone, signed out too, reads active and read-only pages, except people who blocked the page. Public responses never say who moderates. |
 | Privacy classification | Public (C11-C01). Built: public responses do not include account IDs. |
-| Events | `public.page_created`, `public.page_updated`. |
-| Commands | Create; edit (name, description, topic and rules). |
-| Queries | Read a page, with its rules; list my pages; discover pages by name, handle, description and topic. |
-| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match; a body of up to 64 KiB since T83, as for posts), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed). |
-| Persistence | `public_pages`. |
-| Retention | Built: kept. **TBD** (U-10). |
+| Events | `public.page_created`, `public.page_updated`, `public.page_archived`, `public.page_deleted`, `public.page_restored`, `public.page_purged`; `public.moderator_invited`, `_accepted`, `_declined`, `_withdrawn`, `_removed`, `_stepped_down`, `_expired`, `_invalidated`; `public.handover_offered`, `_accepted`, `_declined`, `_cancelled`, `_expired`, `_invalidated`. |
+| Commands | Create; edit (name, description, topic and rules); invite, withdraw and remove a moderator, and accept, decline or step down as one; offer, cancel, accept and decline a handover; archive, delete and restore. |
+| Queries | Read a page, with its rules and state; list my pages; discover pages by name, handle, description and topic; the page's moderators and latest handover offer (owner only); my moderator invitations and roles; pages offered to me. |
+| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match; a body of up to 64 KiB since T83, as for posts), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed); since T84 `POST`/`GET /v1/pages/{page_id}/moderators`, `POST /v1/pages/{page_id}/moderators/{moderator_id}/accept\|decline\|withdraw\|remove\|step-down` (If-Match), `GET /v1/me/moderator-roles`, `POST`/`GET /v1/pages/{page_id}/handover` (Idempotency-Key and If-Match), `POST /v1/pages/{page_id}/handover/{offer_id}/accept\|decline\|cancel` (If-Match), `GET /v1/me/handover-offers`; since T85 `POST /v1/pages/{page_id}/archive\|restore\|delete` (If-Match). |
+| Persistence | `public_pages` (with `deleted_at`, `purge_after`, `pre_delete_status` since migration `0031`), `page_moderators`, `page_handovers`. |
+| Retention | Built: kept while active or read only; a deleted page is erased 7 days after deletion, keeping its handle. |
 | Audit requirements | Built: `community_audit_events` plus outbox. |
 | Agent access | **TBD** (D4). **PROPOSED** a page agent answers only from approved public page material (Chapter 2 contract). |
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
 | Validation rules | Built: handle 3–30 lowercase letters, digits and inner hyphens, unique and not reserved; name 1–80 characters on one line; description up to 500 characters; rules up to 2,000 characters on several lines, public and empty by default (T83); topic one of `community`, `education`, `health`, `local`, `family`, `events`, `hobbies`, `support`, `news`, `other`. |
-| Invariants | Built: handles are unique; `follower_count >= 0`; `version >= 1`; one creation per owner and request key. |
-| Failure modes | Built: 409 HANDLE_TAKEN, 409 PAGE_LIMIT_REACHED, 403 PAGE_MANAGER_REQUIRED, 412 CONTENT_CHANGED. Since 2026-10-01 a change that waits for a lock checks the session again before saving (T04). |
+| Invariants | Built: handles are unique; `follower_count >= 0`; `version >= 1`; one creation per owner and request key; at most one waiting moderator invitation and one waiting handover offer per page, at most 10 active moderators, and one active row per page and person. |
+| Failure modes | Built: 409 HANDLE_TAKEN, 409 PAGE_LIMIT_REACHED, 403 PAGE_MANAGER_REQUIRED, 412 CONTENT_CHANGED; since T84 and T85 409 MODERATOR_SELF, MODERATOR_ALREADY_ACTIVE, MODERATOR_LIMIT_REACHED, MODERATOR_INVITATION_PENDING, MODERATOR_INVITATION_CLOSED, MODERATOR_INVITATION_INVALIDATED, MODERATOR_REQUIRED, HANDOVER_PENDING, HANDOVER_CLOSED, HANDOVER_INVALIDATED, PAGE_READ_ONLY, PAGE_DELETED, PAGE_NAME_MISMATCH; 410 MODERATOR_INVITATION_EXPIRED, HANDOVER_EXPIRED, PAGE_RESTORE_EXPIRED; 403 REAUTHENTICATION_REQUIRED. Since 2026-10-01 a change that waits for a lock checks the session again before saving (T04). |
 | Dependencies | User; D1. |
 
 ### 16. Post
@@ -541,7 +542,7 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Posts are part of the public side (R4). |
 | Owner | Module `community`; written by the page owner. |
 | Scope | Public once published; drafts are private to the page owner. |
-| Lifecycle | Built: draft, then published, then deleted; drafts can also be deleted; published posts can be edited (`edited_at`). Since T83 the page owner can pin a published post to the top of its page (`pinned_at`) and unpin it; pinning changes neither the post nor its version tag, and deleting a post unpins it. Review before publication and revision history are **TBD** (U-10; C2-D04 PROPOSED; C2-D05 OPEN). |
+| Lifecycle | Built: draft, then published, then deleted; drafts can also be deleted; published posts can be edited (`edited_at`). Since T83 the page owner can pin a published post to the top of its page (`pinned_at`) and unpin it, and since T84 so can the page's moderators; pinning changes neither the post nor its version tag, and deleting a post unpins it. Review before publication and revision history are **TBD** (U-10; C2-D04 PROPOSED; C2-D05 OPEN). |
 | States | Built: `draft, published, deleted`. |
 | Relationships | Page; author; Comments; Reactions and Saves; Reports. |
 | Permissions | Built: the page owner drafts, edits, publishes, deletes, pins and unpins; anyone, signed out too, reads published posts, except from pages they blocked. |

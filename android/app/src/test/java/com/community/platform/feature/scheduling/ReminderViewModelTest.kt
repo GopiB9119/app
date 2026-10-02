@@ -639,4 +639,15 @@ class ReminderViewModelTest {
         assertTrue(model.state.value.notice!!.startsWith("Snoozed until "))
         assertTrue(fixture.api.actions.isEmpty())
     }
+
+    @Test fun theSameInvalidDateAndTimeIncrementsTheMessageIdEachTime() = runBlocking {
+        start()
+        model.fields("2026-02-30", "08:00", fixture.request.timezone)
+        val initialMessageId = model.state.value.messageId
+        repeat(2) { attempt ->
+            model.preview()
+            assertEquals("Select a valid date and time.", model.state.value.error)
+            assertEquals(initialMessageId + attempt + 1L, model.state.value.messageId)
+        }
+    }
 }

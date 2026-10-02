@@ -6,6 +6,7 @@ import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.identity.PaginationDto
 import com.community.platform.feature.spaces.SpaceRepositoryTest
 import com.google.gson.Gson
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -30,6 +31,7 @@ import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentTest {
@@ -211,6 +213,34 @@ class AgentTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { repository.runs(fixture.accountId, fixture.spaceId, null, emptySet(), setOf("after-2")) } }
         api.runs.reverse()
         assertThrows(IdentityFailure::class.java) { runBlocking { repository.runs(fixture.accountId, fixture.spaceId, null) } }
+    }
+
+    // Without the app-wide request lock (T82), a read sent beside a request could answer after it and hide that request.
+    @Test fun aRefreshWhileARequestIsUnansweredIsNotSent(): Unit = runBlocking {
+        val reached = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val held = object : AgentApi by api {
+            override suspend fun runs(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<AgentRunDto>>> {
+                reads.incrementAndGet(); return api.runs(authorization, spaceId, cursor, limit)
+            }
+            override suspend fun memories(authorization: String): Response<EnvelopeDto<List<AgentMemoryDto>>> {
+                reads.incrementAndGet(); return api.memories(authorization)
+            }
+            override suspend fun ask(authorization: String, key: String, body: AgentAskDto): Response<EnvelopeDto<AgentRunDto>> {
+                reached.complete(Unit); release.await(); return api.ask(authorization, key, body)
+            }
+        }
+        val current = AgentViewModel(AgentRepository(held, fixture.accounts), fixture.repository); model = current
+        current.bind(fixture.accountId); settle(current)
+        val before = reads.get()
+        current.message("Add a task to water the plants tomorrow"); current.ask()
+        withTimeout(5000) { reached.await() }
+        current.reload(); current.reloadMemories()
+        release.complete(Unit)
+        val settled = settle(current)
+        assertEquals(before, reads.get())
+        assertTrue(settled.runs.single().awaitingApproval)
     }
 
     @Test fun askingShowsTheExactChangeAndNothingRunsBeforeApproval(): Unit = runBlocking {

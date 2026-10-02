@@ -236,17 +236,19 @@ def create_app(settings=None, clock=utcnow):
         response.headers["X-Request-ID"] = request.state.request_id
         return response
 
-    def error_response(request, status, code, message, details=None):
+    def error_response(request, status, code, message, details=None, retry_after=900):
         request.state.error_code = code
         return JSONResponse(
             {"error": {"code": code, "message": message, "details": details or {}}, "request_id": request.state.request_id},
             status_code=status,
-            headers={"Retry-After": "900"} if status == 429 else None,
+            headers={"Retry-After": str(retry_after)} if status == 429 else None,
         )
 
     @application.exception_handler(DomainError)
     async def domain_error(request: Request, error: DomainError):
-        return error_response(request, error.status, error.code, error.message, getattr(error, "details", None))
+        return error_response(
+            request, error.status, error.code, error.message, getattr(error, "details", None), getattr(error, "retry_after", 900),
+        )
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):

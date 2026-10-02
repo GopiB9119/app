@@ -148,6 +148,20 @@ class ModerationScreenTest {
         }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val others = listOf("5f2b5d2a-7e7d-4c6f-9c73-2e6b5b4d3c03", "6a3c6e3b-8f8e-4d7a-8d84-3f7c6c5e4d04").map { item.copy(targetId = it) }
+        val last = others.last()
+        var state by mutableStateOf(reviewing().copy(queue = ModerationList(listOf(item) + others, loaded = true), decisions = mapOf(last.key to ModerationDecisionDraft("hide", "spam"))))
+        val actions = ModerationActions(decide = { target ->
+            state = state.copy(queue = state.queue.copy(items = state.queue.items.filterNot { it.key == target.key }), decisions = state.decisions - target.key, message = ModerationMessage.DECISION_RECORDED)
+        })
+        compose.setContent { CommunityTheme { ModerationScreen(state, actions, "UTC") } }
+        reveal("moderation-record-${last.targetId}")
+        compose.onNodeWithTag("moderation-record-${last.targetId}").performClick()
+        // The other reports stay: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithText("Decision recorded.").assertIsDisplayed()
+    }
+
     @Test fun safetyShowsReportStatesAndOnlyEligibleAppealsWithARequiredNote() {
         val waiting = MyReportDto(targetId, "post", targetId, "spam", "open", null, null, stamp, null)
         var state by mutableStateOf(ModerationState(accountId = accountId, moderator = true,

@@ -9,12 +9,14 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Request
@@ -26,6 +28,8 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChecklistTest {
@@ -133,6 +137,50 @@ class ChecklistTest {
         assertEquals(ChecklistState(), current.state.value)
     }
 
+    // Without the app-wide request lock (T82), a read sent beside a change could answer after it and undo it on screen.
+    @Test fun aRefreshWhileAChangeIsUnansweredIsNotSent() = runBlocking {
+        val reached = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val held = object : ChecklistApi by api {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<ChecklistDto>> {
+                reads.incrementAndGet(); return api.read(authorization, taskId)
+            }
+            override suspend fun change(authorization: String, taskId: String, etag: String, key: String, body: ChecklistChangeDto): Response<EnvelopeDto<ChecklistDto>> {
+                reached.complete(Unit); release.await(); return api.change(authorization, taskId, etag, key, body)
+            }
+        }
+        val current = ChecklistViewModel(ChecklistRepository(held, fixture.accounts)); model = current
+        current.bind(fixture.accountId, taskId, fixture.spaceId); idle(current)
+        val loaded = reads.get()
+        current.check(item, true)
+        withTimeout(5000) { reached.await() }
+        current.refresh(); current.reload()
+        release.complete(Unit); idle(current)
+        // A read sent beside the change may still be queued when the screen settles, so give it time to show up.
+        assertNull(withTimeoutOrNull(2000) { while (reads.get() == loaded) delay(10) })
+        assertEquals(1, commands.size)
+        assertEquals("Checklist saved.", current.state.value.notice)
+    }
+
+    @Test fun aChangeWhileTheChecklistLoadsIsNotSent() = runBlocking {
+        val hold = AtomicBoolean(false)
+        val reached = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val held = object : ChecklistApi by api {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<ChecklistDto>> {
+                if (hold.get()) { reached.complete(Unit); release.await() }
+                return api.read(authorization, taskId)
+            }
+        }
+        val current = ChecklistViewModel(ChecklistRepository(held, fixture.accounts)); model = current
+        current.bind(fixture.accountId, taskId, fixture.spaceId); idle(current)
+        hold.set(true); current.refresh()
+        withTimeout(5000) { reached.await() }
+        current.check(item, true)
+        release.complete(Unit); idle(current)
+        assertNull(withTimeoutOrNull(2000) { while (commands.isEmpty()) delay(10) })
+        assertFalse(current.state.value.basis!!.items.single().checked)
+    }
+
     @Test fun wirePreservesFalseAndOmitsOtherActionFields() = runBlocking {
         var request: Request? = null
         val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
@@ -150,5 +198,16 @@ class ChecklistTest {
         val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
         assertEquals(setOf("action", "item_id", "checked"), body.keySet())
         assertFalse(body["checked"].asBoolean)
+    }
+
+    @Test fun theSameInvalidItemTitleIncrementsTheMessageIdEachTime() = runBlocking {
+        val current = ready()
+        current.title("Invalid\u0001title")
+        val initialMessageId = current.state.value.messageId
+        repeat(2) { attempt ->
+            current.saveTitle()
+            assertEquals("Enter an item title of 1 to 200 plain characters.", current.state.value.error)
+            assertEquals(initialMessageId + attempt + 1L, current.state.value.messageId)
+        }
     }
 }

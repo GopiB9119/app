@@ -21,6 +21,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 
 /** The emulator is set to 640 x 1280 px at density 320, so the app really is 320 dp wide. */
@@ -42,6 +43,18 @@ internal fun ComposeContentTestRule.assertReachable(list: String, matcher: Seman
 }
 
 internal fun ComposeContentTestRule.assertReachable(list: String, tag: String) = assertReachable(list, hasTestTag(tag))
+
+/**
+ * Checks that no item of the lazy list [list] matches [matcher]. A lazy list composes only the items near the screen, so a
+ * count of nodes says nothing about the rest of the list. This looks through the whole list, from its top to its end, and
+ * leaves the list at its end.
+ */
+internal fun ComposeContentTestRule.assertNotInList(list: String, matcher: SemanticsMatcher) {
+    val error = assertThrows("${matcher.description} is in $list", AssertionError::class.java) { onNodeWithTag(list).performScrollToNode(matcher) }
+    assertTrue(error.message.orEmpty(), error.message.orEmpty().contains("No node found that matches"))
+}
+
+internal fun ComposeContentTestRule.assertNotInList(list: String, tag: String) = assertNotInList(list, hasTestTag(tag))
 
 /** Checks the node is shown whole inside [container], for example an open dialog. */
 internal fun ComposeContentTestRule.assertInside(container: SemanticsMatcher, matcher: SemanticsMatcher) {

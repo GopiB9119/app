@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -148,6 +149,10 @@ fun CareScreen(state: CareState, actions: CareActions) {
         }
     }
     BackHandler(onBack = back)
+    val list = rememberLazyListState()
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as saving the form, bring it into view to be seen and announced.
+    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(unit * 2), verticalAlignment = Alignment.CenterVertically) {
@@ -158,7 +163,7 @@ fun CareScreen(state: CareState, actions: CareActions) {
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("care-content"), contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("care-content"), state = list, contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
                     state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-error")) } }
                     state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-notice")) } }
                     if (state.view != CareView.ADD) {

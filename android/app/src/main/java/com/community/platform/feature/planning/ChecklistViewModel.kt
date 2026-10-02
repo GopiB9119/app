@@ -20,6 +20,7 @@ data class ChecklistState(
     val removing: ChecklistItemDto? = null, val pending: ChecklistIntent? = null,
     val busy: Boolean = false, val conflict: Boolean = false, val denied: Boolean = false,
     val requiresSignIn: Boolean = false, val error: String? = null, val notice: String? = null,
+    val messageId: Long = 0,
 ) {
     val locked: Boolean get() = busy || pending != null
     val dirty: Boolean get() = title.isNotEmpty() || editingId != null || removing != null
@@ -53,7 +54,7 @@ class ChecklistViewModel @Inject constructor(private val repository: ChecklistRe
         work = viewModelScope.launch {
             try {
                 val result = operation(account, task, space)
-                if (generation == expected) mutableState.update { it.copy(basis = result, pending = null, conflict = false, title = "", editingId = null, removing = null, notice = if (current.pending != null) "Checklist saved." else null) }
+                if (generation == expected) mutableState.update { it.copy(basis = result, pending = null, conflict = false, title = "", editingId = null, removing = null, notice = if (current.pending != null) "Checklist saved." else null, messageId = if (current.pending != null) it.messageId + 1 else it.messageId) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 if (generation == expected) mutableState.update {
@@ -61,9 +62,9 @@ class ChecklistViewModel @Inject constructor(private val repository: ChecklistRe
                     val denied = failure?.status in setOf(401, 403, 404) || failure?.code == "ACCOUNT_CHANGED"
                     val definite = failure != null && failure.status in 400..499 && failure.status != 408
                     if (denied) ChecklistState(accountId = account, taskId = task, spaceId = space, denied = true,
-                        requiresSignIn = failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED", error = error.message)
+                        requiresSignIn = failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED", error = error.message, messageId = it.messageId + 1)
                     else it.copy(pending = if (definite) null else it.pending, conflict = it.conflict || definite,
-                        error = if (error is IOException) "No connection. Changes are not confirmed." else error.message ?: "The checklist could not be confirmed.")
+                        error = if (error is IOException) "No connection. Changes are not confirmed." else error.message ?: "The checklist could not be confirmed.", messageId = it.messageId + 1)
                 }
             } finally { if (generation == expected) mutableState.update { it.copy(busy = false) } }
         }
@@ -90,7 +91,7 @@ class ChecklistViewModel @Inject constructor(private val repository: ChecklistRe
         val title = current.title.trim()
         val invalid = setOf(Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.SURROGATE.toInt(), Character.PRIVATE_USE.toInt(), Character.UNASSIGNED.toInt())
         if (title.codePointCount(0, title.length) !in 1..200 || title.codePoints().anyMatch { Character.getType(it) in invalid }) {
-            mutableState.update { it.copy(error = "Enter an item title of 1 to 200 plain characters.") }; return
+            mutableState.update { it.copy(error = "Enter an item title of 1 to 200 plain characters.", messageId = it.messageId + 1) }; return
         }
         submit(ChecklistChangeDto(if (current.editingId == null) "add" else "rename", itemId = current.editingId, title = title))
     }

@@ -1769,7 +1769,8 @@ test('community: a moderator pins, the page is handed over, archived read only, 
     }
     await helperPage.screenshot({ path: path.join(root, '.local/screenshots/community-page-deleted-live-mobile.png'), fullPage: true });
     await deleted.getByRole('button', { name: 'Restore page', exact: true }).click();
-    await helperPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Seed swap', exact: true }).waitFor();
+    // The page comes back as it was, so the post the moderator pinned is still pinned.
+    await helperPage.getByRole('region', { name: 'Pinned', exact: true }).getByRole('article', { name: 'Seed swap', exact: true }).waitFor();
     assert.equal((await visitorContext.request.get(`${base}/api/pages/${handle}`)).status(), 200);
     for (const width of [320, 390]) {
       await helperPage.setViewportSize({ width, height: 844 });
@@ -1862,6 +1863,106 @@ test('post search: Discover finds published public posts by their words, literal
     await readerContext.close();
     await visitorContext.close();
   }
+});
+
+test('events timezone: the browser default creates the intended local time using the API catalog', { timeout: 180000 }, async context => {
+  const ownerContext = await browser.newContext({ timezoneId: 'Asia/Calcutta', viewport: { width: 1440, height: 1000 } });
+  const page = await ownerContext.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await signUp(page, `event-timezone-${Date.now()}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': owner.id };
+    const zonesResponse = await ownerContext.request.get(`${base}/api/timezones`);
+    assert.equal(zonesResponse.status(), 200);
+    const zones = (await zonesResponse.json()).data;
+    assert.equal(zones.includes('Asia/Kolkata'), true);
+    assert.equal(zones.includes('Asia/Calcutta'), false);
+    const created = await ownerContext.request.post(`${base}/api/spaces`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { name: 'Timezone fixture', space_type: 'family' },
+    });
+    assert.equal(created.status(), 201, await created.text());
+    const space = (await created.json()).data;
+    const pageResponse = await page.goto(`${base}/app/events?space_id=${space.id}`);
+    assert.match(pageResponse.headers()['content-security-policy'], /frame-ancestors 'none'/);
+    await page.getByRole('button', { name: 'New event', exact: true }).click();
+    const form = page.getByRole('form', { name: 'New event', exact: true });
+    const day = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await form.getByRole('button', { name: 'Create event', exact: true }).click();
+    await form.getByText('Check the highlighted fields.', { exact: true }).waitFor();
+    assert.equal(await form.getByLabel('Title', { exact: true }).getAttribute('aria-invalid'), 'true');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('name') === 'title');
+    await form.getByLabel('Title', { exact: true }).fill('Timezone check');
+    await form.getByLabel('Starts', { exact: true }).fill(`${day}T18:30`);
+    await form.getByLabel('Ends (optional)', { exact: true }).fill(`${day}T19:30`);
+    const timezone = form.getByRole('combobox', { name: 'Time zone', exact: true });
+    await page.waitForFunction(() => {
+      const select = document.querySelector('form select');
+      return select && !select.disabled;
+    });
+    assert.equal(await timezone.inputValue(), 'Asia/Kolkata');
+    assert.deepEqual(await timezone.locator('option').evaluateAll(options => options.map(option => option.value)), zones);
+    const confirmations = [];
+    const keepDraft = async dialog => { confirmations.push(dialog.message()); await dialog.dismiss(); };
+    page.on('dialog', keepDraft);
+    await form.getByRole('button', { name: 'Close form', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Spaces', exact: true }).click();
+    page.off('dialog', keepDraft);
+    assert.equal(confirmations.length, 2);
+    assert.ok(confirmations.every(message => /unsaved/.test(message)));
+    assert.equal(await form.getByLabel('Title', { exact: true }).inputValue(), 'Timezone check');
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    await form.getByLabel('Starts', { exact: true }).fill(`${yesterday}T18:30`);
+    await form.getByRole('button', { name: 'Create event', exact: true }).click();
+    await form.getByText('Choose a start time in the future.', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute('name') === 'local_start');
+    assert.equal(await form.getByLabel('Title', { exact: true }).inputValue(), 'Timezone check');
+    await form.getByLabel('Starts', { exact: true }).fill(`${day}T18:30`);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/event-timezone-live-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 320, height: 1000 });
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body, body *')].filter(element => element instanceof HTMLElement)
+        .map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.setProperty('font-size', `${size * 2}px`, 'important');
+    });
+    assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.body).fontSize)), 32);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '320 px at 200% text');
+    const overflow = await form.locator('input, select, textarea, button').evaluateAll(elements => elements.filter(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left < 0 || bounds.right > innerWidth;
+    }).map(element => element.outerHTML));
+    assert.deepEqual(overflow, []);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/event-timezone-live-320-200.png'), fullPage: true });
+    const answer = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/spaces/${space.id}/events`);
+    await form.getByRole('button', { name: 'Create event', exact: true }).click();
+    const response = await answer;
+    assert.equal(response.status(), 201, await response.text());
+    const event = (await response.json()).data;
+    await page.getByRole('region', { name: 'Timezone check', exact: true }).waitFor();
+    const storedResponse = await ownerContext.request.get(`${base}/api/events/${event.id}`, { headers });
+    assert.equal(storedResponse.status(), 200);
+    const stored = (await storedResponse.json()).data;
+    assert.equal(stored.timezone, 'Asia/Kolkata');
+    assert.equal(stored.local_start, `${day}T18:30`);
+    assert.equal(stored.local_end, `${day}T19:30`);
+    assert.equal(Date.parse(stored.starts_at), Date.parse(`${day}T13:00:00Z`));
+    assert.equal(Date.parse(stored.ends_at), Date.parse(`${day}T14:00:00Z`));
+    const start = performance.now();
+    const refused = await ownerContext.request.post(`${base}/api/spaces/${space.id}/events`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+      data: { title: 'Refused alias', timezone: 'Asia/Calcutta', local_start: `${day}T18:30` },
+    });
+    const milliseconds = Math.round(performance.now() - start);
+    assert.equal(refused.status(), 422);
+    assert.equal((await refused.json()).error.details['body.timezone'], 'Invalid value');
+    for (const [name, value] of Object.entries({
+      'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY',
+      'referrer-policy': 'no-referrer', 'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+    })) assert.equal(refused.headers()[name], value, name);
+    context.diagnostic(`Local synthetic validation request: 422 in ${milliseconds} ms; browser default persisted as Asia/Kolkata at the intended UTC instant.`);
+    assert.deepEqual(errors, []);
+  } finally { await ownerContext.close(); }
 });
 
 test('events: exact create retry, responses, reschedule confirmation and cancellation', { timeout: 180000 }, async () => {
@@ -2637,6 +2738,96 @@ test('roles: the owner makes an admin, who invites and removes ordinary members 
     await ownerPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
     assert.equal(await ownerPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/roles-members-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    for (const context of contexts) await context.close();
+  }
+});
+
+test('invite permission: the owner lets everyone invite, a member invites someone, and turning it off withdraws what the member sent', { timeout: 240000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const contexts = [ownerContext, memberContext, guestContext];
+  const external = [];
+  for (const context of contexts) await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+    external.push(route.request().url());
+    return route.abort('blockedbyclient');
+  });
+  const [ownerPage, memberPage, guestPage] = await Promise.all(contexts.map(context => context.newPage()));
+  const errors = [];
+  for (const page of [ownerPage, memberPage, guestPage]) page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    const spaceName = `Rivera household ${suffix}`;
+    await signUp(ownerPage, `invites-owner-${suffix}@example.test`);
+    await signUp(memberPage, `invites-member-${suffix}@example.test`);
+    await signUp(guestPage, `invites-guest-${suffix}@example.test`);
+    const me = async context => (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const [owner, member, guest] = await Promise.all(contexts.map(me));
+    const headersFor = person => ({ Origin: base, 'X-Account-ID': person.id });
+    const created = await ownerContext.request.post(`${base}/api/spaces`, {
+      headers: { ...headersFor(owner), 'Idempotency-Key': crypto.randomUUID() }, data: { name: spaceName, space_type: 'family' },
+    });
+    assert.equal(created.status(), 201, await created.text());
+    const space = (await created.json()).data;
+    assert.equal(space.member_invites, false);
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${space.id}/invitations`, {
+      headers: { ...headersFor(owner), 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id },
+    });
+    assert.equal(sent.status(), 201, await sent.text());
+    const joined = await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: headersFor(member), data: {} });
+    assert.equal(joined.status(), 200, await joined.text());
+    const early = await memberContext.request.post(`${base}/api/spaces/${space.id}/invitations`, {
+      headers: { ...headersFor(member), 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: guest.id },
+    });
+    assert.equal(early.status(), 404, 'Until the owner allows it, a member gets the missing-Space answer.');
+
+    const setPolicy = async (button, confirm, notice) => {
+      await ownerPage.goto(`${base}/app/spaces`);
+      await ownerPage.getByRole('button', { name: `Settings for ${spaceName}`, exact: true }).click();
+      const dialog = ownerPage.getByRole('dialog', { name: 'Space settings', exact: true });
+      await dialog.getByRole('button', { name: button, exact: true }).click();
+      await dialog.getByRole('button', { name: confirm, exact: true }).click();
+      await dialog.getByText(notice, { exact: true }).waitFor();
+    };
+    const inviteFromMember = async () => {
+      await memberPage.goto(`${base}/app/spaces`);
+      await memberPage.getByRole('button', { name: `Manage invitations for ${spaceName}`, exact: true }).click();
+      await memberPage.getByText('Everyone in this Space can invite people. You see only the invitations you sent.', { exact: true }).waitFor();
+      await memberPage.getByLabel('Recipient account ID', { exact: true }).fill(guest.id);
+      await memberPage.getByRole('button', { name: 'Create invitation', exact: true }).click();
+      await memberPage.getByText('Invitation created.', { exact: true }).waitFor();
+    };
+    const inbox = async () => (await (await guestContext.request.get(`${base}/api/invitations`, { headers: { 'X-Account-ID': guest.id } })).json()).data;
+
+    await setPolicy('Let everyone invite people', 'Let everyone invite', 'Everyone in the Space can now invite people.');
+    await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/invite-permission-live-desktop.png'), fullPage: false });
+    await inviteFromMember();
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/invite-permission-member-live-mobile.png'), fullPage: true });
+    const [waiting] = await inbox();
+    assert.equal(waiting.space_id, space.id);
+
+    // Turning it off withdraws the member's waiting invitation, and turning it on again does not bring it back.
+    await setPolicy('Only owner and admins can invite', 'Only owner and admins', 'Only you and admins can invite people now.');
+    assert.deepEqual(await inbox(), []);
+    const late = await guestContext.request.post(`${base}/api/invitations/${waiting.id}/accept`, { headers: headersFor(guest), data: {} });
+    assert.equal(late.status(), 409);
+    await memberPage.goto(`${base}/app/spaces`);
+    await memberPage.getByRole('heading', { name: spaceName, exact: true }).waitFor();
+    assert.equal(await memberPage.getByRole('button', { name: `Manage invitations for ${spaceName}`, exact: true }).count(), 0);
+    await setPolicy('Let everyone invite people', 'Let everyone invite', 'Everyone in the Space can now invite people.');
+    assert.deepEqual(await inbox(), []);
+
+    await inviteFromMember();
+    await guestPage.goto(`${base}/app/spaces`);
+    await guestPage.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    await guestPage.getByRole('dialog', { name: `Join ${spaceName}?`, exact: true }).getByRole('button', { name: 'Join Space', exact: true }).click();
+    await guestPage.getByText(`Joined ${spaceName}.`, { exact: true }).waitFor();
+    const admitted = await guestContext.request.get(`${base}/api/spaces/${space.id}`, { headers: headersFor(guest) });
+    assert.equal((await admitted.json()).data.role, 'member');
     assert.deepEqual(external, []);
     assert.deepEqual(errors, []);
   } finally {

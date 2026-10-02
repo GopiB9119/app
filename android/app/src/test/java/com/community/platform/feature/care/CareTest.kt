@@ -260,6 +260,77 @@ class CareTest {
         assertEquals(listOf("2026-09-25", "2026-09-25"), api.dates)
     }
 
+    /**
+     * Reads the day when asked and can hold that answer, so a note sent later is answered first.
+     * Today the app-wide request lock keeps the note waiting instead; without it (T82) the older day would arrive last.
+     */
+    private inner class LateDay : CareApi by api {
+        @Volatile var noted: CareOccurrenceDto? = null
+        @Volatile var hold: CompletableDeferred<Unit>? = null
+        @Volatile var holdReport: CompletableDeferred<Unit>? = null
+        val read = CompletableDeferred<Unit>()
+        val reporting = CompletableDeferred<Unit>()
+        val dates: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        override suspend fun day(authorization: String, date: String): Response<EnvelopeDto<CareDayDto>> {
+            dates += date
+            val answer = day.copy(occurrences = listOf(noted ?: dose, later))
+            hold?.let { gate -> read.complete(Unit); gate.await() }
+            return ok(answer)
+        }
+        override suspend fun report(authorization: String, instructionId: String, key: String, etag: String, body: ReportDoseDto): Response<EnvelopeDto<CareOccurrenceDto>> {
+            holdReport?.let { gate -> reporting.complete(Unit); gate.await() }
+            return api.report(authorization, instructionId, key, etag, body).also { answer -> answer.body()?.data?.let { noted = it } }
+        }
+    }
+
+    @Test fun aDoseNoteWhileTheDayLoadsIsNotUndoneByTheDaysOlderAnswer() = runBlocking {
+        val source = LateDay()
+        val current = ready(CareRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.hold = gate
+        current.reload()
+        withTimeout(5000) { source.read.await() }
+        current.report(dose, "taken")
+        withTimeout(5000) { current.state.first { !it.working } }
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertEquals("taken", settled.day!!.occurrences.first().report?.outcome)
+        // The first load, the one the note stopped, and that one sent again after the note.
+        assertEquals(listOf("2026-09-25", "2026-09-25", "2026-09-25"), source.dates.toList())
+    }
+
+    @Test fun aLostDoseNoteWhileTheDayLoadsKeepsItsMessageAndTheDayStillLoads() = runBlocking {
+        val source = LateDay()
+        val current = ready(CareRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.hold = gate
+        current.reload()
+        withTimeout(5000) { source.read.await() }
+        api.reportFailure = 503
+        current.report(dose, "taken")
+        withTimeout(5000) { current.state.first { !it.working } }
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertEquals("Your note is not confirmed. Choose it again to retry; it cannot be saved twice.", settled.error)
+        assertNotNull(settled.pendingReport)
+        assertNull(settled.day!!.occurrences.first().report)
+        assertEquals(3, source.dates.size)
+    }
+
+    @Test fun aRefreshWhileADoseNoteIsUnansweredIsNotSent() = runBlocking {
+        val source = LateDay()
+        val current = ready(CareRepository(source, fixture.accounts))
+        val gate = CompletableDeferred<Unit>()
+        source.holdReport = gate
+        current.report(dose, "taken")
+        withTimeout(5000) { source.reporting.await() }
+        current.reload()
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertEquals("taken", settled.day!!.occurrences.first().report?.outcome)
+        assertEquals(listOf("2026-09-25"), source.dates.toList())
+    }
+
     @Test fun stopNeedsConfirmationAndRetriesWithTheSameKey() = runBlocking {
         val current = ready()
         current.showMedicines(false); idle(current)

@@ -56,6 +56,7 @@ class EventsTest {
         var past = emptyList<EventDto>()
         var current = detail
         var listFailure = 0
+        var nextCursor: String? = null
         var createFailure = 0
         var createCode = "SYNTHETIC"
         var wrongResponse = false
@@ -66,7 +67,7 @@ class EventsTest {
         val responses = mutableListOf<String>()
         override suspend fun list(authorization: String, spaceId: String, period: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<EventDto>>> {
             periods += period
-            return if (listFailure != 0) failed(listFailure) else ok(if (period == "past") past else upcoming, PaginationDto(null, false))
+            return if (listFailure != 0) failed(listFailure) else ok(if (period == "past") past else upcoming, PaginationDto(nextCursor, nextCursor != null))
         }
         override suspend fun read(authorization: String, eventId: String) = ok(current)
         override suspend fun create(authorization: String, spaceId: String, key: String, body: EventBodyDto): Response<EnvelopeDto<EventDto>> {
@@ -165,6 +166,48 @@ class EventsTest {
         assertEquals(EventMode.DETAIL, current.state.value.mode)
         assertEquals("Family dinner", current.state.value.selected?.title)
         assertEquals("Event created.", current.state.value.notice)
+    }
+
+    @Test fun identicalLoadMoreFailuresPublishDistinctMessageOccurrences() = runBlocking {
+        api.nextCursor = "synthetic-next"
+        val current = ready()
+        val initial = current.state.value
+        api.listFailure = 503
+        current.reload(more = true); idle(current)
+        val first = current.state.value
+        assertEquals("Synthetic SYNTHETIC", first.error)
+        assertEquals(initial.messageId + 1, first.messageId)
+
+        current.reload(more = true); idle(current)
+        val second = current.state.value
+        assertEquals(first.error, second.error)
+        assertEquals(first.messageId + 1, second.messageId)
+        assertEquals(initial.events, second.events)
+        assertEquals(initial.nextCursor, second.nextCursor)
+    }
+
+    @Test fun confirmedCreateEditAndCancellationPublishNewNoticeOccurrences() = runBlocking {
+        val current = ready()
+        val initialMessageId = current.state.value.messageId
+        current.startCreate()
+        current.draft { it.copy(title = "Dinner", date = "2026-09-25", start = "18:30", end = "21:00") }
+        current.save(); idle(current)
+        assertEquals("Event created.", current.state.value.notice)
+        assertEquals(initialMessageId + 1, current.state.value.messageId)
+        assertNull(current.state.value.pending)
+        assertEquals(EventMode.DETAIL, current.state.value.mode)
+
+        current.startEdit()
+        current.draft { it.copy(start = "19:00") }
+        current.save(); idle(current)
+        assertEquals("Event saved.", current.state.value.notice)
+        assertEquals(initialMessageId + 2, current.state.value.messageId)
+        assertEquals("2026-09-25T19:00", current.state.value.selected?.localStart)
+
+        current.askCancel(); current.cancelEvent(); idle(current)
+        assertEquals("Event cancelled.", current.state.value.notice)
+        assertEquals(initialMessageId + 3, current.state.value.messageId)
+        assertEquals("cancelled", current.state.value.selected?.status)
     }
 
     @Test fun definiteCreateRejectionReleasesTheAttempt() = runBlocking {

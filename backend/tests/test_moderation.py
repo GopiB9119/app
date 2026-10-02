@@ -451,8 +451,10 @@ def test_page_owner_conflict_covers_other_authors_and_only_the_author_can_appeal
         response = decide(client, owner, target_type, identifier)
         assert response.status_code == 409 and response.json()["error"]["code"] == "CONFLICT_OF_INTEREST"
     decision = decide(client, reviewer, "post", post["id"]).json()["data"]
+    # T109: DEC-024 shows hidden content only to its author, so the page owner who did not write it no longer reads it.
+    assert client.get(f"/v1/posts/{post['id']}", headers=auth(owner)).status_code == 404
+    assert client.get(f"/v1/posts/{post['id']}", headers=auth(reader)).json()["data"]["moderation"]["hidden"] is True
     for person in (owner, reader):
-        assert client.get(f"/v1/posts/{post['id']}", headers=auth(person)).json()["data"]["moderation"]["hidden"] is True
         assert client.get("/v1/me/moderation-notices", headers=auth(person)).json()["data"][0]["id"] == decision["id"]
     assert appeal(client, owner, decision["id"]).status_code == 403
     assert appeal(client, reader, decision["id"]).status_code == 201
@@ -585,3 +587,26 @@ def test_an_appeal_needs_a_note(client, content):
         response = appeal(client, owner, decision["id"], note=note)
         assert response.status_code == 422, (note, response.text)
     assert appeal(client, owner, decision["id"]).status_code == 201
+
+
+def test_the_queue_and_appeals_show_nothing_of_a_deleted_page(client, app, content):
+    # T115 (1): DEC-025 hides a deleted page and everything on it from everyone but its owner at once, moderators too.
+    from tests.test_page_lifecycle import delete
+
+    owner, reader, reviewer, page, post, remark = content
+    other = moderator(client, app, "second-moderator@example.test")
+    for target_type, target_id in (("page", page["id"]), ("comment", remark["id"])):
+        report(client, reader, target_type, target_id)
+    decision = decide(client, reviewer, "post", post["id"]).json()["data"]
+    assert appeal(client, owner, decision["id"]).status_code == 201
+    current = client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]
+    assert delete(client, owner, page, etag=current["etag"]).status_code == 200
+
+    queue = client.get("/v1/moderation/queue", headers=auth(other))
+    appeals = client.get("/v1/moderation/appeals?status=open", headers=auth(other))
+    listed = queue.json()["data"] + appeals.json()["data"]
+    assert len(listed) == 3
+    assert [(item["preview"]["status"], item["page_name"]) for item in listed] == [("unavailable", None)] * 3
+    for response in (queue, appeals):
+        for shown in (page["name"], page["handle"], page["description"], post["body"], remark["body"]):
+            assert shown not in response.text, shown

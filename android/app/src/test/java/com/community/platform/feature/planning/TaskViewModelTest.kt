@@ -10,12 +10,14 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -26,6 +28,7 @@ import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
 import java.time.YearMonth
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TaskViewModelTest {
@@ -215,6 +218,41 @@ class TaskViewModelTest {
         assertEquals(1, fake.keys.size)
     }
 
+    // Without the app-wide request lock (T82), a read sent beside a status change could answer after it and show the old status.
+    @Test fun aRefreshDuringAnUnansweredStatusChangeIsNotSent() = runBlocking {
+        val reached = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val api = object : TaskApi by fake {
+            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
+                reads.incrementAndGet()
+                return fake.tasks(authorization, spaceId, limit, cursor, status)
+            }
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<FamilyTaskDto>> {
+                reads.incrementAndGet()
+                return fake.read(authorization, taskId)
+            }
+            override suspend fun status(authorization: String, taskId: String, key: String, etag: String, body: TaskStatusDto): Response<EnvelopeDto<FamilyTaskDto>> {
+                reached.complete(Unit)
+                release.await()
+                return fake.status(authorization, taskId, key, etag, body)
+            }
+        }
+        val model = ready(api)
+        val loaded = reads.get()
+        val record = model.state.value.tasks.single()
+        model.proposeStatus(record, "completed"); model.confirmStatus()
+        withTimeout(5000) { reached.await() }
+        model.refresh(); model.loadMore(); model.open(record); model.filter("open")
+        release.complete(Unit)
+        val state = settled(model)
+        // A read sent beside the change may still be queued when the screen settles, so give it time to show up.
+        assertNull(withTimeoutOrNull(2000) { while (reads.get() == loaded) delay(10) })
+        assertEquals(loaded, reads.get())
+        assertEquals("Task status saved.", state.notice)
+        assertNull(model.state.value.statusFilter)
+    }
+
     @Test fun authenticationFailureClearsPrivateTaskState() = runBlocking {
         val model = ready()
         fake.failure = 401
@@ -276,5 +314,17 @@ class TaskViewModelTest {
         model.refresh()
         assertEquals(1, writes)
         assertNull(failed.notice)
+    }
+
+    @Test fun theSameInvalidTaskTitleIncrementsTheMessageIdEachTime() = runBlocking {
+        val model = ready()
+        model.create(); settled(model)
+        model.updateFields(TaskFields("x".repeat(201), "", null, null))
+        val initialMessageId = model.state.value.messageId
+        repeat(2) { attempt ->
+            model.save()
+            assertEquals("Use a title of 1 to 200 characters and notes of at most 5,000 characters.", model.state.value.error)
+            assertEquals(initialMessageId + attempt + 1L, model.state.value.messageId)
+        }
     }
 }

@@ -70,9 +70,10 @@ fun messageProblem(value: String): MessageProblem? {
     return if (blocked) MessageProblem.CONTROL else null
 }
 
+/** A deletion is final, so a copy read before it never brings the message back, whichever answer arrives last (T82). */
 fun mergeMessages(current: List<MessageDto>, incoming: List<MessageDto>): List<MessageDto> {
     val byId = LinkedHashMap<String, MessageDto>()
     current.forEach { byId[it.id] = it }
-    incoming.forEach { byId[it.id] = it }
+    incoming.forEach { message -> if (byId[message.id]?.deletedAt == null || message.deletedAt != null) byId[message.id] = message }
     return byId.values.sortedBy { it.position.toLong() }
 }

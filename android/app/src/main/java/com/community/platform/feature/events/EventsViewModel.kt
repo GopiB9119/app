@@ -38,6 +38,7 @@ data class EventsState(
     val error: String? = null,
     val notice: String? = null,
     val requiresSignIn: Boolean = false,
+    val messageId: Long = 0,
 ) {
     val busy: Boolean get() = loading || working
 }
@@ -75,7 +76,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
             error is IOException -> "No connection. Nothing new is confirmed."
             else -> error.message ?: "Something went wrong."
         }
-        mutableState.update { it.copy(error = message) }
+        mutableState.update { it.copy(error = message, messageId = it.messageId + 1) }
         if (failure?.status == 404 && mutableState.value.mode != EventMode.LIST) {
             mutableState.update { it.copy(mode = EventMode.LIST, selected = null, confirmingCancel = false) }
             reload()
@@ -178,7 +179,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
             val event = current.selected ?: return
             command({ id ->
                 val saved = repository.update(id, event, body)
-                mutableState.update { it.copy(mode = EventMode.DETAIL, selected = saved, notice = "Event saved.") }
+                mutableState.update { it.copy(mode = EventMode.DETAIL, selected = saved, notice = "Event saved.", messageId = it.messageId + 1) }
             }, "The change is not confirmed. Reload the event to check it before editing again.")
             return
         }
@@ -198,7 +199,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
     private fun submit(intent: EventCreateIntent) = command({ _ ->
         try {
             val created = repository.create(intent)
-            mutableState.update { it.copy(pending = null, mode = EventMode.DETAIL, selected = created, past = false, draft = EventDraft(timezone = zone), notice = "Event created.") }
+            mutableState.update { it.copy(pending = null, mode = EventMode.DETAIL, selected = created, past = false, draft = EventDraft(timezone = zone), notice = "Event created.", messageId = it.messageId + 1) }
             reload()
         } catch (error: IdentityFailure) {
             // A definite rejection releases the attempt; an unknown outcome keeps it for an exact retry.
@@ -224,7 +225,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
         mutableState.update { it.copy(confirmingCancel = false) }
         command({ account ->
             val cancelled = repository.cancel(account, event)
-            mutableState.update { it.copy(selected = cancelled, notice = "Event cancelled.") }
+            mutableState.update { it.copy(selected = cancelled, notice = "Event cancelled.", messageId = it.messageId + 1) }
         }, "The cancellation is not confirmed. Reload the event to check it.")
     }
 

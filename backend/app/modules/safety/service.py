@@ -79,6 +79,9 @@ class SafetyService:
             if error.status != 404:
                 raise
             return ContentPreview(status="unavailable"), None
+        # A deleted page and everything on it are hidden from everyone but its owner, moderators too (DEC-025, T115).
+        if page.status not in ("active", "read_only"):
+            return ContentPreview(status="unavailable"), None
         if target_type == "page":
             preview = ContentPreview(name=target.name, handle=target.handle, description=target.description, status=target.status)
         elif target_type == "post":
@@ -169,7 +172,7 @@ class SafetyService:
             self.identity.authenticate(database, token, lock=True)
             self.require_independent(target, page, user)
             if body.action == "hide":
-                if target.status != {"page": "active", "post": "published", "comment": "visible"}[body.target_type]:
+                if target.status not in {"page": ("active", "read_only"), "post": ("published",), "comment": ("visible",)}[body.target_type]:
                     raise DomainError(409, "CONTENT_UNAVAILABLE", "This content is no longer public.")
                 if target.moderation_hidden_at is not None:
                     raise DomainError(409, "CONTENT_ALREADY_HIDDEN", "This content already has a hiding decision.")
