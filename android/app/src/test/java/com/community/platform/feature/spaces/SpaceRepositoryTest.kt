@@ -28,6 +28,21 @@ import java.util.UUID
 class SpaceRepositoryTest {
     private val fixture = Fixture()
 
+    @Test fun memberInvitationsAreValidOnlyForFamilyAndGroup(): Unit = runBlocking {
+        for (type in listOf("family", "group")) {
+            fixture.api.space = fixture.space.copy(spaceType = type, memberInvites = true)
+            assertTrue(fixture.repository.spaces(fixture.accountId).items.single().memberInvites)
+            assertTrue(fixture.repository.read(fixture.accountId, fixture.spaceId).memberInvites)
+        }
+        for (type in listOf("couple", "solo")) {
+            fixture.api.space = fixture.space.copy(spaceType = type, memberInvites = true)
+            val listError = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.spaces(fixture.accountId) } }
+            val readError = assertThrows(IdentityFailure::class.java) { runBlocking { fixture.repository.read(fixture.accountId, fixture.spaceId) } }
+            assertEquals("INVALID_RESPONSE", listError.code)
+            assertEquals("INVALID_RESPONSE", readError.code)
+        }
+    }
+
     @Test fun adminSpacesAndRosterRowsAreAccepted(): Unit = runBlocking {
         fixture.api.space = fixture.space.copy(role = "admin")
         assertEquals("admin", fixture.repository.spaces(fixture.accountId).items.single().role)

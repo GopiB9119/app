@@ -480,6 +480,119 @@ class SpaceScreenTest {
         compose.runOnIdle { assertEquals(1, saves) }
     }
 
+    @Test fun invitePolicySectionShowsOnlyForFamilyAndGroupOwners() {
+        val basis = SpaceSettingsDto(space.id, space.name, "family", "private", "active", "owner", "1", space.createdAt, "\"settings\"")
+        var state by mutableStateOf(SpaceSettingsState(accountId = accountId, spaceId = space.id, basis = basis, name = basis.name))
+        val callbacks = SpaceSettingsActions({}, {}, {}, {}, {})
+        compose.setContent { CommunityTheme { SpaceSettingsScreen(state, callbacks, {}) } }
+        for (type in listOf("family", "group")) {
+            compose.runOnIdle { state = state.copy(basis = basis.copy(spaceType = type)) }
+            compose.onNodeWithText("Who can invite people").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Owner and admins").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("space-settings-invite-policy").performScrollTo().assertIsDisplayed().assertIsEnabled()
+            compose.runOnIdle { state = state.copy(basis = state.basis!!.copy(memberInvites = true)) }
+            compose.onNodeWithText("Everyone in the Space").performScrollTo().assertIsDisplayed()
+        }
+        for (hidden in listOf(basis.copy(spaceType = "couple"), basis.copy(spaceType = "solo"), basis.copy(role = "admin"))) {
+            compose.runOnIdle { state = state.copy(basis = hidden) }
+            compose.onNodeWithText("Who can invite people").assertDoesNotExist()
+            compose.onNodeWithTag("space-settings-invite-policy").assertDoesNotExist()
+            compose.onNodeWithTag("space-settings-invite-policy-confirm").assertDoesNotExist()
+        }
+    }
+
+    @Test fun invitePolicyConfirmationCancelsAndLocksAnUnansweredChoice() {
+        val basis = SpaceSettingsDto(space.id, space.name, "family", "private", "active", "owner", "1", space.createdAt, "\"settings\"")
+        var state by mutableStateOf(SpaceSettingsState(accountId = accountId, spaceId = space.id, basis = basis, name = basis.name))
+        val requests = mutableListOf<InvitePolicyIntent>()
+        val callbacks = SpaceSettingsActions({}, {}, {}, {}, {},
+            proposeInvitePolicy = { state = state.copy(confirmingInvitePolicy = true) },
+            cancelInvitePolicy = { state = state.copy(confirmingInvitePolicy = false) },
+            confirmInvitePolicy = {
+                val intent = state.pendingInvitePolicy ?: InvitePolicyIntent(accountId, space.id, true, basis.etag, "original-policy-key")
+                requests.add(intent)
+                state = state.copy(pendingInvitePolicy = intent)
+            })
+        compose.setContent { CommunityTheme { SpaceSettingsScreen(state, callbacks, {}) } }
+        compose.onNodeWithTag("space-settings-invite-policy").performScrollTo().performClick()
+        compose.onNodeWithTag("space-settings-invite-policy-cancel").performScrollTo().performClick()
+        compose.runOnIdle { assertTrue(requests.isEmpty()); assertNull(state.pendingInvitePolicy) }
+        compose.onNodeWithTag("space-settings-invite-policy-confirm").assertDoesNotExist()
+        compose.onNodeWithTag("space-settings-invite-policy").performScrollTo().performClick()
+        compose.onNodeWithTag("space-settings-invite-policy-confirm").performScrollTo().performClick()
+        compose.onNodeWithTag("space-settings-name").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("space-settings-invite-policy-cancel").performScrollTo().assertIsNotEnabled()
+        compose.runOnIdle { state = state.copy(busy = true) }
+        compose.onNodeWithTag("space-settings-invite-policy-confirm").performScrollTo().assertIsNotEnabled()
+        compose.runOnIdle { state = state.copy(busy = false) }
+        compose.onNodeWithTag("space-settings-invite-policy-confirm").assertTextContains("Retry original choice").performClick()
+        compose.runOnIdle { assertEquals(2, requests.size); assertEquals(requests[0], requests[1]); assertEquals(basis.etag, requests[0].etag) }
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun invitePolicyConfirmStaysReachableAtLargeText() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals(320, context.resources.configuration.screenWidthDp)
+        val basis = SpaceSettingsDto(space.id, "Walkers ${"A".repeat(60)}", "group", "private", "active", "owner", "1", space.createdAt, "\"settings\"")
+        var state by mutableStateOf(SpaceSettingsState(accountId = accountId, spaceId = space.id, basis = basis, name = basis.name))
+        var confirmations = 0
+        val callbacks = SpaceSettingsActions({}, {}, {}, {}, {},
+            proposeInvitePolicy = { state = state.copy(confirmingInvitePolicy = true) },
+            cancelInvitePolicy = { state = state.copy(confirmingInvitePolicy = false) },
+            confirmInvitePolicy = { confirmations += 1; state = state.copy(confirmingInvitePolicy = false) })
+        compose.setContent { CommunityTheme { SpaceSettingsScreen(state, callbacks, {}) } }
+        for (enabled in listOf(false, true)) {
+            compose.runOnIdle { state = state.copy(basis = basis.copy(memberInvites = enabled)) }
+            compose.onNodeWithTag("space-settings-invite-policy").performScrollTo().assertIsDisplayed().performClick()
+            val description = compose.onNodeWithTag("space-settings-invite-policy-description").performScrollTo().assertIsDisplayed()
+            description.assertTextContains(if (enabled) "Only you and admins will be able to invite people." else "Everyone in the Space will be able to invite people.")
+            val layouts = mutableListOf<TextLayoutResult>()
+            description.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
+            assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)
+            compose.onNodeWithTag("space-settings-invite-policy-cancel").performScrollTo().assertIsDisplayed()
+            val confirm = compose.onNodeWithTag("space-settings-invite-policy-confirm").performScrollTo().assertIsDisplayed().assertIsEnabled()
+            val bounds = confirm.fetchSemanticsNode().boundsInRoot
+            assertTrue(bounds.height >= 48f * context.resources.displayMetrics.density)
+            assertTrue(bounds.width <= compose.onRoot().fetchSemanticsNode().boundsInRoot.width)
+            confirm.performClick()
+        }
+        compose.runOnIdle { assertEquals(2, confirmations) }
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun memberInviteSectionFollowsPolicyAndShowsOnlySentInvitationNote() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals(320, context.resources.configuration.screenWidthDp)
+        var state by mutableStateOf(workspace())
+        val requests = mutableListOf<SpaceCommand.Invite>()
+        val callbacks = actions(recipient = { state = state.copy(recipientDraft = it) },
+            invite = { requests.add(SpaceCommand.Invite(accountId, state.selectedSpace!!.id, state.recipientDraft, "member-invite-key")); state = state.copy(recipientDraft = "") })
+        compose.setContent { CommunityTheme { SpaceScreen(state, callbacks, "UTC", {}, {}) } }
+        for (type in listOf("family", "group")) {
+            val member = space.copy(spaceType = type, role = "member", memberInvites = true)
+            compose.runOnIdle { state = workspace().copy(selectedSpace = member, sent = listOf(invitation.copy(recipientAccountId = otherId))) }
+            revealText("Everyone in this Space can invite people. You see only the invitations you sent.")
+            val note = compose.onNodeWithTag("space-member-invite-note").performScrollTo().assertIsDisplayed()
+            val layouts = mutableListOf<TextLayoutResult>()
+            note.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { read -> assertTrue(read(layouts)) }
+            assertEquals(2f, layouts.single().layoutInput.density.fontScale, 0.01f)
+            reveal("space-recipient")
+            compose.onNodeWithTag("space-recipient").performScrollTo().assertIsEnabled().performTextReplacement(otherId)
+            reveal("space-invite")
+            val invite = compose.onNodeWithTag("space-invite").performScrollTo().assertIsDisplayed().assertIsEnabled()
+            assertTrue(invite.fetchSemanticsNode().boundsInRoot.height >= 48f * context.resources.displayMetrics.density)
+            invite.performClick()
+            reveal("invitation-revoke-${invitation.id}")
+            compose.onNodeWithTag("invitation-revoke-${invitation.id}").performScrollTo().assertIsDisplayed()
+            compose.runOnIdle { state = state.copy(selectedSpace = member.copy(memberInvites = false)) }
+            compose.onNodeWithTag("space-recipient").assertDoesNotExist()
+            compose.onNodeWithTag("space-invite").assertDoesNotExist()
+            compose.onNodeWithTag("space-member-invite-note").assertDoesNotExist()
+            compose.onNodeWithTag("invitation-revoke-${invitation.id}").assertDoesNotExist()
+        }
+        compose.runOnIdle { assertEquals(2, requests.size); assertTrue(requests.all { it.recipientAccountId == otherId }) }
+    }
+
     @DeviceFontScale(2f)
     @Test fun ownershipReviewUsesRealLargeTextWithReachableActions() {
         assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)

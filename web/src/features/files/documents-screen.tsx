@@ -8,16 +8,28 @@ import { ArrowLeft, FilePlus2, LoaderCircle, RefreshCw, Trash2, X } from "lucide
 import { api } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useLanguage, useText } from "@/features/i18n/i18n";
+import type { MessageId, MessageValues } from "@/features/i18n/messages";
 import { isUnknown } from "@/features/community/client";
 import { problemText, sessionLost, useViewer } from "@/features/community/shared";
 import { spacesSchema } from "@/features/spaces/client";
-import { ACCEPT, KIND_LABELS, addDocument, countLines, decodeText, deleteDocument, fileProblem, formatSize, isCursorProblem, lineRange, listDocuments, readDocument, splitLines } from "./client";
+import { ACCEPT, MAX_NAME, addDocument, decodeText, deleteDocument, fileProblem, formatSize, isCursorProblem, lineRange, listDocuments, readDocument, splitLines } from "./client";
 import type { AddIntent, SpaceDocument } from "./client";
 import styles from "./documents.module.css";
 
-const date = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const kindIds = { "text/plain": "documents.kind.text", "text/markdown": "documents.kind.markdown", "text/csv": "documents.kind.csv" } as const;
+const fileProblemIds: Record<string, MessageId> = {
+  "Add a .txt, .md or .csv file. Other file types need a virus scanner, which is not available yet.": "documents.problem.type",
+  [`File names can have up to ${MAX_NAME} characters.`]: "documents.problem.name",
+  "Use a file name without folders.": "documents.problem.folders",
+  "This file is empty.": "documents.problem.empty",
+  "A document can be at most 512 KB.": "documents.problem.size",
+  "This file is not UTF-8 text.": "documents.problem.utf8",
+  "This file could not be read.": "documents.problem.read",
+};
 
 type View = { spaceId: string; documentId: string; line: string; end: string };
+type DocumentNotice = { id: MessageId; values?: MessageValues };
 
 function addressOf(view: View) {
   const query = new URLSearchParams();
@@ -37,24 +49,26 @@ function viewFromAddress(): View {
 export function DocumentsScreen({ initialSpaceId, initialDocumentId, initialLine, initialEnd }: {
   initialSpaceId: string; initialDocumentId: string; initialLine: string; initialEnd: string;
 }) {
+  const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
   if (viewer.pending || viewer.signedOut) {
-    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading documents</main></Shell>;
+    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("documents.loading")}</main></Shell>;
   }
   if (!viewer.account) {
-    return <Shell account><main className={styles.main}><h1>Documents unavailable</h1><p role="alert">{problemText(viewer.error, "Documents could not load.")}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />Retry</button></main></Shell>;
+    return <Shell account><main className={styles.main}><h1>{t("documents.unavailable")}</h1><p role="alert">{problemText(viewer.error, t("documents.loadError"))}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />{t("documents.retry")}</button></main></Shell>;
   }
   return <Documents key={viewer.account.id} user={viewer.account} initial={{ spaceId: initialSpaceId, documentId: initialDocumentId, line: initialLine, end: initialEnd }} />;
 }
 
 function Documents({ user, initial }: { user: Account; initial: View }) {
+  const t = useText();
   const queryClient = useQueryClient();
   const spaceLabel = useId();
   const [view, setView] = useState<View>(initial);
-  const [notice, setNotice] = useState<{ text: string; at: number } | null>(null);
+  const [notice, setNotice] = useState<(DocumentNotice & { at: number }) | null>(null);
   const [locked, setLocked] = useState(false);
-  const announce = (text: string) => setNotice({ text, at: Date.now() });
+  const announce = (message: DocumentNotice) => setNotice({ ...message, at: Date.now() });
   const spaces = useQuery({
     queryKey: ["spaces", user.id],
     queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }),
@@ -77,23 +91,24 @@ function Documents({ user, initial }: { user: Account; initial: View }) {
   };
   const spaceList = spaces.data?.data ?? [];
   const space = spaceList.find(item => item.id === view.spaceId) ?? spaceList[0];
+  const [beforeSpacesLink, afterSpacesLink] = t("documents.noSpaces").split("{link}");
 
   return <Shell account>
     <main className={styles.main}>
       <header className={styles.header}>
-        <h1>Documents</h1>
-        {!view.documentId && <p>Text files shared with the current members of a Space. People who join later do not see documents added before they joined.</p>}
+        <h1>{t("documents.title")}</h1>
+        {!view.documentId && <p>{t("documents.intro")}</p>}
       </header>
-      {spaces.isPending && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading your Spaces</p>}
-      {spaces.isError && <div className="message error" role="alert">{problemText(spaces.error, "Your Spaces could not load.")}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />Retry</button></div>}
-      {spaces.isSuccess && spaceList.length === 0 && <p className={styles.empty}>Create or join a Space first. <Link href="/app/spaces">Go to your Spaces</Link></p>}
+      {spaces.isPending && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("documents.loadingSpaces")}</p>}
+      {spaces.isError && <div className="message error" role="alert">{problemText(spaces.error, t("documents.spacesError"))}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />{t("documents.retry")}</button></div>}
+      {spaces.isSuccess && spaceList.length === 0 && <p className={styles.empty}>{beforeSpacesLink}<Link href="/app/spaces">{t("documents.goToSpaces")}</Link>{afterSpacesLink}</p>}
       {view.documentId
         ? <DocumentViewer key={view.documentId} user={user} documentId={view.documentId} range={lineRange(view.line, view.end)}
           onClose={spaceId => { setNotice(null); go(spaceId ? { spaceId } : {}); }}
           onDeleted={(message, spaceId) => { announce(message); queryClient.removeQueries({ queryKey: ["documents", user.id, spaceId] }); go({ spaceId }); }} />
         : space && <>
           <div className={styles.controls}>
-            <label className={styles.field}><span id={spaceLabel}>Space</span>
+            <label className={styles.field}><span id={spaceLabel}>{t("documents.space")}</span>
               <select aria-labelledby={spaceLabel} value={space.id} disabled={locked} onChange={event => { setNotice(null); go({ spaceId: event.target.value }); }}>
                 {spaceList.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
@@ -107,15 +122,17 @@ function Documents({ user, initial }: { user: Account; initial: View }) {
   </Shell>;
 }
 
-function Notice({ message }: { message: { text: string; at: number } | null }) {
+function Notice({ message }: { message: (DocumentNotice & { at: number }) | null }) {
+  const t = useText();
   const ref = useRef<HTMLParagraphElement>(null);
   useEffect(() => { if (message) ref.current?.focus(); }, [message]);
-  return message ? <p ref={ref} className={styles.notice} role="status" tabIndex={-1}>{message.text}</p> : null;
+  return message ? <p ref={ref} className={styles.notice} role="status" tabIndex={-1}>{t(message.id, message.values)}</p> : null;
 }
 
 function AddDocument({ user, space, onLocked, onAdded }: {
-  user: Account; space: { id: string; name: string }; onLocked: (locked: boolean) => void; onAdded: (message: string) => void;
+  user: Account; space: { id: string; name: string }; onLocked: (locked: boolean) => void; onAdded: (message: DocumentNotice) => void;
 }) {
+  const t = useText();
   const queryClient = useQueryClient();
   const fieldId = useId();
   const reading = useRef(0);
@@ -128,7 +145,7 @@ function AddDocument({ user, space, onLocked, onAdded }: {
     onSuccess: item => {
       setIntent(null); setChoice(null); setInputKey(value => value + 1);
       void queryClient.invalidateQueries({ queryKey: ["documents", user.id, space.id] });
-      onAdded(item.status === "deleted" ? "The document was added and then deleted." : `Added “${item.name}” to ${space.name}.`);
+      onAdded(item.status === "deleted" ? { id: "documents.addedDeleted" } : { id: "documents.added", values: { name: item.name ?? "", space: space.name } });
     },
     onError: error => {
       // A definite refusal releases the choice with a fresh key; an unconfirmed outcome keeps the same key and text.
@@ -173,25 +190,27 @@ function AddDocument({ user, space, onLocked, onAdded }: {
     setIntent(null); setChoice(null); setInputKey(value => value + 1); add.reset();
     void queryClient.invalidateQueries({ queryKey: ["documents", user.id, space.id] });
   };
+  const problemId = problem ? fileProblemIds[problem] : undefined;
 
   return <form className={styles.panel} onSubmit={submit} aria-labelledby={`${fieldId}-title`} noValidate>
-    <h2 id={`${fieldId}-title`}>Add a document to {space.name}</h2>
-    <p className={styles.hint}>Only text files for now. Other file types need a virus scanner, which is not available yet.</p>
-    <label className={styles.field}>Text file (.txt, .md or .csv, up to 512 KB)
+    <h2 id={`${fieldId}-title`}>{t("documents.addTitle", { space: space.name })}</h2>
+    <p className={styles.hint}>{t("documents.textOnly")}</p>
+    <label className={styles.field}>{t("documents.file")}
       <input key={inputKey} type="file" accept={ACCEPT} disabled={locked} aria-describedby={problem ? `${fieldId}-problem` : undefined} onChange={choose} />
     </label>
     {choice && <p className={styles.chosen}>{choice.name} ({formatSize(choice.size)})</p>}
-    {problem && <p id={`${fieldId}-problem`} className="message error" role="alert">{problem}</p>}
-    {add.isError && <p className="message error" role="alert">{problemText(add.error, "The document was not added.")}{uncertain ? " Retry sends the same document; it will not be added twice." : ""}</p>}
-    {add.isPending && <p role="status">Adding the document...</p>}
+    {problem && <p id={`${fieldId}-problem`} className="message error" role="alert">{problemId ? t(problemId, { limit: MAX_NAME }) : problem}</p>}
+    {add.isError && <p className="message error" role="alert">{problemText(add.error, t("documents.addError"))}{uncertain ? t("documents.retryAddHint") : ""}</p>}
+    {add.isPending && <p role="status">{t("documents.adding")}</p>}
     <div className={styles.actions}>
-      <button className="primary-button" type="submit" disabled={!choice || add.isPending}>{add.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <FilePlus2 size={17} aria-hidden />}{uncertain ? "Retry" : "Add document"}</button>
-      {uncertain && <button type="button" className="secondary-button" onClick={giveUp}>Check the list instead</button>}
+      <button className="primary-button" type="submit" disabled={!choice || add.isPending}>{add.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <FilePlus2 size={17} aria-hidden />}{uncertain ? t("documents.retry") : t("documents.add")}</button>
+      {uncertain && <button type="button" className="secondary-button" onClick={giveUp}>{t("documents.checkList")}</button>}
     </div>
   </form>;
 }
 
 function DocumentList({ user, space, locked, onOpen }: { user: Account; space: { id: string; name: string }; locked: boolean; onOpen: (id: string) => void }) {
+  const t = useText();
   const queryClient = useQueryClient();
   const titleId = useId();
   const key = ["documents", user.id, space.id];
@@ -204,37 +223,43 @@ function DocumentList({ user, space, locked, onOpen }: { user: Account; space: {
   const rows = [...new Map(list.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
   const stale = isCursorProblem(list.error);
   return <section aria-labelledby={titleId}>
-    <h2 id={titleId} className={styles.listTitle}>Documents in {space.name}</h2>
-    {list.isPending && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading documents</p>}
-    {list.isError && <div className="message error" role="alert">{problemText(list.error, "Documents could not load.")}
-      {stale ? <button className="text-button" onClick={() => void queryClient.resetQueries({ queryKey: key })}><RefreshCw size={16} aria-hidden />Reload the list</button>
-        : <button className="text-button" onClick={() => void list.refetch()}><RefreshCw size={16} aria-hidden />Retry</button>}
+    <h2 id={titleId} className={styles.listTitle}>{t("documents.listTitle", { space: space.name })}</h2>
+    {list.isPending && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("documents.loading")}</p>}
+    {list.isError && <div className="message error" role="alert">{problemText(list.error, t("documents.loadError"))}
+      {stale ? <button className="text-button" onClick={() => void queryClient.resetQueries({ queryKey: key })}><RefreshCw size={16} aria-hidden />{t("documents.reloadList")}</button>
+        : <button className="text-button" onClick={() => void list.refetch()}><RefreshCw size={16} aria-hidden />{t("documents.retry")}</button>}
     </div>}
-    {list.isSuccess && rows.length === 0 && <p className={styles.empty}>No documents yet. Add a .txt, .md or .csv file.</p>}
+    {list.isSuccess && rows.length === 0 && <p className={styles.empty}>{t("documents.empty")}</p>}
     <ul className={styles.list}>{rows.map(item => <DocumentRow key={item.id} item={item} locked={locked} onOpen={onOpen} />)}</ul>
-    {list.hasNextPage && !stale && <div className={styles.actions}><button className="secondary-button" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{list.isFetchingNextPage ? "Loading..." : "Load more"}</button></div>}
+    {list.hasNextPage && !stale && <div className={styles.actions}><button className="secondary-button" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>{list.isFetchingNextPage ? t("documents.loadingMore") : t("documents.more")}</button></div>}
   </section>;
 }
 
 function DocumentRow({ item, locked, onOpen }: { item: SpaceDocument; locked: boolean; onOpen: (id: string) => void }) {
+  const t = useText();
+  const { language } = useLanguage();
+  const date = new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium" });
   return <li className={styles.card}>
     <button className={styles.cardButton} disabled={locked} onClick={() => onOpen(item.id)}>{item.name}</button>
-    <p className={styles.meta}>{item.media_type ? KIND_LABELS[item.media_type] : ""} · {formatSize(item.size_bytes ?? 0)} · {countLines(item.line_count ?? 0)}</p>
-    <p className={styles.meta}>Added by {item.added_by_name || "a former member"} on {date.format(new Date(item.added_at))}</p>
+    <p className={styles.meta}>{item.media_type ? t(kindIds[item.media_type]) : ""} · {formatSize(item.size_bytes ?? 0)} · {t(item.line_count === 1 ? "documents.lines.one" : "documents.lines.many", { count: item.line_count ?? 0 })}</p>
+    <p className={styles.meta}>{t("documents.addedBy", { name: item.added_by_name || t("documents.formerMember"), date: date.format(new Date(item.added_at)) })}</p>
   </li>;
 }
 
 function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
   user: Account; documentId: string; range: { start: number; end: number } | null;
-  onClose: (spaceId?: string) => void; onDeleted: (message: string, spaceId: string) => void;
+  onClose: (spaceId?: string) => void; onDeleted: (message: DocumentNotice, spaceId: string) => void;
 }) {
+  const t = useText();
+  const { language } = useLanguage();
+  const date = new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium" });
   const queryClient = useQueryClient();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [confirming, setConfirming] = useState(false);
   const detail = useQuery({ queryKey: ["document", user.id, documentId], queryFn: ({ signal }) => readDocument(user.id, documentId, signal) });
   const remove = useMutation({
     mutationFn: (item: { id: string; space_id: string; name: string | null }) => deleteDocument(user.id, item),
-    onSuccess: (_outcome, item) => { setConfirming(false); onDeleted(`Deleted “${item.name ?? "the document"}”.`, item.space_id); },
+    onSuccess: (_outcome, item) => { setConfirming(false); onDeleted({ id: "documents.deleted", values: { name: item.name ?? t("documents.theDocument") } }, item.space_id); },
   });
   useEffect(() => {
     if (sessionLost(detail.error) || sessionLost(remove.error)) { queryClient.clear(); window.location.replace("/login"); }
@@ -250,13 +275,13 @@ function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
-  if (detail.isPending) return <section className={styles.panel} aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading the document</section>;
+  if (detail.isPending) return <section className={styles.panel} aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("documents.loadingDocument")}</section>;
   if (detail.isError) {
     return <section className={styles.panel}>
-      <p className="message error" role="alert">{problemText(detail.error, "This document could not load.")}{detail.error && "status" in detail.error && detail.error.status === 404 ? " It may have been deleted, or it was added before you joined this Space." : ""}</p>
+      <p className="message error" role="alert">{problemText(detail.error, t("documents.documentError"))}{detail.error && "status" in detail.error && detail.error.status === 404 ? t("documents.unavailableHint") : ""}</p>
       <div className={styles.actions}>
-        {!("status" in detail.error && detail.error.status === 404) && <button className="secondary-button" onClick={() => void detail.refetch()}><RefreshCw size={16} aria-hidden />Retry</button>}
-        <button className="text-button" onClick={() => onClose()}><ArrowLeft size={16} aria-hidden />Back to the documents</button>
+        {!("status" in detail.error && detail.error.status === 404) && <button className="secondary-button" onClick={() => void detail.refetch()}><RefreshCw size={16} aria-hidden />{t("documents.retry")}</button>}
+        <button className="text-button" onClick={() => onClose()}><ArrowLeft size={16} aria-hidden />{t("documents.back")}</button>
       </div>
     </section>;
   }
@@ -266,18 +291,18 @@ function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
     <section className={styles.panel} aria-labelledby="document-title">
       <div className={styles.panelHeader}>
         <h2 id="document-title" ref={headingRef} tabIndex={-1}>{item.name}</h2>
-        <button className="text-button" onClick={() => onClose(item.space_id)}><ArrowLeft size={16} aria-hidden />Back to the documents</button>
+        <button className="text-button" onClick={() => onClose(item.space_id)}><ArrowLeft size={16} aria-hidden />{t("documents.back")}</button>
       </div>
-      <p className={styles.meta}>{item.media_type ? KIND_LABELS[item.media_type] : ""} · {formatSize(item.size_bytes ?? 0)} · {countLines(item.line_count ?? 0)}</p>
-      <p className={styles.meta}>In {item.space_name}. Added by {item.added_by_name || "a former member"} on {date.format(new Date(item.added_at))}.</p>
+      <p className={styles.meta}>{item.media_type ? t(kindIds[item.media_type]) : ""} · {formatSize(item.size_bytes ?? 0)} · {t(item.line_count === 1 ? "documents.lines.one" : "documents.lines.many", { count: item.line_count ?? 0 })}</p>
+      <p className={styles.meta}>{t("documents.details", { space: item.space_name, name: item.added_by_name || t("documents.formerMember"), date: date.format(new Date(item.added_at)) })}</p>
       {range && (visible
-        ? <p className={styles.notice} role="status">{range.start === range.end ? `Line ${range.start} is marked below.` : `Lines ${range.start} to ${Math.min(range.end, lines.length)} are marked below.`}</p>
-        : <p className={styles.notice} role="status">This document has {countLines(lines.length)}, so the lines you followed are not shown.</p>)}
+        ? <p className={styles.notice} role="status">{range.start === range.end ? t("documents.markedLine", { line: range.start }) : t("documents.markedLines", { start: range.start, end: Math.min(range.end, lines.length) })}</p>
+        : <p className={styles.notice} role="status">{t("documents.missingLines", { lines: t(lines.length === 1 ? "documents.lines.one" : "documents.lines.many", { count: lines.length }) })}</p>)}
       {item.can_delete && <div className={styles.actions}>
-        <button className="secondary-button" onClick={() => { remove.reset(); setConfirming(true); }}><Trash2 size={16} aria-hidden />Delete document</button>
+        <button className="secondary-button" onClick={() => { remove.reset(); setConfirming(true); }}><Trash2 size={16} aria-hidden />{t("documents.delete")}</button>
       </div>}
     </section>
-    <ol className={styles.lines} aria-label={`Text of ${item.name}`}>
+    <ol className={styles.lines} aria-label={t("documents.textOf", { name: item.name ?? "" })}>
       {lines.map((text, index) => {
         const number = index + 1;
         const marked = Boolean(range && number >= range.start && number <= range.end);
@@ -285,13 +310,13 @@ function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
           aria-current={marked ? "location" : undefined} tabIndex={range && number === range.start ? -1 : undefined}>{text}</li>;
       })}
     </ol>
-    {confirming && <ConfirmDialog title="Delete document?" locked={remove.isPending} onClose={() => setConfirming(false)}>
-      <p>Delete “{item.name}”, added by {item.added_by_name || "a former member"}, from {item.space_name}? Its text is removed for everyone and cannot be recovered.</p>
-      {remove.isError && <p className="message error" role="alert">{problemText(remove.error, "The document was not deleted.")}</p>}
+    {confirming && <ConfirmDialog title={t("documents.deleteTitle")} locked={remove.isPending} onClose={() => setConfirming(false)}>
+      <p>{t("documents.deleteWarning", { name: item.name ?? "", person: item.added_by_name || t("documents.formerMember"), space: item.space_name })}</p>
+      {remove.isError && <p className="message error" role="alert">{problemText(remove.error, t("documents.deleteError"))}</p>}
       <div className={styles.dialogActions}>
-        <button className="secondary-button" disabled={remove.isPending} onClick={() => setConfirming(false)}>Cancel</button>
+        <button className="secondary-button" disabled={remove.isPending} onClick={() => setConfirming(false)}>{t("documents.cancel")}</button>
         <button className="primary-button" disabled={remove.isPending} onClick={() => remove.mutate(item)}>
-          {remove.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Trash2 size={17} aria-hidden />}{remove.isError && isUnknown(remove.error) ? "Retry delete" : "Delete document"}
+          {remove.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Trash2 size={17} aria-hidden />}{remove.isError && isUnknown(remove.error) ? t("documents.retryDelete") : t("documents.delete")}
         </button>
       </div>
     </ConfirmDialog>}
@@ -299,11 +324,12 @@ function DocumentViewer({ user, documentId, range, onClose, onDeleted }: {
 }
 
 function ConfirmDialog({ title, locked, onClose, children }: { title: string; locked: boolean; onClose: () => void; children: React.ReactNode }) {
+  const t = useText();
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const titleId = useId();
   useEffect(() => { dialog?.showModal(); return () => dialog?.close(); }, [dialog]);
   return <dialog ref={setDialog} className={styles.dialog} aria-labelledby={titleId} onCancel={event => { if (locked) event.preventDefault(); else onClose(); }}>
-    <div className="dialog-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label="Close" title="Close" disabled={locked} onClick={onClose}><X size={18} aria-hidden /></button></div>
+    <div className="dialog-heading"><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label={t("documents.close")} title={t("documents.close")} disabled={locked} onClick={onClose}><X size={18} aria-hidden /></button></div>
     {children}
   </dialog>;
 }

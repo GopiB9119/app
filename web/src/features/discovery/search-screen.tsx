@@ -8,9 +8,11 @@ import { LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { api } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useLanguage, useText } from "@/features/i18n/i18n";
+import type { Language } from "@/features/i18n/messages";
 import { problemText, sessionLost, useViewer } from "@/features/community/shared";
 import { spacesSchema } from "@/features/spaces/client";
-import { EVENT_LABELS, FIRST_PAGE, MAX_QUERY, TASK_LABELS, documentLink, eventLink, highlight, normalizeQuery, queryProblem, searchSpaces, searchWords, taskLink } from "./client";
+import { FIRST_PAGE, MAX_QUERY, documentLink, eventLink, highlight, normalizeQuery, queryProblem, searchSpaces, searchWords, taskLink } from "./client";
 import type { SearchResults } from "./client";
 import styles from "./search.module.css";
 
@@ -18,30 +20,33 @@ type Submitted = { q: string; spaceId: string };
 
 const addressOf = (value: Submitted) => `/app/search?${new URLSearchParams(value.spaceId ? { q: value.q, space_id: value.spaceId } : { q: value.q })}`;
 
-function wallTime(local: string) {
+function wallTime(local: string, language: Language = "en") {
   const [day, time] = local.split("T");
   const [year, month, date] = day.split("-").map(Number);
-  return `${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, date)))}, ${time}`;
+  return `${new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, date)))}, ${time}`;
 }
 
-function dueDate(value: string) {
+function dueDate(value: string, language: Language = "en") {
   const [year, month, date] = value.split("-").map(Number);
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, date)));
+  return new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, date)));
 }
 
 export function SearchScreen({ initialQuery, initialSpaceId }: { initialQuery: string; initialSpaceId: string }) {
+  const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
   if (viewer.pending || viewer.signedOut) {
-    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading search</main></Shell>;
+    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("search.loading")}</main></Shell>;
   }
   if (!viewer.account) {
-    return <Shell account><main className={styles.main}><h1>Search unavailable</h1><p role="alert">{problemText(viewer.error, "Search could not load.")}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />Retry</button></main></Shell>;
+    return <Shell account><main className={styles.main}><h1>{t("search.unavailable")}</h1><p role="alert">{problemText(viewer.error, t("search.loadError"))}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />{t("search.retry")}</button></main></Shell>;
   }
   return <SearchPage key={viewer.account.id} user={viewer.account} initial={{ q: initialQuery, spaceId: initialSpaceId }} />;
 }
 
 function SearchPage({ user, initial }: { user: Account; initial: Submitted }) {
+  const t = useText();
+  const { language } = useLanguage();
   const queryClient = useQueryClient();
   const fieldId = useId();
   const resultsRef = useRef<HTMLHeadingElement>(null);
@@ -91,57 +96,59 @@ function SearchPage({ user, initial }: { user: Account; initial: Submitted }) {
   const spaceList = spaces.data?.data ?? [];
   const words = submitted ? searchWords(submitted.q) : [];
   const empty = found && !found.documents.length && !found.tasks.length && !found.events.length;
+  const localProblem = problem === "Enter at least one word to search for." ? t("search.problem.empty")
+    : problem === `Search for up to ${MAX_QUERY} characters.` ? t("search.problem.long", { limit: MAX_QUERY }) : problem;
 
   return <Shell account>
     <main className={styles.main}>
       <header className={styles.header}>
-        <h1>Search</h1>
-        <p>Find documents, tasks and events in the Spaces you belong to.</p>
+        <h1>{t("search.title")}</h1>
+        <p>{t("search.intro")}</p>
       </header>
       <form className={styles.form} onSubmit={submit} role="search" noValidate>
-        <label className={styles.field} htmlFor={`${fieldId}-q`}>Search your Spaces
+        <label className={styles.field} htmlFor={`${fieldId}-q`}>{t("search.query")}
           <input id={`${fieldId}-q`} type="search" value={text} maxLength={MAX_QUERY * 2} autoComplete="off" aria-invalid={problem !== null}
             aria-describedby={`${fieldId}-hint${problem ? ` ${fieldId}-problem` : ""}`} onChange={event => { setText(event.target.value); setProblem(null); }} />
         </label>
-        <p className={styles.hint} id={`${fieldId}-hint`}>Every word must match, from the start of a word. Messages, care records and reminders are not searched.</p>
-        {problem && <p id={`${fieldId}-problem`} className="field-error" role="alert">{problem}</p>}
-        <label className={styles.field} htmlFor={`${fieldId}-space`}><span id={`${fieldId}-space-label`}>Space</span>
+        <p className={styles.hint} id={`${fieldId}-hint`}>{t("search.hint")}</p>
+        {problem && <p id={`${fieldId}-problem`} className="field-error" role="alert">{localProblem}</p>}
+        <label className={styles.field} htmlFor={`${fieldId}-space`}><span id={`${fieldId}-space-label`}>{t("search.space")}</span>
           <select id={`${fieldId}-space`} aria-labelledby={`${fieldId}-space-label`} value={filter} disabled={spaces.isPending} onChange={event => setFilter(event.target.value)}>
-            <option value="">All my Spaces</option>
+            <option value="">{t("search.allSpaces")}</option>
             {spaceList.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
           </select>
         </label>
-        {spaces.isError && <p className="message error" role="alert">{problemText(spaces.error, "Your Spaces could not load.")}</p>}
+        {spaces.isError && <p className="message error" role="alert">{problemText(spaces.error, t("search.spacesError"))}</p>}
         <div className={styles.actions}>
-          <button className="primary-button" type="submit" disabled={results.isFetching}>{results.isFetching ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Search size={17} aria-hidden />}Search</button>
+          <button className="primary-button" type="submit" disabled={results.isFetching}>{results.isFetching ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Search size={17} aria-hidden />}{t("search.title")}</button>
         </div>
       </form>
-      {results.isFetching && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Searching</p>}
-      {results.isError && !results.isFetching && <div className="message error" role="alert">{problemText(results.error, "The search did not finish.")}
-        <button className="text-button" onClick={() => void results.refetch()}><RefreshCw size={16} aria-hidden />Try again</button></div>}
+      {results.isFetching && <p role="status" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("search.searching")}</p>}
+      {results.isError && !results.isFetching && <div className="message error" role="alert">{problemText(results.error, t("search.error"))}
+        <button className="text-button" onClick={() => void results.refetch()}><RefreshCw size={16} aria-hidden />{t("search.tryAgain")}</button></div>}
       {found && !results.isFetching && <section aria-labelledby={`${fieldId}-results`} className={styles.results}>
-        <h2 id={`${fieldId}-results`} ref={resultsRef} tabIndex={-1}>Results for “{submitted?.q}”</h2>
+        <h2 id={`${fieldId}-results`} ref={resultsRef} tabIndex={-1}>{t("search.resultsFor", { query: submitted?.q ?? "" })}</h2>
         {empty
-          ? <p className={styles.empty}>Nothing found in your Spaces.</p>
+          ? <p className={styles.empty}>{t("search.empty")}</p>
           : <>
-            <Group title="Documents" count={found.documents.length} more={found.more_documents}>
+            <Group title={t("search.documents")} count={found.documents.length} more={found.more_documents}>
               {found.documents.map((hit, index) => <li key={`${hit.document_id}-${index}`} className={styles.card}>
                 <Link href={documentLink(hit)} className={styles.cardLink}>{hit.name}</Link>
-                <p className={styles.meta}>In {hit.space_name} · {hit.start_line === hit.end_line ? `Line ${hit.start_line}` : `Lines ${hit.start_line}–${hit.end_line}`}</p>
+                <p className={styles.meta}>{t("search.inSpace", { space: hit.space_name })} · {hit.start_line === hit.end_line ? t("search.line", { line: hit.start_line }) : t("search.lines", { start: hit.start_line, end: hit.end_line })}</p>
                 <Excerpt value={hit.excerpt} words={words} />
               </li>)}
             </Group>
-            <Group title="Tasks" count={found.tasks.length} more={found.more_tasks}>
+            <Group title={t("search.tasks")} count={found.tasks.length} more={found.more_tasks}>
               {found.tasks.map(hit => <li key={hit.task_id} className={styles.card}>
                 <Link href={taskLink(hit)} className={styles.cardLink}>{hit.title}</Link>
-                <p className={styles.meta}>In {hit.space_name} · {TASK_LABELS[hit.status]}{hit.due_date ? ` · Due ${dueDate(hit.due_date)}` : ""}</p>
+                <p className={styles.meta}>{t("search.inSpace", { space: hit.space_name })} · {t(`search.task.${hit.status}`)}{hit.due_date ? t("search.due", { date: dueDate(hit.due_date, language) }) : ""}</p>
                 <Excerpt value={hit.excerpt} words={words} />
               </li>)}
             </Group>
-            <Group title="Events" count={found.events.length} more={found.more_events}>
+            <Group title={t("search.events")} count={found.events.length} more={found.more_events}>
               {found.events.map(hit => <li key={hit.event_id} className={styles.card}>
                 <Link href={eventLink(hit)} className={styles.cardLink}>{hit.title}</Link>
-                <p className={styles.meta}>In {hit.space_name} · {wallTime(hit.local_start)} ({hit.timezone}) · {EVENT_LABELS[hit.status]}</p>
+                <p className={styles.meta}>{t("search.inSpace", { space: hit.space_name })} · {wallTime(hit.local_start, language)} ({hit.timezone}) · {t(`search.event.${hit.status}`)}</p>
                 <Excerpt value={hit.excerpt} words={words} />
               </li>)}
             </Group>
@@ -152,11 +159,12 @@ function SearchPage({ user, initial }: { user: Account; initial: Submitted }) {
 }
 
 function Group({ title, count, more, children }: { title: string; count: number; more: boolean; children: React.ReactNode }) {
+  const t = useText();
   const titleId = useId();
   return <section aria-labelledby={titleId} className={styles.group}>
     <h3 id={titleId} className={styles.groupTitle}>{title} ({count}{more ? "+" : ""})</h3>
-    {count === 0 ? <p className={styles.empty}>None found.</p> : <ul className={styles.list}>{children}</ul>}
-    {more && <p className={styles.hint}>Showing the first {FIRST_PAGE}. Add words to narrow the results.</p>}
+    {count === 0 ? <p className={styles.empty}>{t("search.none")}</p> : <ul className={styles.list}>{children}</ul>}
+    {more && <p className={styles.hint}>{t("search.firstPage", { limit: FIRST_PAGE })}</p>}
   </section>;
 }
 

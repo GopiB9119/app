@@ -4,15 +4,6 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ## 2026-10-02
 
-### Community Management (Page Moderators, Handover and Lifecycle)
-
-- Implemented [DEC-025](docs/DECISIONS.md#accepted-decisions) parts 3, 4, and 5 ([T84](docs/TASKS.md#community-management), [T85](docs/TASKS.md#community-management)):
-  - **Page Moderators (Part 3):** Page owner can invite moderators by account ID (up to 10 moderators per page, 72h expiry), withdraw pending invitations, or remove active moderators. Active moderators can pin published posts (up to 3 pins) or step down from the role.
-  - **Page Handover (Part 4):** Page owner can offer full page ownership to an active moderator (15-minute expiry). The offeree can review, accept, or decline the handover offer. The owner can withdraw the offer before response.
-  - **Page Lifecycle (Part 5):** Page owner can archive an active page into `read_only` state, restore it back to `active`, or soft-delete it by explicitly typing the exact normalized page handle/name. Deleted pages enter a 7-day grace period where they can be restored before permanent background erasure by `account-deletion-worker`.
-- Cross-platform implementation on Backend (migration `0031_page_moderators_and_lifecycle.py`), Web Next.js client & UI components (`PageStateNotice`, `ModeratorPin`, `PageManagement`, `PageRoles`), and Android (`CommunityRepository`, `CommunityViewModel`, `CommunityScreen`). Full multilingual translations in Telugu and Hindi for all new strings.
-- Verified with 92 backend tests, 163 web client tests (`community-client.test.mjs`), 6 web UI tests (`community-ui.test.mjs`), 22 i18n layout tests (`i18n-community-ui.test.mjs`), and 96 Android JVM tests (`CommunityTest` and `ModerationTest`). Checkpoint recorded in [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md#page-moderators-handover-and-lifecycle-checkpoint).
-
 ### Android Space Invitation Policy
 
 - Implemented [DEC-026](docs/DECISIONS.md#accepted-decisions) on Android: an owner-reviewed family/group invite-policy setting, original key/body/ETag retries after an unanswered command, fresh settings after a stale review, member invitations and sent-list/withdrawal controls, and bounded access reload after a member invitation 404. Couple/solo and join-request restrictions remain unchanged; backend and web files were not changed.
@@ -79,7 +70,6 @@ Built under [DEC-019 to DEC-024](docs/DECISIONS.md#accepted-decisions), all prov
 
 ### Product (audit session)
 
-- **Review of the finished critical gaps; four defects fixed** (T101–T104, T106–T111): three read-only reviews checked live updates, phone alerts, unsent messages, account deletion and moderation against their decisions and found 19 defects. Fixed: the reminder inbox is newest first, so new reminders are on the first page and Android's phone alerts no longer miss most of them; one deleted account no longer stops moderators' Appeals list from loading, and an appeal needs a note; Android chat no longer skips messages after a long absence; one Keystore error no longer deletes the other unsent messages. The rest are recorded for the sessions that built them, and the lock-screen text needs a decision.
 - **Audit M6 records how the shared working tree mixes sessions' work** (PROPOSED for the owner): commits made with `git add -A` carry other sessions' unfinished work under an unrelated message; the audit session now stages only the paths it changed, and proposes that every session does until each has its own branch.
 - **Offline tests for the web calendar and checklists; the calendar keeps the Space and timezone you chose** (T99): 24 tests. They found that a refresh could switch the calendar to another Space or drop the chosen display timezone from its list, and that the heading and two-digit dates were cut off at 320 px with 200% text; all are fixed.
 - **One emoji-heavy name or title no longer empties a list** (T100): the web counted names, task titles and agent texts in its answers in UTF-16 units, where the server counts characters, so a person with more than 40 emoji in their name, or a task title with more than 100, made tasks, reminders, the inbox, the calendar, checklists, conversations, events or agent requests fail to load for everyone. Every web answer now counts characters, and account settings, the task form, checklists and the agent take the full limit of emoji. On Android, task assignee names are counted the same way, and the name fields keep 80 whole characters instead of 40 emoji.

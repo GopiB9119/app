@@ -1,0 +1,6 @@
+.localized { overflow-wrap: anywhere; }
+.localized :global(.section-title), .localized :global(.account-facts > span) { flex-wrap: wrap; }
+.localized :global(.section-title h2) { min-width: 0; flex: 1; }
+.localized :global(.verified-badge) { white-space: normal; }
+.dialog { overflow-wrap: anywhere; }
+.dialog :global(.dialog-heading h2) { min-width: 0; }

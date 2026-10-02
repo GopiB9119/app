@@ -8,10 +8,11 @@ import type { Account } from "@/features/identity/client";
 import { ApiError } from "@/features/identity/client";
 import { useText } from "@/features/i18n/i18n";
 import {
-  TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, pagePosts, pinPost, pinnedPosts, publishPost, readPage,
+  TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, myModeratorRoles, pagePosts, pinPost, pinnedPosts, publishPost, readPage,
   unblock, updatePage, updatePost,
 } from "./client";
 import type { CreateIntent, PublicPage, PublicPost, ReportTarget, Topic } from "./client";
+import { ModeratorPin, PageManagement, PageStateNotice } from "./page-management";
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useTextProblem, useViewer } from "./shared";
 import styles from "./community.module.css";
 
@@ -34,28 +35,36 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
   const [updates, setUpdates] = useState<Record<string, PublicPost>>({});
   const page = useQuery({ queryKey: ["public-page", reference, viewer?.id ?? null], queryFn: ({ signal }) => readPage(reference, viewer?.id, signal), networkMode: "always" });
   const current = page.data;
+  // A deleted page shows its owner only how to restore it, so its posts are not asked for.
+  const listed = Boolean(current && !current.blocked && current.status !== "deleted");
   const posts = useInfiniteQuery({
     queryKey: ["page-posts", current?.id, viewer?.id ?? null],
     queryFn: ({ pageParam, signal }) => pagePosts(current!.id, viewer?.id, pageParam, signal),
     initialPageParam: null as string | null, getNextPageParam: last => last.next,
-    enabled: Boolean(current && !current.blocked), networkMode: "always",
+    enabled: listed, networkMode: "always",
   });
   const pinned = useQuery({
     queryKey: ["pinned-posts", current?.id, viewer?.id ?? null],
     queryFn: ({ signal }) => pinnedPosts(current!, viewer?.id, signal),
-    enabled: Boolean(current && !current.blocked), networkMode: "always",
+    enabled: listed, networkMode: "always",
   });
   const draftList = useQuery({
     queryKey: ["page-drafts", current?.id, viewer?.id ?? null],
     queryFn: ({ signal }) => drafts(viewer!.id, current!.id, signal),
-    enabled: Boolean(viewer && current?.can_manage), networkMode: "always",
+    enabled: Boolean(viewer && current?.can_manage && current.status !== "deleted"), networkMode: "always",
   });
   const blocks = useQuery({
     queryKey: ["blocks", viewer?.id ?? null], queryFn: ({ signal }) => myBlocks(viewer!.id, signal),
     enabled: Boolean(viewer && current?.blocked), networkMode: "always",
   });
+  // Someone else may moderate this page, which lets them pin its posts. A failed list only hides those controls.
+  const roles = useQuery({
+    queryKey: ["moderator-roles", viewer?.id ?? null], queryFn: ({ signal }) => myModeratorRoles(viewer!.id, signal),
+    enabled: Boolean(viewer && current && !current.can_manage && !current.blocked), networkMode: "always",
+  });
+  const moderating = Boolean(current && roles.data?.some(role => role.page_id === current.id && role.status === "active"));
   const problem = page.error ?? posts.error ?? pinned.error ?? draftList.error ?? blocks.error;
-  useEffect(() => { if (sessionLost(problem)) window.location.reload(); }, [problem]);
+  useEffect(() => { if (sessionLost(problem ?? roles.error)) window.location.reload(); }, [problem, roles.error]);
   function refresh() {
     setUpdates({});
     void queryClient.invalidateQueries({ queryKey: ["public-page", reference] });
@@ -88,6 +97,9 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
   // Pinned posts also come in the date-ordered list; they show only once, at the top, while the pinned list loads.
   const pinnedIds = new Set(pinned.data?.map(item => item.id) ?? []);
   const shown = items.filter(item => !pinnedIds.has(item.id));
+  // Only an active page takes new posts, edits, pins, likes or follows; an archived one can still be unfollowed.
+  const active = current.status === "active";
+  const deleted = current.status === "deleted";
   return <CommunityFrame account={viewer} current={current.can_manage ? "pages" : null}>
     <header className={styles.pageHeader}>
       <h1>{current.name}</h1>
@@ -96,11 +108,13 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         <span className={styles.badge}>{t(`community.topic.${current.topic}`)}</span>
         <span className={styles.meta}>{current.follower_count === 1 ? t("community.followers.one") : t("community.followers.other", { count: current.follower_count })}</span>
         {current.can_manage && <span className={styles.badge}>{t("community.youOwnPage")}</span>}
+        {moderating && <span className={styles.badge}>{t("community.roles.youModerate")}</span>}
+        {current.status !== "active" && <span className={styles.badge}>{t(`community.manage.status.${current.status}`)}</span>}
       </div>
       {current.description && <p className={styles.description}>{current.description}</p>}
       {current.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${current.moderation.reason}`) })}</p>}
       {viewer && !current.can_manage && <div className={styles.actions}>
-        {!current.blocked && <button className={current.following ? "secondary-button" : "primary-button"} aria-pressed={current.following} disabled={busy}
+        {!current.blocked && (active || current.following) && <button className={current.following ? "secondary-button" : "primary-button"} aria-pressed={current.following} disabled={busy}
           onClick={() => run(() => followPage(viewer.id, current.id, !current.following))}>
           {current.following ? <UserCheck size={17} aria-hidden /> : <UserPlus size={17} aria-hidden />}{t(current.following ? "community.following" : "community.follow")}
         </button>}
@@ -117,37 +131,40 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         </div>
       </div>}
       {!viewer && <p className={styles.meta}>{t("community.signInForPage")}</p>}
-      {current.can_manage && !editing && <div className={styles.actions}><button className="secondary-button" onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />{t("community.editPage")}</button></div>}
+      {current.can_manage && active && !editing && <div className={styles.actions}><button className="secondary-button" onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />{t("community.editPage")}</button></div>}
     </header>
-    {current.rules && <section className={styles.stack} aria-labelledby="rules-heading">
+    <PageStateNotice page={current} />
+    {current.rules && !deleted && <section className={styles.stack} aria-labelledby="rules-heading">
       <h2 id="rules-heading">{t("community.rules")}</h2>
       <p className={styles.body}>{current.rules}</p>
     </section>}
     {error && <div className="message error" role="alert">{error}</div>}
-    {current.can_manage && viewer && editing && <PageEditor account={viewer} page={current} onDone={() => { setEditing(false); refresh(); }} />}
-    {current.can_manage && viewer && <Composer account={viewer} page={current} onCreated={refresh} />}
-    {current.can_manage && viewer && <section className={styles.stack} aria-labelledby="drafts-heading">
+    {current.can_manage && viewer && active && editing && <PageEditor account={viewer} page={current} onDone={() => { setEditing(false); refresh(); }} />}
+    {current.can_manage && viewer && active && <Composer account={viewer} page={current} onCreated={refresh} />}
+    {current.can_manage && viewer && !deleted && <section className={styles.stack} aria-labelledby="drafts-heading">
       <h2 id="drafts-heading">{t("community.drafts")}</h2>
       {draftList.isPending && <p role="status">{t("community.loadingDrafts")}</p>}
       {draftList.isError && !sessionLost(draftList.error) && <Failure error={draftList.error} retry={() => draftList.refetch()} />}
       {draftList.data?.length === 0 && <p className={styles.empty}>{t("community.noDrafts")}</p>}
       {draftList.data?.map(post => <PostCard key={post.id} post={post} account={viewer} onChange={refresh}>
         {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
-        <PostManager account={viewer} post={post} onChanged={refresh} />
+        {active && <PostManager account={viewer} post={post} onChanged={refresh} />}
       </PostCard>)}
     </section>}
-    {!current.blocked && pinned.isError && !sessionLost(pinned.error) && <Failure error={pinned.error} retry={() => pinned.refetch()} />}
-    {!current.blocked && pinned.data && pinned.data.length > 0 && <section className={styles.stack} aria-labelledby="pinned-heading">
+    {current.can_manage && viewer && <PageManagement key={current.id} account={viewer} page={current} onChanged={refresh} />}
+    {listed && pinned.isError && !sessionLost(pinned.error) && <Failure error={pinned.error} retry={() => pinned.refetch()} />}
+    {listed && pinned.data && pinned.data.length > 0 && <section className={styles.stack} aria-labelledby="pinned-heading">
       <h2 id="pinned-heading">{t("community.pinned")}</h2>
       {pinned.data.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} pinnedMark onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
           {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
-          {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
+          {post.can_manage && viewer && active && <PostManager account={viewer} post={post} onChanged={refresh} />}
+          {!post.can_manage && viewer && active && moderating && <ModeratorPin account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}
     </section>}
-    <section className={styles.stack} aria-labelledby="posts-heading">
+    {!deleted && <section className={styles.stack} aria-labelledby="posts-heading">
       <h2 id="posts-heading">{t("community.posts")}</h2>
       {current.blocked && <p className={styles.notice}>{t("community.pageBlocked")}</p>}
       {posts.isPending && !current.blocked && <p role="status" aria-busy="true">{t("community.loadingPosts")}</p>}
@@ -157,11 +174,12 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
           {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
-          {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
+          {post.can_manage && viewer && active && <PostManager account={viewer} post={post} onChanged={refresh} />}
+          {!post.can_manage && viewer && active && moderating && <ModeratorPin account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}
       {posts.hasNextPage && !posts.isError && <button className="secondary-button" disabled={posts.isFetchingNextPage} onClick={() => posts.fetchNextPage()}>{t("community.morePosts")}</button>}
-    </section>
+    </section>}
     {report && viewer && <ReportDialog account={viewer} target={report} onClose={() => setReport(null)} />}
   </CommunityFrame>;
 }

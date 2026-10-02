@@ -20,6 +20,10 @@ Text limits count characters as the server does, so an emoji counts once ([T79](
 
 Built for [T12](../../../../docs/TASKS.md#approved-requirements-not-built-yet) under [DEC-017](../../../../docs/DECISIONS.md#accepted-decisions) (provisional). The create form also offers Couple, with the note "Private couple Space: only you and one partner you invite". A couple row reads the two-person roster and shows "Waiting for your partner" or "With" and the partner's name; the read is keyed by the Space version, so refreshing the list after someone joins or leaves reads it again. The invitation dialog explains that a couple is for two people with one waiting invitation at a time, and the server's `COUPLE_FULL` and `COUPLE_INVITATION_PENDING` messages are shown as they are. Evidence: the `couples:` journey in `tests/e2e/identity.test.mjs` and the Space schema test in `tests/web-client.test.mjs`.
 
+## Who Can Invite
+
+Built for the per-Space permission part of [T13](../../../../docs/TASKS.md#approved-requirements-not-built-yet) under [DEC-026](../../../../docs/DECISIONS.md#accepted-decisions) (provisional). In Space settings the owner of a family or group Space sees "Who can invite people" ("Owner and admins" or "Everyone in the Space") and changes it after a confirmation that explains the result; the change is sent with the reviewed settings version and a request key that a retry after a lost answer reuses, and a changed Space asks for a reload. When the setting is on, members get the invite button; their panel says they see only the invitations they sent. If the owner turns it off, or the member is removed, the panel says "Only the owner and admins can invite people to this Space now." instead of closing, and the Space list reloads so the button goes.
+
 ## Members
 
 Each Space has a members action. Its roster shows minimal current account/name/role information; only the current owner sees ordinary-member removal, and only an ordinary member sees self-leave. Confirmation shows the exact Space, member name and account ID. The owner cannot leave or remove themselves in this slice.

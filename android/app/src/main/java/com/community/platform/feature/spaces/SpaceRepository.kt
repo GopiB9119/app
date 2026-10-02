@@ -35,6 +35,7 @@ class SpaceRepository @Inject constructor(private val api: SpaceApi, private val
             label(value.name, 80)
             require(value.spaceType in setOf("family", "couple", "solo", "group") && value.visibility in setOf("private", "public") && value.status == "active")
             require(value.visibility == "private" || value.spaceType == "group")
+            require(!value.memberInvites || value.spaceType in setOf("family", "group"))
             value.description?.let { require(it.codePointCount(0, it.length) <= 280) }
             require(value.spaceType != "solo" || value.role == "owner")
             require(value.role in setOf("owner", "admin", "member") && value.version.matches(Regex("[1-9][0-9]*")) && value.version.toLong() > 0)

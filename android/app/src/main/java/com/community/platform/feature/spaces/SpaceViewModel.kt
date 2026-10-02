@@ -100,7 +100,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val current = mutableState.value
         if (current.navigationLocked || current.creating) return
         action { accountId, expected ->
-            current.selectedSpace?.let { loadSpace(accountId, it.id, expected) }
+            current.selectedSpace?.let { if (!loadSpace(accountId, it.id, expected)) return@action }
             val spaces = repository.spaces(accountId)
             update(expected) { it.copy(spaces = spaces.items, spaceCursor = spaces.nextCursor) }
             val inbox = repository.inbox(accountId)
@@ -108,14 +108,51 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         }
     }
 
-    private suspend fun loadSpace(accountId: String, spaceId: String, expected: Long) {
+    private suspend fun loadSpace(accountId: String, spaceId: String, expected: Long): Boolean {
         val selected = repository.read(accountId, spaceId)
         update(expected) { it.copy(selectedSpace = selected, sent = emptyList(), sentCursor = null, members = emptyList(), ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false) }
         if (mutableState.value.showingMembers) loadMembers(accountId, spaceId, expected)
-        if (mutableState.value.selectedSpace?.role in setOf("owner", "admin") && selected.spaceType != "solo") {
-            val sent = repository.sent(accountId, spaceId)
+        val invitingSpace = mutableState.value.selectedSpace?.takeIf { it.id == spaceId } ?: return false
+        if (invitingSpace.canInvitePeople) {
+            val sent = withInviteAccess(accountId, invitingSpace, expected) { repository.sent(accountId, spaceId) } ?: return false
             update(expected) { it.copy(sent = sent.items, sentCursor = sent.nextCursor) }
         }
+        return true
+    }
+
+    private suspend fun <Value : Any> withInviteAccess(accountId: String, space: SpaceDto, expected: Long, operation: suspend () -> Value): Value? {
+        return try { operation() }
+        catch (error: IdentityFailure) {
+            if (space.role != "member" || error.status != 404 || error.code != "NOT_FOUND") throw error
+            reloadInviteAccess(accountId, space.id, expected)
+            null
+        }
+    }
+
+    private suspend fun reloadInviteAccess(accountId: String, spaceId: String, expected: Long) {
+        if (generation != expected) return
+        val message = "Only the owner and admins can invite people to this Space now."
+        update(expected) { it.copy(selectedSpace = null, spaces = it.spaces.filterNot { space -> space.id == spaceId },
+            members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false,
+            sent = emptyList(), sentCursor = null, recipientDraft = "", pending = null, confirmation = null, error = message, notice = null) }
+        try {
+            val page = repository.spaces(accountId)
+            update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor) }
+            if (generation != expected) return
+            val selected = try { repository.read(accountId, spaceId) }
+            catch (error: IdentityFailure) {
+                if (error.status != 404 || error.code != "NOT_FOUND") throw error
+                null
+            }
+            update(expected) { current -> current.copy(selectedSpace = selected,
+                spaces = if (selected == null) current.spaces.filterNot { it.id == spaceId }
+                    else current.spaces.map { if (it.id == spaceId) selected else it }) }
+        } catch (error: CancellationException) { throw error }
+        catch (error: IdentityFailure) {
+            if (error.status == 401 || error.code == "ACCOUNT_CHANGED") throw error
+            update(expected) { it.copy(error = message) }
+        }
+        catch (_error: Exception) { update(expected) { it.copy(error = message) } }
     }
 
     private suspend fun loadMembers(accountId: String, spaceId: String, expected: Long) {
@@ -222,7 +259,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     fun recipient(value: String) {
         val current = mutableState.value
         val selected = current.selectedSpace ?: return
-        if (!current.locked && current.confirmation == null && selected.role in setOf("owner", "admin") && selected.spaceType != "solo") mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
+        if (!current.locked && current.confirmation == null && selected.canInvitePeople) mutableState.update { it.copy(recipientDraft = value, error = null, notice = null) }
     }
 
     fun discardDraft() {
@@ -257,7 +294,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val current = mutableState.value
         val accountId = current.accountId ?: return
         val selected = current.selectedSpace ?: return
-        if (current.locked || current.confirmation != null || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo") return
+        if (current.locked || current.confirmation != null || !selected.canInvitePeople) return
         val input = current.recipientDraft.trim()
         val recipient = try { UUID.fromString(input).toString().also { require(it.equals(input, ignoreCase = true)) } }
         catch (_error: IllegalArgumentException) {
@@ -275,7 +312,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         when (command) {
             is SpaceCommand.Accept -> if (command.invitation.recipientAccountId != current.accountId || command.invitation.status != "pending" || current.invitations.none { it.id == command.invitation.id }) return
             is SpaceCommand.Decline -> if (command.invitation.recipientAccountId != current.accountId || command.invitation.status != "pending" || current.invitations.none { it.id == command.invitation.id }) return
-            is SpaceCommand.Revoke -> if (selected == null || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo" || selected.id != command.invitation.spaceId || command.invitation.status != "pending" || current.sent.none { it.id == command.invitation.id }) return
+            is SpaceCommand.Revoke -> if (selected == null || !selected.canInvitePeople || selected.id != command.invitation.spaceId || command.invitation.status != "pending" || current.sent.none { it.id == command.invitation.id }) return
             else -> return
         }
         mutableState.update { it.copy(confirmation = command, error = null, notice = null) }
@@ -292,9 +329,17 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
 
     private fun executePending() {
         val command = mutableState.value.pending ?: return
+        val invitingSpace = mutableState.value.selectedSpace?.takeIf {
+            when (command) {
+                is SpaceCommand.Invite -> command.spaceId == it.id
+                is SpaceCommand.Revoke -> command.invitation.spaceId == it.id
+                else -> false
+            }
+        }
         action { accountId, expected ->
             if (command.accountId != accountId) throw IdentityFailure("ACCOUNT_CHANGED", "Sign in again before continuing.", 401)
-            val result = repository.execute(command)
+            val result = if (invitingSpace == null) repository.execute(command)
+                else withInviteAccess(accountId, invitingSpace, expected) { repository.execute(command) } ?: return@action
             if (result is SpaceCommandResult.MemberRoleSaved) {
                 val change = command as SpaceCommand.ChangeRole
                 val notice = "${result.member.displayName} is now ${if (result.member.role == "admin") "an admin" else "a member"}."
@@ -378,9 +423,9 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
     fun moreSent() {
         val current = mutableState.value
         val selected = current.selectedSpace ?: return
-        if (current.navigationLocked || selected.role !in setOf("owner", "admin") || selected.spaceType == "solo" || current.sentCursor == null) return
+        if (current.navigationLocked || !selected.canInvitePeople || current.sentCursor == null) return
         action { accountId, expected ->
-            val page = repository.sent(accountId, selected.id, current.sentCursor)
+            val page = withInviteAccess(accountId, selected, expected) { repository.sent(accountId, selected.id, current.sentCursor) } ?: return@action
             update(expected) { it.copy(sent = (it.sent + page.items).distinctBy(SpaceInvitationDto::id), sentCursor = page.nextCursor) }
         }
     }

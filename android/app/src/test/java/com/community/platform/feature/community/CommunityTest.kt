@@ -122,6 +122,21 @@ class CommunityTest {
         override suspend fun blocks(authorization: String) = ok(emptyList<BlockDto>())
         override suspend fun block(authorization: String, body: CreateBlockDto) = ok(BlockDto(commentId, "page", body.targetId, "River Walkers", "2026-09-19T10:04:00Z"))
         override suspend fun unblock(authorization: String, blockId: String, body: Map<String, String>) = ok(OutcomeDto(blockId, "removed"))
+        override suspend fun moderators(authorization: String, pageId: String) = ok(emptyList<ModeratorDto>())
+        override suspend fun inviteModerator(authorization: String, pageId: String, key: String, body: Map<String, String>) =
+            ok(ModeratorDto(commentId, pageId, body.getValue("account_id"), "Sam", "pending", stamp, "2026-09-22T10:04:00Z", null, "\"m1\""))
+        override suspend fun resolveModerator(authorization: String, pageId: String, moderatorId: String, action: String, etag: String, body: Map<String, String>) =
+            ok(ModeratorDto(moderatorId, pageId, otherPageId, "Sam", mapOf("accept" to "active", "decline" to "declined", "withdraw" to "withdrawn", "remove" to "removed", "step-down" to "stepped_down").getValue(action), stamp, null, stamp, "\"m2\""))
+        override suspend fun moderatorRoles(authorization: String) = ok(emptyList<ModeratorRoleDto>())
+        override suspend fun offerHandover(authorization: String, pageId: String, key: String, etag: String, body: Map<String, String>) =
+            ok(HandoverDto(draftId, pageId, "river-walkers", "River Walkers", otherPageId, "Ana", body.getValue("to_account_id"), "Sam", "pending", stamp, "2026-09-19T10:19:00Z", null, "\"h1\""))
+        override suspend fun handover(authorization: String, pageId: String): Response<EnvelopeDto<HandoverDto>> = failed(404, "NOT_FOUND")
+        override suspend fun handoverOffers(authorization: String) = ok(emptyList<HandoverDto>())
+        override suspend fun respondHandover(authorization: String, pageId: String, offerId: String, action: String, etag: String, body: Map<String, String>) =
+            ok(HandoverDto(offerId, pageId, "river-walkers", "River Walkers", otherPageId, "Ana", personBlockId, "Sam", mapOf("accept" to "accepted", "decline" to "declined", "cancel" to "cancelled").getValue(action), stamp, null, stamp, "\"h2\""))
+        override suspend fun pageState(authorization: String, pageId: String, action: String, etag: String, body: Map<String, String>) =
+            ok(page.copy(canManage = true, etag = "\"p3\"", status = when (action) { "archive" -> "read_only"; "delete" -> "deleted"; else -> "active" },
+                purgeAfter = if (action == "delete") "2026-09-26T10:04:00Z" else null))
     }
 
     /** A server for reports and blocks. It records every call, can refuse a command or lose its answer, and alone decides what a block hides. */
@@ -1974,5 +1989,313 @@ class CommunityTest {
         json = Gson().toJson(EnvelopeDto(owned, null))
         assertTrue(json.toByteArray().size <= 65536)
         assertEquals(owned, wire.myPages(fixture.accountId))
+    }
+
+    private val inviteeId = "1b2c3d4e-5f60-4b7c-9d8e-0f1a2b3c4d5e"
+    private val roleId = "2c3d4e5f-6071-4c8d-8e9f-1a2b3c4d5e6f"
+    private val offerId = "3d4e5f60-7182-4d9e-9fa0-2b3c4d5e6f70"
+    private val handoverKey = "4f5e6d7c-8b9a-4c0d-9e1f-2a3b4c5d6e7f"
+
+    private fun moderatorRow(id: String = roleId, status: String = "active") =
+        ModeratorDto(id, pageId, inviteeId, "Sam", status, stamp, if (status == "pending") "2026-09-22T10:04:00Z" else null, if (status == "pending") null else stamp, "\"m1\"")
+    private fun role(status: String = "pending") =
+        ModeratorRoleDto(roleId, pageId, "river-walkers", "River Walkers", status, stamp, if (status == "pending") "2026-09-22T10:04:00Z" else null, null, "\"r1\"")
+    private fun offer(status: String = "pending") =
+        HandoverDto(offerId, pageId, "river-walkers", "River Walkers", otherPageId, "Ana", fixture.accountId, "You", status, stamp, if (status == "pending") "2026-09-19T10:19:00Z" else null, null, "\"h1\"")
+
+    /**
+     * A server for one page, its moderators and handover offers, and the signed-in person's own roles (DEC-025).
+     * It keeps what each command changed, records every call with its key or version tag, and can lose an answer after applying a change.
+     */
+    inner class RolesApi(owner: Boolean) : CommunityApi by api {
+        var shown = if (owner) page.copy(canManage = true, etag = "\"p1\"") else page
+        val rows = mutableListOf<ModeratorDto>()
+        var roles = listOf<ModeratorRoleDto>()
+        var offers = listOf<HandoverDto>()
+        var latest: HandoverDto? = null
+        val calls: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        private val invited = mutableMapOf<String, ModeratorDto>()
+        var lost = false
+        override suspend fun page(authorization: String, reference: String): Response<EnvelopeDto<PageDto>> = ok(shown)
+        override suspend fun moderators(authorization: String, pageId: String): Response<EnvelopeDto<List<ModeratorDto>>> { calls += "GET moderators"; return ok(rows.toList()) }
+        override suspend fun handover(authorization: String, pageId: String): Response<EnvelopeDto<HandoverDto>> { calls += "GET handover"; return latest?.let { ok(it) } ?: failed(404, "NOT_FOUND") }
+        override suspend fun moderatorRoles(authorization: String): Response<EnvelopeDto<List<ModeratorRoleDto>>> { calls += "GET roles"; return ok(roles) }
+        override suspend fun handoverOffers(authorization: String): Response<EnvelopeDto<List<HandoverDto>>> { calls += "GET offers"; return ok(offers) }
+        override suspend fun inviteModerator(authorization: String, pageId: String, key: String, body: Map<String, String>): Response<EnvelopeDto<ModeratorDto>> {
+            calls += "POST invite $key ${body.getValue("account_id")}"
+            val row = invited.getOrPut(key) {
+                moderatorRow(java.util.UUID.nameUUIDFromBytes(key.toByteArray()).toString(), "pending").copy(accountId = body.getValue("account_id")).also { rows += it }
+            }
+            if (lost) throw IOException("Synthetic lost answer")
+            return ok(row)
+        }
+        override suspend fun resolveModerator(authorization: String, pageId: String, moderatorId: String, action: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<ModeratorDto>> {
+            calls += "POST $action $moderatorId $etag"
+            val outcome = mapOf("accept" to "active", "decline" to "declined", "withdraw" to "withdrawn", "remove" to "removed", "step-down" to "stepped_down").getValue(action)
+            val row = rows.firstOrNull { it.id == moderatorId }
+                ?: roles.firstOrNull { it.id == moderatorId }?.let { ModeratorDto(it.id, it.pageId, fixture.accountId, "You", it.status, it.createdAt, it.expiresAt, null, it.etag) }
+                ?: return failed(404, "NOT_FOUND")
+            if (row.etag != etag) return failed(412, "CONTENT_CHANGED")
+            val changed = row.copy(status = outcome, expiresAt = null, resolvedAt = stamp, etag = "\"m2\"")
+            val index = rows.indexOfFirst { it.id == moderatorId }
+            if (index >= 0) { if (outcome == "active") rows[index] = changed else rows.removeAt(index) }
+            roles = roles.mapNotNull { if (it.id != moderatorId) it else if (outcome == "active") it.copy(status = "active", expiresAt = null, etag = "\"m2\"") else null }
+            return ok(changed)
+        }
+        override suspend fun offerHandover(authorization: String, pageId: String, key: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<HandoverDto>> {
+            calls += "POST handover $key $etag ${body.getValue("to_account_id")}"
+            if (etag != shown.etag) return failed(412, "CONTENT_CHANGED")
+            val made = latest ?: HandoverDto(offerId, pageId, "river-walkers", "River Walkers", fixture.accountId, "You", body.getValue("to_account_id"), "Sam", "pending", stamp, "2026-09-19T10:19:00Z", null, "\"h1\"").also { latest = it }
+            if (lost) throw IOException("Synthetic lost answer")
+            return ok(made)
+        }
+        override suspend fun respondHandover(authorization: String, pageId: String, offerId: String, action: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<HandoverDto>> {
+            calls += "POST $action $offerId $etag"
+            val outcome = mapOf("accept" to "accepted", "decline" to "declined", "cancel" to "cancelled").getValue(action)
+            val current = latest?.takeIf { it.id == offerId } ?: offers.firstOrNull { it.id == offerId } ?: return failed(404, "NOT_FOUND")
+            if (current.etag != etag) return failed(412, "CONTENT_CHANGED")
+            val changed = current.copy(status = outcome, expiresAt = null, resolvedAt = stamp, etag = "\"h2\"")
+            if (latest?.id == offerId) latest = changed
+            offers = offers.filterNot { it.id == offerId }
+            return ok(changed)
+        }
+        override suspend fun pageState(authorization: String, pageId: String, action: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<PageDto>> {
+            calls += "POST $action $etag $body"
+            if (etag != shown.etag) return failed(412, "CONTENT_CHANGED")
+            if (action == "delete" && body["confirm"] != shown.name) return failed(409, "PAGE_NAME_MISMATCH")
+            val version = "\"p${shown.etag!!.filter(Char::isDigit).toInt() + 1}\""
+            shown = when (action) {
+                "archive" -> shown.copy(status = "read_only", etag = version)
+                "delete" -> shown.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z", etag = version)
+                else -> shown.copy(status = "active", purgeAfter = null, etag = version)
+            }
+            return ok(shown)
+        }
+    }
+
+    @Test fun pageStatesModeratorsAndOffersAreCheckedLikeOtherPublicFacts() {
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        assertEquals(owned.copy(status = "read_only"), repository.page(owned.copy(status = "read_only")))
+        assertEquals(page.copy(status = "read_only"), repository.page(page.copy(status = "read_only")))
+        val deleted = owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z")
+        assertEquals(deleted, repository.page(deleted))
+        // Only the owner sees a deleted page, and only a deleted page has a time to be erased.
+        for (bad in listOf(page.copy(status = "deleted"), owned.copy(status = "archived"), owned.copy(purgeAfter = "2026-09-26T10:04:00Z"), deleted.copy(purgeAfter = "soon"))) {
+            assertThrows(IdentityFailure::class.java) { repository.page(bad) }
+        }
+        // An answer without a state reads as an active page.
+        val older = JsonParser.parseString(Gson().toJson(page)).asJsonObject.apply { remove("status"); remove("purge_after") }
+        assertTrue(repository.page(Gson().fromJson(older, PageDto::class.java)).writable)
+        val row = moderatorRow(roleId, "pending")
+        assertEquals(row, repository.moderator(row, pageId))
+        for (bad in listOf(row.copy(pageId = otherPageId), row.copy(expiresAt = null), row.copy(status = "owner"), row.copy(accountId = "someone"), row.copy(displayName = ""), row.copy(etag = ""))) {
+            assertThrows(IdentityFailure::class.java) { repository.moderator(bad, pageId) }
+        }
+        assertEquals(role(), repository.role(role()))
+        for (bad in listOf(role().copy(pageHandle = "Bad Handle"), role().copy(expiresAt = null), role().copy(pageName = ""))) {
+            assertThrows(IdentityFailure::class.java) { repository.role(bad) }
+        }
+        assertEquals(offer(), repository.handover(offer(), pageId))
+        for (bad in listOf(offer().copy(toAccountId = otherPageId), offer().copy(status = "taken"), offer().copy(expiresAt = null), offer().copy(pageId = otherPageId))) {
+            assertThrows(IdentityFailure::class.java) { repository.handover(bad, pageId) }
+        }
+    }
+
+    @Test fun moderatorHandoverAndPageStateCommandsGoToTheirRoutesWithKeysAndVersions() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val bodies = mutableListOf<String>()
+        var status = 200
+        var reply: Any = EnvelopeDto(listOf<ModeratorDto>(), null)
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val request = chain.request(); requests += request
+            val buffer = Buffer(); request.body?.writeTo(buffer); bodies += buffer.readUtf8()
+            okhttp3.Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status).message("OK")
+                .body(Gson().toJson(reply).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = CommunityRepository(IdentityModule.community(http, Gson()), fixture.accounts)
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        val row = moderatorRow(roleId, "pending")
+        val made = HandoverDto(offerId, pageId, "river-walkers", "River Walkers", fixture.accountId, "You", inviteeId, "Sam", "pending", stamp, "2026-09-19T10:19:00Z", null, "\"h1\"")
+        reply = EnvelopeDto(row, null)
+        assertEquals(row, wire.create(CreateIntent.Moderator(fixture.accountId, handoverKey, pageId, inviteeId)))
+        reply = EnvelopeDto(row.copy(status = "withdrawn", expiresAt = null, resolvedAt = stamp), null)
+        wire.resolveModerator(fixture.accountId, pageId, roleId, "\"m1\"", "withdraw")
+        reply = EnvelopeDto(made, null)
+        assertEquals(made, wire.create(CreateIntent.Handover(fixture.accountId, handoverKey, pageId, "\"p1\"", inviteeId, "Sam")))
+        reply = EnvelopeDto(made.copy(status = "cancelled", expiresAt = null, resolvedAt = stamp, etag = "\"h2\""), null)
+        wire.respondHandover(fixture.accountId, made, "cancel")
+        reply = EnvelopeDto(owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z", etag = "\"p2\""), null)
+        wire.changePageState(fixture.accountId, owned, "delete", "River Walkers")
+        reply = EnvelopeDto(owned.copy(status = "read_only", etag = "\"p2\""), null)
+        wire.changePageState(fixture.accountId, owned, "archive")
+        assertEquals(listOf(
+            "POST /v1/pages/$pageId/moderators", "POST /v1/pages/$pageId/moderators/$roleId/withdraw", "POST /v1/pages/$pageId/handover",
+            "POST /v1/pages/$pageId/handover/$offerId/cancel", "POST /v1/pages/$pageId/delete", "POST /v1/pages/$pageId/archive",
+        ), requests.map { "${it.method} ${it.url.encodedPath}" })
+        // Invitations and offers carry one key for every retry; every decision carries the version it was made on.
+        assertEquals(listOf(handoverKey, null, handoverKey, null, null, null), requests.map { it.header("Idempotency-Key") })
+        assertEquals(listOf(null, "\"m1\"", "\"p1\"", "\"h1\"", "\"p1\"", "\"p1\""), requests.map { it.header("If-Match") })
+        assertTrue(requests.all { it.header("Authorization") == "Bearer ${fixture.token}" })
+        assertEquals(listOf("""{"account_id":"$inviteeId"}""", "{}", """{"to_account_id":"$inviteeId"}""", "{}", """{"confirm":"River Walkers"}""", "{}"), bodies)
+        requests.clear(); bodies.clear()
+        reply = EnvelopeDto(listOf(row), null)
+        assertEquals(listOf(row), wire.moderators(fixture.accountId, pageId))
+        reply = EnvelopeDto(listOf(role()), null)
+        assertEquals(listOf(role()), wire.moderatorRoles(fixture.accountId))
+        reply = EnvelopeDto(listOf(offer()), null)
+        assertEquals(listOf(offer()), wire.handoverOffers(fixture.accountId))
+        // A page without a handover offer answers 404, which means there is none.
+        status = 404; reply = mapOf("error" to mapOf("code" to "NOT_FOUND", "message" to "Handover offer not found.", "details" to emptyMap<String, String>()))
+        assertNull(wire.handover(fixture.accountId, pageId))
+        assertEquals(listOf("/v1/pages/$pageId/moderators", "/v1/me/moderator-roles", "/v1/me/handover-offers", "/v1/pages/$pageId/handover"), requests.map { it.url.encodedPath })
+        assertTrue(requests.all { it.method == "GET" && it.header("Authorization") == "Bearer ${fixture.token}" })
+        status = 200
+        // Answers that do not confirm what was asked are refused.
+        reply = EnvelopeDto(row.copy(status = "active", expiresAt = null), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.resolveModerator(fixture.accountId, pageId, roleId, "\"m1\"", "withdraw") } }.code)
+        reply = EnvelopeDto(owned, null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.changePageState(fixture.accountId, owned, "archive") } }.code)
+        reply = EnvelopeDto(owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z"), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.changePageState(fixture.accountId, owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z"), "restore") } }.code)
+        reply = EnvelopeDto(listOf(row.copy(status = "removed", expiresAt = null)), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.moderators(fixture.accountId, pageId) } }.code)
+        reply = EnvelopeDto(listOf(offer("expired")), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.handoverOffers(fixture.accountId) } }.code)
+        reply = EnvelopeDto(made.copy(toAccountId = otherPageId, toName = "Kim"), null)
+        assertEquals("INVALID_RESPONSE", assertThrows(IdentityFailure::class.java) { runBlocking { wire.create(CreateIntent.Handover(fixture.accountId, handoverKey, pageId, "\"p1\"", inviteeId, "Sam")) } }.code)
+    }
+
+    @Test fun ownerInvitesOnlyAnotherFullAccountIdAndRetriesWithTheSameKey() = runBlocking {
+        val server = RolesApi(owner = true)
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        assertEquals(listOf("GET moderators", "GET handover"), server.calls)
+        current.state.value.let { state -> assertTrue(state.moderators.isEmpty()); assertNull(state.handover); assertFalse(state.moderating) }
+        // Part of an ID, or your own, is refused before anything is sent.
+        assertFalse(current.inviteModerator("1b2c3d4e"))
+        assertEquals(MODERATOR_ID_INVALID, current.state.value.error)
+        assertFalse(current.inviteModerator(fixture.accountId.uppercase()))
+        assertEquals(2, server.calls.size)
+        // A lost answer keeps the invitation, and Retry sends it again with its first key.
+        server.lost = true
+        assertTrue(current.inviteModerator("  ${inviteeId.uppercase()} ")); idle(current)
+        val pending = current.state.value.pending as CreateIntent.Moderator
+        assertEquals(inviteeId, pending.inviteeId)
+        assertEquals("No connection. Nothing new is confirmed.", current.state.value.error)
+        assertFalse(current.inviteModerator(inviteeId))
+        server.lost = false
+        current.retry(); idle(current)
+        assertEquals(List(2) { "POST invite ${pending.key} $inviteeId" }, server.calls.filter { it.startsWith("POST") })
+        current.state.value.let { state ->
+            assertNull(state.pending)
+            assertEquals(MODERATOR_INVITED, state.notice)
+            assertEquals(listOf(inviteeId to "pending"), state.moderators.map { it.accountId to it.status })
+        }
+    }
+
+    @Test fun ownerWithdrawsAndRemovesModeratorsAgainstTheVersionShown() = runBlocking {
+        val server = RolesApi(owner = true)
+        server.rows += moderatorRow(roleId, "active")
+        server.rows += moderatorRow(offerId, "pending").copy(accountId = otherPageId, displayName = "Kim")
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        val (active, waiting) = current.state.value.moderators.partition { it.status == "active" }
+        current.resolveModerator(waiting.single(), "withdraw"); idle(current)
+        assertEquals(listOf(roleId), current.state.value.moderators.map(ModeratorDto::id))
+        // A version changed since it was shown is refused, and the page stays shown.
+        server.rows[0] = server.rows[0].copy(etag = "\"m9\"")
+        current.resolveModerator(active.single(), "remove"); idle(current)
+        current.state.value.let { state -> assertEquals("Synthetic CONTENT_CHANGED", state.error); assertFalse(state.missing); assertEquals(1, state.moderators.size) }
+        current.reload(); idle(current)
+        current.resolveModerator(current.state.value.moderators.single(), "remove"); idle(current)
+        assertTrue(current.state.value.moderators.isEmpty())
+        // The owner only withdraws and removes; nothing else is sent from the page.
+        current.resolveModerator(active.single(), "accept")
+        assertEquals(listOf("POST withdraw $offerId \"m1\"", "POST remove $roleId \"m1\"", "POST remove $roleId \"m9\""), server.calls.filter { it.startsWith("POST") })
+    }
+
+    @Test fun ownerOffersThePageToACurrentModeratorWithTheReviewedVersionAndCanCancelIt() = runBlocking {
+        val server = RolesApi(owner = true)
+        server.rows += moderatorRow(roleId, "active")
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        val moderator = current.state.value.moderators.single()
+        assertFalse(current.offerHandover(moderator.copy(status = "pending")))
+        assertFalse(current.offerHandover(moderator.copy(pageId = otherPageId)))
+        server.lost = true
+        assertTrue(current.offerHandover(moderator)); idle(current)
+        val pending = current.state.value.pending as CreateIntent.Handover
+        assertEquals(CreateIntent.Handover(fixture.accountId, pending.key, pageId, "\"p1\"", inviteeId, "Sam"), pending)
+        server.lost = false
+        current.retry(); idle(current)
+        assertEquals(List(2) { "POST handover ${pending.key} \"p1\" $inviteeId" }, server.calls.filter { it.startsWith("POST") })
+        current.state.value.let { state -> assertEquals(HANDOVER_OFFERED, state.notice); assertEquals("pending", state.handover?.status) }
+        current.respondHandover(current.state.value.handover!!, "cancel"); idle(current)
+        assertEquals("POST cancel $offerId \"h1\"", server.calls.last { it.startsWith("POST") })
+        assertEquals("cancelled", current.state.value.handover?.status)
+    }
+
+    @Test fun invitationsRolesAndOffersShowUnderYourPagesAndAreAnsweredAgainstTheVersionShown() = runBlocking {
+        val server = RolesApi(owner = false)
+        server.roles = listOf(role("pending"))
+        server.offers = listOf(offer())
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.MyPages); idle(current)
+        assertEquals(listOf("GET roles", "GET offers"), server.calls)
+        current.state.value.let { state -> assertEquals(listOf(roleId), state.roles.map(ModeratorRoleDto::id)); assertEquals(listOf(offerId), state.offers.map(HandoverDto::id)) }
+        current.resolveRole(current.state.value.roles.single(), "accept"); idle(current)
+        assertEquals("active", current.state.value.roles.single().status)
+        current.respondHandover(current.state.value.offers.single(), "accept"); idle(current)
+        current.state.value.let { state -> assertEquals(HANDOVER_ACCEPTED, state.notice); assertTrue(state.offers.isEmpty()) }
+        current.resolveRole(current.state.value.roles.single(), "step-down"); idle(current)
+        current.state.value.let { state -> assertTrue(state.roles.isEmpty()); assertNull(state.error) }
+        current.resolveRole(role(), "remove")
+        assertEquals(listOf("POST accept $roleId \"r1\"", "POST accept $offerId \"h1\"", "POST step-down $roleId \"m2\""), server.calls.filter { it.startsWith("POST") })
+    }
+
+    @Test fun onlyAnActiveModeratorOfThePageCanPinItsPosts() = runBlocking {
+        val server = RolesApi(owner = false)
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        assertEquals(listOf("GET roles"), server.calls)
+        assertFalse(current.state.value.moderating)
+        current.pin(current.state.value.posts.single()); idle(current)
+        // A waiting invitation, or a role on another page, is not a role on this page.
+        for (roles in listOf(listOf(role("pending")), listOf(role("active").copy(pageId = otherPageId)))) {
+            server.roles = roles
+            current.reload(); idle(current)
+            assertFalse(current.state.value.moderating)
+            current.pin(current.state.value.posts.single()); idle(current)
+        }
+        assertTrue(api.actions.isEmpty())
+        server.roles = listOf(role("active"))
+        current.reload(); idle(current)
+        assertTrue(current.state.value.moderating)
+        current.pin(current.state.value.posts.single()); idle(current)
+        assertEquals(listOf("pin"), api.actions)
+    }
+
+    @Test fun archiveRestoreAndDeleteUseTheVersionShownAndDeletingNeedsTheExactName() = runBlocking {
+        val server = RolesApi(owner = true)
+        val current = ready(CommunityRepository(server, fixture.accounts))
+        current.open(Destination.Page("river-walkers")); idle(current)
+        current.archivePage(); idle(current)
+        current.state.value.let { state -> assertTrue(state.page!!.readOnly); assertEquals(PAGE_ARCHIVED, state.notice) }
+        current.restorePage(); idle(current)
+        current.state.value.let { state -> assertTrue(state.page!!.writable); assertEquals(PAGE_RESTORED, state.notice) }
+        // A different name is refused before anything is sent; spaces are tidied as the server tidies them.
+        assertFalse(current.deletePage("River Walker"))
+        assertEquals(PAGE_DELETE_NAME, current.state.value.error)
+        assertTrue(current.deletePage("  River \u00A0 Walkers ")); idle(current)
+        current.state.value.let { state ->
+            assertTrue(state.page!!.deleted)
+            assertEquals("2026-09-26T10:04:00Z", state.page!!.purgeAfter)
+            assertEquals(PAGE_DELETED, state.notice)
+            // A deleted page shows its owner nothing but the way back.
+            assertTrue(state.posts.isEmpty() && state.pinned.isEmpty() && state.drafts.isEmpty() && state.moderators.isEmpty() && state.handover == null)
+        }
+        current.restorePage(); idle(current)
+        assertTrue(current.state.value.page!!.writable)
+        assertEquals(listOf("POST archive \"p1\" {}", "POST restore \"p2\" {}", "POST delete \"p3\" {confirm=River Walkers}", "POST restore \"p4\" {}"), server.calls.filter { it.startsWith("POST") })
     }
 }

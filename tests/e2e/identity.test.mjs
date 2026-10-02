@@ -1668,6 +1668,122 @@ test('community: page creation retry, private drafts, publication, follow feed, 
   }
 });
 
+test('community: a moderator pins, the page is handed over, archived read only, deleted for its owner and restored', { timeout: 300000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const helperContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const visitorContext = await browser.newContext({ viewport: { width: 1024, height: 900 } });
+  const ownerPage = await ownerContext.newPage();
+  const helperPage = await helperContext.newPage();
+  const errors = [];
+  for (const page of [ownerPage, helperPage]) page.on('pageerror', error => errors.push(error.message));
+  const readOnly = 'This page is archived. You can read it, but nothing new can be posted, commented on, liked or followed.';
+  try {
+    const suffix = Date.now();
+    const handle = `helpers-${suffix}`;
+    const name = `Garden Helpers ${suffix}`;
+    await signUp(ownerPage, `roles-owner-${suffix}@example.test`);
+    await signUp(helperPage, `roles-helper-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const helper = (await (await helperContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const created = await ownerContext.request.post(`${base}/api/pages`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { handle, name, description: 'Seed swaps.', topic: 'hobbies' },
+    });
+    assert.equal(created.status(), 201);
+    const pageId = (await created.json()).data.id;
+    const drafted = await ownerContext.request.post(`${base}/api/pages/${pageId}/posts`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { title: 'Seed swap', body: 'Bring seeds on Sunday.' },
+    });
+    assert.equal(drafted.status(), 201);
+    const draft = (await drafted.json()).data;
+    assert.equal((await ownerContext.request.post(`${base}/api/posts/${draft.id}/publish`, { headers: { ...ownerHeaders, 'If-Match': draft.etag }, data: {} })).status(), 200);
+
+    // The owner invites the helper by account ID, and the helper accepts under Your pages (DEC-025 part 3).
+    await ownerPage.goto(`${base}/pages/${handle}`);
+    const moderators = ownerPage.getByRole('region', { name: 'Moderators', exact: true });
+    await moderators.getByText('No moderators yet.', { exact: true }).waitFor();
+    const invite = moderators.getByRole('form', { name: 'Invite a moderator', exact: true });
+    await invite.getByLabel('Their account ID', { exact: true }).fill(helper.id);
+    await invite.getByRole('button', { name: 'Send invitation', exact: true }).click();
+    await ownerPage.getByText('Invitation sent. They have 72 hours to accept.', { exact: true }).waitFor();
+    await moderators.getByText(/^Invited\. They can answer until/).waitFor();
+    await helperPage.goto(`${base}/app/pages`);
+    const helping = helperPage.getByRole('region', { name: 'Pages you help moderate', exact: true });
+    await helping.getByText(`You are invited to moderate ${name}.`, { exact: false }).waitFor();
+    await helping.getByRole('button', { name: 'Accept', exact: true }).click();
+    await helping.getByRole('group', { name: 'Pages you help moderate', exact: true }).getByRole('button', { name: 'Accept', exact: true }).click();
+    await helping.getByRole('link', { name, exact: true }).click();
+
+    // The moderator pins the post; everyone sees it pinned, and nothing public says who moderates.
+    await helperPage.getByText('You moderate this page', { exact: true }).waitFor();
+    await helperPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('button', { name: 'Pin to top', exact: true }).click();
+    await helperPage.getByRole('region', { name: 'Pinned', exact: true }).getByRole('button', { name: 'Unpin', exact: true }).waitFor();
+    const pinned = (await (await visitorContext.request.get(`${base}/api/pages/${handle}/pinned-posts`)).json()).data;
+    assert.deepEqual(pinned.map(item => item.id), [draft.id]);
+    const publicView = await (await visitorContext.request.get(`${base}/api/pages/${handle}`)).text();
+    assert.equal(publicView.includes(helper.id), false);
+    assert.equal((await visitorContext.request.get(`${base}/api/pages/${pageId}/moderators`)).status(), 401);
+
+    // The owner hands the page over; the moderator takes it over and the old owner becomes a moderator (DEC-025 part 4).
+    await ownerPage.reload();
+    await moderators.getByText('Moderator', { exact: true }).waitFor();
+    await moderators.getByRole('button', { name: 'Hand over the page', exact: true }).click();
+    await moderators.getByRole('group', { name: 'Moderators', exact: true }).getByRole('button', { name: 'Offer the page', exact: true }).click();
+    await moderators.getByText(/^Offered to Alex Morgan until/).waitFor();
+    await helperPage.goto(`${base}/app/pages`);
+    await helping.getByText(`Alex Morgan offers you ${name} until`, { exact: false }).waitFor();
+    await helping.getByRole('button', { name: 'Take over', exact: true }).click();
+    await helping.getByRole('group', { name: 'Pages you help moderate', exact: true }).getByRole('button', { name: 'Take over', exact: true }).click();
+    await helping.getByText('You own the page now. Its previous owner is one of its moderators.', { exact: true }).waitFor();
+    await helperPage.getByRole('region', { name: 'Pages you own', exact: true }).getByRole('link', { name, exact: true }).waitFor();
+    await ownerPage.goto(`${base}/app/pages`);
+    await ownerPage.getByRole('region', { name: 'Pages you help moderate', exact: true }).getByRole('link', { name, exact: true }).waitFor();
+
+    // The new owner archives the page: it stays readable, and nothing changes on it until it is restored (DEC-025 part 5).
+    await helperPage.goto(`${base}/pages/${handle}`);
+    const state = helperPage.getByRole('region', { name: 'Archive or delete', exact: true });
+    await state.getByRole('button', { name: 'Archive page', exact: true }).click();
+    await state.getByRole('group', { name: 'Archive page', exact: true }).getByRole('button', { name: 'Archive page', exact: true }).click();
+    await helperPage.getByText(readOnly, { exact: true }).waitFor();
+    await ownerPage.goto(`${base}/pages/${handle}`);
+    await ownerPage.getByText(readOnly, { exact: true }).waitFor();
+    assert.equal(await ownerPage.getByRole('button', { name: 'Unpin', exact: true }).count(), 0);
+    const refused = await ownerContext.request.post(`${base}/api/posts/${draft.id}/unpin`, { headers: ownerHeaders, data: {} });
+    assert.equal(refused.status(), 409);
+    assert.equal((await refused.json()).error.code, 'PAGE_READ_ONLY');
+    await state.getByRole('button', { name: 'Restore page', exact: true }).click();
+    await helperPage.getByText('Page restored.', { exact: true }).waitFor();
+
+    // Deleting needs the page's exact name and hides it from everyone else at once; its owner restores it within 7 days.
+    await state.getByRole('button', { name: 'Delete page', exact: true }).click();
+    const remove = state.getByRole('form', { name: 'Delete page', exact: true });
+    await remove.getByLabel("Type the page's name to confirm", { exact: true }).fill(name);
+    await remove.getByRole('button', { name: 'Delete page', exact: true }).click();
+    const deleted = helperPage.getByRole('region', { name: 'Deleted', exact: true });
+    await deleted.getByText(/^You deleted this page, so nobody else can see it\. Restore it before/).waitFor();
+    assert.equal((await visitorContext.request.get(`${base}/api/pages/${handle}`)).status(), 404);
+    assert.equal((await ownerContext.request.get(`${base}/api/pages/${handle}`, { headers: ownerHeaders })).status(), 404);
+    for (const width of [320, 390]) {
+      await helperPage.setViewportSize({ width, height: 844 });
+      assert.equal(await helperPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `deleted page width ${width}`);
+    }
+    await helperPage.screenshot({ path: path.join(root, '.local/screenshots/community-page-deleted-live-mobile.png'), fullPage: true });
+    await deleted.getByRole('button', { name: 'Restore page', exact: true }).click();
+    await helperPage.getByRole('region', { name: 'Posts', exact: true }).getByRole('article', { name: 'Seed swap', exact: true }).waitFor();
+    assert.equal((await visitorContext.request.get(`${base}/api/pages/${handle}`)).status(), 200);
+    for (const width of [320, 390]) {
+      await helperPage.setViewportSize({ width, height: 844 });
+      assert.equal(await helperPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `managed page width ${width}`);
+    }
+    await helperPage.screenshot({ path: path.join(root, '.local/screenshots/community-page-moderators-live-mobile.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await helperContext.close();
+    await visitorContext.close();
+  }
+});
+
 test('post search: Discover finds published public posts by their words, literally, and never drafts', { timeout: 180000 }, async () => {
   const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const readerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

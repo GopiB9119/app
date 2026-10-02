@@ -62,8 +62,18 @@ data class CommunityState(
     val editingPage: PageDto? = null,
     val pageEditFailed: Boolean = false,
     val pageEditSession: Long = 0,
+    /** The shown page's moderators and its waiting invitation, for its owner (DEC-025). */
+    val moderators: List<ModeratorDto> = emptyList(),
+    /** The shown page's latest handover offer, for its owner. */
+    val handover: HandoverDto? = null,
+    /** Your waiting invitations to moderate and the pages you moderate. */
+    val roles: List<ModeratorRoleDto> = emptyList(),
+    /** Pages offered to you, which you can accept or decline. */
+    val offers: List<HandoverDto> = emptyList(),
 ) {
     val busy: Boolean get() = loading || working
+    /** You moderate the shown page, so you may pin its posts; the comments say for themselves which you may remove. */
+    val moderating: Boolean get() = page != null && roles.any { it.pageId == page.id && it.status == "active" }
     /** "You do not own a page yet" needs a successful load of the pages you own. */
     val noOwnedPages: Boolean get() = ownedLoaded && pages.isEmpty()
     /** "You do not follow any pages" needs a successful load, so a load in progress or a failure never looks empty. */
@@ -77,6 +87,16 @@ const val PAGE_EDIT_INVALID = "Use a name of 1 to 80 characters and a descriptio
 const val PAGE_RULES_INVALID = "Use rules of up to 2,000 characters."
 const val PAGE_EDIT_CONFLICT = "This page changed since you opened the editor. Close it and reload before editing again."
 const val PAGE_EDIT_SAVED = "Page saved."
+const val MODERATOR_ID_INVALID = "Enter the full account ID of another person. They find it on their Spaces screen."
+const val MODERATOR_INVITED = "Invitation sent. They have 72 hours to accept."
+const val HANDOVER_OFFERED = "Offer sent. It lasts 15 minutes."
+const val HANDOVER_ACCEPTED = "You own the page now. Its previous owner is one of its moderators."
+const val PAGE_ARCHIVED = "Page archived. It is read only until you restore it."
+const val PAGE_RESTORED = "Page restored."
+const val PAGE_DELETED = "Page deleted. You can restore it for 7 days."
+const val PAGE_DELETE_NAME = "Type the page's name exactly to delete it."
+
+private val ACCOUNT_ID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 /** The server allows 1,000 characters of report details, counted as code points (Python `len`). */
 const val REPORT_DETAILS_LIMIT = 1000
@@ -193,13 +213,20 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                     }
                     is Destination.Page -> {
                         val page = if (more) current.page ?: return@launch else repository.page(account, destination.reference)
-                        val posts = if (page.blocked) CommunityPage(emptyList(), null) else repository.pagePosts(account, page.id, cursor)
-                        val drafts = if (page.canManage && !more) repository.drafts(account, page.id) else current.drafts
-                        val pinned = when { page.blocked -> emptyList(); more -> current.pinned; else -> repository.pinnedPosts(account, page.id) }
+                        // A deleted page shows its owner only how to restore it.
+                        val hidden = page.blocked || page.deleted
+                        val posts = if (hidden) CommunityPage(emptyList(), null) else repository.pagePosts(account, page.id, cursor)
+                        val drafts = when { more -> current.drafts; page.canManage && !page.deleted -> repository.drafts(account, page.id); else -> emptyList() }
+                        val pinned = when { hidden -> emptyList(); more -> current.pinned; else -> repository.pinnedPosts(account, page.id) }
                         val blocks = if (page.blocked) repository.blocks(account) else emptyList()
+                        // The owner manages the page's moderators and handover; anyone else may be one of its moderators.
+                        val moderators = when { more -> current.moderators; page.canManage && !page.deleted -> repository.moderators(account, page.id); else -> emptyList() }
+                        val handover = when { more -> current.handover; page.canManage && !page.deleted -> repository.handover(account, page.id); else -> null }
+                        val roles = when { more -> current.roles; page.canManage || hidden -> emptyList(); else -> repository.moderatorRoles(account) }
                         apply(expected, destination) {
                             it.copy(page = page, drafts = drafts, pinned = pinned, blocks = blocks, nextCursor = posts.nextCursor,
-                                posts = if (more) (it.posts + posts.items).distinctBy(PostDto::id) else posts.items)
+                                posts = if (more) (it.posts + posts.items).distinctBy(PostDto::id) else posts.items,
+                                moderators = moderators, handover = handover, roles = roles)
                         }
                     }
                     is Destination.Post -> {
@@ -213,7 +240,9 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                         if (!more) {
                             try {
                                 val owned = repository.myPages(account)
-                                apply(expected, destination) { it.copy(pages = owned, ownedLoaded = true) }
+                                val roles = repository.moderatorRoles(account)
+                                val offers = repository.handoverOffers(account)
+                                apply(expected, destination) { it.copy(pages = owned, ownedLoaded = true, roles = roles, offers = offers) }
                             } catch (error: CancellationException) { throw error }
                             catch (error: Exception) {
                                 if (mutableState.value.destination == destination) {
@@ -292,9 +321,9 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     fun retryFollowing() = reload(more = mutableState.value.followedStatus == ListStatus.LOADED && mutableState.value.followedNextCursor != null)
     fun like(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.liked) "unlike" else "like")) }
     fun save(post: PostDto) = command(subject = post.id) { replacePost(repository.react(it, post.id, if (post.saved) "unsave" else "save")) }
-    /** Pins a published post to the top of the shown page, or unpins it, then reloads the page so the pinned list is the server's. */
+    /** Pins a published post to the top of the shown page, or unpins it, then reloads the page so the pinned list is the server's. The owner and the page's moderators may pin. */
     fun pin(post: PostDto) {
-        if (!post.canManage || post.status != "published") return
+        if ((!post.canManage && !mutableState.value.moderating) || post.status != "published") return
         command(subject = post.id) { replacePost(repository.pin(it, post.id, !post.pinned)); reloadAfterCommand() }
     }
 
@@ -343,7 +372,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     /** Sends the exact pending command again with its original key. */
     fun retry() {
         val intent = mutableState.value.pending ?: return
-        command {
+        // An invitation's 404 is about the invited account, not the shown page.
+        command(subject = (intent as? CreateIntent.Moderator)?.inviteeId) {
             try {
                 val result = repository.create(intent)
                 mutableState.update { it.copy(pending = null) }
@@ -358,6 +388,8 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
                     }
                     is CreateIntent.Post -> { mutableState.update { it.copy(notice = "Draft saved. Only you can see it until you publish.") }; reloadAfterCommand() }
                     is CreateIntent.Comment -> reloadAfterCommand()
+                    is CreateIntent.Moderator -> { mutableState.update { it.copy(notice = MODERATOR_INVITED) }; reloadAfterCommand() }
+                    is CreateIntent.Handover -> { mutableState.update { it.copy(notice = HANDOVER_OFFERED) }; reloadAfterCommand() }
                 }
             } catch (error: IdentityFailure) {
                 // A definite rejection releases the command; an unknown outcome keeps it for an exact retry.
@@ -471,4 +503,66 @@ class CommunityViewModel @Inject constructor(private val repository: CommunityRe
     fun blockPage(page: PageDto) = command("Page blocked. Its posts are hidden from you.", subject = page.id) { repository.block(it, "page", page.id); reloadAfterCommand() }
     fun blockAuthor(comment: CommentDto) = command("Person blocked. Their comments are hidden from you.", subject = comment.id) { repository.block(it, "comment_author", comment.id); reloadAfterCommand() }
     fun unblock(block: BlockDto) = command("Unblocked.", subject = block.id) { repository.unblock(it, block.id); reloadAfterCommand() }
+
+    /** The owner invites another person, by account ID, to moderate the shown page. A lost answer keeps the invitation for an exact retry. */
+    fun inviteModerator(accountId: String): Boolean {
+        val current = mutableState.value
+        val account = current.accountId ?: return false
+        val page = current.page?.takeIf { it.canManage && it.writable } ?: return false
+        val invitee = accountId.trim().lowercase()
+        if (!invitee.matches(ACCOUNT_ID) || invitee == account.lowercase()) {
+            mutableState.update { it.copy(error = MODERATOR_ID_INVALID, notice = null) }
+            return false
+        }
+        return submit(CreateIntent.Moderator(account, UUID.randomUUID().toString(), page.id, invitee))
+    }
+
+    /** The owner withdraws a waiting invitation or removes a moderator of the shown page. */
+    fun resolveModerator(moderator: ModeratorDto, action: String) {
+        if (action !in setOf("withdraw", "remove") || mutableState.value.page?.let { it.canManage && it.id == moderator.pageId } != true) return
+        command(subject = moderator.id) { repository.resolveModerator(it, moderator.pageId, moderator.id, moderator.etag, action); reloadAfterCommand() }
+    }
+
+    /** You accept or decline an invitation to moderate, or step down as a moderator. */
+    fun resolveRole(role: ModeratorRoleDto, action: String) {
+        if (action !in setOf("accept", "decline", "step-down")) return
+        command(subject = role.id) { repository.resolveModerator(it, role.pageId, role.id, role.etag, action); reloadAfterCommand() }
+    }
+
+    /** The owner offers the shown page, as it is now, to one of its moderators. The offer needs a recent sign-in and lasts 15 minutes. */
+    fun offerHandover(moderator: ModeratorDto): Boolean {
+        val current = mutableState.value
+        val account = current.accountId ?: return false
+        val page = current.page?.takeIf { it.canManage && it.writable && it.id == moderator.pageId } ?: return false
+        if (moderator.status != "active") return false
+        return submit(CreateIntent.Handover(account, UUID.randomUUID().toString(), page.id, page.etag ?: return false, moderator.accountId, moderator.displayName))
+    }
+
+    /** The moderator accepts or declines an offered page; the owner cancels the offer. */
+    fun respondHandover(offer: HandoverDto, action: String) {
+        if (action !in setOf("accept", "decline", "cancel")) return
+        command(if (action == "accept") HANDOVER_ACCEPTED else null, subject = offer.id) { repository.respondHandover(it, offer, action); reloadAfterCommand() }
+    }
+
+    /** Archives the shown page, so it stays readable but nothing new can be added. */
+    fun archivePage() = changePage("archive", null, PAGE_ARCHIVED)
+    /** Brings back an archived page, or a deleted one within its 7 days, as it was. */
+    fun restorePage() = changePage("restore", null, PAGE_RESTORED)
+
+    /** Deletes the shown page after its name is typed exactly. Returns false, keeping the dialog open, when the name differs. */
+    fun deletePage(confirm: String): Boolean {
+        val page = mutableState.value.page?.takeIf { it.canManage && !it.deleted } ?: return false
+        val typed = confirm.replace(Regex("[\\s\\p{Z}\\u0085\\u001C-\\u001F]+"), " ").trim()
+        if (typed != page.name) {
+            mutableState.update { it.copy(error = PAGE_DELETE_NAME, notice = null) }
+            return false
+        }
+        changePage("delete", typed, PAGE_DELETED)
+        return true
+    }
+
+    private fun changePage(action: String, confirm: String?, notice: String) {
+        val page = mutableState.value.page?.takeIf { it.canManage && it.etag != null } ?: return
+        command(notice) { account -> replacePage(repository.changePageState(account, page, action, confirm)); reloadAfterCommand() }
+    }
 }

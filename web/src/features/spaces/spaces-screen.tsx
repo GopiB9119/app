@@ -11,6 +11,7 @@ import { Shell } from "@/features/identity/shell";
 import { useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
 import { characters, lengthProblem, readMembers, spaceSchema, spacesSchema } from "./client";
+import type { FamilySpace } from "./client";
 import { AccountIdentifier, InvitationInbox, ManageInvitations } from "./invitations";
 import { ManageJoinRequests } from "./join-requests";
 import { ManageMembers } from "./members";
@@ -29,6 +30,11 @@ const privacyNotes: Record<Exclude<SpaceType, "group">, MessageId> = {
   solo: "spaces.form.soloPrivacy",
   couple: "spaces.form.couplePrivacy",
 };
+
+function canInvite(space: FamilySpace) {
+  if (space.role !== "member") return space.space_type !== "solo";
+  return space.member_invites && (space.space_type === "family" || space.space_type === "group");
+}
 
 function CoupleStatus({ accountId, spaceId, version }: { accountId: string; spaceId: string; version: string }) {
   const t = useText();
@@ -138,7 +144,7 @@ function FamilySpaces({ user }: { user: Account }) {
 
   const accountChanged = problem instanceof ApiError && (problem.status === 401 || problem.code === "ACCOUNT_CHANGED");
   const visible = !accountChanged && !spaces.isError ? spaces.data?.data ?? [] : [];
-  const managedSpace = visible.find(space => space.id === managedSpaceId && space.role !== "member" && space.space_type !== "solo");
+  const managedSpace = visible.find(space => space.id === managedSpaceId && space.space_type !== "solo");
   const membersSpace = visible.find(space => space.id === membersSpaceId);
   const requestsSpace = visible.find(space => space.id === requestsSpaceId && space.role !== "member" && space.space_type === "group");
   const dialogOpen = managedSpaceId !== null || membersSpaceId !== null || settingsSpaceId !== null || requestsSpaceId !== null;
@@ -183,7 +189,7 @@ function FamilySpaces({ user }: { user: Account }) {
               <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={t("spaces.documentsFor", { name: space.name })} aria-label={t("spaces.documentsFor", { name: space.name })}><FileText size={18} aria-hidden /></Link>
               {space.role === "owner" && <button className="icon-button" title={t("spaces.settingsFor", { name: space.name })} aria-label={t("spaces.settingsFor", { name: space.name })} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /></button>}
               {space.space_type !== "solo" && <button className="icon-button" title={t("spaces.membersOf", { name: space.name })} aria-label={t("spaces.membersOf", { name: space.name })} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /></button>}
-              {space.role !== "member" && space.space_type !== "solo" && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
+              {canInvite(space) && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
               {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={t("spaces.joinRequestsFor", { name: space.name })} aria-label={t("spaces.joinRequestsFor", { name: space.name })} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /></button>}
             </div>
           </li>)}</ul>}
@@ -215,7 +221,7 @@ function FamilySpaces({ user }: { user: Account }) {
           </form>
         </section>
       </div>
-      {managedSpace && <ManageInvitations key={managedSpace.id} user={user} space={managedSpace} onClose={() => setManagedSpaceId(null)} />}
+      {managedSpace && <ManageInvitations key={managedSpace.id} user={user} space={managedSpace} ended={false} onClose={() => setManagedSpaceId(null)} />}
       {membersSpace && <ManageMembers key={membersSpace.id} user={user} space={membersSpace} onClose={() => setMembersSpaceId(null)} />}
       {settingsSpaceId && !accountChanged && <ManageSpaceSettings key={`${user.id}:${settingsSpaceId}`} accountId={user.id} spaceId={settingsSpaceId} onClose={() => setSettingsSpaceId(null)} />}
       {requestsSpace && <ManageJoinRequests key={requestsSpace.id} user={user} space={requestsSpace} onClose={() => setRequestsSpaceId(null)} />}

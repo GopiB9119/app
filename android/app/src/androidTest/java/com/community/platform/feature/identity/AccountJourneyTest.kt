@@ -498,6 +498,7 @@ class AccountJourneyTest {
         }
         reveal("space-workspace", "space-show-members")
         compose.onNodeWithTag("space-show-members").performClick()
+        waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "ownership-offer-${owner.id}")
         compose.onNodeWithTag("space-leave").assertDoesNotExist()
         compose.onNodeWithContentDescription("Back to Spaces").performClick()
@@ -509,6 +510,7 @@ class AccountJourneyTest {
         compose.onNodeWithTag("space-row-$spaceId").performClick()
         reveal("space-workspace", "space-show-members")
         compose.onNodeWithTag("space-show-members").performClick()
+        waitForEnabled(hasContentDescription("Refresh Spaces and invitations"))
         reveal("space-workspace", "space-leave")
         compose.onNodeWithTag("ownership-offer-${nextOwner.id}").assertDoesNotExist()
         compose.onNodeWithTag("space-leave").performClick()

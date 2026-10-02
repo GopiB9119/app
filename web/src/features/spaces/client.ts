@@ -14,22 +14,27 @@ const spaceShape = z.object({
   description: chars(0, 280).default(""),
   space_type: z.enum(["family", "solo", "group", "couple"]),
   visibility: z.enum(["private", "public"]),
+  member_invites: z.boolean().default(false),
   status: z.literal("active"),
   role: z.enum(["owner", "admin", "member"]),
   version: z.string().regex(/^[1-9][0-9]*$/),
   created_at: z.string().datetime({ offset: true }),
 });
 const onlyGroupsArePublic = (space: { visibility: string; space_type: string }) => space.visibility === "private" || space.space_type === "group";
-export const spaceSchema = spaceShape.refine(onlyGroupsArePublic, { message: "Only group Spaces can be public." });
+const onlyFamiliesAndGroupsLetMembersInvite = (space: { member_invites: boolean; space_type: string }) => !space.member_invites || space.space_type === "family" || space.space_type === "group";
+export const spaceSchema = spaceShape.refine(onlyGroupsArePublic, { message: "Only group Spaces can be public." })
+  .refine(onlyFamiliesAndGroupsLetMembersInvite, { message: "Only family and group Spaces can let members invite." });
 
 export const spacesSchema = z.array(spaceSchema).max(50);
 
 export type FamilySpace = z.infer<typeof spaceSchema>;
 export const spaceSettingsSchema = spaceShape.extend({ role: z.literal("owner"), etag: z.string().regex(/^"[a-f0-9]{64}"$/) })
-  .refine(onlyGroupsArePublic, { message: "Only group Spaces can be public." });
+  .refine(onlyGroupsArePublic, { message: "Only group Spaces can be public." })
+  .refine(onlyFamiliesAndGroupsLetMembersInvite, { message: "Only family and group Spaces can let members invite." });
 export type SpaceSettings = z.infer<typeof spaceSettingsSchema>;
 export type SpaceSettingsIntent = { accountId: string; spaceId: string; name: string; description?: string; etag: string; key: string };
 export type VisibilityIntent = { accountId: string; spaceId: string; visibility: "private" | "public"; etag: string; key: string };
+export type InvitePolicyIntent = { accountId: string; spaceId: string; memberInvites: boolean; etag: string; key: string };
 export const spaceTypeLabels: Record<FamilySpace["space_type"], string> = { family: "Family", group: "Group", solo: "Solo", couple: "Couple" };
 
 export async function readSpaceSettings(accountId: string, spaceId: string, signal?: AbortSignal) {
@@ -55,6 +60,17 @@ export async function changeVisibility(intent: VisibilityIntent) {
   });
   if (result.data.id !== intent.spaceId || result.data.visibility !== intent.visibility) {
     throw new ApiError(502, "INVALID_RESPONSE", "The visibility result does not match this review.");
+  }
+  return result.data;
+}
+
+export async function changeInvitePolicy(intent: InvitePolicyIntent) {
+  const result = await api(`spaces/${intent.spaceId}/invite-policy`, spaceSettingsSchema, {
+    method: "POST", accountId: intent.accountId, body: { member_invites: intent.memberInvites },
+    headers: { "If-Match": intent.etag, "Idempotency-Key": intent.key },
+  });
+  if (result.data.id !== intent.spaceId || result.data.member_invites !== intent.memberInvites) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The invitation setting result does not match this review.");
   }
   return result.data;
 }

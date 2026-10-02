@@ -6,11 +6,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, KeyRound, LoaderCircle, Mail } from "lucide-react";
-import { ApiError, api, authSchema, challengeSchema, doneSchema } from "./client";
+import { ApiError, api, authSchema, challengeSchema, characters, doneSchema } from "./client";
 import { Shell } from "./shell";
 import { TimezoneListProblem } from "./timezone-list-problem";
 import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
-import type { MessageId } from "@/features/i18n/messages";
+import type { MessageId, MessageValues } from "@/features/i18n/messages";
 
 const inputSchema = z.object({
   email: z.string().email("auth.error.email").refine(value => value.endsWith(".test"), "auth.error.syntheticEmail"),
@@ -100,6 +100,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
     if (!/^\d{6}$/.test(fields.code)) { form.setError("code", { message: "auth.error.code" }); return; }
     if (fields.password.length < 12 || fields.password.length > 128) { form.setError("password", { message: "auth.error.passwordLength" }); return; }
     if (mode === "register" && !fields.display_name.trim()) { form.setError("display_name", { message: "auth.error.displayName" }); return; }
+    if (mode === "register" && characters(fields.display_name.trim()) > 80) { form.setError("display_name", { message: "auth.error.displayNameLength" }); return; }
     const proof = { challenge_id: challenge.challenge_id, code: fields.code, password: fields.password };
     try {
       if (mode === "register") {
@@ -140,7 +141,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
         {challenge && <>
           <div className="verification-summary"><Mail size={20} aria-hidden /><span>{t("auth.emailVerification")} <strong>{t("auth.codeRequested")}</strong></span><span className="step-label">02 / 02</span></div>
           <label>{t("auth.code")}<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} className="code-input" placeholder="000000" {...form.register("code")} aria-invalid={!!form.formState.errors.code} aria-describedby="code-error" /><FieldError id="code-error" message={form.formState.errors.code?.message} /></label>
-          {mode === "register" && <label>{t("auth.displayName")}<input autoComplete="name" maxLength={80} {...form.register("display_name")} aria-invalid={!!form.formState.errors.display_name} aria-describedby="name-error" /><FieldError id="name-error" message={form.formState.errors.display_name?.message} /></label>}
+          {mode === "register" && <label>{t("auth.displayName")}<input autoComplete="name" maxLength={160} {...form.register("display_name")} aria-invalid={!!form.formState.errors.display_name} aria-describedby="name-error" /><FieldError id="name-error" message={form.formState.errors.display_name?.message} values={{ limit: 80 }} /></label>}
         </>}
         {passwordShown && <label><span id="password-label">{t(mode === "login" ? "auth.password" : "auth.newPassword")}</span><div className="password-field"><input type={visible ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} maxLength={128} disabled={!interactive} {...form.register("password")} aria-labelledby="password-label" aria-invalid={!!form.formState.errors.password} aria-describedby="password-hint password-error" /><button className="icon-button" type="button" disabled={!interactive} onClick={() => setVisible(!visible)} aria-label={t(visible ? "auth.hidePassword" : "auth.showPassword")} title={t(visible ? "auth.hidePassword" : "auth.showPassword")}>{visible ? <EyeOff size={19} /> : <Eye size={19} />}</button></div><span id="password-hint" className="field-hint">{mode !== "login" ? t("auth.passwordHint") : ""}</span><FieldError id="password-error" message={form.formState.errors.password?.message} /></label>}
         {challenge && mode === "register" && <label><span id="signup-timezone-label">{t("auth.timezone")}</span><select aria-labelledby="signup-timezone-label" {...form.register("timezone")}>{timezones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>}
@@ -157,7 +158,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   </Shell>;
 }
 
-function FieldError({ id, message }: { id: string; message?: string }) {
+function FieldError({ id, message, values }: { id: string; message?: string; values?: MessageValues }) {
   const t = useText();
-  return <span id={id} className="field-error">{message ? t(message as MessageId) : undefined}</span>;
+  return <span id={id} className="field-error">{message ? t(message as MessageId, values) : undefined}</span>;
 }

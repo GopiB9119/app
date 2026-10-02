@@ -81,6 +81,7 @@ const coreEn = {
   "auth.error.code": "Enter the six-digit code.",
   "auth.error.passwordLength": "Use 12 to 128 characters.",
   "auth.error.displayName": "Enter a display name.",
+  "auth.error.displayNameLength": "Use up to {limit} characters.",
 } as const;
 
 export type MessageValues = Readonly<Record<string, string | number>>;
@@ -142,6 +143,7 @@ const coreTe: Partial<Record<keyof typeof coreEn, string>> = {
   "auth.error.code": "ఆరు అంకెల కోడ్ నమోదు చేయండి.",
   "auth.error.passwordLength": "12 నుంచి 128 అక్షరాలు ఉపయోగించండి.",
   "auth.error.displayName": "కనిపించే పేరు నమోదు చేయండి.",
+  "auth.error.displayNameLength": "{limit} అక్షరాల వరకు ఉపయోగించండి.",
 };
 
 const coreHi: Partial<Record<keyof typeof coreEn, string>> = {
@@ -201,6 +203,7 @@ const coreHi: Partial<Record<keyof typeof coreEn, string>> = {
   "auth.error.code": "छह अंकों का कोड दर्ज करें।",
   "auth.error.passwordLength": "12 से 128 अक्षर इस्तेमाल करें।",
   "auth.error.displayName": "दिखने वाला नाम दर्ज करें।",
+  "auth.error.displayNameLength": "{limit} अक्षरों तक इस्तेमाल करें।",
 };
 
 // The areas, in this order. An id defined twice would let the later one win silently, so a test refuses duplicates.

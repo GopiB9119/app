@@ -120,7 +120,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const care = new RegExp(`^(GET|POST) care/instructions$|^GET care/instructions/${uuidPart}$|^POST care/instructions/${uuidPart}/(stop|reports)$|^GET care/day$`).test(`${request.method} ${route}`);
   const publicCommunity = publicRead.test(`${request.method} ${route}`);
   const groupSearch = request.method === "GET" && route === "discover/spaces";
-  const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/visibility$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
+  const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/(visibility|invite-policy)$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
   const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^DELETE agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
   const documentAdd = request.method === "POST" && new RegExp(`^spaces/${uuidPart}/documents$`).test(route);
   const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));

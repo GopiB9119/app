@@ -144,6 +144,9 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
     var exitReview by remember { mutableStateOf<ExitReview?>(null) }
     val list = rememberLazyListState()
     LaunchedEffect(state.tab, state.creating, state.selectedSpace?.id) { list.scrollToItem(0) }
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as inviting or removing a member, bring it into view to be seen and announced.
+    LaunchedEffect(state.error, state.notice) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
     val back: () -> Unit = {
         if (!state.busy) {
             when {
@@ -174,7 +177,11 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(state = list, modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("space-workspace"), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp)) {
-                    state.error?.let { item("error") { SpaceMessage(it, true) } }
+                    state.error?.let { item("error") { SpaceMessage(when (it) {
+                        "Only the owner and admins can invite people to this Space now." -> stringResource(R.string.spaces_member_invite_unavailable)
+                        "You can have up to 10 waiting invitations in this Space." -> stringResource(R.string.spaces_member_invite_limit)
+                        else -> it
+                    }, true) } }
                     state.notice?.let { item("notice") { SpaceMessage(it, false) } }
                     if (state.pending != null && !state.busy) item("retry") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -343,15 +350,16 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 }
                                 if (state.ownershipCursor != null) item("more-ownership") { TextButton(onClick = actions.moreOwnershipOffers, enabled = !state.navigationLocked) { Text(stringResource(R.string.ownership_more)) } }
                             }
-                            if (selected.role in setOf("owner", "admin") && selected.spaceType != "solo") {
+                            if (selected.canInvitePeople) {
                                 item("invite-title") { Text(stringResource(R.string.spaces_invite_member), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() }) }
                                 item("invite-form") {
-                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3)) {
                                         if (selected.spaceType == "couple") Text(stringResource(R.string.spaces_couple_invite_hint), style = MaterialTheme.typography.bodyMedium)
+                                        if (selected.role == "member") Text(stringResource(R.string.spaces_member_invite_note), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("space-member-invite-note"))
                                         OutlinedTextField(value = state.recipientDraft, onValueChange = { actions.recipient(it.take(80)) }, label = { Text(stringResource(R.string.spaces_recipient_id)) }, enabled = !state.locked, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("space-recipient"))
                                         SpaceFact(stringResource(R.string.spaces_invited_role), stringResource(R.string.spaces_member))
-                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Button(onClick = actions.invite, enabled = !state.locked && state.recipientDraft.isNotBlank(), shape = RoundedCornerShape(6.dp), modifier = Modifier.heightIn(min = 48.dp).testTag("space-invite")) { Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_create_invitation)) }
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                                            Button(onClick = actions.invite, enabled = !state.locked && state.recipientDraft.isNotBlank(), shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("space-invite")) { Icon(Icons.Default.Add, null, Modifier.size(DesignTokens.SpaceUnit * 4)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.spaces_create_invitation)) }
                                             if (state.recipientDraft.isNotEmpty()) TextButton(onClick = actions.discardDraft, enabled = !state.locked) { Text(stringResource(R.string.discard)) }
                                         }
                                     }
@@ -360,7 +368,7 @@ fun SpaceScreen(state: SpaceWorkspaceState, actions: SpaceActions, timezone: Str
                                 if (state.sent.isEmpty() && !state.busy && state.error == null) item("sent-empty") { Text(stringResource(R.string.spaces_no_sent)) }
                                 items(state.sent, key = { "sent-${it.id}" }) { invitation ->
                                     InvitationRow(invitation, timezone, incoming = false) {
-                                        if (invitation.status == "pending") OutlinedButton(onClick = { state.accountId?.let { actions.propose(SpaceCommand.Revoke(it, invitation)) } }, enabled = !state.navigationLocked, shape = RoundedCornerShape(6.dp), modifier = Modifier.testTag("invitation-revoke-${invitation.id}")) { Icon(Icons.Default.Close, null, Modifier.size(17.dp)); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.spaces_revoke)) }
+                                        if (invitation.status == "pending") OutlinedButton(onClick = { state.accountId?.let { actions.propose(SpaceCommand.Revoke(it, invitation)) } }, enabled = !state.navigationLocked, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("invitation-revoke-${invitation.id}")) { Icon(Icons.Default.Close, null, Modifier.size(DesignTokens.SpaceUnit * 4)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.spaces_revoke)) }
                                     }
                                 }
                                 if (state.sentCursor != null) item("more-sent") { TextButton(onClick = actions.moreSent, enabled = !state.navigationLocked) { Text(stringResource(R.string.spaces_more_sent)) } }

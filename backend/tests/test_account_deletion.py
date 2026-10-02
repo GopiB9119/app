@@ -7,6 +7,7 @@ from sqlalchemy import func, select, text
 
 from app.db import Base
 from app.modules.identity import deletion
+from app.modules.community.models import PageHandover, PageModerator
 from app.modules.identity.models import AccountSession, User
 from app.modules.scheduling.models import Reminder, ReminderSeries
 from app.modules.safety.models import ModerationAppeal
@@ -18,8 +19,9 @@ from tests.test_documents import add as add_document
 from tests.test_events import create as create_event, respond
 from tests.test_exports import request_export
 from tests.test_identity import PASSWORD, account, auth
-from tests.test_live_updates import Hints, change
+from tests.test_live_updates import Hints, change, leave_or_remove
 from tests.test_messaging import admit, open_chat, send
+from tests.test_page_moderators import moderating, offer_handover
 from tests.test_moderation import appeal, content, decide, moderator, resolve
 from tests.test_reminder_delivery_guards import preview_reminder
 from tests.test_reminder_series import create_series, source_for
@@ -294,3 +296,95 @@ def test_purge_ends_open_appeals_and_keeps_resolved_ones_readable(client, app, c
     assert [(item["appeal"]["id"], item["appeal"]["note"]) for item in upheld] == [(resolved["id"], "Removed when the account was deleted.")]
     with app.state.sessions() as database:
         assert database.get(ModerationAppeal, open_appeal["id"]) is None
+
+def test_purge_erases_sessions_and_keeps_only_the_identifier_a_kept_record_needs(client, app):
+    # T110: DEC-022 lists sessions among what is erased. A handover Sam accepted still names the session Alex offered it
+    # from, so that one row keeps its identifier and nothing else; every other session row goes.
+    alex = account(client, app)
+    login(client)
+    sam = account(client, app, "sam@example.test")
+    page = create_page(client, alex, handle="alex-hands-over").json()["data"]
+    moderating(client, alex, page, sam)
+    offer = offer_handover(client, alex, page, sam["user"]["id"], etag=page["etag"]).json()["data"]
+    accepted = client.post(f"/v1/pages/{page['id']}/handover/{offer['id']}/accept",
+                           headers={**auth(sam), "If-Match": offer["etag"]}, json={})
+    assert accepted.status_code == 200, accepted.text
+    with app.state.sessions() as database:
+        before = {row.id: row.token_digest for row in database.scalars(select(AccountSession).where(AccountSession.account_id == alex["user"]["id"]))}
+        referenced = database.scalar(select(PageHandover.from_session_id).where(PageHandover.id == offer["id"]))
+    assert len(before) == 2 and referenced in before
+    assert request_deletion(client, alex).status_code == 202
+    app.state.clock.now += timedelta(days=7, minutes=1)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    with app.state.sessions() as database:
+        [kept] = database.scalars(select(AccountSession).where(AccountSession.account_id == alex["user"]["id"])).all()
+        assert kept.id == referenced and kept.token_digest != before[referenced]
+        assert (kept.device_name, kept.platform) == ("Removed device", "removed")
+        assert kept.created_at == kept.expires_at == kept.revoked_at == app.state.clock.now
+
+
+def test_purge_ends_page_roles_on_other_pages_and_on_its_own(client, app):
+    # T112: page moderators (DEC-025) came after the purge was written.
+    alex = account(client, app)
+    sam = account(client, app, "sam@example.test")
+    riya = account(client, app, "riya@example.test")
+    theirs = create_page(client, riya, handle="riya-walks").json()["data"]
+    moderating(client, riya, theirs, alex)
+    own = create_page(client, alex, handle="alex-walks").json()["data"]
+    moderating(client, alex, own, sam)
+    assert request_deletion(client, alex).status_code == 202
+    app.state.clock.now += timedelta(days=7, minutes=1)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    riya = login(client, "riya@example.test").json()["data"]
+    sam = login(client, "sam@example.test").json()["data"]
+    listed = client.get(f"/v1/pages/{theirs['id']}/moderators", headers=auth(riya)).json()["data"]
+    assert [row for row in listed if row["account_id"] == alex["user"]["id"]] == []
+    with app.state.sessions() as database:
+        assert [row.status for row in database.scalars(select(PageModerator).where(PageModerator.account_id == alex["user"]["id"]))] == ["stepped_down"]
+        assert database.scalar(select(func.count()).select_from(PageModerator).where(PageModerator.page_id == own["id"])) == 0
+    assert client.get("/v1/me/moderator-roles", headers=auth(sam)).json()["data"] == []
+
+
+def test_purge_erases_the_schedules_of_a_space_with_no_other_member(client, app):
+    # T110: DEC-022 deletes a Space with no other member "with its contents"; the titles went, the dates and times stayed.
+    alex = account(client, app)
+    solo = create_space(client, alex, name="Alex solo").json()["data"]["id"]
+    assert create_task(client, alex, solo, title="Alex dentist", due_date="2026-12-24").status_code == 201
+    created = create_event(client, alex, solo, title="Alex dinner", timezone="Pacific/Chatham",
+                           local_start="2026-12-24T19:45", local_end="2026-12-24T21:15")
+    assert created.status_code == 201, created.text
+    assert "Pacific/Chatham" in stored_text(app) and "2026-12-24" in stored_text(app)
+    assert request_deletion(client, alex).status_code == 202
+    app.state.clock.now += timedelta(days=7, minutes=1)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    after = stored_text(app)
+    assert "Pacific/Chatham" not in after and "2026-12-24" not in after
+
+
+def test_signing_in_after_the_grace_period_offers_no_cancellation(client, app):
+    # T110: DEC-022 offers cancellation for 7 days; after that the account behaves as erased, even before the worker runs.
+    alex = account(client, app)
+    assert request_deletion(client, alex).status_code == 202
+    app.state.clock.now += timedelta(days=7)
+    response = login(client)
+    assert response.status_code == 401 and response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+def test_purge_tells_the_chats_of_a_space_it_already_left(client, app):
+    # T106 (4): messages the person left behind are erased too, so those chats read again at once.
+    sam = account(client, app, "sam@example.test")
+    alex = account(client, app)
+    shared = create_space(client, sam, name="Shared family").json()["data"]["id"]
+    admit(client, sam, shared, alex)
+    chat = open_chat(client, alex, shared).json()["data"]
+    direct = open_chat(client, alex, shared, sam["user"]["id"]).json()["data"]
+    assert send(client, alex, chat["id"], "Alex left 4471").status_code == 201
+    assert send(client, alex, direct["id"], "Alex direct left 4471").status_code == 201
+    assert leave_or_remove(client, alex, shared, alex, "leave").status_code == 200
+    assert request_deletion(client, alex).status_code == 202
+    app.state.clock.now += timedelta(days=7, minutes=1)
+    hints = Hints(app, sam)
+    hints.since_last()
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    by_id = lambda items: sorted(items, key=lambda item: item["conversation_id"])
+    assert by_id(hints.since_last()) == by_id([change(chat, "deleted"), change(direct, "deleted")])

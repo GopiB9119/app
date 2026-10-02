@@ -20,6 +20,7 @@ const familyId = '359bd05a-c95c-4975-b061-d647e82a6958';
 const groupId = '463aa3d5-a47c-4560-8fe9-70da2f866a2e';
 const secondFamilyId = '5f0c8a0e-9f67-4c55-8a29-1f1f7d6f1a01';
 const coupleId = '6a1d9b1f-0a78-4d66-9b3a-2a2a8e7a2b02';
+const soloId = '7c2e1d66-1b9a-4f3e-8d2b-5a6b7c8d9e03';
 const created = '2026-09-19T10:00:00Z';
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const lostAnswer = 'No connection. Your changes are not confirmed.';
@@ -92,11 +93,11 @@ async function fixture(context, options = {}) {
     Object.defineProperty(crypto, 'randomUUID', { value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`, configurable: true });
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
     const state = window.spacesFixture = {
-      calls: [], unexpected: [], streams: [], receipts: {}, myRequests: [], sent: {}, nextId: 0,
+      calls: [], unexpected: [], streams: [], receipts: {}, myRequests: [], sent: structuredClone(options.sent ?? {}), nextId: 0,
       spaces: structuredClone(options.spaces ?? []),
       members: Object.fromEntries(Object.entries(options.members ?? {}).map(([id, list]) => [id, list.map(member => ({ version: 1, ...member }))])),
       groups: structuredClone(options.groups ?? []), joinQueue: structuredClone(options.joinQueue ?? {}),
-      writes: { create: 0, role: 0, remove: 0, settings: 0, join: 0, invite: 0 },
+      writes: { create: 0, role: 0, remove: 0, settings: 0, join: 0, invite: 0, policy: 0 },
       lose: { ...options.lose }, hold: { ...options.hold }, holding: {}, release: {},
     };
     const find = id => state.spaces.find(item => item.id === id);
@@ -106,7 +107,7 @@ async function fixture(context, options = {}) {
     };
     state.bump = (spaceId, fields) => { Object.assign(find(spaceId), fields); find(spaceId).version = String(Number(find(spaceId).version) + 1); };
     const memberOut = member => ({ account_id: member.account_id, display_name: member.display_name, role: member.role, joined_at: created, etag: `"m-${member.account_id}-v${member.version}"` });
-    const spaceOut = ({ id, name, description, space_type, visibility, role, version, created_at }) => ({ id, name, description, space_type, visibility, status: 'active', role, version, created_at });
+    const spaceOut = ({ id, name, description, space_type, visibility, member_invites, role, version, created_at }) => ({ id, name, description, space_type, visibility, member_invites: member_invites === true, status: 'active', role, version, created_at });
     const settingsEtag = item => `"${String(item.version).padStart(64, '0')}"`;
     const reply = (data, extra = {}, status = 200) => new Response(JSON.stringify({ data, request_id: 'offline-spaces', ...extra }), { status });
     const paged = data => reply(data, { pagination: { next_cursor: null, has_more: false } });
@@ -175,12 +176,18 @@ async function fixture(context, options = {}) {
       }
       if (path === '/api/invitations' && method === 'GET') return paged([]);
       let match = path.match(/^\/api\/spaces\/([^/]+)\/invitations$/);
-      if (match && method === 'GET') return paged(state.sent[match[1]] ?? []);
+      if (match && method === 'GET') {
+        const item = find(match[1]);
+        // A member who may no longer invite gets "not found"; staleSent lets a test keep answering to prove the Spaces list alone ends the panel.
+        if (item?.role === 'member' && item.member_invites !== true && !state.staleSent) return failed(404, 'NOT_FOUND', 'Synthetic invitations are unavailable.');
+        return paged(state.sent[match[1]] ?? []);
+      }
       if (match && method === 'POST') {
         const rejected = needKey();
         if (rejected) return rejected;
         const item = find(match[1]);
-        if (!item || item.role === 'member') return failed(403, 'ACCESS_DENIED', 'Synthetic invitations are unavailable.');
+        if (!item) return failed(403, 'ACCESS_DENIED', 'Synthetic invitations are unavailable.');
+        if (item.role === 'member' && item.member_invites !== true) return failed(404, 'NOT_FOUND', 'Synthetic invitations are unavailable.');
         const replayed = replay('invite', key, config);
         if (replayed) return replayed;
         const invitation = {
@@ -254,6 +261,24 @@ async function fixture(context, options = {}) {
         const saved = { ...spaceOut(item), role: 'owner', etag: settingsEtag(item) };
         remember(path, key, config, headers['if-match'], saved);
         lost('settings');
+        return reply(saved);
+      }
+      match = path.match(/^\/api\/spaces\/([^/]+)\/invite-policy$/);
+      if (match && method === 'POST') {
+        const rejected = needKey();
+        if (rejected) return rejected;
+        const replayed = replay(path, key, config, headers['if-match']);
+        if (replayed) return replayed;
+        const item = find(match[1]);
+        if (!item || item.role !== 'owner') return failed(403, 'ACCESS_DENIED', 'Synthetic policy is unavailable.');
+        if (!['family', 'group'].includes(item.space_type) || typeof body?.member_invites !== 'boolean') return failed(422, 'INVALID_REQUEST', 'Synthetic policy is not allowed here.');
+        if (headers['if-match'] !== settingsEtag(item)) return failed(412, 'SPACE_CHANGED', 'This Space changed. Reload and review the setting.');
+        item.member_invites = body.member_invites;
+        item.version = String(Number(item.version) + 1);
+        state.writes.policy += 1;
+        const saved = { ...spaceOut(item), role: 'owner', etag: settingsEtag(item) };
+        remember(path, key, config, headers['if-match'], saved);
+        lost('policy');
         return reply(saved);
       }
       match = path.match(/^\/api\/spaces\/([^/]+)\/join-requests$/);
@@ -748,6 +773,256 @@ test('spaces: names, descriptions and members full of emoji load and count each 
     assert.deepEqual(saved.body, { name, description: emoji(280) });
     await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
     await page.getByText(emoji(280), { exact: true }).waitFor();
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+const inviteHeading = scope => scope.getByRole('heading', { name: 'Who can invite people', exact: true, level: 3 });
+const ownerAdminsOnly = 'Only the owner and admins can invite people to this Space now.';
+const memberNote = 'Everyone in this Space can invite people. You see only the invitations you sent.';
+const confirmOn = 'Everyone in the Space will be able to invite people. They join as members. Each member sees and can withdraw only the invitations they sent.';
+const confirmOff = 'Only you and admins will be able to invite people. Invitations that members sent and that are still waiting will be withdrawn.';
+const sentByMember = { id: 'e1e1e1e1-0000-4000-8000-000000000001', space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan', recipient_account_id: priya, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-04T10:00:00Z' };
+
+test('spaces: the owner lets everyone invite people after a confirmation; a lost answer is retried with the same key, body and version (DEC-026)', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      lose: { policy: 1 },
+      spaces: [space(familyId, 'Morgan family')],
+      members: { [familyId]: [person(me, 'Alex Morgan', 'owner')] },
+    });
+    const { page } = result;
+    const route = `/api/spaces/${familyId}/invite-policy`;
+    await page.getByRole('button', { name: 'Settings for Morgan family', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    await dialog.getByLabel('Space name', { exact: true }).waitFor();
+    await inviteHeading(dialog).waitFor();
+    await dialog.getByText('Owner and admins', { exact: true }).waitFor();
+    assert.equal(await dialog.getByText('Everyone in the Space', { exact: true }).count(), 0);
+
+    // Keeping the current setting sends nothing.
+    await dialog.getByRole('button', { name: 'Let everyone invite people', exact: true }).click();
+    await dialog.getByText(confirmOn, { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Keep it for owner and admins', exact: true }).click();
+    await dialog.getByText(confirmOn, { exact: true }).waitFor({ state: 'detached' });
+    assert.equal((await requests(page, 'POST', route)).length, 0);
+
+    await dialog.getByRole('button', { name: 'Let everyone invite people', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Let everyone invite', exact: true }).click();
+    await dialog.getByRole('alert').getByText(lostAnswer, { exact: true }).waitFor();
+    await dialog.getByText('The change is unconfirmed. Retrying sends exactly the same change.', { exact: true }).waitFor();
+    // A lost answer is not shown as saved, and the reviewed change cannot be swapped for another.
+    assert.equal(await dialog.getByText('Everyone in the Space can now invite people.', { exact: true }).count(), 0);
+    assert.equal(await dialog.getByText('Everyone in the Space', { exact: true }).count(), 0);
+    await dialog.getByText('Owner and admins', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Keep it for owner and admins', exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Let everyone invite', exact: true }).count(), 0, 'The confirm button became Retry.');
+
+    await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
+    await dialog.getByText('Everyone in the Space can now invite people.', { exact: true }).waitFor();
+    await dialog.getByText('Everyone in the Space', { exact: true }).waitFor();
+    assert.equal(await dialog.getByText('Owner and admins', { exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Only owner and admins can invite', exact: true }).waitFor();
+
+    const attempts = await requests(page, 'POST', route);
+    assert.equal(attempts.length, 2);
+    for (const attempt of attempts) {
+      assertKey(attempt);
+      assert.deepEqual(attempt.body, { member_invites: true });
+      assert.equal(attempt.headers['if-match'], settingsEtag(1));
+    }
+    assert.equal(attempts[0].headers['idempotency-key'], attempts[1].headers['idempotency-key']);
+    assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+    assert.equal((await writes(page)).policy, 1);
+
+    // Turning it off again is a new review: new key, the version the first change produced.
+    await dialog.getByRole('button', { name: 'Only owner and admins can invite', exact: true }).click();
+    await dialog.getByText(confirmOff, { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Only owner and admins', exact: true }).click();
+    await dialog.getByText('Only you and admins can invite people now.', { exact: true }).waitFor();
+    await dialog.getByText('Owner and admins', { exact: true }).waitFor();
+    const off = (await requests(page, 'POST', route))[2];
+    assertKey(off);
+    assert.deepEqual(off.body, { member_invites: false });
+    assert.equal(off.headers['if-match'], settingsEtag(2));
+    assert.notEqual(off.headers['idempotency-key'], attempts[0].headers['idempotency-key']);
+    assert.equal((await writes(page)).policy, 2);
+    await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+test('spaces: family and group settings show Who can invite people, but couple and solo settings do not', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      spaces: [
+        space(familyId, 'Morgan family'), space(groupId, 'Garden club', { space_type: 'group', visibility: 'public' }),
+        space(coupleId, 'Synthetic pair', { space_type: 'couple' }), space(soloId, 'My planning', { space_type: 'solo' }),
+      ],
+      members: { [familyId]: [person(me, 'Alex Morgan', 'owner')], [groupId]: [person(me, 'Alex Morgan', 'owner')], [coupleId]: [person(me, 'Alex Morgan', 'owner')] },
+    });
+    const { page } = result;
+    const inspect = async name => {
+      await page.getByRole('button', { name: `Settings for ${name}`, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+      await dialog.getByLabel('Space name', { exact: true }).waitFor();
+      const shown = { heading: await inviteHeading(dialog).count(), button: await dialog.getByRole('button', { name: /^(Let everyone invite people|Only owner and admins can invite)$/ }).count() };
+      if (shown.heading) await dialog.getByText('Owner and admins', { exact: true }).waitFor();
+      await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+      await dialog.waitFor({ state: 'detached' });
+      return shown;
+    };
+    assert.deepEqual(await inspect('Morgan family'), { heading: 1, button: 1 });
+    assert.deepEqual(await inspect('Garden club'), { heading: 1, button: 1 });
+    assert.deepEqual(await inspect('Synthetic pair'), { heading: 0, button: 0 });
+    assert.deepEqual(await inspect('My planning'), { heading: 0, button: 0 });
+    assert.equal((await requests(page, 'POST', `/api/spaces/${familyId}/invite-policy`)).length, 0);
+    assert.equal((await writes(page)).policy, 0);
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+test('spaces: a member sees the invite button only when the family or group Space lets everyone invite, and invites with the member note', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      spaces: [
+        space(familyId, 'Morgan family', { role: 'member', member_invites: true }),
+        space(secondFamilyId, 'Lee household', { role: 'member' }),
+        space(groupId, 'Garden club', { space_type: 'group', visibility: 'public', role: 'member', member_invites: true }),
+        space(coupleId, 'Synthetic pair', { space_type: 'couple', role: 'member' }),
+      ],
+      members: { [coupleId]: [person(taylor, 'Taylor Morgan', 'owner'), person(me, 'Alex Morgan', 'member')] },
+      sent: { [familyId]: [sentByMember] },
+    });
+    const { page } = result;
+    await page.getByRole('heading', { name: 'Lee household', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Synthetic pair', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Manage invitations for Garden club', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Manage invitations for Lee household', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Manage invitations for Synthetic pair', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: /^Settings for / }).count(), 0, 'A member gets no settings button.');
+
+    await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+    await page.getByRole('heading', { name: 'Invite to Morgan family', exact: true }).waitFor();
+    await page.getByText(memberNote, { exact: true }).waitFor();
+    await page.getByText(priya, { exact: true }).waitFor();
+    assert.equal(await page.getByText(ownerAdminsOnly, { exact: true }).count(), 0);
+    await page.getByLabel('Recipient account ID', { exact: true }).fill(lee);
+    await page.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await page.getByText('Invitation created.', { exact: true }).waitFor();
+    const [invitation] = await requests(page, 'POST', `/api/spaces/${familyId}/invitations`);
+    assertKey(invitation);
+    assert.deepEqual(invitation.body, { recipient_account_id: lee });
+    await page.getByRole('button', { name: 'Close invitation management', exact: true }).click();
+    await page.getByRole('heading', { name: 'Invite to Morgan family', exact: true }).waitFor({ state: 'detached' });
+
+    await page.getByRole('button', { name: 'Manage invitations for Garden club', exact: true }).click();
+    await page.getByRole('heading', { name: 'Invite to Garden club', exact: true }).waitFor();
+    await page.getByText(memberNote, { exact: true }).waitFor();
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+// A member's open panel ends when the sent list answers "not found" or the Spaces list says members may no longer invite.
+for (const [how, staleSent] of [['the sent list answers not found', false], ['the refreshed Spaces list no longer lets members invite', true]]) {
+  test(`spaces: when ${how}, a member's open panel shows that only the owner and admins can invite, and closing it frees the other rows`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+    try {
+      const result = await fixture(context, {
+        spaces: [
+          space(familyId, 'Morgan family', { role: 'member', member_invites: true }),
+          space(groupId, 'Garden club', { space_type: 'group', visibility: 'public', role: 'member', member_invites: true }),
+        ],
+        sent: { [familyId]: [sentByMember] },
+      });
+      const { page } = result;
+      const other = name => page.getByRole('button', { name, exact: true });
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      await page.getByText(memberNote, { exact: true }).waitFor();
+      await page.getByText(priya, { exact: true }).waitFor();
+      assert.equal(await other('Manage invitations for Garden club').isDisabled(), true, 'Another row is locked while a panel is open.');
+      assert.equal(await other('Members of Garden club').isDisabled(), true);
+
+      const sentBefore = (await requests(page, 'GET', `/api/spaces/${familyId}/invitations`)).length;
+      const spacesBefore = (await requests(page, 'GET', '/api/spaces')).length;
+      await page.evaluate(({ spaceId, staleSent }) => {
+        window.spacesFixture.staleSent = staleSent;
+        window.spacesFixture.bump(spaceId, { member_invites: false });
+      }, { spaceId: familyId, staleSent });
+      if (staleSent) await page.getByRole('button', { name: 'Refresh Spaces', exact: true }).click();
+      else await page.getByRole('button', { name: 'Refresh sent invitations', exact: true }).click();
+      await page.getByRole('alert').getByText(ownerAdminsOnly, { exact: true }).waitFor();
+      assert.equal(await page.getByText(memberNote, { exact: true }).count(), 0);
+      assert.equal(await page.getByLabel('Recipient account ID', { exact: true }).count(), 0);
+      assert.equal(await page.getByText(priya, { exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Create invitation', exact: true }).count(), 0);
+      // The Spaces list was read again, and now the row has no invite button.
+      await page.waitForFunction(count => window.spacesFixture.calls.filter(call => call.method === 'GET' && call.route === '/api/spaces').length > count, spacesBefore);
+      await other('Manage invitations for Morgan family').waitFor({ state: 'detached' });
+      if (staleSent) assert.equal((await requests(page, 'GET', `/api/spaces/${familyId}/invitations`)).length, sentBefore, 'An ended panel does not ask for the sent list again.');
+      assert.equal(await other('Manage invitations for Garden club').isDisabled(), true, 'The panel is still open, so the other rows stay locked.');
+
+      const close = page.getByRole('button', { name: 'Close invitation management', exact: true });
+      assert.equal(await close.isEnabled(), true);
+      await close.click();
+      await page.getByRole('heading', { name: 'Invite to Morgan family', exact: true }).waitFor({ state: 'detached' });
+      assert.equal(await page.getByText(ownerAdminsOnly, { exact: true }).count(), 0);
+      assert.equal(await other('Manage invitations for Garden club').isEnabled(), true);
+      assert.equal(await other('Members of Garden club').isEnabled(), true);
+      assert.equal(await other('Manage invitations for Morgan family').count(), 0);
+      assert.equal((await writes(page)).invite, 0);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+test('spaces: Who can invite people and its confirmation fit 320 px at 200% text and keep their buttons reachable', async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      lose: { policy: 1 },
+      spaces: [space(familyId, 'Morgan family')],
+      members: { [familyId]: [person(me, 'Alex Morgan', 'owner')] },
+    });
+    const { page } = result;
+    await page.getByRole('heading', { name: 'Morgan family', exact: true }).waitFor();
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), 32);
+
+    await page.getByRole('button', { name: 'Settings for Morgan family', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    await dialog.getByLabel('Space name', { exact: true }).waitFor();
+    const noClip = async state => assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true, `${state} must not clip its content.`);
+    const reach = async (name, state) => assertReachable(page, dialog.getByRole('button', { name, exact: true }), `${state}: ${name}`);
+    await assertReachable(page, inviteHeading(dialog), 'Who can invite people');
+    await assertReachable(page, dialog.getByText('Owner and admins', { exact: true }), 'Owner and admins');
+    await reach('Let everyone invite people', 'Setting');
+    await assertFits(page, 'Setting'); await noClip('The setting');
+
+    await dialog.getByRole('button', { name: 'Let everyone invite people', exact: true }).click();
+    await assertReachable(page, dialog.getByText(confirmOn, { exact: true }), 'Confirmation text');
+    await reach('Keep it for owner and admins', 'Confirmation'); await reach('Let everyone invite', 'Confirmation');
+    await assertFits(page, 'Confirmation'); await noClip('The confirmation');
+
+    await dialog.getByRole('button', { name: 'Let everyone invite', exact: true }).click();
+    await dialog.getByRole('alert').getByText(lostAnswer, { exact: true }).waitFor();
+    await assertReachable(page, dialog.getByText('The change is unconfirmed. Retrying sends exactly the same change.', { exact: true }), 'Unconfirmed note');
+    await reach('Keep it for owner and admins', 'Unconfirmed'); await reach('Retry', 'Unconfirmed');
+    await assertFits(page, 'Unconfirmed change'); await noClip('The unconfirmed change');
+
+    await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
+    await assertReachable(page, dialog.getByText('Everyone in the Space can now invite people.', { exact: true }), 'Success notice');
+    await reach('Only owner and admins can invite', 'After saving');
+    await dialog.getByRole('button', { name: 'Only owner and admins can invite', exact: true }).click();
+    await assertReachable(page, dialog.getByText(confirmOff, { exact: true }), 'Confirmation text to restrict');
+    await reach('Keep it for everyone', 'Restrict confirmation'); await reach('Only owner and admins', 'Restrict confirmation');
+    await assertFits(page, 'Restrict confirmation'); await noClip('The restrict confirmation');
+    await assertReachable(page, dialog.getByRole('button', { name: 'Close Space settings', exact: true }), 'Close Space settings');
+    assert.equal((await writes(page)).policy, 1);
     await assertOffline(result);
   } finally { await context.close(); }
 });

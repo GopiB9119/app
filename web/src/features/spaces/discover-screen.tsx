@@ -1,42 +1,52 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Globe, LoaderCircle, RefreshCw, Search, Send, UndoDot, UsersRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { askToJoin, cancelJoinRequest, characters, findGroups, joinStatusLabels, lengthProblem, myJoinRequests } from "./client";
-import type { DirectoryEntry, JoinIntent } from "./client";
+import { useLanguage, useText } from "@/features/i18n/i18n";
+import type { MessageId, MessageValues } from "@/features/i18n/messages";
+import { askToJoin, cancelJoinRequest, characters, findGroups, lengthProblem, myJoinRequests } from "./client";
+import type { DirectoryEntry, JoinIntent, JoinRequest } from "./client";
 import styles from "./spaces.module.css";
 
 const NOTE_LIMIT = 280;
-const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const statusLabels: Record<JoinRequest["status"], MessageId> = {
+  pending: "spaces.groups.status.pending", approved: "spaces.groups.status.approved", declined: "spaces.groups.status.declined",
+  cancelled: "spaces.groups.status.cancelled", closed: "spaces.groups.status.closed", expired: "spaces.groups.status.expired",
+};
 
 export function DiscoverScreen() {
+  const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) window.location.replace("/login");
   }, [profile.error]);
   if (profile.isPending) {
-    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />Loading groups</main></Shell>;
+    return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("spaces.groups.loadingScreen")}</main></Shell>;
   }
   if (!profile.data || profile.isError) {
-    return <Shell account><main className={styles.main}><h1>Groups unavailable</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />Retry</button></main></Shell>;
+    return <Shell account><main className={styles.main}><h1>{t("spaces.groups.unavailable")}</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />{t("spaces.retry")}</button></main></Shell>;
   }
   return <FindGroups key={profile.data.data.id} user={profile.data.data} />;
 }
 
 function FindGroups({ user }: { user: Account }) {
+  const t = useText();
+  const { language } = useLanguage();
+  // English keeps the browser's own date format.
+  const dateFormat = useMemo(() => new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium" }), [language]);
   const cache = useQueryClient();
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [asking, setAsking] = useState<DirectoryEntry | null>(null);
   const [note, setNote] = useState("");
   const [intent, setIntent] = useState<JoinIntent | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{ id: MessageId; values?: MessageValues } | null>(null);
   const groups = useInfiniteQuery({
     queryKey: ["groups", user.id, query], initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => findGroups(user.id, query, pageParam, signal),

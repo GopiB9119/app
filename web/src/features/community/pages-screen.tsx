@@ -9,6 +9,7 @@ import type { Account } from "@/features/identity/client";
 import { useText } from "@/features/i18n/i18n";
 import { HANDLE_PATTERN, TOPICS, createPage, followPage, followingPages, isUnknown, myPages } from "./client";
 import type { CreateIntent, Topic } from "./client";
+import { PageRoles } from "./page-roles";
 import { CommunityFrame, Failure, Loading, problemText, sessionLost, useTextProblem, useViewer } from "./shared";
 import styles from "./community.module.css";
 
@@ -53,6 +54,7 @@ function MyPages({ account }: { account: Account }) {
       <ul className={styles.list}>
         {owned.data?.map(page => <li key={page.id} className={styles.row}>
           <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>{t("community.ownedSummary", { handle: page.handle, topic: t(`community.topic.${page.topic}`), count: page.follower_count })}</span>
+            {page.status !== "active" && <>{" "}<span className={styles.badge}>{t(`community.manage.status.${page.status}`)}</span></>}
             {page.moderation && <span className={styles.meta}>{" "}{t("community.hiddenByModerators", { reason: t(`community.reason.${page.moderation.reason}`) })}</span>}
           </span>
         </li>)}
@@ -60,6 +62,7 @@ function MyPages({ account }: { account: Account }) {
       {owned.data && owned.data.length < 5 && <CreatePageForm account={account} onCreated={() => queryClient.invalidateQueries({ queryKey: ["my-pages", account.id] })} />}
       {owned.data?.length === 5 && <p className={styles.meta}>{t("community.ownedLimit")}</p>}
     </section>
+    <PageRoles account={account} />
     <section className={styles.stack} aria-labelledby="following-heading">
       <h2 id="following-heading">{t("community.followingPages")}</h2>
       {error && <div className="message error" role="alert">{error}</div>}

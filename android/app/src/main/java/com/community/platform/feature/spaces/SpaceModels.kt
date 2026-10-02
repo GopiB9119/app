@@ -12,7 +12,12 @@ data class SpaceDto(
     val version: String,
     @SerializedName("created_at") val createdAt: String,
     val description: String? = null,
+    @SerializedName("member_invites") val memberInvites: Boolean = false,
 )
+
+val SpaceDto.canInvitePeople: Boolean get() =
+    (role in setOf("owner", "admin") && spaceType != "solo") ||
+        (role == "member" && memberInvites && spaceType in setOf("family", "group"))
 
 data class SpaceInvitationDto(
     val id: String,

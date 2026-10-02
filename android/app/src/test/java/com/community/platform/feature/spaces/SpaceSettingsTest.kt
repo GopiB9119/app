@@ -24,6 +24,7 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
+import java.io.IOException
 import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -33,13 +34,24 @@ class SpaceSettingsTest {
     private var value = original
     private var failure = 0
     private val commands = mutableListOf<Triple<String, String, EditSpaceSettingsDto>>()
+    private val policyCommands = mutableListOf<Triple<String, String, InvitePolicyDto>>()
+    private var policyError: Exception? = null
+    private var reads = 0
     private val api = object : SpaceSettingsApi {
         override suspend fun read(authorization: String, spaceId: String): Response<EnvelopeDto<SpaceSettingsDto>> {
             assertEquals("Bearer ${fixture.token}", authorization)
+            reads += 1
             return result()
         }
         override suspend fun save(authorization: String, spaceId: String, etag: String, key: String, body: EditSpaceSettingsDto): Response<EnvelopeDto<SpaceSettingsDto>> {
             commands.add(Triple(key, etag, body))
+            return result()
+        }
+        override suspend fun invitePolicy(authorization: String, spaceId: String, etag: String, key: String, body: InvitePolicyDto): Response<EnvelopeDto<SpaceSettingsDto>> {
+            assertEquals("Bearer ${fixture.token}", authorization)
+            assertEquals(fixture.spaceId, spaceId)
+            policyCommands.add(Triple(key, etag, body))
+            policyError?.let { throw it }
             return result()
         }
         fun result(): Response<EnvelopeDto<SpaceSettingsDto>> = if (failure == 0) Response.success(EnvelopeDto(value, null)) else Response.error(failure, """{"error":{"code":"CHECK_FAILED","message":"Synthetic failure","details":{}}}""".toResponseBody("application/json".toMediaType()))
@@ -57,6 +69,179 @@ class SpaceSettingsTest {
         idle(current)
         assertEquals(original, current.state.value.basis)
         return current
+    }
+
+    @Test fun invitePolicyWireSendsExactPathHeadersAndBooleanBody(): Unit = runBlocking {
+        var request: Request? = null
+        var response = original.copy(memberInvites = true, version = "2", etag = "\"${"b".repeat(64)}\"")
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            request = chain.request()
+            okhttp3.Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(EnvelopeDto(response, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = SpaceSettingsRepository(IdentityModule.spaceSettings(http, Gson()), fixture.accounts)
+        for (enabled in listOf(true, false)) {
+            response = response.copy(memberInvites = enabled)
+            val intent = InvitePolicyIntent(fixture.accountId, fixture.spaceId, enabled, original.etag, UUID.randomUUID().toString())
+            assertEquals(response, wire.changeInvitePolicy(intent))
+            assertEquals("POST", request!!.method)
+            assertEquals("/v1/spaces/${fixture.spaceId}/invite-policy", request!!.url.encodedPath)
+            assertEquals("Bearer ${fixture.token}", request!!.header("Authorization"))
+            assertEquals(intent.etag, request!!.header("If-Match"))
+            assertEquals(intent.requestKey, request!!.header("Idempotency-Key"))
+            val buffer = Buffer(); request!!.body!!.writeTo(buffer)
+            val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
+            assertEquals(setOf("member_invites"), body.keySet())
+            assertEquals(enabled, body["member_invites"].asBoolean)
+        }
+    }
+
+    @Test fun invitePolicyResultMustMatchSpaceOwnerAndRequestedChoice(): Unit = runBlocking {
+        val intent = InvitePolicyIntent(fixture.accountId, fixture.spaceId, true, original.etag, UUID.randomUUID().toString())
+        for (invalid in listOf(original, original.copy(id = fixture.accountId, memberInvites = true),
+            original.copy(role = "member", memberInvites = true), original.copy(spaceType = "couple", memberInvites = true))) {
+            value = invalid
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { repository.changeInvitePolicy(intent) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+        }
+        value = original.copy(memberInvites = true)
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.changeInvitePolicy(intent.copy(memberInvites = false)) } }
+        value = original.copy(spaceType = "solo")
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.changeInvitePolicy(intent.copy(memberInvites = false)) } }
+    }
+
+    @Test fun invitePolicyProposesCancelsAndConfirmsBothChoices() = runBlocking {
+        val current = ready()
+        current.proposeInvitePolicy()
+        assertTrue(current.state.value.confirmingInvitePolicy)
+        assertTrue(policyCommands.isEmpty())
+        current.cancelInvitePolicy()
+        current.confirmInvitePolicy()
+        assertFalse(current.state.value.confirmingInvitePolicy)
+        assertTrue(policyCommands.isEmpty())
+        for (enabled in listOf(true, false)) {
+            current.proposeInvitePolicy()
+            value = original.copy(memberInvites = enabled, version = if (enabled) "2" else "3", etag = "\"${"b".repeat(64)}\"")
+            current.confirmInvitePolicy(); idle(current)
+            assertEquals(value, current.state.value.basis)
+            assertEquals(enabled, policyCommands.last().third.memberInvites)
+            assertNull(current.state.value.pendingInvitePolicy)
+            assertFalse(current.state.value.confirmingInvitePolicy)
+            assertFalse(current.state.value.locked)
+            assertEquals(if (enabled) "Everyone in the Space can now invite people." else "Only you and admins can invite people now.", current.state.value.notice)
+        }
+        assertEquals(original.etag, policyCommands.first().second)
+        assertEquals(value.etag, policyCommands.last().second)
+        assertNotEquals(policyCommands.first().first, policyCommands.last().first)
+    }
+
+    @Test fun invitePolicyUnansweredRequestRetriesSameKeyEtagAndBody() = runBlocking {
+        val current = ready()
+        current.proposeInvitePolicy()
+        policyError = IOException("Synthetic unanswered request")
+        current.confirmInvitePolicy(); idle(current)
+        val intent = current.state.value.pendingInvitePolicy!!
+        assertTrue(current.state.value.confirmingInvitePolicy)
+        assertTrue(current.state.value.locked)
+        assertFalse(current.state.value.conflict)
+        assertEquals("No connection. Changes are not confirmed.", current.state.value.error)
+        current.cancelInvitePolicy(); current.proposeInvitePolicy(); current.reload(); current.refresh()
+        current.name("Different name"); current.description("Different description"); current.save()
+        assertEquals(original.name, current.state.value.name)
+        assertEquals("", current.state.value.description)
+        assertEquals(1, reads)
+        assertEquals(1, policyCommands.size)
+        assertTrue(commands.isEmpty())
+        policyError = null
+        value = original.copy(memberInvites = true, version = "2")
+        current.retry(); idle(current)
+        assertEquals(2, policyCommands.size)
+        assertEquals(policyCommands[0], policyCommands[1])
+        assertEquals(intent.requestKey, policyCommands.last().first)
+        assertEquals(intent.etag, policyCommands.last().second)
+        assertEquals(intent.memberInvites, policyCommands.last().third.memberInvites)
+        assertEquals(intent.requestKey, UUID.fromString(intent.requestKey).toString())
+        assertNull(current.state.value.pendingInvitePolicy)
+    }
+
+    @Test fun invitePolicyConflictReloadsSettingsBeforeAnotherReview() = runBlocking {
+        val current = ready()
+        current.proposeInvitePolicy()
+        policyError = IdentityFailure("SPACE_CHANGED", "This Space changed. Reload and review it again.", 412)
+        value = original.copy(name = "Other edit", version = "2", etag = "\"${"b".repeat(64)}\"")
+        current.confirmInvitePolicy(); idle(current)
+        assertEquals(2, reads)
+        assertEquals(value, current.state.value.basis)
+        assertEquals(value.name, current.state.value.name)
+        assertNull(current.state.value.pendingInvitePolicy)
+        assertFalse(current.state.value.confirmingInvitePolicy)
+        assertFalse(current.state.value.conflict)
+        assertEquals("This Space changed. Reload and review it again.", current.state.value.notice)
+        current.retry(); current.confirmInvitePolicy()
+        assertEquals(1, policyCommands.size)
+        policyError = null
+        current.proposeInvitePolicy()
+        value = value.copy(memberInvites = true, version = "3")
+        current.confirmInvitePolicy(); idle(current)
+        assertEquals(value.etag, policyCommands.last().second)
+        assertNotEquals(policyCommands.first().first, policyCommands.last().first)
+    }
+
+    @Test fun invitePolicyRequiresFamilyOrGroupAndSavedSettings() = runBlocking {
+        val current = ready()
+        current.name("Unsaved name")
+        current.proposeInvitePolicy()
+        assertFalse(current.state.value.confirmingInvitePolicy)
+        current.reload(); idle(current)
+        for (type in listOf("couple", "solo")) {
+            value = original.copy(spaceType = type)
+            current.reload(); idle(current)
+            current.proposeInvitePolicy(); current.confirmInvitePolicy()
+            assertFalse(current.state.value.confirmingInvitePolicy)
+        }
+        assertTrue(policyCommands.isEmpty())
+        value = original.copy(spaceType = "group")
+        current.reload(); idle(current)
+        current.proposeInvitePolicy()
+        assertTrue(current.state.value.confirmingInvitePolicy)
+    }
+
+    @Test fun invitePolicyBusyConfirmationPreventsDoubleSends() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val delayed = object : SpaceSettingsApi by api {
+            override suspend fun invitePolicy(authorization: String, spaceId: String, etag: String, key: String, body: InvitePolicyDto): Response<EnvelopeDto<SpaceSettingsDto>> {
+                val response = api.invitePolicy(authorization, spaceId, etag, key, body)
+                entered.complete(Unit); release.await()
+                return response
+            }
+        }
+        val current = SpaceSettingsViewModel(SpaceSettingsRepository(delayed, fixture.accounts))
+        model = current
+        current.bind(fixture.accountId, fixture.spaceId); idle(current)
+        current.proposeInvitePolicy()
+        value = original.copy(memberInvites = true, version = "2")
+        current.confirmInvitePolicy()
+        withTimeout(5000) { entered.await() }
+        current.confirmInvitePolicy(); current.retry(); current.cancelInvitePolicy(); current.reload(); current.save()
+        assertEquals(1, policyCommands.size)
+        assertEquals(1, reads)
+        assertTrue(current.state.value.busy)
+        release.complete(Unit); idle(current)
+        assertNull(current.state.value.pendingInvitePolicy)
+        assertTrue(current.state.value.basis!!.memberInvites)
+    }
+
+    @Test fun settingsMemberInvitationsAreValidOnlyForFamilyAndGroup(): Unit = runBlocking {
+        for (type in listOf("family", "group")) {
+            value = original.copy(spaceType = type, memberInvites = true)
+            assertTrue(repository.read(fixture.accountId, fixture.spaceId).memberInvites)
+        }
+        for (type in listOf("couple", "solo")) {
+            value = original.copy(spaceType = type, memberInvites = true)
+            val error = assertThrows(IdentityFailure::class.java) { runBlocking { repository.read(fixture.accountId, fixture.spaceId) } }
+            assertEquals("INVALID_RESPONSE", error.code)
+        }
     }
 
     @Test fun settingsRejectWrongOwnerScopeAndReview(): Unit = runBlocking {

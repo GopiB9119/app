@@ -183,12 +183,16 @@ export type ModeratorRole = z.infer<typeof moderatorRoleSchema>;
 
 export const HANDOVER_STATES = ["pending", "accepted", "declined", "cancelled", "expired", "invalidated"] as const;
 export type HandoverState = typeof HANDOVER_STATES[number];
+// The server reports an offer whose 15 minutes passed, or whose page or people changed, as expired or invalidated
+// before anything has closed it, so those two may still carry their end time and no resolution time.
+const handoverLifecycle = (value: { status: string; expires_at: string | null; resolved_at: string | null }) =>
+  pendingLifecycle(value) || ((value.status === "expired" || value.status === "invalidated") && value.expires_at !== null && value.resolved_at === null);
 export const handoverSchema = z.object({
   id: uuid, page_id: uuid, page_handle: z.string().min(3).max(30), page_name: chars(1, 80),
   from_account_id: uuid, from_name: chars(1, 80), to_account_id: uuid, to_name: chars(1, 80),
   status: z.enum(HANDOVER_STATES),
   created_at: timestamp, expires_at: timestamp.nullable(), resolved_at: timestamp.nullable(), etag,
-}).refine(pendingLifecycle);
+}).refine(handoverLifecycle);
 export type Handover = z.infer<typeof handoverSchema>;
 
 function invalid(message = "The service returned an unexpected response."): never {
@@ -401,7 +405,8 @@ export async function inviteModerator(intent: CreateIntent<{ account_id: string 
   const result = (await api(`pages/${intent.pageId}/moderators`, moderatorRowSchema, {
     method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
   })).data;
-  if (result.page_id !== intent.pageId || result.account_id !== intent.body.account_id || result.status !== "pending") {
+  // A retry with the same key returns the original invitation, whatever has happened to it since.
+  if (result.page_id !== intent.pageId || result.account_id !== intent.body.account_id) {
     invalid("The invitation could not be confirmed.");
   }
   return result;
@@ -413,8 +418,9 @@ export async function pageModerators(accountId: string, pageId: string, signal?:
   return result;
 }
 
+// A person may moderate any number of pages, so this list has no small limit.
 export async function myModeratorRoles(accountId: string, signal?: AbortSignal) {
-  const result = unique((await api("me/moderator-roles", z.array(moderatorRoleSchema).max(10), { accountId, signal })).data);
+  const result = unique((await api("me/moderator-roles", z.array(moderatorRoleSchema).max(1000), { accountId, signal })).data);
   if (result.some(item => item.status !== "pending" && item.status !== "active")) invalid();
   return result;
 }
@@ -431,25 +437,34 @@ export const acceptModerator = (accountId: string, pageId: string, row: Moderato
 export const declineModerator = (accountId: string, pageId: string, row: ModeratorRole | ModeratorRow) => moderatorAction(accountId, pageId, row, "decline", "declined");
 export const withdrawModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "withdraw", "withdrawn");
 export const removeModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "remove", "removed");
-export const stepDownModerator = (accountId: string, pageId: string, row: ModeratorRow) => moderatorAction(accountId, pageId, row, "step-down", "stepped_down");
+export const stepDownModerator = (accountId: string, pageId: string, row: ModeratorRole | ModeratorRow) => moderatorAction(accountId, pageId, row, "step-down", "stepped_down");
 
 export async function offerHandover(intent: CreateIntent<{ to_account_id: string }> & { pageId: string; etag: string }) {
   const result = (await api(`pages/${intent.pageId}/handover`, handoverSchema, {
     method: "POST", accountId: intent.accountId, body: intent.body,
     headers: { "Idempotency-Key": intent.key, "If-Match": intent.etag },
   })).data;
-  if (result.page_id !== intent.pageId || result.to_account_id !== intent.body.to_account_id || result.status !== "pending") {
+  // A retry with the same key returns the original offer, whatever has happened to it since.
+  if (result.page_id !== intent.pageId || result.to_account_id !== intent.body.to_account_id) {
     invalid("The offer could not be confirmed.");
   }
   return result;
 }
 
+/** The page's latest handover offer, for the owner who made it or the moderator it was made to; null when there is none. */
 export async function pageHandover(accountId: string, pageId: string, signal?: AbortSignal) {
-  return (await api(`pages/${pageId}/handover`, handoverSchema, { accountId, signal })).data;
+  try {
+    const result = (await api(`pages/${pageId}/handover`, handoverSchema, { accountId, signal })).data;
+    if (result.page_id !== pageId) invalid();
+    return result;
+  } catch (problem) {
+    if (problem instanceof ApiError && problem.status === 404) return null;
+    throw problem;
+  }
 }
 
 export async function myHandoverOffers(accountId: string, signal?: AbortSignal) {
-  const result = unique((await api("me/handover-offers", z.array(handoverSchema).max(10), { accountId, signal })).data);
+  const result = unique((await api("me/handover-offers", z.array(handoverSchema).max(1000), { accountId, signal })).data);
   if (result.some(item => item.status !== "pending" || item.to_account_id !== accountId)) invalid();
   return result;
 }
@@ -470,19 +485,27 @@ export const respondHandover = (
 
 export async function archivePage(accountId: string, page: PublicPage) {
   if (!page.etag) invalid();
-  return checkPage((await api(`pages/${page.id}/archive`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+  const result = checkPage((await api(`pages/${page.id}/archive`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+  if (result.status !== "read_only") invalid("The archive could not be confirmed.");
+  return result;
 }
 
 export async function restorePage(accountId: string, page: PublicPage) {
   if (!page.etag) invalid();
-  return checkPage((await api(`pages/${page.id}/restore`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+  const result = checkPage((await api(`pages/${page.id}/restore`, pageSchema, { method: "POST", accountId, body: {}, headers: { "If-Match": page.etag } })).data, page.id);
+  // A deleted page comes back as it was, which may be archived; an archived page comes back active.
+  if (page.status === "deleted" ? result.status === "deleted" : result.status !== "active") invalid("The restore could not be confirmed.");
+  return result;
 }
 
 export async function deletePage(accountId: string, page: PublicPage, confirm: string) {
   if (!page.etag) invalid();
-  return checkPage((await api(`pages/${page.id}/delete`, pageSchema, {
+  const result = checkPage((await api(`pages/${page.id}/delete`, pageSchema, {
     method: "POST", accountId, body: { confirm }, headers: { "If-Match": page.etag },
   })).data, page.id);
+  // A deleted page stays readable for the grace period, so the deletion is only confirmed by its status.
+  if (result.status !== "deleted") invalid("The deletion could not be confirmed.");
+  return result;
 }
 
 export function isUnknown(error: unknown) {

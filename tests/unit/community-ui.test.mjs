@@ -107,6 +107,9 @@ async function fixture(context) {
         Object.assign(state.post, body, { edited_at: '2026-09-19T11:00:00Z', etag: next(state.post.etag) });
         return reply(state.post);
       }
+      // The owner's page has no moderators and no handover offer (DEC-025); page-roles-ui.test.mjs covers them.
+      if (url.pathname === `/api/pages/${pageId}/moderators` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/handover` && method === 'GET') return failed(404, 'NOT_FOUND', 'Handover offer not found.');
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
     };
   }, { accountId, pageId, postId });
@@ -290,6 +293,9 @@ test('followed pages show loading and failure instead of claiming the person fol
         state.calls.push({ route: url.pathname, method });
         if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
         if (url.pathname === '/api/me/pages' && method === 'GET') return reply([]);
+        // No invitations, roles or offers to moderate pages (DEC-025); page-roles-ui.test.mjs covers them.
+        if (url.pathname === '/api/me/moderator-roles' && method === 'GET') return reply([]);
+        if (url.pathname === '/api/me/handover-offers' && method === 'GET') return reply([]);
         if (url.pathname === '/api/me/following' && method === 'GET') {
           await new Promise(resume => state.waiting.push(resume));
           if (state.fail) return new Response(JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Service is temporarily unavailable.' }, request_id: 'offline-pages' }), { status: 503 });

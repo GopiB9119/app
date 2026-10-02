@@ -40,6 +40,222 @@ class SpaceViewModelTest {
 
     private suspend fun idle(value: SpaceViewModel) = withTimeout(5000) { value.state.first { !it.busy } }
 
+    private fun <Value> invitationNotFound(message: String = "Space not found."): Response<EnvelopeDto<Value>> =
+        Response.error(404, """{"error":{"code":"NOT_FOUND","message":"$message"}}""".toResponseBody())
+
+    @Test fun memberCanDraftSendPaginateAndWithdrawInvitationsWhenEnabled(): Unit = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        val value = ready()
+        for (type in listOf("family", "group")) {
+            fixture.api.space = fixture.api.space.copy(spaceType = type)
+            fixture.api.invitation = fixture.invitation.copy(recipientAccountId = fixture.accountId)
+            value.refresh(); idle(value)
+            fixture.api.invitation = fixture.invitation
+            fixture.api.pagination = PaginationDto("next-sent", true)
+            value.open(fixture.spaceId); idle(value)
+            assertEquals(listOf(fixture.invitation), value.state.value.sent)
+            assertEquals("next-sent", value.state.value.sentCursor)
+            fixture.api.pagination = PaginationDto(null, false)
+            value.moreSent(); idle(value)
+            assertNull(value.state.value.sentCursor)
+            value.recipient(fixture.recipientId)
+            assertEquals(fixture.recipientId, value.state.value.recipientDraft)
+            value.invite(); idle(value)
+            assertEquals("Invitation created.", value.state.value.notice)
+            assertEquals("member", value.state.value.sent.single().role)
+            assertNull(value.state.value.pending)
+            value.propose(SpaceCommand.Revoke(fixture.accountId, fixture.invitation.copy(id = fixture.accountId)))
+            assertNull(value.state.value.confirmation)
+            value.propose(SpaceCommand.Revoke(fixture.accountId, value.state.value.sent.single()))
+            assertNotNull(value.state.value.confirmation)
+            value.confirm(); idle(value)
+            assertEquals("revoked", value.state.value.sent.single().status)
+            value.closePanel()
+        }
+        assertEquals(listOf(fixture.recipientId, fixture.recipientId), fixture.api.recipients)
+        assertEquals(listOf("revoke" to fixture.invitationId, "revoke" to fixture.invitationId), fixture.api.actions)
+    }
+
+    @Test fun memberCannotDraftSendListOrWithdrawWhenInvitationsAreDisabled(): Unit = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member")
+        var sentCalls = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun sent(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceInvitationDto>>> {
+                sentCalls += 1
+                return fixture.api.sent(authorization, spaceId, cursor, limit)
+            }
+        }
+        val value = ready(api)
+        for (type in listOf("family", "group", "couple")) {
+            fixture.api.space = fixture.api.space.copy(spaceType = type)
+            value.refresh(); idle(value); value.open(fixture.spaceId); idle(value)
+            value.recipient(fixture.recipientId); value.invite(); value.moreSent()
+            value.propose(SpaceCommand.Revoke(fixture.accountId, fixture.invitation))
+            assertEquals("", value.state.value.recipientDraft)
+            assertNull(value.state.value.pending)
+            assertNull(value.state.value.confirmation)
+            assertTrue(value.state.value.sent.isEmpty())
+            value.closePanel()
+        }
+        assertEquals(0, sentCalls)
+        assertTrue(fixture.api.recipients.isEmpty())
+        assertTrue(fixture.api.actions.isEmpty())
+    }
+
+    @Test fun memberInviteNotFoundReloadsSpaceAndDropsTheIntent() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var invitations = 0; var lists = 0; var details = 0; var sentLists = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun spaces(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceDto>>> {
+                lists += 1; return fixture.api.spaces(authorization, cursor, limit)
+            }
+            override suspend fun space(authorization: String, spaceId: String): Response<EnvelopeDto<SpaceDto>> {
+                details += 1; return fixture.api.space(authorization, spaceId)
+            }
+            override suspend fun sent(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceInvitationDto>>> {
+                sentLists += 1; return fixture.api.sent(authorization, spaceId, cursor, limit)
+            }
+            override suspend fun invite(authorization: String, spaceId: String, key: String, body: CreateSpaceInvitationDto): Response<EnvelopeDto<SpaceInvitationDto>> {
+                invitations += 1
+                fixture.api.space = fixture.api.space.copy(memberInvites = false, version = "2")
+                return invitationNotFound()
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value)
+        value.recipient(fixture.recipientId); value.invite(); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertNull(value.state.value.pending)
+        assertEquals("", value.state.value.recipientDraft)
+        assertTrue(value.state.value.sent.isEmpty())
+        assertNull(value.state.value.sentCursor)
+        assertEquals(false, value.state.value.selectedSpace!!.memberInvites)
+        assertEquals(false, value.state.value.spaces.single().memberInvites)
+        value.retry(); value.moreSent(); value.invite()
+        assertEquals(1, invitations)
+        assertEquals(2, lists)
+        assertEquals(2, details)
+        assertEquals(1, sentLists)
+    }
+
+    @Test fun memberSentListNotFoundReloadsPolicyWithoutLooping() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var sentLists = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun sent(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceInvitationDto>>> {
+                sentLists += 1
+                fixture.api.space = fixture.api.space.copy(memberInvites = false, version = "2")
+                return invitationNotFound()
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertEquals(fixture.api.space, value.state.value.selectedSpace)
+        assertEquals(listOf(fixture.api.space), value.state.value.spaces)
+        value.moreSent(); value.retry(); value.refresh(); idle(value)
+        assertEquals(1, sentLists)
+        assertTrue(value.state.value.sent.isEmpty())
+    }
+
+    @Test fun memberSentPaginationNotFoundReloadsPolicyWithoutAnotherSentLoad() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var sentLists = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun sent(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceInvitationDto>>> {
+                sentLists += 1
+                if (cursor == null) return Response.success(EnvelopeDto(listOf(fixture.invitation), null, PaginationDto("next-sent", true)))
+                fixture.api.space = fixture.api.space.copy(memberInvites = false, version = "2")
+                return invitationNotFound()
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value)
+        value.moreSent(); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertEquals(false, value.state.value.selectedSpace!!.memberInvites)
+        assertEquals(false, value.state.value.spaces.single().memberInvites)
+        assertNull(value.state.value.sentCursor)
+        value.moreSent(); value.retry()
+        assertEquals(2, sentLists)
+    }
+
+    @Test fun memberWithdrawalNotFoundReloadsSpaceAndHidesInvitations() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var withdrawals = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun revoke(authorization: String, spaceId: String, invitationId: String, body: Map<String, String>): Response<EnvelopeDto<InvitationOutcomeDto>> {
+                withdrawals += 1
+                fixture.api.space = fixture.api.space.copy(memberInvites = false, version = "2")
+                return invitationNotFound("Invitation not found.")
+            }
+        }
+        val value = ready(api)
+        fixture.api.invitation = fixture.invitation
+        value.open(fixture.spaceId); idle(value)
+        value.propose(SpaceCommand.Revoke(fixture.accountId, value.state.value.sent.single()))
+        value.confirm(); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertNull(value.state.value.pending)
+        assertNull(value.state.value.confirmation)
+        assertTrue(value.state.value.sent.isEmpty())
+        assertEquals(false, value.state.value.selectedSpace!!.memberInvites)
+        assertEquals(false, value.state.value.spaces.single().memberInvites)
+        value.retry(); value.confirm(); value.moreSent()
+        assertEquals(1, withdrawals)
+    }
+
+    @Test fun removedMemberInviteNotFoundClearsSpaceAndReloadsTheList() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var removed = false
+        var lists = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun spaces(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceDto>>> {
+                lists += 1; return fixture.api.spaces(authorization, cursor, limit)
+            }
+            override suspend fun space(authorization: String, spaceId: String): Response<EnvelopeDto<SpaceDto>> =
+                if (removed) invitationNotFound() else fixture.api.space(authorization, spaceId)
+            override suspend fun invite(authorization: String, spaceId: String, key: String, body: CreateSpaceInvitationDto): Response<EnvelopeDto<SpaceInvitationDto>> {
+                removed = true; fixture.api.listedSpaces = emptyList()
+                return invitationNotFound()
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value)
+        value.recipient(fixture.recipientId); value.invite(); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertNull(value.state.value.selectedSpace)
+        assertTrue(value.state.value.spaces.isEmpty())
+        assertNull(value.state.value.pending)
+        assertEquals(2, lists)
+    }
+
+    @Test fun memberInviteAccessReloadFailureLeavesControlsHiddenWithoutRetry() = runBlocking {
+        fixture.api.space = fixture.space.copy(role = "member", memberInvites = true)
+        var refused = false
+        var lists = 0
+        var invitations = 0
+        val api = object : SpaceApi by fixture.api {
+            override suspend fun spaces(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<SpaceDto>>> {
+                lists += 1
+                return if (refused) Response.error(503, """{"error":{"code":"TEMPORARY_FAILURE","message":"Reload unavailable."}}""".toResponseBody()) else fixture.api.spaces(authorization, cursor, limit)
+            }
+            override suspend fun invite(authorization: String, spaceId: String, key: String, body: CreateSpaceInvitationDto): Response<EnvelopeDto<SpaceInvitationDto>> {
+                refused = true; invitations += 1
+                return invitationNotFound()
+            }
+        }
+        val value = ready(api)
+        value.open(fixture.spaceId); idle(value)
+        value.recipient(fixture.recipientId); value.invite(); idle(value)
+        assertEquals("Only the owner and admins can invite people to this Space now.", value.state.value.error)
+        assertNull(value.state.value.selectedSpace)
+        assertNull(value.state.value.pending)
+        value.retry(); value.invite(); value.moreSent()
+        assertEquals(2, lists)
+        assertEquals(1, invitations)
+    }
+
     @Test fun roleActionsRequireOwnerAndExactRosterReview(): Unit = runBlocking {
         val value = ready()
         value.open(fixture.spaceId); idle(value); value.showMembers(); idle(value)

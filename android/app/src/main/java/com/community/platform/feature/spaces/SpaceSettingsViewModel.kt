@@ -20,9 +20,10 @@ data class SpaceSettingsState(
     val pending: SpaceSettingsIntent? = null, val busy: Boolean = false,
     val conflict: Boolean = false, val denied: Boolean = false, val requiresSignIn: Boolean = false,
     val error: String? = null, val notice: String? = null,
+    val confirmingInvitePolicy: Boolean = false, val pendingInvitePolicy: InvitePolicyIntent? = null,
 ) {
     val dirty: Boolean get() = basis != null && (name != basis.name || description != basis.description.orEmpty())
-    val locked: Boolean get() = busy || pending != null
+    val locked: Boolean get() = busy || pending != null || confirmingInvitePolicy || pendingInvitePolicy != null
 }
 
 @HiltViewModel
@@ -53,24 +54,72 @@ class SpaceSettingsViewModel @Inject constructor(private val repository: SpaceSe
                 val result = operation(account, space)
                 if (generation == expected) mutableState.update {
                     it.copy(basis = result, name = result.name, description = result.description.orEmpty(), pending = null, conflict = false,
-                        notice = if (current.pending != null) "Settings saved. Current name: ${result.name}" else null)
+                        pendingInvitePolicy = null, confirmingInvitePolicy = false,
+                        notice = when {
+                            current.pendingInvitePolicy != null -> if (result.memberInvites) "Everyone in the Space can now invite people." else "Only you and admins can invite people now."
+                            current.pending != null -> "Settings saved. Current name: ${result.name}"
+                            else -> null
+                        })
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
-                if (generation == expected) mutableState.update {
-                    val failure = error as? IdentityFailure
-                    val denied = failure?.status in setOf(401, 403, 404) || failure?.code == "ACCOUNT_CHANGED"
-                    val definite = failure != null && failure.status in 400..499 && failure.status != 408
-                    when {
-                        denied -> SpaceSettingsState(accountId = account, spaceId = space, denied = true,
-                            requiresSignIn = failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED", error = error.message)
-                        else -> it.copy(pending = if (definite) null else it.pending,
-                            conflict = it.conflict || definite || current.pending == null && it.basis != null,
-                            error = if (error is IOException) "No connection. Changes are not confirmed." else error.message ?: "The settings could not be confirmed.")
-                    }
+                if (generation == expected && error is IdentityFailure && error.status == 412 && current.pendingInvitePolicy != null) {
+                    mutableState.update { it.copy(pendingInvitePolicy = null, confirmingInvitePolicy = false, conflict = true,
+                        notice = "This Space changed. Reload and review it again.") }
+                    try {
+                        val fresh = repository.read(account, space)
+                        if (generation == expected) mutableState.update { it.copy(basis = fresh, name = fresh.name,
+                            description = fresh.description.orEmpty(), conflict = false) }
+                    } catch (reloadError: CancellationException) { throw reloadError }
+                    catch (reloadError: Exception) { failed(expected, current, reloadError) }
+                } else {
+                    failed(expected, current, error)
                 }
             } finally { if (generation == expected) mutableState.update { it.copy(busy = false) } }
         }
+    }
+
+    private fun failed(expected: Long, current: SpaceSettingsState, error: Exception) {
+        if (generation != expected) return
+        val failure = error as? IdentityFailure
+        val denied = failure?.status in setOf(401, 403, 404) || failure?.code == "ACCOUNT_CHANGED"
+        val definite = failure != null && failure.status in 400..499 && failure.status != 408
+        mutableState.update {
+            when {
+                denied -> SpaceSettingsState(accountId = current.accountId, spaceId = current.spaceId, denied = true,
+                    requiresSignIn = failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED", error = error.message)
+                else -> it.copy(pending = if (definite) null else it.pending,
+                    pendingInvitePolicy = if (definite) null else it.pendingInvitePolicy,
+                    confirmingInvitePolicy = if (definite) false else it.confirmingInvitePolicy,
+                    conflict = it.conflict || definite || current.pending == null && current.pendingInvitePolicy == null && it.basis != null,
+                    error = if (error is IOException) "No connection. Changes are not confirmed." else error.message ?: "The settings could not be confirmed.")
+            }
+        }
+    }
+
+    fun proposeInvitePolicy() {
+        val current = mutableState.value
+        val basis = current.basis ?: return
+        if (!current.locked && !current.dirty && !current.conflict && !current.denied && !current.requiresSignIn &&
+            basis.role == "owner" && basis.spaceType in setOf("family", "group")) {
+            mutableState.update { it.copy(confirmingInvitePolicy = true, error = null, notice = null) }
+        }
+    }
+
+    fun cancelInvitePolicy() {
+        val current = mutableState.value
+        if (!current.busy && current.pendingInvitePolicy == null) mutableState.update { it.copy(confirmingInvitePolicy = false) }
+    }
+
+    fun confirmInvitePolicy() {
+        val current = mutableState.value
+        val account = current.accountId ?: return
+        val basis = current.basis ?: return
+        if (current.busy || !current.confirmingInvitePolicy || current.denied || current.requiresSignIn || current.pending != null ||
+            basis.role != "owner" || basis.spaceType !in setOf("family", "group")) return
+        val intent = current.pendingInvitePolicy ?: InvitePolicyIntent(account, basis.id, !basis.memberInvites, basis.etag, UUID.randomUUID().toString())
+        mutableState.update { it.copy(pendingInvitePolicy = intent) }
+        action { _, _ -> repository.changeInvitePolicy(intent) }
     }
 
     fun name(value: String) {
@@ -112,6 +161,10 @@ class SpaceSettingsViewModel @Inject constructor(private val repository: SpaceSe
     }
 
     fun retry() {
+        if (mutableState.value.pendingInvitePolicy != null) {
+            confirmInvitePolicy()
+            return
+        }
         val command = mutableState.value.pending ?: return
         action { _, _ -> repository.save(command) }
     }

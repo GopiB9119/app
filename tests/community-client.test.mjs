@@ -403,13 +403,14 @@ test('Moderator commands send the key, body and reviewed version and confirm the
   const client = communityClient(async (url, options) => {
     calls.push({ url: String(url), options });
     const route = String(url);
-    if (route.endsWith(`/pages/${pageId}/moderators`)) return Response.json({ data: moderator() });
+    if (route.endsWith(`/pages/${pageId}/moderators`)) {
+      return Response.json({ data: options.method === 'GET' ? [moderator()] : moderator() });
+    }
     if (route.endsWith('/accept')) return Response.json({ data: moderator({ status: 'active', expires_at: null, resolved_at: '2026-09-19T11:00:00Z' }) });
     if (route.endsWith('/decline')) return Response.json({ data: resolved('declined') });
     if (route.endsWith('/withdraw')) return Response.json({ data: resolved('withdrawn') });
     if (route.endsWith('/remove')) return Response.json({ data: resolved('removed') });
     if (route.endsWith('/step-down')) return Response.json({ data: resolved('stepped_down') });
-    if (route.endsWith('/moderators')) return Response.json({ data: [moderator()] });
     return Response.json({ data: [{ ...moderator(), page_handle: 'river-walkers', page_name: 'River Walkers' }] });
   });
   await client.inviteModerator({ accountId, key, pageId, body: { account_id: otherId } });
@@ -457,7 +458,8 @@ test('Handover and lifecycle commands send the reviewed version and confirm the 
     if (route.endsWith('/archive')) return Response.json({ data: page({ can_manage: true, etag: '"v2"', status: 'read_only' }) });
     if (route.endsWith('/restore')) return Response.json({ data: page({ can_manage: true, etag: '"v3"', status: 'active' }) });
     if (route.endsWith('/delete')) return Response.json({ data: page({ can_manage: true, etag: '"v4"', status: 'deleted', purge_after: '2026-09-26T10:00:00Z' }) });
-    return Response.json({ data: [handover()] });
+    // Everything else is a list, and the only list left is the offers waiting for the signed-in account.
+    return Response.json({ data: [handover({ to_account_id: accountId })] });
   });
   const shown = page({ can_manage: true, etag: '"v1"' });
   await client.offerHandover({ accountId, key, pageId, etag: shown.etag, body: { to_account_id: otherId } });
@@ -478,7 +480,7 @@ test('Handover and lifecycle commands send the reviewed version and confirm the 
 
   assert.equal((await client.pageHandover(accountId, pageId)).id, accountId);
   assert.deepEqual((await client.myHandoverOffers(accountId)).map(item => item.id), [accountId]);
-  await assert.rejects(communityClient(async () => Response.json({ data: [handover({ to_account_id: accountId })] })).myHandoverOffers(accountId), { status: 502 });
+  await assert.rejects(communityClient(async () => Response.json({ data: [handover({ to_account_id: otherId })] })).myHandoverOffers(accountId), { status: 502 });
 
   assert.equal((await client.archivePage(accountId, shown)).status, 'read_only');
   assert.equal((await client.restorePage(accountId, page({ can_manage: true, etag: '"v2"', status: 'read_only' }))).status, 'active');
@@ -489,4 +491,49 @@ test('Handover and lifecycle commands send the reviewed version and confirm the 
   assert.equal(archive.options.body, '{}');
   assert.deepEqual(JSON.parse(remove.options.body), { confirm: 'River Walkers' });
   await assert.rejects(communityClient(async () => Response.json({ data: page({ can_manage: true, etag: '"v2"', status: 'active' }) })).archivePage(accountId, shown), { status: 502 });
+});
+
+test('Offers past their time, restores of archived pages, retried commands and long role lists read as the server means them', async () => {
+  const client = communityClient();
+  const handover = (overrides = {}) => ({
+    id: accountId, page_id: pageId, page_handle: 'river-walkers', page_name: 'River Walkers',
+    from_account_id: accountId, from_name: 'Alex', to_account_id: otherId, to_name: 'Sam',
+    status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-09-19T10:15:00Z', resolved_at: null, etag: '"h1"', ...overrides,
+  });
+  // The server reports an offer whose 15 minutes passed, or whose page changed, before anything closed it.
+  for (const status of ['expired', 'invalidated']) {
+    assert.equal(client.handoverSchema.safeParse(handover({ status })).success, true, status);
+    assert.equal(client.handoverSchema.safeParse(handover({ status, expires_at: null, resolved_at: '2026-09-19T10:05:00Z' })).success, true, status);
+    assert.equal(client.handoverSchema.safeParse(handover({ status, resolved_at: '2026-09-19T10:05:00Z' })).success, false, status);
+  }
+  for (const status of ['accepted', 'declined', 'cancelled']) assert.equal(client.handoverSchema.safeParse(handover({ status })).success, false, status);
+
+  // A page without an offer answers 404, which means there is none; other failures stay failures.
+  const missing = { error: { code: 'NOT_FOUND', message: 'Handover offer not found.', details: {} } };
+  assert.equal(await communityClient(async () => Response.json(missing, { status: 404 })).pageHandover(accountId, pageId), null);
+  assert.equal((await communityClient(async () => Response.json({ data: handover({ status: 'expired' }) })).pageHandover(accountId, pageId)).status, 'expired');
+  await assert.rejects(communityClient(async () => Response.json({ data: handover({ page_id: otherId }) })).pageHandover(accountId, pageId), { status: 502 });
+  await assert.rejects(communityClient(async () => Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Try again.', details: {} } }, { status: 503 })).pageHandover(accountId, pageId), { status: 503 });
+
+  // A deleted page comes back as it was, which may be archived; an archived page comes back active.
+  const owned = page({ can_manage: true, etag: '"v4"', status: 'deleted', purge_after: '2026-09-26T10:00:00Z' });
+  const restored = status => communityClient(async () => Response.json({ data: page({ can_manage: true, etag: '"v5"', status }) }));
+  assert.equal((await restored('read_only').restorePage(accountId, owned)).status, 'read_only');
+  assert.equal((await restored('active').restorePage(accountId, owned)).status, 'active');
+  await assert.rejects(restored('deleted').restorePage(accountId, owned), { status: 502 });
+  await assert.rejects(restored('read_only').restorePage(accountId, page({ can_manage: true, etag: '"v2"', status: 'read_only' })), { status: 502 });
+
+  // A retry with the same key returns the original invitation or offer, even after it was answered.
+  const moderator = { id: accountId, page_id: pageId, account_id: otherId, display_name: 'Sam', status: 'active', created_at: '2026-09-19T10:00:00Z', expires_at: null, resolved_at: '2026-09-19T11:00:00Z', etag: '"m2"' };
+  assert.equal((await communityClient(async () => Response.json({ data: moderator })).inviteModerator({ accountId, key, pageId, body: { account_id: otherId } })).status, 'active');
+  const accepted = handover({ status: 'accepted', expires_at: null, resolved_at: '2026-09-19T10:05:00Z' });
+  assert.equal((await communityClient(async () => Response.json({ data: accepted })).offerHandover({ accountId, key, pageId, etag: '"v1"', body: { to_account_id: otherId } })).status, 'accepted');
+
+  // A person may moderate any number of pages, and be offered more than ten.
+  const roles = Array.from({ length: 11 }, (_, index) => ({
+    ...moderator, id: `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`, page_handle: `walkers-${index}`, page_name: `Walkers ${index}`,
+  }));
+  assert.equal((await communityClient(async () => Response.json({ data: roles })).myModeratorRoles(accountId)).length, 11);
+  const offers = roles.map(role => handover({ id: role.id, to_account_id: accountId }));
+  assert.equal((await communityClient(async () => Response.json({ data: offers })).myHandoverOffers(accountId)).length, 11);
 });

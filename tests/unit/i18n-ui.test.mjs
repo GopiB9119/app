@@ -237,13 +237,13 @@ for (const language of ['te', 'hi']) {
       assert.match(await page.evaluate(() => document.cookie), new RegExp(`(?:^|; )cp_lang=${language}(?:;|$)`));
       assert.equal(result.documents.length, 1, 'Changing the language must not reload.');
       await page.evaluate(() => window.renderI18nFixture('account'));
-      await page.getByRole('heading', { name: 'Your account', exact: true }).waitFor();
+      await page.getByRole('heading', { name: texts[language]['account.heading'], exact: true }).waitFor();
       const navigation = page.getByRole('navigation', { name: texts[language]['nav.main'], exact: true });
       assert.deepEqual(await navigation.getByRole('link').allTextContents(), ['nav.home', 'nav.spaces', 'nav.messages', 'nav.discover', 'nav.profile'].map(id => texts[language][id]));
       assert.equal(await navigation.getByRole('link', { name: texts[language]['nav.profile'], exact: true }).getAttribute('aria-current'), 'page');
       await page.getByRole('link', { name: texts[language]['shell.inboxUnread'].replace('{count}', '7'), exact: true }).waitFor();
       assert.equal(await page.locator('.app-header').getByRole('link', { name: texts[language]['shell.search'], exact: true }).getAttribute('title'), texts[language]['shell.search']);
-      assert.equal(await page.getByLabel('Display name', { exact: true }).inputValue(), name);
+      assert.equal(await page.getByLabel(texts[language]['account.displayName'], { exact: true }).inputValue(), name);
       assert.equal(await page.getByText(name, { exact: true }).count(), 1, 'User-written names remain unchanged.');
       assertClean(result);
       await page.close();

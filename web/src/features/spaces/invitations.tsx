@@ -110,7 +110,7 @@ export function InvitationInbox({ user }: { user: Account }) {
   </section>;
 }
 
-export function ManageInvitations({ user, space, onClose }: { user: Account; space: FamilySpace; onClose: () => void }) {
+export function ManageInvitations({ user, space, ended = false, onClose }: { user: Account; space: FamilySpace; ended?: boolean; onClose: () => void }) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
@@ -121,6 +121,7 @@ export function ManageInvitations({ user, space, onClose }: { user: Account; spa
   const [revokeTarget, setRevokeTarget] = useState<FamilyInvitation | null>(null);
   const history = useInfiniteQuery({
     queryKey: ["sentInvitations", user.id, space.id],
+    enabled: !ended,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => invitationPage(`spaces/${space.id}/invitations`, user.id, pageParam, signal),
     getNextPageParam: last => last.pagination.next_cursor ?? undefined,
@@ -155,14 +156,19 @@ export function ManageInvitations({ user, space, onClose }: { user: Account; spa
     },
   });
   const denied = useAccountGuard(history.error, invite.error, revoke.error);
+  // A member's 404 means the owner turned the setting off or removed them; a withdraw 404 alone could be a stale row, so the refetched list decides.
+  const gone = ended || (space.role === "member" && [history.error, invite.error].some(error => error instanceof ApiError && error.status === 404));
+  useEffect(() => {
+    if (gone) void queryClient.invalidateQueries({ queryKey: ["spaces", user.id] });
+  }, [gone, queryClient, user.id]);
   const rows = [...new Map(history.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
 
   useEffect(() => {
-    if (!recipient && !intent) return;
+    if (gone || (!recipient && !intent)) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [recipient, intent]);
+  }, [recipient, intent, gone]);
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -174,7 +180,9 @@ export function ManageInvitations({ user, space, onClose }: { user: Account; spa
   }
 
   return <section className={styles.invitationSection} aria-labelledby="manage-invitations-title">
-    <div className={styles.sectionHeading}><UserPlus size={20} aria-hidden /><h2 id="manage-invitations-title">{t("spaces.invitations.inviteTo", { name: space.name })}</h2><button className="icon-button" title={t("spaces.invitations.close")} aria-label={t("spaces.invitations.close")} disabled={intent !== null || revoke.isPending} onClick={onClose}><X size={18} aria-hidden /></button></div>
+    <div className={styles.sectionHeading}><UserPlus size={20} aria-hidden /><h2 id="manage-invitations-title">{t("spaces.invitations.inviteTo", { name: space.name })}</h2><button className="icon-button" title={t("spaces.invitations.close")} aria-label={t("spaces.invitations.close")} disabled={(intent !== null || revoke.isPending) && !gone} onClick={onClose}><X size={18} aria-hidden /></button></div>
+    {gone ? <p className="message error" role="alert">{t("spaces.invitations.ownerAdminsOnly")}</p> : <>
+    {space.role === "member" && <p className={styles.emptyNote}>{t("spaces.invitations.memberNote")}</p>}
     {notice && <p className="message success" role="status">{t(notice)}</p>}
     {space.space_type === "couple" && <p className={styles.emptyNote}>{t("spaces.invitations.coupleHint")}</p>}
     <form className={styles.inviteForm} onSubmit={submit}>
@@ -194,6 +202,7 @@ export function ManageInvitations({ user, space, onClose }: { user: Account; spa
     </li>)}</ul>}
     {history.hasNextPage && !denied && <button className="text-button" disabled={history.isFetching} onClick={() => history.fetchNextPage()}>{t("spaces.invitations.moreSent")}</button>}
     {revokeTarget && !denied && <InvitationConfirmation title={t("spaces.invitations.revokeTitle")} label={t("spaces.invitations.revoke")} pending={revoke.isPending} error={revoke.error?.message} onCancel={() => setRevokeTarget(null)} onConfirm={() => revoke.mutate(revokeTarget)}><p className={styles.accountCode}>{revokeTarget.recipient_account_id}</p></InvitationConfirmation>}
+    </>}
   </section>;
 }
 

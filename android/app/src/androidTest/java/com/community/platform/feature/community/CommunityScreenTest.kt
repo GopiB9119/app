@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasTestTag
@@ -247,6 +249,169 @@ class CommunityScreenTest {
         reveal("pin-$postId")
         compose.onNodeWithTag("pin-$postId").assertTextContains("Pin to top").performClick()
         assertEquals(listOf(pinned, unpinned), pins)
+    }
+
+    private val inviteeId = "1b2c3d4e-5f60-4b7c-9d8e-0f1a2b3c4d5e"
+    private val activeId = "2c3d4e5f-6071-4c8d-8e9f-1a2b3c4d5e6f"
+    private val waitingId = "3d4e5f60-7182-4d9e-9fa0-2b3c4d5e6f70"
+    private val offerId = "4f5e6d7c-8b9a-4c0d-9e1f-2a3b4c5d6e7f"
+    private val stamp = "2026-09-19T10:00:00Z"
+    private val later = "2099-01-01T00:00:00Z"
+
+    private fun largeNarrow(content: @androidx.compose.runtime.Composable () -> Unit) = compose.setContent {
+        val density = LocalDensity.current
+        CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+            Box(Modifier.width(320.dp).fillMaxHeight()) { CommunityTheme { content() } }
+        }
+    }
+
+    private fun insideAndShown(vararg tags: String) {
+        val parent = compose.onNodeWithTag("community-content").fetchSemanticsNode().boundsInRoot
+        for (tag in tags) {
+            reveal(tag)
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            val bounds = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(tag, !bounds.isEmpty && bounds.left >= parent.left && bounds.right <= parent.right)
+        }
+    }
+
+    @Test fun largeTextNarrowOwnerManagesModeratorsHandoverAndPageState() {
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        val active = ModeratorDto(activeId, pageId, inviteeId, "Sam", "active", stamp, null, stamp, "\"m1\"")
+        val waiting = ModeratorDto(waitingId, pageId, accountId.replace('6', '7'), "Kim", "pending", stamp, later, null, "\"m2\"")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = owned, moderators = listOf(active, waiting)))
+        val offered = mutableListOf<ModeratorDto>()
+        val resolved = mutableListOf<Pair<String, String>>()
+        val invites = mutableListOf<String>()
+        var archives = 0
+        var restores = 0
+        val actions = CommunityActions(
+            inviteModerator = { invites += it; true }, resolveModerator = { row, action -> resolved += row.displayName to action },
+            offerHandover = { offered += it; true }, archivePage = { archives += 1 }, restorePage = { restores += 1 },
+        )
+        largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
+        insideAndShown("page-moderators", "moderator-$activeId", "moderator-handover-$activeId", "moderator-remove-$activeId", "moderator-withdraw-$waitingId", "page-state", "page-archive", "page-delete")
+        // While an invitation waits, no second one can be sent.
+        compose.onAllNodesWithTag("moderator-invite-id").assertCountEquals(0)
+        reveal("page-moderators")
+        capture("community-page-moderators-large-text.png")
+        // Handing over, removing and withdrawing each ask first, naming the person.
+        reveal("moderator-handover-$activeId")
+        compose.onNodeWithTag("moderator-handover-$activeId").performScrollTo().performClick()
+        compose.onNodeWithText("Hand River Walkers over to Sam?").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        assertEquals(listOf(active), offered)
+        reveal("moderator-remove-$activeId")
+        compose.onNodeWithTag("moderator-remove-$activeId").performScrollTo().performClick()
+        compose.onNodeWithText("Remove Sam?").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        reveal("moderator-withdraw-$waitingId")
+        compose.onNodeWithTag("moderator-withdraw-$waitingId").performScrollTo().performClick()
+        compose.onNodeWithText("Kim will no longer be able to accept.").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        assertEquals(listOf("Sam" to "remove", "Kim" to "withdraw"), resolved)
+
+        // Without a waiting invitation the owner can invite; an offer that waits replaces Hand over with its own Cancel.
+        state = state.copy(moderators = listOf(active), handover = HandoverDto(offerId, pageId, page.handle, page.name, accountId, "You", inviteeId, "Sam", "pending", stamp, later, null, "\"h1\""))
+        insideAndShown("moderator-invite-id", "moderator-invite", "page-handover", "handover-cancel")
+        compose.onAllNodesWithTag("moderator-handover-$activeId").assertCountEquals(0)
+        compose.onNodeWithTag("moderator-invite-id").performScrollTo().performTextReplacement(" $inviteeId ")
+        compose.onNodeWithTag("moderator-invite").performScrollTo().performClick()
+        assertEquals(listOf(" $inviteeId "), invites)
+        reveal("page-archive")
+        compose.onNodeWithTag("page-archive").performScrollTo().performClick()
+        compose.onNodeWithTag("community-confirm").performClick()
+        assertEquals(1, archives)
+
+        // A read-only page says so, keeps its moderators listed, and offers only Restore and Delete.
+        state = state.copy(page = owned.copy(status = "read_only"), handover = null)
+        insideAndShown("page-read-only", "moderator-remove-$activeId", "page-restore", "page-delete")
+        for (tag in listOf("page-edit", "post-save-draft", "moderator-invite-id", "moderator-handover-$activeId", "page-archive")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        compose.onNodeWithTag("page-restore").performScrollTo().performClick()
+        assertEquals(1, restores)
+
+        // A deleted page shows its owner only when it will be erased and how to restore it.
+        state = state.copy(page = owned.copy(status = "deleted", purgeAfter = "2026-09-26T10:04:00Z"))
+        insideAndShown("page-deleted", "page-restore")
+        for (tag in listOf("page-moderators", "page-state", "post-save-draft", "page-read-only")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        reveal("page-deleted")
+        capture("community-page-deleted-large-text.png")
+        compose.onNodeWithTag("page-restore").performScrollTo().performClick()
+        assertEquals(2, restores)
+    }
+
+    @Test fun deletingAPageNeedsItsExactNameTyped() {
+        val owned = page.copy(canManage = true, etag = "\"p1\"")
+        val deletes = mutableListOf<String>()
+        compose.setContent { CommunityTheme { CommunityScreen(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = owned), CommunityActions(deletePage = { deletes += it; true }), "UTC", {}) } }
+        reveal("page-delete")
+        compose.onNodeWithTag("page-delete").performScrollTo().performClick()
+        compose.onNodeWithText("Delete River Walkers?").assertIsDisplayed()
+        compose.onNodeWithTag("page-delete-confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("page-delete-name").performTextReplacement("River Walker")
+        compose.onNodeWithTag("page-delete-confirm").assertIsNotEnabled()
+        compose.onNodeWithTag("page-delete-name").performTextReplacement(" River  Walkers ")
+        compose.onNodeWithTag("page-delete-confirm").assertIsEnabled().performClick()
+        assertEquals(listOf(" River  Walkers "), deletes)
+        compose.onAllNodesWithTag("page-delete-dialog").assertCountEquals(0)
+    }
+
+    @Test fun largeTextNarrowOffersInvitationsAndRolesAreAnsweredFromYourPages() {
+        val invitation = ModeratorRoleDto(waitingId, pageId, page.handle, page.name, "pending", stamp, later, null, "\"r1\"")
+        val moderating = ModeratorRoleDto(activeId, inviteeId, "hill-runners", "Hill Runners", "active", stamp, null, stamp, "\"r2\"")
+        val offer = HandoverDto(offerId, pageId, page.handle, page.name, inviteeId, "Ana", accountId, "You", "pending", stamp, later, null, "\"h1\"")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.MyPages, ownedLoaded = true, followedStatus = ListStatus.LOADED,
+            roles = listOf(invitation, moderating), offers = listOf(offer)))
+        val answers = mutableListOf<String>()
+        val opened = mutableListOf<Destination>()
+        val actions = CommunityActions(
+            open = { opened += it }, resolveRole = { role, action -> answers += "${role.pageName} $action" },
+            respondHandover = { item, action -> answers += "${item.pageName} offer $action" },
+        )
+        largeNarrow { CommunityScreen(state, actions, "UTC", {}) }
+        insideAndShown("offer-$offerId", "offer-accept-$offerId", "offer-decline-$offerId", "role-$waitingId", "role-accept-$waitingId", "role-decline-$waitingId",
+            "role-$activeId", "role-open-$activeId", "role-step-down-$activeId")
+        compose.onAllNodesWithTag("moderating-none").assertCountEquals(0)
+        reveal("offer-$offerId")
+        capture("community-page-roles-large-text.png")
+        // Taking over a page and agreeing to moderate ask first; declining does not.
+        compose.onNodeWithTag("offer-accept-$offerId").performScrollTo().performClick()
+        compose.onNodeWithText("Take over River Walkers?").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        compose.onNodeWithTag("offer-decline-$offerId").performScrollTo().performClick()
+        reveal("role-accept-$waitingId")
+        compose.onNodeWithTag("role-accept-$waitingId").performScrollTo().performClick()
+        compose.onNodeWithText("Moderate River Walkers?").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        compose.onNodeWithTag("role-decline-$waitingId").performScrollTo().performClick()
+        reveal("role-step-down-$activeId")
+        compose.onNodeWithTag("role-step-down-$activeId").performScrollTo().performClick()
+        compose.onNodeWithText("Step down from Hill Runners?").assertIsDisplayed()
+        compose.onNodeWithTag("community-confirm").performClick()
+        compose.onNodeWithTag("role-open-$activeId").performScrollTo().performClick()
+        assertEquals(listOf("River Walkers offer accept", "River Walkers offer decline", "River Walkers accept", "River Walkers decline", "Hill Runners step-down"), answers)
+        assertEquals(listOf<Destination>(Destination.Page("hill-runners")), opened)
+        state = state.copy(roles = emptyList(), offers = emptyList())
+        insideAndShown("moderating-none")
+    }
+
+    @Test fun largeTextNarrowModeratorPinsButHasNoOwnerControlsAndReadOnlyHidesThem() {
+        val role = ModeratorRoleDto(activeId, pageId, page.handle, page.name, "active", stamp, null, stamp, "\"r1\"")
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.Page(page.handle), page = page, posts = listOf(post), roles = listOf(role)))
+        val pins = mutableListOf<PostDto>()
+        largeNarrow { CommunityScreen(state, CommunityActions(pin = { pins += it }), "UTC", {}) }
+        insideAndShown("pin-$postId", "page-follow")
+        for (tag in listOf("edit-$postId", "delete-$postId", "page-moderators", "page-state", "page-edit")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        compose.onNodeWithTag("pin-$postId").performScrollTo().assertTextContains("Pin to top").performClick()
+        assertEquals(listOf(post), pins)
+        // On a read-only page nothing can be pinned or followed, and the page says why.
+        state = state.copy(page = page.copy(status = "read_only"))
+        insideAndShown("page-read-only")
+        for (tag in listOf("pin-$postId", "page-follow")) compose.onAllNodesWithTag(tag).assertCountEquals(0)
+        // Someone who already follows it can still unfollow.
+        state = state.copy(page = page.copy(status = "read_only", following = true, followerCount = 1))
+        insideAndShown("page-follow")
+        compose.onNodeWithTag("page-follow").assertTextContains("Unfollow")
     }
 
     private fun capture(name: String) {

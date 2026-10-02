@@ -2,13 +2,15 @@
 
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Globe, LoaderCircle, LockKeyhole, RefreshCw, Save, X } from "lucide-react";
+import { Globe, LoaderCircle, LockKeyhole, RefreshCw, Save, UserPlus, X } from "lucide-react";
 import { ApiError } from "@/features/identity/client";
-import { changeVisibility, characters, lengthProblem, readSpaceSettings, saveSpaceSettings } from "./client";
-import type { SpaceSettings, SpaceSettingsIntent, VisibilityIntent } from "./client";
+import { useText } from "@/features/i18n/i18n";
+import { changeInvitePolicy, changeVisibility, characters, lengthProblem, readSpaceSettings, saveSpaceSettings } from "./client";
+import type { InvitePolicyIntent, SpaceSettings, SpaceSettingsIntent, VisibilityIntent } from "./client";
 import styles from "./spaces.module.css";
 
 export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId: string; spaceId: string; onClose: () => void }) {
+  const t = useText();
   const cache = useQueryClient();
   const heading = useId();
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
@@ -17,7 +19,9 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
   const [description, setDescription] = useState("");
   const [intent, setIntent] = useState<SpaceSettingsIntent | null>(null);
   const [visibilityIntent, setVisibilityIntent] = useState<VisibilityIntent | null>(null);
+  const [inviteIntent, setInviteIntent] = useState<InvitePolicyIntent | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [confirmingInvites, setConfirmingInvites] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [discard, setDiscard] = useState<"close" | "reload" | null>(null);
   const [notice, setNotice] = useState("");
@@ -45,9 +49,17 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
     },
     onError: error => failed(error, () => setVisibilityIntent(null)),
   });
-  const problem = save.error ?? visibility.error ?? review.error;
+  const invitePolicy = useMutation({ mutationFn: changeInvitePolicy, retry: false, networkMode: "always",
+    onSuccess: async result => {
+      setInviteIntent(null); setConfirmingInvites(false);
+      setNotice(t(result.member_invites ? "spaces.settings.invites.nowEveryone" : "spaces.settings.invites.nowAdmins"));
+      await settled(result);
+    },
+    onError: error => failed(error, () => setInviteIntent(null)),
+  });
+  const problem = save.error ?? visibility.error ?? invitePolicy.error ?? review.error;
   const denied = problem instanceof ApiError && ([401, 403, 404].includes(problem.status) || problem.code === "ACCOUNT_CHANGED");
-  const locked = intent !== null || visibilityIntent !== null || save.isPending || visibility.isPending;
+  const locked = intent !== null || visibilityIntent !== null || inviteIntent !== null || save.isPending || visibility.isPending || invitePolicy.isPending;
   const dirty = basis !== null && (name !== basis.name || description !== basis.description);
   useEffect(() => {
     if (!dirty && !locked) return;
@@ -62,11 +74,12 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
   }, [problem, cache]);
   function close() { if (!locked || denied) { if (dirty && !denied) setDiscard("close"); else onClose(); } }
   async function reload() {
-    setDiscard(null); save.reset(); visibility.reset(); setNotice(""); setConfirming(false);
+    setDiscard(null); save.reset(); visibility.reset(); invitePolicy.reset(); setNotice(""); setConfirming(false); setConfirmingInvites(false);
     const result = await review.refetch();
     if (result.data && !result.isError) { setBasis(result.data); setName(result.data.name); setDescription(result.data.description); setConflict(false); }
   }
   const target = basis?.visibility === "public" ? "private" : "public";
+  const inviteTarget = basis ? !basis.member_invites : true;
   const nameProblem = lengthProblem(name, 80);
   const descriptionProblem = lengthProblem(description, 280);
   return <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={heading} onCancel={event => { event.preventDefault(); close(); }}>
@@ -89,13 +102,13 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
         <span className={styles.counter}>{characters(description)}/280</span>
         {descriptionProblem && <span className="field-error">{descriptionProblem}</span>}
         {intent && !save.isPending && <p role="status">The result is unconfirmed. Retrying uses the original {intent.description === undefined ? "name" : "name, description"} and review.</p>}
-        <button className="primary-button" type="submit" disabled={save.isPending || visibility.isPending || review.isFetching || conflict || !name.trim() || (!intent && (nameProblem !== null || descriptionProblem !== null)) || (!intent && name.trim() === basis.name && description.trim() === basis.description)}>
+        <button className="primary-button" type="submit" disabled={save.isPending || visibility.isPending || invitePolicy.isPending || review.isFetching || conflict || !name.trim() || (!intent && (nameProblem !== null || descriptionProblem !== null)) || (!intent && name.trim() === basis.name && description.trim() === basis.description)}>
           {save.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <Save size={17} aria-hidden />}{intent && !save.isPending ? (intent.description === undefined ? "Retry original name" : "Retry original changes") : description.trim() === basis.description ? "Save name" : "Save changes"}
         </button>
       </form>
       {basis.space_type === "group" ? <div className={styles.invitationSection}>
         <h3>{basis.visibility === "public" ? <><Globe size={17} aria-hidden className={styles.publicMark} /> Public group</> : <><LockKeyhole size={17} aria-hidden /> Private group</>}</h3>
-        {!confirming ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching} onClick={() => { setConfirming(true); setNotice(""); }}>
+        {!confirming ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirmingInvites} onClick={() => { setConfirming(true); setNotice(""); }}>
           {target === "public" ? <Globe size={17} aria-hidden /> : <LockKeyhole size={17} aria-hidden />}{target === "public" ? "Make this group public" : "Make this group private"}</button>
         : <div className={styles.noteForm}>
           <p>{target === "public"
@@ -112,6 +125,24 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
         </div>}
         {dirty && !locked && <p className={styles.emptyNote}>Save or undo your edits before changing who can find the group.</p>}
       </div> : <p className={styles.description}><LockKeyhole size={14} aria-hidden /> Family, couple and solo Spaces are always private.</p>}
+      {(basis.space_type === "family" || basis.space_type === "group") && <div className={styles.invitationSection}>
+        <h3><UserPlus size={17} aria-hidden /> {t("spaces.settings.invites.title")}</h3>
+        <p>{t(basis.member_invites ? "spaces.settings.invites.everyone" : "spaces.settings.invites.admins")}</p>
+        {!confirmingInvites ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirming} onClick={() => { setConfirmingInvites(true); setNotice(""); }}>
+          <UserPlus size={17} aria-hidden />{t(inviteTarget ? "spaces.settings.invites.allow" : "spaces.settings.invites.restrict")}</button>
+        : <div className={styles.noteForm}>
+          <p>{t(inviteTarget ? "spaces.settings.invites.confirmOn" : "spaces.settings.invites.confirmOff")}</p>
+          {inviteIntent && !invitePolicy.isPending && <p role="status">{t("spaces.settings.visibilityUnconfirmed")}</p>}
+          <div className={`dialog-actions ${styles.membershipActions}`}>
+            <button className="secondary-button" disabled={invitePolicy.isPending || inviteIntent !== null} onClick={() => setConfirmingInvites(false)}>{t(inviteTarget ? "spaces.settings.invites.keepAdmins" : "spaces.settings.invites.keepEveryone")}</button>
+            <button className="primary-button" disabled={invitePolicy.isPending} onClick={() => {
+              const command = inviteIntent ?? { accountId, spaceId, memberInvites: inviteTarget, etag: basis.etag, key: crypto.randomUUID() };
+              setInviteIntent(command); invitePolicy.mutate(command);
+            }}>{invitePolicy.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : null}{inviteIntent && !invitePolicy.isPending ? t("spaces.retry") : t(inviteTarget ? "spaces.settings.invites.turnOn" : "spaces.settings.invites.turnOff")}</button>
+          </div>
+        </div>}
+        {dirty && !locked && <p className={styles.emptyNote}>{t("spaces.settings.invites.saveFirst")}</p>}
+      </div>}
       {conflict && <button className="text-button" disabled={review.isFetching} onClick={() => setDiscard("reload")}><RefreshCw size={17} aria-hidden />Reload current settings</button>}
     </>}
     {discard && !locked && <div className={styles.invitationSection}>

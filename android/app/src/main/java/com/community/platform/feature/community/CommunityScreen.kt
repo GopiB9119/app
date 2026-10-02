@@ -84,6 +84,14 @@ data class CommunityActions(
     val editPage: (String, String, String, String?) -> Boolean = { _, _, _, _ -> false },
     val retryFollowing: () -> Unit = reload,
     val pin: (PostDto) -> Unit = {},
+    val inviteModerator: (String) -> Boolean = { false },
+    val resolveModerator: (ModeratorDto, String) -> Unit = { _, _ -> },
+    val resolveRole: (ModeratorRoleDto, String) -> Unit = { _, _ -> },
+    val offerHandover: (ModeratorDto) -> Boolean = { false },
+    val respondHandover: (HandoverDto, String) -> Unit = { _, _ -> },
+    val archivePage: () -> Unit = {},
+    val restorePage: () -> Unit = {},
+    val deletePage: (String) -> Boolean = { false },
 )
 
 private data class Confirmation(val title: String, val text: String, val confirm: String, val action: () -> Unit)
@@ -113,6 +121,9 @@ fun CommunityRoute(viewModel: CommunityViewModel, accountId: String, timezone: S
         viewModel::startEdit, viewModel::cancelEdit, viewModel::editPost,
         viewModel::unfollow, viewModel::startPageEdit, viewModel::cancelPageEdit, viewModel::editPage,
         viewModel::retryFollowing, viewModel::pin,
+        inviteModerator = viewModel::inviteModerator, resolveModerator = viewModel::resolveModerator, resolveRole = viewModel::resolveRole,
+        offerHandover = viewModel::offerHandover, respondHandover = viewModel::respondHandover,
+        archivePage = viewModel::archivePage, restorePage = viewModel::restorePage, deletePage = viewModel::deletePage,
     ), timezone, onBack, safetyContent = { moderationHistory(moderationUi, moderationActions, moderationTime) })
     ModerationAppealDialog(moderationUi, moderationActions)
 }
@@ -170,7 +181,7 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
                         Destination.Discover -> discover(state, actions, time, report)
                         is Destination.Page -> page(state, actions, time, ask, report)
                         is Destination.Post -> post(state, actions, time, ask, report)
-                        Destination.MyPages -> myPages(state, actions)
+                        Destination.MyPages -> myPages(state, actions, time, ask)
                         Destination.Blocked -> { blocked(state, actions, ask); safetyContent() }
                     }
                     if (state.nextCursor != null && state.destination !is Destination.MyPages && state.destination !is Destination.Blocked) item("more") {
@@ -206,6 +217,14 @@ private fun pageMessage(value: String): String = when (value) {
     PAGE_RULES_INVALID -> stringResource(R.string.community_page_rules_invalid)
     PAGE_EDIT_CONFLICT -> stringResource(R.string.community_page_edit_conflict)
     PAGE_EDIT_SAVED -> stringResource(R.string.community_page_saved)
+    MODERATOR_ID_INVALID -> stringResource(R.string.community_moderator_id_invalid)
+    MODERATOR_INVITED -> stringResource(R.string.community_moderator_invited_notice)
+    HANDOVER_OFFERED -> stringResource(R.string.community_handover_offered)
+    HANDOVER_ACCEPTED -> stringResource(R.string.community_handover_accepted)
+    PAGE_ARCHIVED -> stringResource(R.string.community_page_archived)
+    PAGE_RESTORED -> stringResource(R.string.community_page_restored)
+    PAGE_DELETED -> stringResource(R.string.community_page_deleted_notice)
+    PAGE_DELETE_NAME -> stringResource(R.string.community_page_delete_name)
     else -> value
 }
 
@@ -261,8 +280,11 @@ private fun PageItem(page: PageDto, state: CommunityState, actions: CommunityAct
         Text(page.name, style = MaterialTheme.typography.titleMedium)
         Text("@${page.handle} / ${page.topic} / ${pluralStringResource(R.plurals.community_followers, page.followerCount, page.followerCount)}", style = MaterialTheme.typography.bodySmall)
         ModerationMark(page.moderation)
+        if (!page.writable) Text(stringResource(if (page.deleted) R.string.community_state_deleted else R.string.community_state_read_only),
+            style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("page-state-${page.handle}"))
         if (page.description.isNotEmpty()) Text(page.description, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
-        if (!page.canManage) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("follow-${page.handle}")) {
+        // A read-only page cannot be followed, but it can still be unfollowed.
+        if (!page.canManage && (page.writable || page.following)) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("follow-${page.handle}")) {
             Text(stringResource(if (page.following) R.string.community_unfollow else R.string.community_follow))
         }
         HorizontalDivider()
@@ -305,13 +327,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
             if (page.description.isNotEmpty()) Text(page.description)
             if (page.canManage) {
                 Text(stringResource(R.string.community_you_own), color = MaterialTheme.colorScheme.primary)
-                if (state.editingPage == null) OutlinedButton(onClick = { actions.startPageEdit(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                if (state.editingPage == null && page.writable) OutlinedButton(onClick = { actions.startPageEdit(page) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
                     modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-edit")) { Text(stringResource(R.string.community_edit_page)) }
             }
             else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val blockLabel = stringResource(R.string.community_block_page)
                 val blockText = stringResource(R.string.community_block_page_text, page.name)
-                if (!page.blocked) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, modifier = Modifier.testTag("page-follow")) { Text(stringResource(if (page.following) R.string.community_unfollow else R.string.community_follow)) }
+                if (!page.blocked && (page.writable || page.following)) OutlinedButton(onClick = { actions.follow(page) }, enabled = !state.working, modifier = Modifier.testTag("page-follow")) { Text(stringResource(if (page.following) R.string.community_unfollow else R.string.community_follow)) }
                 if (page.blocked) state.blocks.firstOrNull { it.pageId == page.id }?.let { block -> OutlinedButton(onClick = { actions.unblock(block) }, enabled = !state.working) { Text(stringResource(R.string.community_unblock)) } }
                 else TextButton(onClick = { ask(Confirmation(blockLabel, blockText, blockLabel) { actions.blockPage(page) }) }, enabled = !state.working, modifier = Modifier.testTag("page-block")) { Text(blockLabel) }
                 TextButton(onClick = { report(ReportTarget("page", page.id, page.name)) }, enabled = !state.working) { Text(stringResource(R.string.community_report)) }
@@ -319,6 +341,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
             if (page.blocked) Text(stringResource(R.string.community_page_blocked))
             HorizontalDivider()
         }
+    }
+    if (page.readOnly) item("read-only") { Text(stringResource(R.string.community_page_read_only), modifier = Modifier.testTag("page-read-only")) }
+    // Only the owner reaches a deleted page, to restore it.
+    if (page.deleted) {
+        item("deleted") { DeletedPage(page, state, actions, time) }
+        return
     }
     page.rules?.takeIf { it.isNotEmpty() }?.let { rules ->
         item("rules") {
@@ -330,15 +358,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
     }
     if (page.canManage) {
         state.editingPage?.takeIf { it.id == page.id }?.let { opened -> item("page-editor") { PageEditor(opened, state, actions) } }
-        item("composer") { Composer(state, actions) }
+        if (page.writable) item("composer") { Composer(state, actions) }
         item("drafts-heading") { Text(stringResource(R.string.community_drafts), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
         if (state.drafts.isEmpty()) item("no-drafts") { Text(stringResource(R.string.community_no_drafts)) }
         items(state.drafts, key = { "draft-${it.id}" }) { draft ->
             Column {
                 PostItem(draft, state, actions, time, report)
-                if (state.editingPostId == draft.id) PostEditor(draft, state, actions) else ManagerActions(draft, state, actions, ask)
+                if (state.editingPostId == draft.id) PostEditor(draft, state, actions) else if (page.writable) ManagerActions(draft, state, actions, ask)
             }
         }
+        item("moderators") { Moderators(page, state, actions, time, ask) }
+        item("page-state") { PageState(page, state, actions, ask) }
     }
     // Pinned posts also come in the date-ordered list; they show only once, in their own section above it.
     val pinnedIds = state.pinned.map(PostDto::id).toSet()
@@ -348,7 +378,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
         items(state.pinned, key = { "pinned-${it.id}" }) { post ->
             Column(Modifier.testTag("pinned-${post.id}")) {
                 PostItem(post, state, actions, time, report, pinnedMark = true)
-                if (post.canManage) { if (state.editingPostId == post.id) PostEditor(post, state, actions) else ManagerActions(post, state, actions, ask) }
+                PostControls(post, page, state, actions, ask)
             }
         }
     }
@@ -359,8 +389,190 @@ private fun androidx.compose.foundation.lazy.LazyListScope.page(state: Community
     items(shown, key = { it.id }) { post ->
         Column {
             PostItem(post, state, actions, time, report)
-            if (post.canManage) { if (state.editingPostId == post.id) PostEditor(post, state, actions) else ManagerActions(post, state, actions, ask) }
+            PostControls(post, page, state, actions, ask)
         }
+    }
+}
+
+/** The owner's controls on a post, or a moderator's pin, while the page is active. */
+@Composable
+private fun PostControls(post: PostDto, page: PageDto, state: CommunityState, actions: CommunityActions, ask: (Confirmation) -> Unit) {
+    when {
+        post.canManage && state.editingPostId == post.id -> PostEditor(post, state, actions)
+        !page.writable -> Unit
+        post.canManage -> ManagerActions(post, state, actions, ask)
+        state.moderating && post.status == "published" -> TextButton(onClick = { actions.pin(post) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("pin-${post.id}")) {
+            Text(stringResource(if (post.pinned) R.string.community_unpin else R.string.community_pin))
+        }
+    }
+}
+
+private fun expired(value: String?): Boolean = value?.let { try { !Instant.parse(it).isAfter(Instant.now()) } catch (_error: RuntimeException) { false } } ?: false
+
+/** A deleted page, as only its owner sees it: when it will be erased, and the way to restore it before then. */
+@Composable
+private fun DeletedPage(page: PageDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter) {
+    Column(Modifier.testTag("page-deleted"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+        Text(stringResource(R.string.community_page_deleted, time.show(page.purgeAfter)))
+        Button(onClick = actions.restorePage, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-restore")) { Text(stringResource(R.string.community_restore)) }
+    }
+}
+
+/** The owner's moderators, the waiting invitation and the handover offer (DEC-025). Nobody else sees who moderates a page. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Moderators(page: PageDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit) {
+    val offer = state.handover?.takeIf { it.status == "pending" }
+    val waiting = state.moderators.any { it.status == "pending" && !expired(it.expiresAt) }
+    val active = state.moderators.count { it.status == "active" }
+    val locked = state.pending != null || state.working
+    var invitee by rememberSaveable(page.id) { mutableStateOf("") }
+    Column(Modifier.testTag("page-moderators"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+        Text(stringResource(R.string.community_moderators), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+        Text(stringResource(R.string.community_moderators_note), style = MaterialTheme.typography.bodySmall)
+        if (state.moderators.isEmpty()) Text(stringResource(R.string.community_no_moderators))
+        state.moderators.forEach { moderator -> ModeratorRow(moderator, page, offer == null, state, actions, time, ask) }
+        offer?.let { current ->
+            Column(Modifier.testTag("page-handover"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+                Text(stringResource(R.string.community_handover_waiting, current.toName, time.show(current.expiresAt)))
+                TextButton(onClick = { actions.respondHandover(current, "cancel") }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("handover-cancel")) { Text(stringResource(R.string.community_handover_cancel)) }
+            }
+        }
+        if (page.writable && !waiting && active < MAX_MODERATORS) {
+            Text(stringResource(R.string.community_invite_moderator), style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(value = invitee, onValueChange = { invitee = it.take(64) }, label = { Text(stringResource(R.string.community_invite_account)) },
+                supportingText = { Text(stringResource(R.string.community_invite_help)) }, enabled = !locked, singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("moderator-invite-id"))
+            Button(onClick = { if (actions.inviteModerator(invitee)) invitee = "" }, enabled = !locked && invitee.isNotBlank(), shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderator-invite")) { Text(stringResource(R.string.community_invite_send)) }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModeratorRow(moderator: ModeratorDto, page: PageDto, canOffer: Boolean, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit) {
+    val withdraw = stringResource(R.string.community_withdraw_invitation)
+    val withdrawText = stringResource(R.string.community_withdraw_invitation_text, moderator.displayName)
+    val remove = stringResource(R.string.community_remove_moderator)
+    val removeTitle = stringResource(R.string.community_remove_moderator_title, moderator.displayName)
+    val removeText = stringResource(R.string.community_remove_moderator_text, moderator.displayName, page.name)
+    val handOver = stringResource(R.string.community_hand_over)
+    val handOverTitle = stringResource(R.string.community_hand_over_title, page.name, moderator.displayName)
+    val handOverText = stringResource(R.string.community_hand_over_text, moderator.displayName)
+    val handOverSend = stringResource(R.string.community_hand_over_send)
+    Column(Modifier.fillMaxWidth().testTag("moderator-${moderator.id}"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+        Text(moderator.displayName, style = MaterialTheme.typography.titleSmall)
+        Text(when {
+            moderator.status == "active" -> stringResource(R.string.community_moderator_active)
+            expired(moderator.expiresAt) -> stringResource(R.string.community_moderator_expired)
+            else -> stringResource(R.string.community_moderator_invited, time.show(moderator.expiresAt))
+        }, style = MaterialTheme.typography.bodySmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+            if (moderator.status == "pending") TextButton(onClick = { ask(Confirmation(withdraw, withdrawText, withdraw) { actions.resolveModerator(moderator, "withdraw") }) }, enabled = !state.working,
+                shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderator-withdraw-${moderator.id}")) { Text(withdraw) }
+            else {
+                if (page.writable && canOffer) TextButton(onClick = { ask(Confirmation(handOverTitle, handOverText, handOverSend) { actions.offerHandover(moderator) }) }, enabled = !state.working && state.pending == null,
+                    shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderator-handover-${moderator.id}")) { Text(handOver) }
+                TextButton(onClick = { ask(Confirmation(removeTitle, removeText, remove) { actions.resolveModerator(moderator, "remove") }) }, enabled = !state.working,
+                    shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderator-remove-${moderator.id}")) { Text(remove) }
+            }
+        }
+    }
+}
+
+/** Archive (read only) or restore the page, or delete it after typing its name. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PageState(page: PageDto, state: CommunityState, actions: CommunityActions, ask: (Confirmation) -> Unit) {
+    var deleting by rememberSaveable(page.id) { mutableStateOf(false) }
+    val archive = stringResource(R.string.community_archive)
+    val archiveText = stringResource(R.string.community_archive_text, page.name)
+    Column(Modifier.testTag("page-state"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+        Text(stringResource(R.string.community_page_state), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+            if (page.readOnly) Button(onClick = actions.restorePage, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-restore")) { Text(stringResource(R.string.community_restore)) }
+            else OutlinedButton(onClick = { ask(Confirmation(archive, archiveText, archive) { actions.archivePage() }) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-archive")) { Text(archive) }
+            TextButton(onClick = { deleting = true }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-delete")) { Text(stringResource(R.string.community_delete_page)) }
+        }
+    }
+    if (deleting) DeletePageDialog(page, state, onDismiss = { deleting = false }) { typed -> if (actions.deletePage(typed)) deleting = false }
+}
+
+/** Deleting needs the page's name typed exactly, as the server checks it too. */
+@Composable
+private fun DeletePageDialog(page: PageDto, state: CommunityState, onDismiss: () -> Unit, onDelete: (String) -> Unit) {
+    var typed by rememberSaveable(page.id) { mutableStateOf("") }
+    val matches = typed.replace(Regex("[\\s\\p{Z}\\u0085\\u001C-\\u001F]+"), " ").trim() == page.name
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.community_delete_page_title, page.name)) }, text = {
+        Column(Modifier.verticalScroll(rememberScrollState()).testTag("page-delete-dialog"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+            Text(stringResource(R.string.community_delete_page_text))
+            OutlinedTextField(value = typed, onValueChange = { typed = it.takeCodePoints(160) }, label = { Text(stringResource(R.string.community_delete_page_name)) },
+                singleLine = true, modifier = Modifier.fillMaxWidth().testTag("page-delete-name"))
+        }
+    }, confirmButton = {
+        TextButton(onClick = { onDelete(typed) }, enabled = matches && !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("page-delete-confirm")) { Text(stringResource(R.string.community_delete_page)) }
+    }, dismissButton = {
+        TextButton(onClick = onDismiss, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) { Text(stringResource(R.string.community_cancel)) }
+    })
+}
+
+/** A page offered to you: accepting makes you its owner and the previous owner one of its moderators. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OfferItem(offer: HandoverDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit) {
+    val accept = stringResource(R.string.community_accept)
+    val acceptTitle = stringResource(R.string.community_accept_offer_title, offer.pageName)
+    val acceptText = stringResource(R.string.community_accept_offer_text, offer.fromName)
+    Column(Modifier.fillMaxWidth().testTag("offer-${offer.id}"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+        Text(stringResource(R.string.community_offer, offer.fromName, offer.pageName, time.show(offer.expiresAt)))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+            Button(onClick = { ask(Confirmation(acceptTitle, acceptText, accept) { actions.respondHandover(offer, "accept") }) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("offer-accept-${offer.id}")) { Text(accept) }
+            TextButton(onClick = { actions.respondHandover(offer, "decline") }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("offer-decline-${offer.id}")) { Text(stringResource(R.string.community_decline)) }
+        }
+        HorizontalDivider()
+    }
+}
+
+/** Your invitation to moderate a page, or a page you moderate. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RoleItem(role: ModeratorRoleDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit) {
+    val accept = stringResource(R.string.community_accept)
+    val acceptTitle = stringResource(R.string.community_accept_role_title, role.pageName)
+    val acceptText = stringResource(R.string.community_accept_role_text)
+    val stepDown = stringResource(R.string.community_step_down)
+    val stepDownTitle = stringResource(R.string.community_step_down_title, role.pageName)
+    val stepDownText = stringResource(R.string.community_step_down_text)
+    Column(Modifier.fillMaxWidth().testTag("role-${role.id}"), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+        if (role.status == "pending") {
+            Text(stringResource(R.string.community_role_invitation, role.pageName, time.show(role.expiresAt)))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                Button(onClick = { ask(Confirmation(acceptTitle, acceptText, accept) { actions.resolveRole(role, "accept") }) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("role-accept-${role.id}")) { Text(accept) }
+                TextButton(onClick = { actions.resolveRole(role, "decline") }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("role-decline-${role.id}")) { Text(stringResource(R.string.community_decline)) }
+            }
+        } else {
+            Text(role.pageName, style = MaterialTheme.typography.titleSmall)
+            Text("@${role.pageHandle}", style = MaterialTheme.typography.bodySmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                OutlinedButton(onClick = { actions.open(Destination.Page(role.pageHandle)) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("role-open-${role.id}")) { Text(stringResource(R.string.community_open_page)) }
+                TextButton(onClick = { ask(Confirmation(stepDownTitle, stepDownText, stepDown) { actions.resolveRole(role, "step-down") }) }, enabled = !state.working, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("role-step-down-${role.id}")) { Text(stepDown) }
+            }
+        }
+        HorizontalDivider()
     }
 }
 
@@ -494,7 +706,7 @@ private fun CommentComposer(state: CommunityState, actions: CommunityActions, pa
 }
 
 @OptIn(ExperimentalLayoutApi::class)
-private fun androidx.compose.foundation.lazy.LazyListScope.myPages(state: CommunityState, actions: CommunityActions) {
+private fun androidx.compose.foundation.lazy.LazyListScope.myPages(state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit) {
     item("owned-heading") { Text(stringResource(R.string.community_owned), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
     state.ownedError?.let { error -> item("owned-error") {
         Column(verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
@@ -526,6 +738,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.myPages(state: Commun
             }
         }
     }
+    // Pages offered to you, your invitations to moderate, and the pages you moderate; they load with the pages you own.
+    item("moderating-heading") { Text(stringResource(R.string.community_moderating), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
+    if (state.ownedLoaded && state.roles.isEmpty() && state.offers.isEmpty()) item("moderating-none") { Text(stringResource(R.string.community_no_moderating), modifier = Modifier.testTag("moderating-none")) }
+    items(state.offers, key = { "offer-${it.id}" }) { offer -> OfferItem(offer, state, actions, time, ask) }
+    items(state.roles, key = { "role-${it.id}" }) { role -> RoleItem(role, state, actions, time, ask) }
     item("followed-heading") { Text(stringResource(R.string.community_followed), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
     when (state.followedStatus) {
         ListStatus.LOADING -> item("followed-loading") { Text(stringResource(R.string.community_loading_followed), modifier = Modifier.testTag("followed-loading")) }
