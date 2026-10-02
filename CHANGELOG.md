@@ -4,6 +4,16 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ## 2026-10-02
 
+### Agent Tooling
+
+- Added nine custom agents for VS Code chat in [.github/agents/](.github/agents/), written after a review of `idea.md`, Chapters 1–20, the documents and the code. Choose one from the agent list in the chat view:
+  - **product-guide** answers questions about the product, the chapters, decisions, tasks, status and code, and changes nothing.
+  - **requirements-analyst** records what you explain or decide in the Product Understanding, Decisions and Tasks, with labels and conflicts. It changes documents only and never approves a decision for you.
+  - **feature-builder** builds a task end to end on backend, web and Android with tests, evidence and document updates, handing each platform to **backend-engineer**, **web-engineer** or **android-engineer**, which you can also use directly.
+  - **bug-fixer** reproduces a reported bug with a failing test, fixes its cause and records it as a defect task.
+  - **code-reviewer** reviews a change without editing anything; **verifier** runs the checks and records the results.
+- They apply [AGENTS.md](AGENTS.md) and the [Product Constitution](docs/PRODUCT_CONSTITUTION.md) and cannot change them. They are listed with the supporting documents in the [documentation map](docs/README.md#supporting-and-historical-documents). No requirement, decision, product code or test changed.
+
 ### Android Space Invitation Policy
 
 - Implemented [DEC-026](docs/DECISIONS.md#accepted-decisions) on Android: an owner-reviewed family/group invite-policy setting, original key/body/ETag retries after an unanswered command, fresh settings after a stale review, member invitations and sent-list/withdrawal controls, and bounded access reload after a member invitation 404. Couple/solo and join-request restrictions remain unchanged; backend and web files were not changed.

@@ -82,6 +82,7 @@ These are not authorities.
 - [ENGINEERING_AUDIT_2026-10-01.md](ENGINEERING_AUDIT_2026-10-01.md): dated read-only audit. Its actions are T39–T53 and X2 in TASKS, and its conflicts are C10 and C11 in the Product Understanding.
 - [ENGINEERING_ASSESSMENT.md](ENGINEERING_ASSESSMENT.md): empty file of unknown origin.
 - [Runbooks](runbooks/README.md): how to run and verify the local build.
+- [Custom agents](../.github/agents/) for VS Code chat: product-guide, requirements-analyst, feature-builder, backend-engineer, web-engineer, android-engineer, bug-fixer, code-reviewer and verifier. Like [AGENTS.md](../AGENTS.md), they apply the Constitution to agent sessions and cannot change it; where an agent file disagrees with an authority, the authority wins and the agent file is corrected.
 - Module READMEs in `backend/app/modules/`, `web/src/features/` and the Android `feature/` folders: integrations, realtime and safety keep the generated "reserved, not implemented" placeholder on all three platforms, as do web and Android platform, Android notifications and Android agents. Files and discovery describe documents and search inside your Spaces on all three platforms; public discovery search, reports and blocks live in the community module, and the native reminder inbox lives in `feature/scheduling`.
 
 ## Update Rules
