@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { runInNewContext } from 'node:vm';
+import { loadMessages } from '../i18n-messages.mjs';
 
 const require = createRequire(new URL('../../web/package.json', import.meta.url));
 const { build } = require('esbuild');
 const { chromium } = require('playwright');
-const typescript = require('typescript');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const web = path.join(root, 'web');
 const origin = 'http://127.0.0.1:3000';
@@ -19,11 +18,7 @@ const email = 'sita@example.test';
 const password = 'Synthetic-password-42!';
 const date = '2026-10-09T18:00:00Z';
 const serverMessage = 'Enter your password. Synthetic server refusal.';
-const dictionariesModule = {};
-runInNewContext(typescript.transpileModule(readFileSync(path.join(web, 'src/features/i18n/messages.ts'), 'utf8'), {
-  compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.CommonJS },
-}).outputText, { exports: dictionariesModule }, { filename: 'messages.ts' });
-const { en, te, hi } = dictionariesModule;
+const { en, te, hi } = loadMessages().messages;
 const texts = { en, te, hi };
 const locales = { en: 'en', te: 'te-IN', hi: 'hi-IN' };
 let browser;

@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, LoaderCircle, RefreshCw, Send, Trash2, X } from "lucide-react";
 
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, characters } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
 import { isUnknown } from "@/features/community/client";
@@ -113,7 +113,7 @@ function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
       <div className={styles.field}>
         <label htmlFor={`${fieldId}-message`}>What do you want to do?</label>
         <span className={styles.hint} id={`${fieldId}-hint`}>For example: add a task to buy milk tomorrow, or remind me to call the bank at 6 pm.</span>
-        <textarea id={`${fieldId}-message`} rows={2} maxLength={500} value={text} aria-describedby={`${fieldId}-hint`}
+        <textarea id={`${fieldId}-message`} rows={2} maxLength={1000} value={text} aria-describedby={`${fieldId}-hint`}
           aria-invalid={!!problem} disabled={ask.isPending || (!!intent && ask.isError)} onChange={event => { setText(event.target.value); setProblem(""); }} />
       </div>
       {problem && <p className="field-error" role="alert">{problem}</p>}
@@ -140,6 +140,8 @@ function RunCard({ user, run, onChanged }: { user: Account; run: AgentRun; onCha
   const fieldId = useId();
   const keys = useRef(new Map<string, string>());
   const [reply, setReply] = useState("");
+  // The server takes an answer of up to 500 characters, an emoji counting once.
+  const replyTooLong = characters(reply.trim()) > 500;
   const decision = useMutation({
     mutationFn: (command: DecisionIntent) => decide(command),
     onSuccess: () => onChanged(),
@@ -167,14 +169,15 @@ function RunCard({ user, run, onChanged }: { user: Account; run: AgentRun; onCha
       <span className={styles.status}>{statusLabels[run.status]}</span>
     </div>
     {run.answer && <p className={styles.answer}>{run.answer}</p>}
-    {run.question && <form className={styles.check} onSubmit={event => { event.preventDefault(); if (reply.trim()) respond.mutate(reply.trim()); }}>
+    {run.question && <form className={styles.check} onSubmit={event => { event.preventDefault(); if (reply.trim() && !replyTooLong) respond.mutate(reply.trim()); }}>
       <p className={styles.answer} id={`${fieldId}-question`}>{run.question.text}</p>
       <label className={styles.field}>Your answer
-        <input value={reply} maxLength={500} aria-describedby={`${fieldId}-question`} disabled={busy} onChange={event => setReply(event.target.value)} />
+        <input value={reply} maxLength={1000} aria-describedby={`${fieldId}-question`} aria-invalid={replyTooLong || undefined} disabled={busy} onChange={event => setReply(event.target.value)} />
       </label>
+      {replyTooLong && <p className="field-error" role="alert">Keep an answer under 500 characters.</p>}
       {respond.isError && <p className="message error" role="alert">{problemText(respond.error, "The answer could not be sent.")}</p>}
       <div className={styles.actions}>
-        <button className="secondary-button" type="submit" disabled={busy || !reply.trim()}><Send size={17} aria-hidden />Answer</button>
+        <button className="secondary-button" type="submit" disabled={busy || !reply.trim() || replyTooLong}><Send size={17} aria-hidden />Answer</button>
         <button className="text-button" type="button" disabled={busy} onClick={() => stop.mutate()}>Stop this request</button>
       </div>
     </form>}

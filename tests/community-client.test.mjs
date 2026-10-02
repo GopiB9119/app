@@ -317,3 +317,176 @@ test('BFF accepts the longest page rules, name and description however their JSO
   assert.deepEqual(await send(escaped), { status: 200, forwarded: 1 });
   assert.deepEqual(await send(`{"rules":"${'x'.repeat(70000)}"}`), { status: 413, forwarded: 0 });
 });
+test('BFF accepts the moderator, handover and lifecycle routes and refuses unknown ones', async () => {
+  const moderatorId = '8c3fad31-2c9a-4e88-9d5c-4c4c0f9c4d04';
+  const offerId = '9d4fbe42-3dab-4f99-aedd-5d5d1f0d5e05';
+  for (const [method, route] of [
+    ['POST', `pages/${pageId}/moderators`], ['GET', `pages/${pageId}/moderators`], ['GET', 'me/moderator-roles'],
+    ['POST', `pages/${pageId}/moderators/${moderatorId}/accept`], ['POST', `pages/${pageId}/moderators/${moderatorId}/decline`],
+    ['POST', `pages/${pageId}/moderators/${moderatorId}/withdraw`], ['POST', `pages/${pageId}/moderators/${moderatorId}/remove`],
+    ['POST', `pages/${pageId}/moderators/${moderatorId}/step-down`],
+    ['POST', `pages/${pageId}/handover`], ['GET', `pages/${pageId}/handover`], ['GET', 'me/handover-offers'],
+    ['POST', `pages/${pageId}/handover/${offerId}/accept`], ['POST', `pages/${pageId}/handover/${offerId}/decline`],
+    ['POST', `pages/${pageId}/handover/${offerId}/cancel`],
+    ['POST', `pages/${pageId}/archive`], ['POST', `pages/${pageId}/restore`], ['POST', `pages/${pageId}/delete`],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route)).status, 200, `${method} ${route}`);
+    assert.equal(proxy.calls.at(-1).url, `https://backend.example.test/v1/${route}`);
+    assert.equal(proxy.calls.at(-1).options.headers.Authorization, 'Bearer synthetic-session');
+  }
+  for (const [method, route] of [
+    ['GET', `pages/${pageId}/archive`], ['DELETE', `pages/${pageId}/moderators`], ['GET', 'moderator-roles'],
+    ['POST', 'handover'], ['GET', 'handover-offers'], ['POST', `pages/${pageId}/moderators/${moderatorId}/cancel`],
+    ['POST', `pages/${pageId}/handover/${offerId}/remove`], ['POST', `pages/${pageId}/purge`],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);
+    assert.equal(proxy.calls.length, 0);
+  }
+  for (const [method, route] of [
+    ['POST', `pages/${pageId}/moderators?as=${otherId}`], ['POST', `pages/${pageId}/handover?as=${otherId}`],
+    ['POST', `pages/${pageId}/archive?limit=1`], ['POST', `pages/${pageId}/delete?confirm=1`],
+  ]) {
+    assert.equal((await bff().request(method, route)).status, 400, `${method} ${route}`);
+  }
+  for (const [method, route] of [
+    ['POST', `pages/${pageId}/moderators`], ['POST', `pages/${pageId}/handover`],
+    ['POST', `pages/${pageId}/archive`], ['POST', `pages/${pageId}/restore`], ['POST', `pages/${pageId}/delete`],
+  ]) {
+    assert.equal((await bff().request(method, route, {}, { session: false })).status, 401, `${method} ${route}`);
+  }
+});
+
+test('Moderator, handover and lifecycle schemas keep their invariants and older answers readable', () => {
+  const client = communityClient();
+  assert.equal(client.pageSchema.parse(page()).status, 'active', 'A page from a server without status reads as active.');
+  assert.equal(client.pageSchema.parse(page()).purge_after, null, 'A page from a server without purge_after reads as null.');
+  for (const status of ['active', 'read_only', 'deleted']) {
+    assert.equal(client.pageSchema.safeParse(page({ status })).success, true, status);
+  }
+  assert.equal(client.pageSchema.safeParse(page({ status: 'archived' })).success, false);
+  assert.equal(client.pageSchema.safeParse(page({ status: 'active', purge_after: '2026-09-26T10:00:00Z' })).success, true);
+
+  const moderator = (overrides = {}) => ({
+    id: accountId, page_id: pageId, account_id: otherId, display_name: 'Sam',
+    status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-09-22T10:00:00Z', resolved_at: null, etag: '"m1"', ...overrides,
+  });
+  assert.equal(client.moderatorRowSchema.safeParse(moderator()).success, true);
+  assert.equal(client.moderatorRoleSchema.safeParse({ ...moderator(), page_handle: 'river-walkers', page_name: 'River Walkers' }).success, true);
+  for (const changes of [
+    { status: 'active' }, { status: 'pending', expires_at: null }, { status: 'pending', resolved_at: '2026-09-20T10:00:00Z' },
+    { status: 'active', expires_at: '2026-09-22T10:00:00Z' }, { status: 'active', resolved_at: '2026-09-20T10:00:00Z' },
+  ]) {
+    assert.equal(client.moderatorRowSchema.safeParse(moderator(changes)).success, false, JSON.stringify(changes));
+  }
+  assert.equal(client.moderatorRowSchema.safeParse(moderator({ status: 'stepped_down', expires_at: null, resolved_at: '2026-09-20T10:00:00Z' })).success, true);
+
+  const handover = (overrides = {}) => ({
+    id: accountId, page_id: pageId, page_handle: 'river-walkers', page_name: 'River Walkers',
+    from_account_id: accountId, from_name: 'Alex', to_account_id: otherId, to_name: 'Sam',
+    status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-09-19T10:15:00Z', resolved_at: null, etag: '"h1"', ...overrides,
+  });
+  assert.equal(client.handoverSchema.safeParse(handover()).success, true);
+  for (const changes of [{ status: 'accepted' }, { status: 'pending', resolved_at: '2026-09-19T10:05:00Z' }, { status: 'accepted', expires_at: '2026-09-19T10:15:00Z' }]) {
+    assert.equal(client.handoverSchema.safeParse(handover(changes)).success, false, JSON.stringify(changes));
+  }
+  assert.equal(client.handoverSchema.safeParse(handover({ status: 'accepted', expires_at: null, resolved_at: '2026-09-19T10:05:00Z' })).success, true);
+});
+test('Moderator commands send the key, body and reviewed version and confirm the answer', async () => {
+  const calls = [];
+  const moderator = (overrides = {}) => ({
+    id: accountId, page_id: pageId, account_id: otherId, display_name: 'Sam',
+    status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-09-22T10:00:00Z', resolved_at: null, etag: '"m1"', ...overrides,
+  });
+  const resolved = status => moderator({ status, expires_at: null, resolved_at: '2026-09-19T11:00:00Z' });
+  const client = communityClient(async (url, options) => {
+    calls.push({ url: String(url), options });
+    const route = String(url);
+    if (route.endsWith(`/pages/${pageId}/moderators`)) return Response.json({ data: moderator() });
+    if (route.endsWith('/accept')) return Response.json({ data: moderator({ status: 'active', expires_at: null, resolved_at: '2026-09-19T11:00:00Z' }) });
+    if (route.endsWith('/decline')) return Response.json({ data: resolved('declined') });
+    if (route.endsWith('/withdraw')) return Response.json({ data: resolved('withdrawn') });
+    if (route.endsWith('/remove')) return Response.json({ data: resolved('removed') });
+    if (route.endsWith('/step-down')) return Response.json({ data: resolved('stepped_down') });
+    if (route.endsWith('/moderators')) return Response.json({ data: [moderator()] });
+    return Response.json({ data: [{ ...moderator(), page_handle: 'river-walkers', page_name: 'River Walkers' }] });
+  });
+  await client.inviteModerator({ accountId, key, pageId, body: { account_id: otherId } });
+  assert.equal(calls[0].url, `/api/pages/${pageId}/moderators`);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.headers['Idempotency-Key'], key);
+  assert.deepEqual(JSON.parse(calls[0].options.body), { account_id: otherId });
+  await assert.rejects(communityClient(async () => Response.json({ data: moderator({ account_id: accountId }) })).inviteModerator({ accountId, key, pageId, body: { account_id: otherId } }), { status: 502 });
+
+  const row = moderator();
+  assert.equal((await client.acceptModerator(accountId, pageId, row)).status, 'active');
+  assert.equal((await client.declineModerator(accountId, pageId, row)).status, 'declined');
+  assert.equal((await client.withdrawModerator(accountId, pageId, row)).status, 'withdrawn');
+  assert.equal((await client.removeModerator(accountId, pageId, row)).status, 'removed');
+  assert.equal((await client.stepDownModerator(accountId, pageId, row)).status, 'stepped_down');
+  for (const action of ['accept', 'decline', 'withdraw', 'remove', 'step-down']) {
+    const call = calls.find(item => item.url.endsWith(`/${action}`));
+    assert.equal(call.options.method, 'POST', action);
+    assert.equal(call.options.headers['If-Match'], '"m1"', action);
+    assert.equal(call.options.body, '{}', action);
+  }
+  await assert.rejects(communityClient(async () => Response.json({ data: moderator({ status: 'active', expires_at: null, resolved_at: '2026-09-19T11:00:00Z' }) })).withdrawModerator(accountId, pageId, row), { status: 502 });
+
+  assert.equal((await client.pageModerators(accountId, pageId)).length, 1);
+  await assert.rejects(communityClient(async () => Response.json({ data: [moderator({ page_id: otherId })] })).pageModerators(accountId, pageId), { status: 502 });
+  await assert.rejects(communityClient(async () => Response.json({ data: [resolved('removed')] })).pageModerators(accountId, pageId), { status: 502 });
+  const roles = await client.myModeratorRoles(accountId);
+  assert.deepEqual(roles.map(item => [item.page_handle, item.status]), [['river-walkers', 'pending']]);
+});
+test('Handover and lifecycle commands send the reviewed version and confirm the answer', async () => {
+  const calls = [];
+  const handover = (overrides = {}) => ({
+    id: accountId, page_id: pageId, page_handle: 'river-walkers', page_name: 'River Walkers',
+    from_account_id: accountId, from_name: 'Alex', to_account_id: otherId, to_name: 'Sam',
+    status: 'pending', created_at: '2026-09-19T10:00:00Z', expires_at: '2026-09-19T10:15:00Z', resolved_at: null, etag: '"h1"', ...overrides,
+  });
+  const done = status => handover({ status, expires_at: null, resolved_at: '2026-09-19T10:05:00Z' });
+  const client = communityClient(async (url, options) => {
+    calls.push({ url: String(url), options });
+    const route = String(url);
+    if (route.endsWith('/handover')) return Response.json({ data: handover() });
+    if (route.endsWith('/accept')) return Response.json({ data: done('accepted') });
+    if (route.endsWith('/decline')) return Response.json({ data: done('declined') });
+    if (route.endsWith('/cancel')) return Response.json({ data: done('cancelled') });
+    if (route.endsWith('/archive')) return Response.json({ data: page({ can_manage: true, etag: '"v2"', status: 'read_only' }) });
+    if (route.endsWith('/restore')) return Response.json({ data: page({ can_manage: true, etag: '"v3"', status: 'active' }) });
+    if (route.endsWith('/delete')) return Response.json({ data: page({ can_manage: true, etag: '"v4"', status: 'deleted', purge_after: '2026-09-26T10:00:00Z' }) });
+    return Response.json({ data: [handover()] });
+  });
+  const shown = page({ can_manage: true, etag: '"v1"' });
+  await client.offerHandover({ accountId, key, pageId, etag: shown.etag, body: { to_account_id: otherId } });
+  assert.equal(calls[0].url, `/api/pages/${pageId}/handover`);
+  assert.equal(calls[0].options.headers['Idempotency-Key'], key);
+  assert.equal(calls[0].options.headers['If-Match'], '"v1"');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { to_account_id: otherId });
+  await assert.rejects(communityClient(async () => Response.json({ data: handover({ to_account_id: accountId }) })).offerHandover({ accountId, key, pageId, etag: shown.etag, body: { to_account_id: otherId } }), { status: 502 });
+
+  const offer = handover();
+  assert.equal((await client.respondHandover(accountId, pageId, offer, 'accept')).status, 'accepted');
+  assert.equal((await client.respondHandover(accountId, pageId, offer, 'decline')).status, 'declined');
+  assert.equal((await client.respondHandover(accountId, pageId, offer, 'cancel')).status, 'cancelled');
+  for (const action of ['accept', 'decline', 'cancel']) {
+    assert.equal(calls.find(item => item.url.endsWith(`/${action}`)).options.headers['If-Match'], '"h1"', action);
+  }
+  await assert.rejects(communityClient(async () => Response.json({ data: done('accepted') })).respondHandover(accountId, pageId, offer, 'decline'), { status: 502 });
+
+  assert.equal((await client.pageHandover(accountId, pageId)).id, accountId);
+  assert.deepEqual((await client.myHandoverOffers(accountId)).map(item => item.id), [accountId]);
+  await assert.rejects(communityClient(async () => Response.json({ data: [handover({ to_account_id: accountId })] })).myHandoverOffers(accountId), { status: 502 });
+
+  assert.equal((await client.archivePage(accountId, shown)).status, 'read_only');
+  assert.equal((await client.restorePage(accountId, page({ can_manage: true, etag: '"v2"', status: 'read_only' }))).status, 'active');
+  assert.equal((await client.deletePage(accountId, shown, 'River Walkers')).status, 'deleted');
+  const archive = calls.find(item => item.url.endsWith('/archive'));
+  const remove = calls.find(item => item.url.endsWith('/delete'));
+  assert.equal(archive.options.headers['If-Match'], '"v1"');
+  assert.equal(archive.options.body, '{}');
+  assert.deepEqual(JSON.parse(remove.options.body), { confirm: 'River Walkers' });
+  await assert.rejects(communityClient(async () => Response.json({ data: page({ can_manage: true, etag: '"v2"', status: 'active' }) })).archivePage(accountId, shown), { status: 502 });
+});

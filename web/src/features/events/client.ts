@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, chars } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
@@ -13,15 +13,15 @@ export const MAX_LOCATION = 200;
 
 const count = z.number().int().nonnegative();
 export const attendeeSchema = z.object({
-  name: z.string().min(1).max(80), response: z.enum(RESPONSES), responded_at: timestamp,
+  name: chars(1, 80), response: z.enum(RESPONSES), responded_at: timestamp,
   outdated: z.boolean(), mine: z.boolean(),
 });
 export const eventSchema = z.object({
-  id: uuid, space_id: uuid, space_name: z.string().min(1).max(80),
+  id: uuid, space_id: uuid, space_name: chars(1, 80),
   title: z.string().min(1).max(MAX_TITLE * 2), description: z.string().max(MAX_DESCRIPTION * 2), location: z.string().max(MAX_LOCATION * 2),
   timezone: z.string().min(1).max(64), local_start: localTime, local_end: localTime.nullable(),
   starts_at: timestamp, ends_at: timestamp.nullable(), status: z.enum(["scheduled", "cancelled"]), ended: z.boolean(),
-  created_by_name: z.string().max(80), created_at: timestamp, updated_at: timestamp,
+  created_by_name: chars(0, 80), created_at: timestamp, updated_at: timestamp,
   schedule_changed_at: timestamp.nullable(), cancelled_at: timestamp.nullable(),
   going: count, maybe: count, not_going: count,
   my_response: z.enum(RESPONSES).nullable(), my_response_outdated: z.boolean(),

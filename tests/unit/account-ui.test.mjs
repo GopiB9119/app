@@ -145,3 +145,32 @@ test('account profile: a save is not undone by an older read that answers after 
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+// T100: the server counts characters, an emoji counting once. Typing must reach the full 80, and longer is refused here.
+test('account profile: the display name takes 80 emoji and says when a name is longer', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, 0);
+    const name = page.getByLabel('Display name', { exact: true });
+    const save = page.getByRole('button', { name: 'Save changes' });
+    const tooLong = page.getByRole('alert').filter({ hasText: 'Use up to 80 characters.' });
+    const emoji = '\u{1F600}'.repeat(80);
+    await name.fill('');
+    await name.focus();
+    // Typed input is held to the field's maxLength, as a person's typing is.
+    await page.keyboard.insertText(emoji);
+    assert.equal(await name.inputValue(), emoji, 'The field must take 80 emoji.');
+    assert.equal(await tooLong.count(), 0);
+    await save.click();
+    await page.getByRole('status').filter({ hasText: 'Profile saved.' }).waitFor();
+    assert.equal(await page.evaluate(() => window.accountFixture.profile.display_name), emoji);
+    await name.fill('');
+    await name.focus();
+    await page.keyboard.insertText('a'.repeat(81));
+    await tooLong.waitFor();
+    assert.equal(await save.isDisabled(), true, 'A name over 80 characters must not be sent.');
+    await page.keyboard.press('Enter');
+    assert.equal((await page.evaluate(() => window.accountFixture.calls.filter(call => call.method === 'PATCH'))).length, 1);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

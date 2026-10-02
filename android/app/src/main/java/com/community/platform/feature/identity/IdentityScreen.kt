@@ -77,6 +77,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.community.platform.DesignTokens
 import com.community.platform.R
+import com.community.platform.feature.community.takeCodePoints
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -224,7 +225,7 @@ private fun AuthenticationBody(state: IdentityState, actions: IdentityActions, s
     } else {
         OutlinedTextField(value = draft.code, onValueChange = { draft.code = it.filter(Char::isDigit).take(6) }, label = { Text(stringResource(R.string.verification_code)) }, singleLine = true, enabled = !state.busy, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag("code"))
         if (state.mode == EntryMode.REGISTER) {
-            OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text(stringResource(R.string.display_name)) }, enabled = !state.busy, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("name"))
+            OutlinedTextField(value = name, onValueChange = { name = it.takeCodePoints(80) }, label = { Text(stringResource(R.string.display_name)) }, enabled = !state.busy, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("name"))
         }
     }
     if (state.mode == EntryMode.LOGIN || verifying) {
@@ -293,7 +294,7 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions, onOpenDa
         shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.account_data_title)) }
     HorizontalDivider()
     Text(stringResource(R.string.profile), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-    OutlinedTextField(value = name, onValueChange = { name = it.take(80) }, label = { Text(stringResource(R.string.display_name)) }, singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth().testTag("profile-name"))
+    OutlinedTextField(value = name, onValueChange = { name = it.takeCodePoints(80) }, label = { Text(stringResource(R.string.display_name)) }, singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth().testTag("profile-name"))
     TimezonePicker(timezone, state.timezones, !state.busy) { timezone = it }
     val changed = name != profile.user.displayName || timezone != profile.user.timezone
     Row(horizontalArrangement = Arrangement.spacedBy(unit * 3)) {

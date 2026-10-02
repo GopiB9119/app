@@ -3,18 +3,14 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { loadMessages } from './i18n-messages.mjs';
 
 const require = createRequire(new URL('../web/package.json', import.meta.url));
 const typescript = require('typescript');
-const source = readFileSync(new URL('../web/src/features/i18n/messages.ts', import.meta.url), 'utf8');
-const compiled = typescript.transpileModule(source, {
-  compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.CommonJS },
-  reportDiagnostics: true,
-});
-assert.equal(compiled.diagnostics.length, 0);
-const messages = {};
-runInNewContext(compiled.outputText, { exports: messages }, { filename: 'messages.ts' });
-const { dictionaries, translate, isLanguage, languageLabels, LANGUAGES } = messages;
+const loaded = loadMessages();
+assert.equal(loaded.diagnostics.length, 0);
+const messages = loaded.messages;
+const { dictionaries, translate, isLanguage, languageLabels, LANGUAGES, core, areas } = messages;
 const placeholders = text => new Set([...text.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)].map(match => match[1]));
 
 test('Only English, Telugu and Hindi are display languages, with native picker labels', () => {
@@ -51,6 +47,28 @@ test('Untranslated ids fall back to English', () => {
     assert.equal(Object.hasOwn(dictionaries[language], 'shell.brandCommunity'), false);
     assert.equal(translate(language, 'shell.brandCommunity'), 'Community');
     assert.equal(translate(language, 'shell.brandPlatform'), 'Platform');
+  }
+});
+
+test('Each screen area names its ids after itself, so no id can be defined twice', () => {
+  const names = Object.keys(areas);
+  assert.equal(names.length, 14);
+  for (const name of names) {
+    for (const id of Object.keys(areas[name].en)) assert.ok(id.startsWith(`${name}.`), `${id} belongs in the ${name} area`);
+  }
+  for (const id of Object.keys(core.en)) assert.ok(!names.some(name => id.startsWith(`${name}.`)), `${id} uses an area prefix`);
+  const sources = [core.en, ...names.map(name => areas[name].en)];
+  assert.equal(Object.keys(dictionaries.en).length, sources.reduce((count, source) => count + Object.keys(source).length, 0));
+});
+
+test('Every screen area has Telugu and Hindi for each of its English ids, and nothing else', () => {
+  for (const [name, area] of Object.entries(areas)) {
+    for (const language of ['te', 'hi']) {
+      assert.deepEqual(Object.keys(area[language]).sort(), Object.keys(area.en).sort(), `${language}/${name}`);
+      for (const [id, text] of Object.entries(area[language])) {
+        assert.equal(dictionaries[language][id], text, `${language}/${id} reaches the merged dictionary`);
+      }
+    }
   }
 });
 

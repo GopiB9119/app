@@ -63,7 +63,7 @@ class ChangeSpaceVisibility(Input):
 
 
 class ChangeInvitePolicy(Input):
-    member_invites: bool
+    member_invites: bool = Field(strict=True)
 
 
 class SpaceView(BaseModel):

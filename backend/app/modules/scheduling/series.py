@@ -523,6 +523,23 @@ class ReminderSeriesService:
         self.reminders.record(database, pending, "reminder.moved", caller.id)
         return pending
 
+    def restore_after_hold(self, database, account_id, since, now):
+        """A cancelled account deletion (DEC-022): repeating reminders stopped while the account waited to be deleted go on
+        from their next occurrence. Dispatch checks access, the task and the reminder setting again, as it always does."""
+        held = database.scalars(select(ReminderSeries).where(
+            ReminderSeries.account_id == account_id, ReminderSeries.status == "suppressed",
+            ReminderSeries.reason == "account_inactive", ReminderSeries.updated_at >= since,
+        ).order_by(ReminderSeries.id).with_for_update()).all()
+        for series in held:
+            series.status, series.reason = "active", None
+            self.record(database, series, "reminder_series.resumed", account_id)
+            last = database.scalar(select(func.max(Reminder.occurrence_date)).where(Reminder.series_id == series.id))
+            after = max(last, recurrence.today(series.timezone, now) - timedelta(days=1)) if last else series.start_date - timedelta(days=1)
+            self.continue_after(database, series, after, now, account_id, allow_late=False)
+            series.version += 1
+            series.updated_at = now
+        return len(held)
+
     def continue_after(self, database, series, after_day, now, user_id=None, allow_late=True):
         upcoming = recurrence.next_occurrence(rule_of(series), after_day, now, allow_late=allow_late)
         if upcoming is None:

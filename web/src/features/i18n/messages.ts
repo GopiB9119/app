@@ -1,4 +1,19 @@
 // Telugu and Hindi texts are machine translations awaiting review by a native speaker (DEC-023).
+import * as account from "./areas/account";
+import * as agent from "./areas/agent";
+import * as care from "./areas/care";
+import * as chat from "./areas/chat";
+import * as community from "./areas/community";
+import * as data from "./areas/data";
+import * as documents from "./areas/documents";
+import * as events from "./areas/events";
+import * as home from "./areas/home";
+import * as inbox from "./areas/inbox";
+import * as reminders from "./areas/reminders";
+import * as search from "./areas/search";
+import * as spaces from "./areas/spaces";
+import * as tasks from "./areas/tasks";
+
 export const LANGUAGES = ["en", "te", "hi"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
@@ -6,7 +21,8 @@ export const languageLabels: Record<Language, string> = {
   en: "English", te: "తెలుగు", hi: "हिन्दी",
 };
 
-export const en = {
+// The shell, navigation and account-entry texts (T70). Each screen area keeps its own texts in ./areas (T98).
+const coreEn = {
   "language.label": "Language",
   "shell.brandCommunity": "Community",
   "shell.brandPlatform": "Platform",
@@ -67,10 +83,9 @@ export const en = {
   "auth.error.displayName": "Enter a display name.",
 } as const;
 
-export type MessageId = keyof typeof en;
 export type MessageValues = Readonly<Record<string, string | number>>;
 
-export const te: Partial<Record<MessageId, string>> = {
+const coreTe: Partial<Record<keyof typeof coreEn, string>> = {
   "language.label": "భాష",
   "shell.home": "Community Platform హోమ్",
   "shell.environment": "లోకల్ పరీక్షా వాతావరణం",
@@ -129,7 +144,7 @@ export const te: Partial<Record<MessageId, string>> = {
   "auth.error.displayName": "కనిపించే పేరు నమోదు చేయండి.",
 };
 
-export const hi: Partial<Record<MessageId, string>> = {
+const coreHi: Partial<Record<keyof typeof coreEn, string>> = {
   "language.label": "भाषा",
   "shell.home": "Community Platform होम",
   "shell.environment": "लोकल टेस्ट माहौल",
@@ -186,6 +201,27 @@ export const hi: Partial<Record<MessageId, string>> = {
   "auth.error.code": "छह अंकों का कोड दर्ज करें।",
   "auth.error.passwordLength": "12 से 128 अक्षर इस्तेमाल करें।",
   "auth.error.displayName": "दिखने वाला नाम दर्ज करें।",
+};
+
+// The areas, in this order. An id defined twice would let the later one win silently, so a test refuses duplicates.
+export const core = { en: coreEn, te: coreTe, hi: coreHi };
+export const areas = { account, agent, care, chat, community, data, documents, events, home, inbox, reminders, search, spaces, tasks };
+
+export const en = {
+  ...coreEn, ...account.en, ...agent.en, ...care.en, ...chat.en, ...community.en, ...data.en, ...documents.en,
+  ...events.en, ...home.en, ...inbox.en, ...reminders.en, ...search.en, ...spaces.en, ...tasks.en,
+};
+
+export type MessageId = keyof typeof en;
+
+export const te: Partial<Record<MessageId, string>> = {
+  ...coreTe, ...account.te, ...agent.te, ...care.te, ...chat.te, ...community.te, ...data.te, ...documents.te,
+  ...events.te, ...home.te, ...inbox.te, ...reminders.te, ...search.te, ...spaces.te, ...tasks.te,
+};
+
+export const hi: Partial<Record<MessageId, string>> = {
+  ...coreHi, ...account.hi, ...agent.hi, ...care.hi, ...chat.hi, ...community.hi, ...data.hi, ...documents.hi,
+  ...events.hi, ...home.hi, ...inbox.hi, ...reminders.hi, ...search.hi, ...spaces.hi, ...tasks.hi,
 };
 
 export const dictionaries = { en, te, hi };

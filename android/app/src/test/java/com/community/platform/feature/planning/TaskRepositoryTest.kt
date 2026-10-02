@@ -190,6 +190,20 @@ class TaskRepositoryTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { repository.read(accountId, spaceId, taskId) } }
     }
 
+    // T100: the server counts a name in characters, an emoji counting once, so a name it accepted must not empty the list.
+    @Test fun assigneeNamesAreCountedInCharactersAsTheServerCountsThem(): Unit = runBlocking {
+        val emoji = "\uD83D\uDE00"
+        val person = TaskAssigneeDto(UUID.randomUUID().toString(), emoji.repeat(80))
+        fake.task = task.copy(assignee = person)
+        assertEquals(emoji.repeat(80), repository.tasks(accountId, spaceId).items.single().task.assignee!!.displayName)
+        fake.assigneeList = listOf(person)
+        assertEquals(listOf(person), repository.assignees(accountId, spaceId))
+        fake.task = task.copy(assignee = person.copy(displayName = emoji.repeat(81)))
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.tasks(accountId, spaceId) } }
+        fake.assigneeList = listOf(person.copy(displayName = emoji.repeat(81)))
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.assignees(accountId, spaceId) } }
+    }
+
     @Test fun retrofitWireRequestPreservesNullsPreconditionAndIdempotencyKey() = runBlocking {
         var captured: Request? = null
         var payload = ""
@@ -266,6 +280,7 @@ class TaskRepositoryTest {
         var authorization = ""
         var pagination: PaginationDto? = PaginationDto(null, false)
         var patch: Map<String, Any?>? = null
+        var assigneeList = emptyList<TaskAssigneeDto>()
         val keys = mutableListOf<String>()
         val etags = mutableListOf<String>()
         val creations = mutableListOf<CreateTaskDto>()
@@ -279,7 +294,7 @@ class TaskRepositoryTest {
             this.authorization = authorization; this.limit = limit
             return response(listOf(task), true)
         }
-        override suspend fun assignees(authorization: String, spaceId: String, taskId: String?) = response(emptyList<TaskAssigneeDto>())
+        override suspend fun assignees(authorization: String, spaceId: String, taskId: String?) = response(assigneeList)
         override suspend fun read(authorization: String, taskId: String) = response(task)
         override suspend fun create(authorization: String, key: String, body: CreateTaskDto): Response<EnvelopeDto<FamilyTaskDto>> { keys.add(key); creations.add(body); return response(task) }
         override suspend fun edit(authorization: String, taskId: String, key: String, etag: String, body: Map<String, Any?>): Response<EnvelopeDto<FamilyTaskDto>> { keys.add(key); etags.add(etag); patch = body; return response(task) }

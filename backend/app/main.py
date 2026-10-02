@@ -185,6 +185,8 @@ def create_app(settings=None, clock=utcnow):
     application.state.exports = ExportService(application.state.tasks)
     application.state.reminders = ReminderService(application.state.tasks)
     application.state.reminder_series = ReminderSeriesService(application.state.reminders)
+    # Cancelling an account deletion lets repeating reminders that stopped during the grace period go on (DEC-022).
+    application.state.account_deletion.on_cancel = application.state.reminder_series.restore_after_hold
     application.state.calendar = CalendarService(application.state.reminders)
     application.state.reminder_requests = ReminderRequestService(application.state.reminders)
     application.state.notifications = NotificationService(application.state.reminders)

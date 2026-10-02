@@ -227,4 +227,16 @@ class OutboxTest {
         assertTrue(outbox.kept(fixture.accountId, "c1").isEmpty())
         assertTrue(store.rows.isEmpty())
     }
+
+    @Test fun aSignOutWhileAMessageIsSealedLeavesNothingKept() = runBlocking {
+        lateinit var racing: Outbox
+        // Signing out happens while the body is being sealed.
+        val clearing = object : MessageSealer {
+            override fun seal(plain: String, binding: String): String { racing.clear(); return "sealed|$binding|${plain.reversed()}" }
+            override fun open(sealed: String, binding: String): String? = null
+        }
+        racing = Outbox(store, clearing, work, Dispatchers.Unconfined) { 1L }
+        assertFalse(racing.keep(SendIntent(fixture.accountId, "c1", "k1", "Bring water")))
+        assertTrue(store.rows.isEmpty())
+    }
 }

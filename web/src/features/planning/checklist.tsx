@@ -3,7 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { ApiError } from "@/features/identity/client";
+import { ApiError, characters } from "@/features/identity/client";
 import { changeChecklist, readChecklist } from "./checklist-client";
 import type { Checklist, ChecklistBody, ChecklistIntent, ChecklistItem } from "./checklist-client";
 import styles from "./checklist.module.css";
@@ -20,6 +20,8 @@ export function TaskChecklist({ accountId, taskId, spaceId, onClose }: { account
   const [conflict, setConflict] = useState(false);
   const [discard, setDiscard] = useState<"close" | "reload" | null>(null);
   const [notice, setNotice] = useState("");
+  // The server counts characters, so an emoji counts once.
+  const titleTooLong = characters(title.trim()) > 200;
   const review = useQuery({ queryKey: ["checklist", accountId, taskId], enabled: basis === null,
     queryFn: ({ signal }) => readChecklist(accountId, taskId, spaceId, signal), retry: false, networkMode: "always", refetchOnWindowFocus: false, gcTime: 0 });
   useEffect(() => { if (!basis && review.data) setBasis(review.data); }, [basis, review.data]);
@@ -73,9 +75,10 @@ export function TaskChecklist({ accountId, taskId, spaceId, onClose }: { account
         </div>}
       </li>)}</ul>
       {basis.items.length === 0 && <p>No checklist items.</p>}
-      {basis.can_manage && !removing && <form className={styles.form} onSubmit={event => { event.preventDefault(); if (title.trim()) submit(editing ? { action: "rename", item_id: editing, title: title.trim() } : { action: "add", title: title.trim() }); }}>
-        <label>{editing ? "Item title" : "New item"}<input maxLength={200} required value={title} disabled={locked} onChange={event => setTitle(event.target.value)} /></label>
-        <div className={styles.commands}><button className="primary-button" disabled={locked || conflict || !title.trim()}>{mutation.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : editing ? <Check size={17} aria-hidden /> : <Plus size={17} aria-hidden />}{editing ? "Save item" : "Add item"}</button>{editing && <button type="button" className="secondary-button" disabled={locked} onClick={() => { setEditing(null); setTitle(""); }}>Cancel edit</button>}</div>
+      {basis.can_manage && !removing && <form className={styles.form} onSubmit={event => { event.preventDefault(); if (title.trim() && !titleTooLong) submit(editing ? { action: "rename", item_id: editing, title: title.trim() } : { action: "add", title: title.trim() }); }}>
+        <label>{editing ? "Item title" : "New item"}<input required value={title} disabled={locked} aria-invalid={titleTooLong || undefined} onChange={event => setTitle(event.target.value)} /></label>
+        {titleTooLong && <p className="message error" role="alert">Use up to 200 characters.</p>}
+        <div className={styles.commands}><button className="primary-button" disabled={locked || conflict || !title.trim() || titleTooLong}>{mutation.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : editing ? <Check size={17} aria-hidden /> : <Plus size={17} aria-hidden />}{editing ? "Save item" : "Add item"}</button>{editing && <button type="button" className="secondary-button" disabled={locked} onClick={() => { setEditing(null); setTitle(""); }}>Cancel edit</button>}</div>
       </form>}
       {removing && <div className={styles.review}><p>Remove {removing.title}?</p><div className={styles.commands}><button className="secondary-button" disabled={locked} onClick={() => setRemoving(null)}>Keep item</button><button className="primary-button" disabled={locked || conflict} onClick={() => submit({ action: "remove", item_id: removing.id })}><Trash2 size={17} aria-hidden />Remove item</button></div></div>}
       {intent && !mutation.isPending && <div className={styles.review}><p role="status">The change is unconfirmed.</p><button className="primary-button" onClick={() => mutation.mutate(intent)}><RefreshCw size={17} aria-hidden />Retry original change</button></div>}

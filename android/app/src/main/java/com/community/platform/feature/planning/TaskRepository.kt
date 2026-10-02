@@ -28,7 +28,7 @@ class TaskRepository @Inject constructor(private val api: TaskApi, private val a
             UUID.fromString(task.spaceId)
             UUID.fromString(task.createdByAccountId)
             task.completedByAccountId?.let(UUID::fromString)
-            task.assignee?.let { UUID.fromString(it.accountId); require(it.displayName.length in 1..80) }
+            task.assignee?.let { UUID.fromString(it.accountId); require(it.displayName.codePointCount(0, it.displayName.length) in 1..80) }
             task.dueDate?.let { require(LocalDate.parse(it).toString() == it) }
             Instant.parse(task.createdAt)
             Instant.parse(task.updatedAt)
@@ -84,7 +84,7 @@ class TaskRepository @Inject constructor(private val api: TaskApi, private val a
     suspend fun assignees(accountId: String, spaceId: String, taskId: String? = null): List<TaskAssigneeDto> = accounts.authorized(accountId) {
         val results = accounts.result(api.assignees(it, spaceId, taskId))
         if (results.size > 50) invalid()
-        try { results.forEach { assignee -> UUID.fromString(assignee.accountId); require(assignee.displayName.length in 1..80) } }
+        try { results.forEach { assignee -> UUID.fromString(assignee.accountId); require(assignee.displayName.codePointCount(0, assignee.displayName.length) in 1..80) } }
         catch (_error: IllegalArgumentException) { invalid() }
         results
     }

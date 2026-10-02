@@ -6,22 +6,25 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { LoaderCircle, Plus, UserMinus } from "lucide-react";
 
 import type { Account } from "@/features/identity/client";
-import { HANDLE_PATTERN, TOPICS, createPage, followPage, followingPages, isUnknown, myPages, reasonLabels, textProblem, topicLabels } from "./client";
+import { useText } from "@/features/i18n/i18n";
+import { HANDLE_PATTERN, TOPICS, createPage, followPage, followingPages, isUnknown, myPages } from "./client";
 import type { CreateIntent, Topic } from "./client";
-import { CommunityFrame, Failure, Loading, problemText, sessionLost, useViewer } from "./shared";
+import { CommunityFrame, Failure, Loading, problemText, sessionLost, useTextProblem, useViewer } from "./shared";
 import styles from "./community.module.css";
 
 type PageIntent = CreateIntent<{ handle: string; name: string; description: string; topic: Topic }>;
 
 export function MyPagesScreen() {
+  const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
-  if (viewer.pending || viewer.signedOut) return <Loading label="Loading your pages" />;
+  if (viewer.pending || viewer.signedOut) return <Loading label={t("community.loadingYourPages")} />;
   if (!viewer.account) return <CommunityFrame account={null} current="pages"><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
   return <MyPages key={viewer.account.id} account={viewer.account} />;
 }
 
 function MyPages({ account }: { account: Account }) {
+  const t = useText();
   const queryClient = useQueryClient();
   const owned = useQuery({ queryKey: ["my-pages", account.id], queryFn: ({ signal }) => myPages(account.id, signal), networkMode: "always" });
   const following = useInfiniteQuery({
@@ -35,46 +38,48 @@ function MyPages({ account }: { account: Account }) {
     setBusy(pageId);
     setError("");
     try { await followPage(account.id, pageId, false); await queryClient.invalidateQueries({ queryKey: ["following", account.id] }); }
-    catch (problem) { setError(problemText(problem, "Unfollow failed.")); }
+    catch (problem) { setError(problemText(problem, t("community.unfollowFailed"), t)); }
     finally { setBusy(null); }
   }
   const followed = following.data?.pages.flatMap(page => page.items) ?? [];
   return <CommunityFrame account={account} current="pages">
-    <div className={styles.heading}><h1>Your pages</h1></div>
-    <p className={styles.meta}>A public page is visible to everyone, including people who are not signed in. Keep private family matters in your Spaces.</p>
+    <div className={styles.heading}><h1>{t("community.yourPages")}</h1></div>
+    <p className={styles.meta}>{t("community.publicPageWarning")}</p>
     <section className={styles.stack} aria-labelledby="owned-heading">
-      <h2 id="owned-heading">Pages you own</h2>
-      {owned.isPending && <p role="status">Loading...</p>}
+      <h2 id="owned-heading">{t("community.ownedPages")}</h2>
+      {owned.isPending && <p role="status">{t("community.loading")}</p>}
       {owned.isError && !sessionLost(owned.error) && <Failure error={owned.error} retry={() => owned.refetch()} />}
-      {owned.data?.length === 0 && <p className={styles.empty}>You do not own a page yet.</p>}
+      {owned.data?.length === 0 && <p className={styles.empty}>{t("community.noOwnedPages")}</p>}
       <ul className={styles.list}>
         {owned.data?.map(page => <li key={page.id} className={styles.row}>
-          <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>@{page.handle} / {topicLabels[page.topic]} / {page.follower_count} followers</span>
-            {page.moderation && <span className={styles.meta}> Hidden by moderators: {reasonLabels[page.moderation.reason]}. Only you can see it.</span>}
+          <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>{t("community.ownedSummary", { handle: page.handle, topic: t(`community.topic.${page.topic}`), count: page.follower_count })}</span>
+            {page.moderation && <span className={styles.meta}>{" "}{t("community.hiddenByModerators", { reason: t(`community.reason.${page.moderation.reason}`) })}</span>}
           </span>
         </li>)}
       </ul>
       {owned.data && owned.data.length < 5 && <CreatePageForm account={account} onCreated={() => queryClient.invalidateQueries({ queryKey: ["my-pages", account.id] })} />}
-      {owned.data?.length === 5 && <p className={styles.meta}>You own the maximum of 5 pages in this local build.</p>}
+      {owned.data?.length === 5 && <p className={styles.meta}>{t("community.ownedLimit")}</p>}
     </section>
     <section className={styles.stack} aria-labelledby="following-heading">
-      <h2 id="following-heading">Pages you follow</h2>
+      <h2 id="following-heading">{t("community.followingPages")}</h2>
       {error && <div className="message error" role="alert">{error}</div>}
-      {following.isPending && <p role="status">Loading pages you follow...</p>}
+      {following.isPending && <p role="status">{t("community.loadingFollowingPages")}</p>}
       {following.isError && !sessionLost(following.error) && <Failure error={following.error} retry={() => following.refetch()} />}
-      {following.isSuccess && followed.length === 0 && <p className={styles.empty}>You do not follow any pages. <Link href="/app/discover">Discover pages</Link>.</p>}
+      {following.isSuccess && followed.length === 0 && <p className={styles.empty}>{t("community.noFollowingPagesBefore")}<Link href="/app/discover">{t("community.discoverPages")}</Link>{t("community.sentenceEnd")}</p>}
       <ul className={styles.list}>
         {followed.map(page => <li key={page.id} className={styles.row}>
           <span><Link href={`/pages/${page.handle}`}>{page.name}</Link> <span className={styles.meta}>@{page.handle}</span></span>
-          <button className="secondary-button" disabled={busy !== null} onClick={() => unfollow(page.id)} aria-label={`Unfollow ${page.name}`}><UserMinus size={17} aria-hidden />Unfollow</button>
+          <button className="secondary-button" disabled={busy !== null} onClick={() => unfollow(page.id)} aria-label={t("community.unfollowPage", { name: page.name })}><UserMinus size={17} aria-hidden />{t("community.unfollow")}</button>
         </li>)}
       </ul>
-      {following.hasNextPage && <button className="secondary-button" disabled={following.isFetchingNextPage} onClick={() => following.fetchNextPage()}>Load more</button>}
+      {following.hasNextPage && <button className="secondary-button" disabled={following.isFetchingNextPage} onClick={() => following.fetchNextPage()}>{t("community.more")}</button>}
     </section>
   </CommunityFrame>;
 }
 
 function CreatePageForm({ account, onCreated }: { account: Account; onCreated: () => void }) {
+  const t = useText();
+  const textProblem = useTextProblem();
   const [handle, setHandle] = useState("");
   const [name, setName] = useState("");
   const [topic, setTopic] = useState<Topic>("community");
@@ -84,7 +89,7 @@ function CreatePageForm({ account, onCreated }: { account: Account; onCreated: (
   const [error, setError] = useState("");
   const [created, setCreated] = useState<string | null>(null);
   const cleanHandle = handle.trim().toLowerCase();
-  const handleProblem = cleanHandle && !HANDLE_PATTERN.test(cleanHandle) ? "Use 3 to 30 lowercase letters or digits, with single hyphens between them." : null;
+  const handleProblem = cleanHandle && !HANDLE_PATTERN.test(cleanHandle) ? t("community.handleInvalid") : null;
   const invalid = !cleanHandle || handleProblem || textProblem(name, 80) || textProblem(description, 500, false);
   async function send(next: PageIntent) {
     setIntent(next);
@@ -96,34 +101,34 @@ function CreatePageForm({ account, onCreated }: { account: Account; onCreated: (
       onCreated();
     } catch (problem) {
       if (sessionLost(problem)) { window.location.reload(); return; }
-      if (isUnknown(problem)) { setState("unknown"); setError(problemText(problem, "The page was not confirmed.")); return; }
-      setIntent(null); setState("idle"); setError(problemText(problem, "The page was not created."));
+      if (isUnknown(problem)) { setState("unknown"); setError(problemText(problem, t("community.createPageUnknown"), t)); return; }
+      setIntent(null); setState("idle"); setError(problemText(problem, t("community.createPageFailed"), t));
     }
   }
   const locked = state !== "idle";
-  return <form className={styles.form} aria-label="Create a public page" onSubmit={event => {
+  return <form className={styles.form} aria-label={t("community.createPublicPage")} onSubmit={event => {
     event.preventDefault();
     if (invalid || locked) return;
     setCreated(null);
     void send({ accountId: account.id, key: crypto.randomUUID(), body: { handle: cleanHandle, name: name.trim(), description: description.trim(), topic } });
   }}>
-    <h2>Create a public page</h2>
-    <label>Handle<input value={handle} maxLength={30} onChange={event => setHandle(event.target.value)} disabled={locked} aria-describedby="handle-help" aria-invalid={handleProblem ? true : undefined} /></label>
-    <span id="handle-help" className={handleProblem ? "field-error" : styles.meta}>{handleProblem ?? "Your page address: /pages/your-handle. It cannot be changed later."}</span>
-    <label>Page name<input value={name} maxLength={160} onChange={event => setName(event.target.value)} disabled={locked} /></label>
-    <label>Topic<select aria-label="Topic" value={topic} onChange={event => setTopic(event.target.value as Topic)} disabled={locked}>
-      {TOPICS.map(item => <option key={item} value={item}>{topicLabels[item]}</option>)}
+    <h2>{t("community.createPublicPage")}</h2>
+    <label>{t("community.handle")}<input value={handle} maxLength={30} onChange={event => setHandle(event.target.value)} disabled={locked} aria-describedby="handle-help" aria-invalid={handleProblem ? true : undefined} /></label>
+    <span id="handle-help" className={handleProblem ? "field-error" : styles.meta}>{handleProblem ?? t("community.handleHelp")}</span>
+    <label>{t("community.pageName")}<input value={name} maxLength={160} onChange={event => setName(event.target.value)} disabled={locked} /></label>
+    <label>{t("community.topic")}<select aria-label={t("community.topic")} value={topic} onChange={event => setTopic(event.target.value as Topic)} disabled={locked}>
+      {TOPICS.map(item => <option key={item} value={item}>{t(`community.topic.${item}`)}</option>)}
     </select></label>
-    <label>Description (optional)<textarea value={description} maxLength={1000} onChange={event => setDescription(event.target.value)} disabled={locked} /></label>
+    <label>{t("community.descriptionOptional")}<textarea value={description} maxLength={1000} onChange={event => setDescription(event.target.value)} disabled={locked} /></label>
     {error && <div className="message error" role="alert">{error}</div>}
-    {created && <p className={styles.notice} role="status">Page created. <Link href={`/pages/${created}`}>Open @{created}</Link> to write your first post.</p>}
+    {created && <p className={styles.notice} role="status">{t("community.pageCreatedBefore")}<Link href={`/pages/${created}`}>{t("community.openHandle", { handle: created })}</Link>{t("community.firstPostAfter")}</p>}
     <div className={styles.actions}>
       {state === "unknown" && intent
         ? <>
-          <button className="primary-button" type="button" onClick={() => send(intent)}>Retry creating page</button>
-          <button className="secondary-button" type="button" onClick={() => { setIntent(null); setState("idle"); onCreated(); }}>Stop tracking</button>
+          <button className="primary-button" type="button" onClick={() => send(intent)}>{t("community.retryCreatePage")}</button>
+          <button className="secondary-button" type="button" onClick={() => { setIntent(null); setState("idle"); onCreated(); }}>{t("community.stopTracking")}</button>
         </>
-        : <button className="primary-button" type="submit" disabled={locked || Boolean(invalid)}>{state === "sending" ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Plus size={17} aria-hidden />}Create page</button>}
+        : <button className="primary-button" type="submit" disabled={locked || Boolean(invalid)}>{state === "sending" ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Plus size={17} aria-hidden />}{t("community.createPage")}</button>}
     </div>
   </form>;
 }

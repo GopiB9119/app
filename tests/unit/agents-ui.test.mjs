@@ -396,3 +396,29 @@ test('the agent screen fits 320px with normal and doubled text, and its buttons 
     await finished(page, outbound, errors);
   } finally { await context.close(); }
 });
+
+// T100: the server takes a request of up to 500 characters, an emoji counting once.
+test('a request can be 500 emoji long, and a longer one is explained before anything is sent', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    await page.getByText('No requests in this Space yet. Only you can see your requests.', { exact: true }).waitFor();
+    await request(page).focus();
+    // Typed input is held to the field's maxLength, as a person's typing is.
+    await page.keyboard.insertText('a'.repeat(501));
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Keep a request under 500 characters.' }).waitFor();
+    assert.equal((await posts(page, '/api/agent-runs')).length, 0);
+    const emoji = '\u{1F600}'.repeat(500);
+    await request(page).fill('');
+    await request(page).focus();
+    await page.keyboard.insertText(emoji);
+    assert.equal(await request(page).inputValue(), emoji, 'The request field must take 500 emoji.');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await page.getByRole('article', { name: emoji }).getByRole('heading', { name: 'Check this before I do it', exact: true }).waitFor();
+    const asks = await posts(page, '/api/agent-runs');
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].body.message, emoji);
+    await finished(page, outbound, errors);
+  } finally { await context.close(); }
+});

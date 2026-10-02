@@ -59,7 +59,8 @@ class PhoneAlertsTest {
         var unread = 0
         var failure: Exception? = null
         var reads = 0
-        override suspend fun inbox(accountId: String): List<InboxNotificationDto> { reads += 1; failure?.let { throw it }; return items }
+        var onRead: (() -> Unit)? = null
+        override suspend fun inbox(accountId: String): List<InboxNotificationDto> { reads += 1; onRead?.invoke(); failure?.let { throw it }; return items }
         override suspend fun unreadMessages(accountId: String): Int { failure?.let { throw it }; return unread }
     }
 
@@ -180,5 +181,16 @@ class PhoneAlertsTest {
         assertEquals(MAX_ALERTED + 20, notifier.reminders.size)
         assertEquals(MAX_ALERTED, prefs.alerted.size)
         assertEquals("n${MAX_ALERTED + 20}", prefs.alerted.last())
+    }
+
+    @Test fun turningAlertsOffWhileTheServerAnswersPostsNothing() = runBlocking {
+        turnedOnAndPrimed()
+        source.items = listOf(item("late"))
+        source.unread = 4
+        source.onRead = { alerts.turnOff() }
+        checker.check()
+        assertTrue(notifier.reminders.isEmpty())
+        assertTrue(notifier.messages.isEmpty())
+        assertNull(prefs.accountId)
     }
 }

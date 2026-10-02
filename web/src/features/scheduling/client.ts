@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, chars } from "@/features/identity/client";
 
 const instant = z.string().datetime({ offset: true });
 const localTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:00$/)
@@ -10,7 +10,7 @@ const namedTimezone = z.string().min(1).max(64).refine(value => {
 });
 export const reminderStatusSchema = z.enum(["scheduled", "available", "cancelled", "suppressed", "expired", "failed"]);
 export const reminderSchema = z.object({
-  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: z.string().min(1).max(200),
+  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: chars(1, 200),
   local_time: localTime, timezone: namedTimezone, scheduled_at: instant, expires_at: instant,
   status: reminderStatusSchema, reason: z.string().nullable(), source_changed: z.boolean(),
   acknowledged_at: instant.nullable(), version: z.string().regex(/^[1-9]\d*$/), channel: z.literal("in_app"),
@@ -24,8 +24,8 @@ const previewOption = z.object({
 }).refine(value => Date.parse(value.dispatch_expires_at) > Date.parse(value.scheduled_at));
 
 export const reminderPreviewSchema = z.object({
-  task_id: z.string().uuid(), task_title: z.string().min(1).max(200), task_version: z.string().regex(/^[1-9]\d*$/),
-  local_time: localTime, timezone: namedTimezone, recipient: z.object({ account_id: z.string().uuid(), display_name: z.string().min(1).max(80) }),
+  task_id: z.string().uuid(), task_title: chars(1, 200), task_version: z.string().regex(/^[1-9]\d*$/),
+  local_time: localTime, timezone: namedTimezone, recipient: z.object({ account_id: z.string().uuid(), display_name: chars(1, 80) }),
   channel: z.literal("in_app"), options: z.array(previewOption).min(1).max(2), expires_at: instant,
 }).superRefine((value, context) => {
   const wallTime = Date.parse(`${value.local_time}Z`);
@@ -42,7 +42,7 @@ export const reminderPreviewSchema = z.object({
 
 export const notificationSchema = z.object({
   id: z.string().uuid(), reminder_id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(),
-  task_title: z.string().min(1).max(200), scheduled_at: instant, created_at: instant, read_at: instant.nullable(), acknowledged_at: instant.nullable(),
+  task_title: chars(1, 200), scheduled_at: instant, created_at: instant, read_at: instant.nullable(), acknowledged_at: instant.nullable(),
   series_id: z.string().uuid().nullable().optional(), snooze_count: z.number().int().min(0).max(3).optional(),
   snoozed_until: instant.nullable().optional(), can_snooze: z.boolean().optional(), snooze_before: instant.nullable().optional(),
 });
@@ -90,9 +90,9 @@ export function offsetLabel(minutes: number) {
   return `UTC${minutes >= 0 ? "+" : "-"}${String(Math.floor(magnitude / 60)).padStart(2, "0")}:${String(magnitude % 60).padStart(2, "0")}`;
 }
 
-const requestPerson = z.object({ account_id: z.string().uuid(), display_name: z.string().min(1).max(80) });
+const requestPerson = z.object({ account_id: z.string().uuid(), display_name: chars(1, 80) });
 export const reminderRequestSchema = z.object({
-  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: z.string().min(1).max(200),
+  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: chars(1, 200),
   task_version: z.string().regex(/^[1-9]\d*$/), requested_by: requestPerson, recipient: requestPerson,
   local_time: localTime, timezone: namedTimezone, scheduled_at: instant, dispatch_expires_at: instant,
   expires_at: instant, created_at: instant, resolved_at: instant.nullable(),
@@ -222,7 +222,7 @@ const ruleShape = {
   clock_change_policy: z.enum(["shift_forward", "skip"]),
 };
 export const seriesPreviewSchema = z.object({
-  task_id: z.string().uuid(), task_title: z.string().min(1).max(200), task_version: z.string().regex(/^[1-9]\d*$/),
+  task_id: z.string().uuid(), task_title: chars(1, 200), task_version: z.string().regex(/^[1-9]\d*$/),
   recipient: requestPerson, ...ruleShape, occurrences: z.array(seriesOccurrenceSchema).min(1).max(10),
   occurrence_count: z.number().int().min(1).max(366),
   clock_changes: z.array(z.object({ local_date: localDate, change: z.enum(["shifted_forward", "repeated_time_first", "skipped"]) })).max(20),
@@ -231,7 +231,7 @@ export const seriesPreviewSchema = z.object({
   && value.occurrences.every((item, index) => item.reminder_id === null
     && (index === 0 || Date.parse(item.scheduled_at) > Date.parse(value.occurrences[index - 1].scheduled_at))));
 export const seriesSchema = z.object({
-  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: z.string().min(1).max(200),
+  id: z.string().uuid(), task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: chars(1, 200),
   task_version: z.string().regex(/^[1-9]\d*$/), source_changed: z.boolean(), ...ruleShape,
   status: z.enum(["active", "paused", "cancelled", "ended", "suppressed"]), reason: z.string().max(40).nullable(),
   next_occurrence: seriesOccurrenceSchema.nullable(), created_at: instant, updated_at: instant,

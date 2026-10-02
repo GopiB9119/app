@@ -244,3 +244,32 @@ test('offline task layout supports long titles and desktop/mobile screenshots wi
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+// T100: the server counts characters, an emoji counting once. The title field takes 200 emoji and the created task shows;
+// a longer title is explained before anything is sent.
+test('offline task titles take 200 emoji and a longer title is explained before anything is sent', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, {});
+    const title = page.getByLabel('Task title', { exact: true });
+    const posts = () => page.evaluate(() => window.taskFixture.calls.filter(call => call.route === '/api/tasks' && call.method === 'POST'));
+    await title.focus();
+    // Typed input is held to the field's maxLength, as a person's typing is.
+    await page.keyboard.insertText('a'.repeat(201));
+    await page.getByRole('button', { name: 'Create task', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Use up to 200 characters.' }).waitFor();
+    assert.equal((await posts()).length, 0);
+    const emoji = '\u{1F600}'.repeat(200);
+    await title.fill('');
+    await title.focus();
+    await page.keyboard.insertText(emoji);
+    assert.equal(await title.inputValue(), emoji, 'The title field must take 200 emoji.');
+    await page.getByRole('button', { name: 'Create task', exact: true }).click();
+    await page.getByText('Task created.', { exact: true }).waitFor();
+    const writes = await posts();
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.title, emoji);
+    assert.equal(await page.getByRole('heading', { name: emoji, exact: true }).count(), 1, 'The list must show a title the server accepted.');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

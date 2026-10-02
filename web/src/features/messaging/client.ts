@@ -1,15 +1,15 @@
 import { z } from "zod";
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, chars } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const position = z.string().regex(/^(0|[1-9][0-9]{0,9})$/);
 const timestamp = z.string().datetime({ offset: true });
 export const MAX_MESSAGE_CHARACTERS = 2000;
 
-export const participantSchema = z.object({ account_id: uuid, display_name: z.string().min(1).max(80) });
+export const participantSchema = z.object({ account_id: uuid, display_name: chars(1, 80) });
 export const conversationSchema = z.object({
-  id: uuid, space_id: uuid, space_name: z.string().min(1).max(80),
-  kind: z.enum(["space", "direct"]), title: z.string().min(1).max(80),
+  id: uuid, space_id: uuid, space_name: chars(1, 80),
+  kind: z.enum(["space", "direct"]), title: chars(1, 80),
   participants: z.array(participantSchema).max(2), can_send: z.boolean(),
   protection: z.literal("server_encrypted"),
   last_position: position, read_position: position, unread_count: z.number().int().nonnegative(),
@@ -26,7 +26,7 @@ export type Conversation = z.infer<typeof conversationSchema>;
 
 export const messageSchema = z.object({
   id: uuid, conversation_id: uuid, position: position.refine(value => value !== "0"),
-  sender_account_id: uuid, sender_name: z.string().min(1).max(80), mine: z.boolean(),
+  sender_account_id: uuid, sender_name: chars(1, 80), mine: z.boolean(),
   client_message_id: uuid.nullable(), status: z.enum(["sent", "deleted", "unavailable"]),
   // The server counts characters; UTF-16 surrogate pairs can double the JavaScript length.
   body: z.string().min(1).max(MAX_MESSAGE_CHARACTERS * 2).nullable(),

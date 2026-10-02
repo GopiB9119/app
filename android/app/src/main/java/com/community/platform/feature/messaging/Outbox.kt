@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
 
@@ -52,9 +53,12 @@ class Outbox(
     private val io: CoroutineContext = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : MessageOutbox {
+    private val clears = AtomicLong()
     override suspend fun keep(intent: SendIntent): Boolean = withContext(io) {
+        val generation = clears.get()
         store.put(UnsentMessage(intent.key, intent.accountId, intent.conversationId, sealer.seal(intent.body, binding(intent)), clock(), 0))
-        true
+        // A sign-out or account change while this was sealed deletes everything kept, so this one goes too.
+        if (clears.get() != generation) { store.remove(intent.key); false } else true
     }
 
     override suspend fun kept(accountId: String, conversationId: String): List<KeptMessage> =
@@ -76,6 +80,7 @@ class Outbox(
 
     /** Deletes every kept message of every account and stops background sending. Blocks. */
     fun clear() {
+        clears.incrementAndGet()
         store.clear()
         work.cancelAll()
     }

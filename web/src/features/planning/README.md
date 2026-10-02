@@ -16,4 +16,10 @@ Source chapters: 1, 3, 13, 17.
 
 Calendar (`calendar-client.ts`, `calendar-screen.tsx`, `/app/calendar`): a month agenda of task due dates and the person's reminders. Since 2026-10-01 it also shows `planned` entries, the future times of active repeating reminders, marked "Planned, repeating" ([DEC-010](../../../../docs/DECISIONS.md#accepted-decisions)).
 
+Calendar refreshes preserve the selected Space, month and display timezone; only an explicit selector or month action changes them. The heading reflows at 320 px with 200% text.
+
+Task checklists are reviewed inside the task screen. Unconfirmed changes retain their original body, UUID key and checklist ETag; controls stay locked until confirmation or a definitive refusal. Removal names the item before confirmation. Item titles use the backend's 200-character (Unicode code point) limit, with an explicit error instead of silently truncating an over-limit draft.
+
+[Offline calendar and checklist browser tests](../../../../tests/unit/calendar-checklist-ui.test.mjs) render the actual screens through the query and language providers, simulate API answers and the live connection in-page, and block every real request. They cover loading/retry/empty/loaded views, display-day/source links, explicit scope changes, pagination, revoked access, checklist confirmation/retry/version behavior, Unicode boundaries and actual 200% text at 320 px. Space events and calendar-file downloading are deliberately excluded while conflict C10 remains open. These tests are not live BFF/database or Next routing evidence.
+
 The [complete feature catalog](../../../../packages/feature-catalog/features.json) retains checklists, dependencies, recurring tasks, calendar views and broader planning workspaces.

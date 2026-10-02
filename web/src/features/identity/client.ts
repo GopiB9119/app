@@ -53,3 +53,9 @@ export async function api<Schema extends z.ZodTypeAny>(
   if (!unread.success) throw new ApiError(502, "INVALID_RESPONSE", "The service returned an invalid unread count.");
   return { data: parsed.data, etag: response.headers.get("etag"), pagination: pagination.data, unreadCount: unread.data };
 }
+
+// The server counts text in characters (code points), not UTF-16 units, so an emoji counts once.
+export const characters = (value: string) => [...value].length;
+/** Text the server limits to between `min` and `max` characters. */
+export const chars = (min: number, max: number, message = `Use up to ${max} characters.`) =>
+  z.string().refine(value => { const length = characters(value); return length >= min && length <= max; }, message);

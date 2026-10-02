@@ -5,19 +5,30 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Check, Crown, LoaderCircle, LogOut, RefreshCw, ShieldCheck, UserRound, UserRoundMinus, UsersRound, X } from "lucide-react";
 import { ApiError } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
-import { changeOwnership, changeRole, endMembership, ownershipLabels, ownershipPage, readMembers } from "./client";
+import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
+import type { MessageId, MessageValues } from "@/features/i18n/messages";
+import { changeOwnership, changeRole, endMembership, ownershipPage, readMembers } from "./client";
 import type { FamilySpace, MembershipIntent, OwnershipIntent, OwnershipTransfer, RoleIntent, SpaceMember } from "./client";
 import styles from "./spaces.module.css";
 
 type Selection = { member: SpaceMember; action: "remove" | "leave" };
 type RoleSelection = { member: SpaceMember; role: "admin" | "member" };
-const roleLabels = { owner: "Owner", admin: "Admin", member: "Member" } as const;
+const roleLabels: Record<SpaceMember["role"], MessageId> = { owner: "spaces.role.owner", admin: "spaces.role.admin", member: "spaces.role.member" };
+const ownershipLabels: Record<OwnershipTransfer["status"], MessageId> = {
+  pending: "spaces.ownership.status.pending", accepted: "spaces.ownership.status.accepted", declined: "spaces.ownership.status.declined",
+  cancelled: "spaces.ownership.status.cancelled", expired: "spaces.ownership.status.expired", invalidated: "spaces.ownership.status.invalidated",
+};
+const ownershipNotices: Record<OwnershipTransfer["status"], MessageId> = {
+  pending: "spaces.ownership.notice.pending", accepted: "spaces.ownership.notice.accepted", declined: "spaces.ownership.notice.declined",
+  cancelled: "spaces.ownership.notice.cancelled", expired: "spaces.ownership.notice.expired", invalidated: "spaces.ownership.notice.invalidated",
+};
 
 function denied(error: Error | null) {
   return error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === "ACCOUNT_CHANGED");
 }
 
 export function ManageMembers({ user, space, onClose }: { user: Account; space: FamilySpace; onClose: () => void }) {
+  const t = useText();
   const client = useQueryClient();
   const titleId = useId();
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -26,7 +37,7 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
   const [roleIntent, setRoleIntent] = useState<RoleIntent | null>(null);
   const [ownershipLocked, setOwnershipLocked] = useState(false);
   const [ownershipError, setOwnershipError] = useState<Error | null>(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{ id: MessageId; values?: MessageValues } | null>(null);
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const [roleDialog, setRoleDialog] = useState<HTMLDialogElement | null>(null);
   const roster = useQuery({ queryKey: ["spaceMembers", user.id, space.id], enabled: intent === null && roleIntent === null,
@@ -40,7 +51,7 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
         window.location.replace("/app/spaces");
         return;
       }
-      setNotice("Member removed.");
+      setNotice({ id: "spaces.members.removed" });
       await client.invalidateQueries({ predicate: query => query.queryKey.includes(user.id) });
     },
     onError: error => {
@@ -54,7 +65,7 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
     mutationFn: changeRole,
     onSuccess: async (result, command) => {
       setRoleSelection(null); setRoleIntent(null);
-      setNotice(`${result.display_name} is now ${command.role === "admin" ? "an admin" : "a member"}.`);
+      setNotice({ id: command.role === "admin" ? "spaces.members.nowAdmin" : "spaces.members.nowMember", values: { name: result.display_name } });
       await client.invalidateQueries({ predicate: query => query.queryKey.includes(user.id) });
     },
     onError: error => {
@@ -86,70 +97,70 @@ export function ManageMembers({ user, space, onClose }: { user: Account; space: 
 
   function review(member: SpaceMember, action: Selection["action"]) {
     if (locked || selection || roleSelection || blocked) return;
-    change.reset(); roleChange.reset(); setNotice(""); setSelection({ member, action });
+    change.reset(); roleChange.reset(); setNotice(null); setSelection({ member, action });
   }
 
   function reviewRole(member: SpaceMember, role: RoleSelection["role"]) {
     if (locked || selection || roleSelection || blocked) return;
-    change.reset(); roleChange.reset(); setNotice(""); setRoleSelection({ member, role });
+    change.reset(); roleChange.reset(); setNotice(null); setRoleSelection({ member, role });
   }
 
   const busy = !!selection || !!roleSelection;
 
   return <section className={styles.invitationSection} aria-labelledby={titleId}>
-    <div className={styles.sectionHeading}><UsersRound size={20} aria-hidden /><h2 id={titleId}>{blocked ? "Members unavailable" : `Members of ${space.name}`}</h2>
-      <button className="icon-button" aria-label="Refresh members" title="Refresh members" disabled={locked || busy || roster.isFetching} onClick={() => { change.reset(); roleChange.reset(); setOwnershipError(null); roster.refetch(); }}><RefreshCw size={18} className={roster.isFetching ? "spin" : ""} aria-hidden /></button>
-      <button className="icon-button" aria-label="Close member management" title="Close member management" disabled={locked} onClick={onClose}><X size={18} aria-hidden /></button>
+    <div className={styles.sectionHeading}><UsersRound size={20} aria-hidden /><h2 id={titleId}>{blocked ? t("spaces.members.unavailable") : t("spaces.membersOf", { name: space.name })}</h2>
+      <button className="icon-button" aria-label={t("spaces.members.refresh")} title={t("spaces.members.refresh")} disabled={locked || busy || roster.isFetching} onClick={() => { change.reset(); roleChange.reset(); setOwnershipError(null); roster.refetch(); }}><RefreshCw size={18} className={roster.isFetching ? "spin" : ""} aria-hidden /></button>
+      <button className="icon-button" aria-label={t("spaces.members.close")} title={t("spaces.members.close")} disabled={locked} onClick={onClose}><X size={18} aria-hidden /></button>
     </div>
-    {notice && <p className="message success" role="status"><Check size={17} aria-hidden />{notice}</p>}
+    {notice && <p className="message success" role="status"><Check size={17} aria-hidden />{t(notice.id, notice.values)}</p>}
     {problem && !busy && <p className="message error" role="alert">{problem.message}</p>}
-    {roster.isPending && <p role="status">Loading members...</p>}
+    {roster.isPending && <p role="status">{t("spaces.members.loading")}</p>}
     {!blocked && !roster.isError && <ul className={styles.invitationList}>{roster.data?.map(member => <li key={member.account_id}>
-      <div className={styles.invitationDetails}><h3>{member.display_name}{member.account_id === user.id ? " (you)" : ""}</h3>
-        <span>{roleLabels[member.role]}</span><span className={styles.accountCode}>{member.account_id}</span>
+      <div className={styles.invitationDetails}><h3>{member.account_id === user.id ? t("spaces.members.you", { name: member.display_name }) : member.display_name}</h3>
+        <span>{t(roleLabels[member.role])}</span><span className={styles.accountCode}>{member.account_id}</span>
       </div>
-      {canChangeRoles && member.role !== "owner" && <button className="secondary-button" aria-label={`${member.role === "admin" ? "Make member" : "Make admin"}: ${member.display_name} (${member.account_id})`} disabled={locked || busy}
-        onClick={() => reviewRole(member, member.role === "admin" ? "member" : "admin")}>{member.role === "admin" ? <UserRound size={17} aria-hidden /> : <ShieldCheck size={17} aria-hidden />}{member.role === "admin" ? "Make member" : "Make admin"}</button>}
-      {((own?.role === "owner" && member.role !== "owner") || (own?.role === "admin" && member.role === "member")) && <button className="icon-button" aria-label={`Remove ${member.display_name} (${member.account_id})`} title={`Remove ${member.display_name}`} disabled={locked || busy} onClick={() => review(member, "remove")}><UserRoundMinus size={19} aria-hidden /></button>}
-      {member.account_id === user.id && member.role !== "owner" && <button className="secondary-button" disabled={locked || busy} onClick={() => review(member, "leave")}><LogOut size={17} aria-hidden />Leave Space</button>}
+      {canChangeRoles && member.role !== "owner" && <button className="secondary-button" aria-label={t(member.role === "admin" ? "spaces.members.makeMemberFor" : "spaces.members.makeAdminFor", { name: member.display_name, account: member.account_id })} disabled={locked || busy}
+        onClick={() => reviewRole(member, member.role === "admin" ? "member" : "admin")}>{member.role === "admin" ? <UserRound size={17} aria-hidden /> : <ShieldCheck size={17} aria-hidden />}{t(member.role === "admin" ? "spaces.members.makeMember" : "spaces.members.makeAdmin")}</button>}
+      {((own?.role === "owner" && member.role !== "owner") || (own?.role === "admin" && member.role === "member")) && <button className="icon-button" aria-label={t("spaces.members.removeFor", { name: member.display_name, account: member.account_id })} title={t("spaces.members.removeTitle", { name: member.display_name })} disabled={locked || busy} onClick={() => review(member, "remove")}><UserRoundMinus size={19} aria-hidden /></button>}
+      {member.account_id === user.id && member.role !== "owner" && <button className="secondary-button" disabled={locked || busy} onClick={() => review(member, "leave")}><LogOut size={17} aria-hidden />{t("spaces.members.leave")}</button>}
     </li>)}</ul>}
     {!blocked && roster.data && !roster.isError && <OwnershipOffers user={user} space={space} members={roster.data}
       disabled={intent !== null || change.isPending || roleIntent !== null || roleChange.isPending || busy || roster.isFetching}
       onLocked={setOwnershipLocked} onDenied={setOwnershipError} />}
     {selection && !blocked && <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={`${titleId}-review`} onCancel={event => { if (locked) event.preventDefault(); else setSelection(null); }}>
-      <div className="dialog-heading"><h2 id={`${titleId}-review`}>{selection.action === "leave" ? "Leave this family Space?" : "Remove this family member?"}</h2>
-        <button className="icon-button" aria-label="Close membership confirmation" title="Close membership confirmation" disabled={locked} onClick={() => setSelection(null)}><X size={18} aria-hidden /></button>
+      <div className="dialog-heading"><h2 id={`${titleId}-review`}>{t(selection.action === "leave" ? "spaces.members.leaveTitle" : "spaces.members.removeConfirmTitle")}</h2>
+        <button className="icon-button" aria-label={t("spaces.members.closeConfirmation")} title={t("spaces.members.closeConfirmation")} disabled={locked} onClick={() => setSelection(null)}><X size={18} aria-hidden /></button>
       </div>
-      <dl className={styles.reviewFacts}><dt>Space</dt><dd>{space.name}</dd><dt>Member</dt><dd>{selection.member.display_name}</dd><dt>Account ID</dt><dd className={styles.accountCode}>{selection.member.account_id}</dd></dl>
-      <p>{selection.action === "leave" ? "You will lose access to this family's tasks and reminders." : "This member will lose access to this family's tasks and reminders."} Earlier copies are not deleted. {selection.action === "leave" ? "You can return only if the owner invites you again, and your earlier tasks and reminders will stay unavailable." : "You can invite them again later, but their earlier tasks and reminders will stay unavailable."}</p>
+      <dl className={styles.reviewFacts}><dt>{t("spaces.members.space")}</dt><dd>{space.name}</dd><dt>{t("spaces.members.member")}</dt><dd>{selection.member.display_name}</dd><dt>{t("spaces.members.accountId")}</dt><dd className={styles.accountCode}>{selection.member.account_id}</dd></dl>
+      <p>{t(selection.action === "leave" ? "spaces.members.leaveEffect" : "spaces.members.removeEffect")}</p>
       {change.isError && <p className="message error" role="alert">{change.error.message}</p>}
-      {intent && !change.isPending && <p role="status">The result is unconfirmed.</p>}
+      {intent && !change.isPending && <p role="status">{t("spaces.members.unconfirmed")}</p>}
       <div className={`dialog-actions ${styles.membershipActions}`}>
-        <button className="secondary-button" disabled={locked} onClick={() => setSelection(null)}>Keep membership</button>
+        <button className="secondary-button" disabled={locked} onClick={() => setSelection(null)}>{t("spaces.members.keep")}</button>
         <button className="primary-button" disabled={change.isPending} onClick={() => {
           const command = intent ?? { accountId: user.id, spaceId: space.id, targetId: selection.member.account_id,
             action: selection.action, key: crypto.randomUUID(), etag: selection.member.etag };
           setIntent(command); change.mutate(command);
         }}>{change.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : intent ? <RefreshCw size={17} aria-hidden /> : <LogOut size={17} aria-hidden />}
-          {intent && !change.isPending ? "Retry original change" : selection.action === "leave" ? "Leave Space" : "Remove member"}</button>
+          {intent && !change.isPending ? t("spaces.members.retryChange") : t(selection.action === "leave" ? "spaces.members.leave" : "spaces.members.remove")}</button>
       </div>
     </dialog>}
     {roleSelection && !blocked && <dialog ref={setRoleDialog} className={styles.invitationDialog} aria-labelledby={`${titleId}-role`} onCancel={event => { if (locked) event.preventDefault(); else setRoleSelection(null); }}>
-      <div className="dialog-heading"><h2 id={`${titleId}-role`}>{roleSelection.role === "admin" ? "Make this person an admin?" : "Make this admin a member?"}</h2>
-        <button className="icon-button" aria-label="Close role confirmation" title="Close role confirmation" disabled={locked} onClick={() => setRoleSelection(null)}><X size={18} aria-hidden /></button>
+      <div className="dialog-heading"><h2 id={`${titleId}-role`}>{t(roleSelection.role === "admin" ? "spaces.members.adminTitle" : "spaces.members.memberTitle")}</h2>
+        <button className="icon-button" aria-label={t("spaces.members.closeRole")} title={t("spaces.members.closeRole")} disabled={locked} onClick={() => setRoleSelection(null)}><X size={18} aria-hidden /></button>
       </div>
-      <dl className={styles.reviewFacts}><dt>Space</dt><dd>{space.name}</dd><dt>Member</dt><dd>{roleSelection.member.display_name}</dd><dt>Account ID</dt><dd className={styles.accountCode}>{roleSelection.member.account_id}</dd></dl>
-      <p>{roleSelection.role === "admin" ? "Admins can invite people, remove members and answer join requests. They cannot change roles, Space settings or ownership." : "They will no longer be able to invite or remove people."}</p>
+      <dl className={styles.reviewFacts}><dt>{t("spaces.members.space")}</dt><dd>{space.name}</dd><dt>{t("spaces.members.member")}</dt><dd>{roleSelection.member.display_name}</dd><dt>{t("spaces.members.accountId")}</dt><dd className={styles.accountCode}>{roleSelection.member.account_id}</dd></dl>
+      <p>{t(roleSelection.role === "admin" ? "spaces.members.adminEffect" : "spaces.members.memberEffect")}</p>
       {roleChange.isError && <p className="message error" role="alert">{roleChange.error.message}</p>}
-      {roleIntent && !roleChange.isPending && <p role="status">The result is unconfirmed.</p>}
+      {roleIntent && !roleChange.isPending && <p role="status">{t("spaces.members.unconfirmed")}</p>}
       <div className={`dialog-actions ${styles.membershipActions}`}>
-        <button className="secondary-button" disabled={locked} onClick={() => setRoleSelection(null)}>Cancel</button>
+        <button className="secondary-button" disabled={locked} onClick={() => setRoleSelection(null)}>{t("spaces.cancel")}</button>
         <button className="primary-button" disabled={roleChange.isPending} onClick={() => {
           const command = roleIntent ?? { accountId: user.id, spaceId: space.id, targetId: roleSelection.member.account_id,
             role: roleSelection.role, key: crypto.randomUUID(), etag: roleSelection.member.etag };
           setRoleIntent(command); roleChange.mutate(command);
         }}>{roleChange.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : roleIntent ? <RefreshCw size={17} aria-hidden /> : roleSelection.role === "admin" ? <ShieldCheck size={17} aria-hidden /> : <UserRound size={17} aria-hidden />}
-          {roleIntent && !roleChange.isPending ? "Retry" : roleSelection.role === "admin" ? "Make admin" : "Make member"}</button>
+          {roleIntent && !roleChange.isPending ? t("spaces.retry") : t(roleSelection.role === "admin" ? "spaces.members.makeAdmin" : "spaces.members.makeMember")}</button>
       </div>
     </dialog>}
   </section>;

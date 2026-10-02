@@ -278,6 +278,7 @@ These defects are in the alerts work (conflict C10). Fix them only if the owner 
     - The lock test is [T60](TASKS.md#defects-that-break-approved-requirements).
     - The care screen's offline tests are [T63](TASKS.md#defects-that-break-approved-requirements); T59 added one repeating reminder test; the Spaces screens are [T78](TASKS.md#defects-that-break-approved-requirements), after the live updates work (T65) settles on the web. [T92](TASKS.md#defects-that-break-approved-requirements) added 29 offline tests for repeating reminders and snooze.
     - On Android, [T93](TASKS.md#defects-that-break-approved-requirements) added device tests for care, events, the calendar and repeating reminders, and found and fixed dialogs that cut their text off at 200%. [T95](TASKS.md#defects-that-break-approved-requirements) added checklists and group Spaces and found two defects ([T97](TASKS.md#defects-that-break-approved-requirements)). Only chat still has no device tests; it waits for T65 and T67. [T96](TASKS.md#defects-that-break-approved-requirements) runs them all with `npm run verify -- -Suite device`.
+  - **Text limits (B11, W04):** T46 made posts count characters as the server does, T79 Spaces, and [T100](TASKS.md#defects-that-break-approved-requirements) every other web answer and form, Android's task assignees and its name fields. One emoji-heavy name or title had been enough to stop a whole list from loading on the web.
 
 ## 6. What Is Missing, and Why
 

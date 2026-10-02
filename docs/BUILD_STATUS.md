@@ -1424,6 +1424,8 @@ Builds [T65–T70 and T86](TASKS.md#owners-critical-gaps) from the owner's list 
 **Tests changed** ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)): DEC-019 makes every signed-in page open the live connection, so the offline fixtures of `home-ui`, `agents-ui`, `care-ui` and `documents-ui` now answer `/api/live` with an open stream that is not counted as a call; no assertion changed. `reminder-ui` (T87's inbox test) and `care-ui` (dose alerts) used Playwright `check()`/`uncheck()` on checkboxes that change only when the save answers, which failed under load; they now click and wait for the saved state, with the same assertions. `reminder-ui` finds the in-app reminder checkbox by its unchecked state because the inbox now has a second switch. `MessagingLiveTest` (new in T65) waits 5.5 s instead of 5 s for the next poll, because the wait starts when the previous poll finishes.
 
 **Not done:** end-to-end encryption (T71, blocked), push through a provider, external integrations and an AI model (blocked as before), the remaining web translations (T98), and running `AccountDataScreenTest` on a device.
+
+**Blind security review** by a model from another vendor, given the areas but not our conclusions. Fixed, each with a test that fails without the fix: the web dropped the new `access` and `member_left` hints, so T86 did not reach web chats; a join request kept a copy of an erased Space's name; a former member of a Space was told about later departures from direct chats they had been in; cancelling a deletion left repeating reminders stopped for good if one fell due during the grace period (they now go on from their next occurrence); a phone alert check could post after sign-out (posting and turning off are now exclusive); a message being sealed during sign-out could stay kept. The purge now locks pages before posts, as pinning does. Left as known limits: when the stored session cannot be decrypted, kept Android messages stay sealed until the next sign-in, which deletes them for another account; whether the lock screen hides the task title also depends on the phone's own setting for sensitive notifications.
 ## Android Checklist And Group Device Tests Checkpoint
 
 Builds [T95](TASKS.md#defects-that-break-approved-requirements) and [T97](TASKS.md#defects-that-break-approved-requirements). Written by a background agent on Claude Opus 5.5, then checked by the audit session, which fixed the two defects the group tests found.
@@ -1464,6 +1466,39 @@ Builds [T96](TASKS.md#defects-that-break-approved-requirements): `npm run verify
 | First run, `npm run verify -- -Suite device`, 04:47 to 05:07 | 136 of 136 tests that started passed in 17 classes; no test of `AgentScreenTest` started (`.local/verify/device-1`). |
 | Second run, with the wait after start, 05:08 to 05:25 | 141 of 142: the `AgentScreenTest` failure above (`.local/verify/device-2`). It failed 3 of 3 again on the same APKs, and passed 6 of 6 on the Pixel 4 shape (`.local/t96-agent-repeat.txt`, `.local/t96-agent-membership-avd.txt`). |
 | Clean build with the test fix, 05:51 to 06:08 | **135 of 135 in 16 classes** on the Pixel 5 shape, including `AgentScreenTest` 6 of 6, `ChecklistScreenTest` 11 of 11 and `GroupScreenTest` 14 of 14 (`.local/t96-device-head.txt`). The other session's new `ModerationScreenTest`, not committed yet, passed 7 of 7 in both earlier runs. |
+## Text Limits Counted In Characters Everywhere Checkpoint
+
+Builds [T100](TASKS.md#defects-that-break-approved-requirements). T46 and T79 made posts and Spaces count text in characters, as the server does, where an emoji counts once. The audit session checked every other free-text limit on the web and Android and found the same defect in the rest.
+
+- **What went wrong:** the web checked names, titles and agent texts in its answers at the server's limit counted in UTF-16 units, where an emoji counts twice. One person whose name has more than 40 emoji, or one task whose title has more than 100, both valid on the server (for example saved from Android), made the web refuse the whole answer. Tasks, reminders, the inbox, the calendar, checklists, conversations, messages, events or agent requests then failed to load for everyone who can see them. Android checked task assignees the same way, and its two name fields cut at 80 UTF-16 units, keeping 40 emoji or half of one. Several web fields stopped at half the emoji the server allows.
+- **Fix:**
+  - The web has one helper, `chars` in `web/src/features/identity/client.ts`, which every client already loads. The answers of tasks, checklists, the calendar, reminders and requests, repeating reminders, the inbox, conversations and messages, events and the agent use it.
+  - Account settings, the task form, checklist items and the agent's request and answer take twice the UTF-16 units and say "Use up to N characters." past the limit, without sending anything. The task form now shows its schema's own message instead of "Check the task title, date and assignee.".
+  - Android: `TaskRepository.kt` counts assignee names in characters, and the sign-up and profile name fields keep 80 whole characters (`takeCodePoints`, from T75).
+  - Not changed: the web sign-up name still stops at 40 emoji, because its messages are being translated (T70, T98) and a person can set up to 80 emoji in account settings; the alerts panel follows conflict C10.
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fix | `tests/text-limits-client.test.mjs`: 0 of 7; each refused a server-valid emoji name or title at the limit. Against the last commit's screens, in throwaway copies of the test files: account settings held 40 emoji ("The field must take 80 emoji."), and the task form and the agent never said that a longer text was too long, because the field had already cut it (`.local/t100/*.before.txt`). Android: the new `TaskRepositoryTest` case failed with "The service returned an unexpected task response.", and the 2 new `IdentityScreenTest` cases found 40 emoji in each name field (`.local/t100/identity-device-before.txt`). |
+| After the fix | The 7 client tests pass; the whole client suite **157 of 157**; offline screens: account 3 of 3, tasks 6 of 6, agent 7 of 7; the web type check passes. Android JVM, planning, identity and community: **168 of 168**; `IdentityScreenTest` **9 of 9** on the API 36 emulator started by `scripts/verify-android-device.ps1` (`.local/t100/`). |
+## Calendar And Checklist Offline Tests Checkpoint
+
+Builds [T99](TASKS.md#defects-that-break-approved-requirements): the web calendar and the task checklists had no offline tests. Written by a background agent on GPT-6.1 Sol, then checked by the audit session. Calendar events and the calendar file download belong to the unrecorded alerts work (conflict C10), so they are left out. The tests came before T98, which will translate these screens.
+
+- **New file:** `tests/unit/calendar-checklist-ui.test.mjs`, 24 tests with simulated answers and the live connection simulated in the page; every network request is refused.
+  - **Calendar (11):** loading, failure with Retry, empty and loaded months; due dates, reminders and planned repeating times on the right day with their own links; month, timezone and Space changing only by an explicit choice; Load more; access refused with 403 or 404 removing what was shown; 320 px at 200% text.
+  - **Checklists (13):** loading and Retry; an empty and a read-only checklist; a lost add or tick retried with the same key, body and version, and never shown as done before it is confirmed; a refused tick (409 or 412) left unticked until a reload is reviewed; renaming; removing only after a confirmation that names the item; a 200-character emoji title shown, and 201 characters explained without sending; access refused; 320 px at 200% text.
+- **Defects found and fixed** (`web/src/features/planning/calendar-screen.tsx`, `calendar.module.css`):
+  - When a refresh listed the Spaces in a new order, the calendar silently switched to the new first Space. The first choice is now kept until the person changes it.
+  - When the account's timezone changed, the chosen display timezone dropped out of the list, so the agenda shown no longer matched the label. The list now keeps the timezone in use.
+  - At 320 px with 200% text, the heading was 336 px wide, and the buttons cut off two-digit dates. The heading now wraps, and the date buttons no longer add padding.
+  - The checklist input cut a long title short without a word. It now keeps what was typed and says "Use up to 200 characters." (with [T100](#text-limits-counted-in-characters-everywhere-checkpoint)).
+
+| Check (2026-10-02) | Result |
+| --- | --- |
+| Before the fixes | 20 of 24 (`.local/t99/before-fixes.log`). |
+| The tests can fail | 13 deliberate breakages, each served by a throwaway copy of the test file so the shared source was not changed, each made the intended test fail: a new key or body on a retry, no `If-Match`, a refused tick shown as done, removal without confirmation, the month, timezone or Space changing on a refresh, the heading or the dates cut off, an oversized dialog, and a server-valid emoji title refused (`.local/t99/mutation-results.json`). |
+| After the fixes | 24 of 24, and the existing `planning-ui` 6 of 6, by the agent; the audit session's complete web run is in the [evaluations](EVALUATIONS.md#test-suites). |
 ## Remaining Gates
 
 1. Complete broader accessibility, process-death/offline recovery, load/latency, production backup/PITR/key-custody and release-runtime qualification; the local restore drill above sets no RPO/RTO objective. Real OS clipboard integration also remains unverified by the payload-double test.

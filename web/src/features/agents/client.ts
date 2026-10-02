@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, characters, chars } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime({ offset: true });
@@ -11,13 +11,13 @@ export const runStatusSchema = z.enum([
 ]);
 export const approvalSchema = z.object({
   id: uuid, run_id: uuid, space_id: uuid, tool_name: z.string().min(1).max(64), risk: z.enum(["low", "medium"]),
-  summary: z.string().min(1).max(300), fields: z.array(z.object({ label: z.string().min(1), value: z.string() })).max(10),
+  summary: chars(1, 300), fields: z.array(z.object({ label: z.string().min(1), value: z.string() })).max(10),
   status: z.enum(["pending", "approved", "rejected", "expired", "cancelled", "superseded"]),
   reason: z.string().nullable(), result_ref: uuid.nullable(), created_at: instant, expires_at: instant,
   decided_at: instant.nullable(), version: z.string().regex(/^[1-9][0-9]*$/), etag: etagSchema,
 }).refine(value => (value.status === "pending") === (value.decided_at === null), { message: "Inconsistent approval decision." });
 export const runSchema = z.object({
-  id: uuid, space_id: uuid, message: z.string().min(1).max(500), status: runStatusSchema,
+  id: uuid, space_id: uuid, message: chars(1, 500), status: runStatusSchema,
   outcome: z.enum(["answered", "refused", "action_completed"]).nullable(), stop_reason: z.string().nullable(),
   intent: z.string().nullable(), answer: z.string().nullable(),
   question: z.object({ id: uuid, text: z.string().min(1), expires_at: instant }).nullable(),
@@ -41,7 +41,7 @@ export const runSchema = z.object({
 export const runsSchema = z.array(runSchema).max(50);
 export const memorySchema = z.object({
   id: uuid, kind: z.enum(["preference", "note"]), key: z.string().nullable(), label: z.string(),
-  content: z.string().min(1).max(200), source: z.string(), source_run_id: uuid.nullable(), created_at: instant,
+  content: chars(1, 200), source: z.string(), source_run_id: uuid.nullable(), created_at: instant,
 });
 export const memoriesSchema = z.array(memorySchema).max(100);
 const deletedSchema = z.object({ id: uuid, status: z.literal("deleted") });
@@ -57,7 +57,7 @@ export const statusLabels: Record<AgentRun["status"], string> = {
   verifying: "Checking", completed: "Done", failed: "Could not finish", cancelled: "Stopped", timed_out: "Timed out", expired: "Expired",
 };
 
-export const messageSchema = z.string().trim().min(1, "Type a request.").max(500, "Keep a request under 500 characters.")
+export const messageSchema = z.string().trim().min(1, "Type a request.").refine(value => characters(value) <= 500, "Keep a request under 500 characters.")
   .refine(value => !/[\u0000-\u001f\u007f]/.test(value), "Use one line without control characters.");
 
 export async function runPage(accountId: string, spaceId: string, cursor: string | null, signal?: AbortSignal) {

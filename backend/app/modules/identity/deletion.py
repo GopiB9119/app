@@ -52,6 +52,11 @@ ERASE = (
     ("series", "DELETE FROM reminder_series WHERE account_id = :a"),
     ("preferences", "DELETE FROM notification_preferences WHERE account_id = :a"),
     # Public community: the person's likes, saves, follows and blocks go; what they wrote is deleted in place.
+    # Pages are locked before their posts, in one order, as pinning does, so the two cannot wait for each other.
+    ("lock_pages", "SELECT id FROM public_pages WHERE id IN (SELECT page_id FROM public_page_follows WHERE account_id = :a "
+                   "UNION SELECT page_id FROM public_posts WHERE id IN (SELECT post_id FROM public_post_reactions WHERE account_id = :a "
+                   "UNION SELECT post_id FROM public_post_comments WHERE author_id = :a) "
+                   "UNION SELECT id FROM public_pages WHERE owner_id = :a) ORDER BY id FOR UPDATE"),
     ("like_counts", "UPDATE public_posts SET like_count = like_count - 1 WHERE id IN (SELECT post_id FROM public_post_reactions WHERE account_id = :a) AND like_count > 0"),
     ("likes", "DELETE FROM public_post_reactions WHERE account_id = :a"),
     ("saves", "DELETE FROM public_saved_posts WHERE account_id = :a"),
@@ -103,6 +108,8 @@ class AccountDeletionService:
         self.sessions = identity.sessions
         self.security = identity.security
         self.clock = identity.clock
+        # Set by the app: brings back what stopped while the account waited, inside the cancel's transaction.
+        self.on_cancel = None
 
     def request(self, token, password, network):
         with self.sessions() as database:
@@ -151,10 +158,13 @@ class AccountDeletionService:
             now = self.clock()
             if not (user is not None and correct and user.status == "deletion_requested" and user.purge_after > now):
                 raise DomainError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
+            since = user.deletion_requested_at
             user.status = "active"
             user.deletion_requested_at = None
             user.purge_after = None
             user.version += 1
+            if self.on_cancel is not None:
+                self.on_cancel(database, user.id, since, now)
             self.identity.record(database, user.id, "account.deletion_cancelled", user.id)
             return self.identity._new_session(database, user, body)
 

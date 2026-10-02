@@ -58,6 +58,8 @@ if (-not $env:JAVA_HOME) {
     $studio = Join-Path $env:ProgramFiles 'Android\Android Studio\jbr'
     if (Test-Path $studio) { $env:JAVA_HOME = $studio }
 }
+# Gradle finds the SDK only through ANDROID_HOME or android\local.properties, which is not kept in the repository.
+if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = $sdk }
 
 function Invoke-Native([string]$File, [string[]]$Arguments) {
     # Native tools write progress to standard error, which PowerShell 5 would turn into errors.

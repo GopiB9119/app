@@ -188,8 +188,19 @@ class SpaceService:
             count = database.scalar(select(func.count()).select_from(SpaceSettingsCommand).where(SpaceSettingsCommand.space_id == identifier))
             if count >= 500:
                 raise DomainError(409, "SETTINGS_LIMIT_REACHED", "The local Space settings limit was reached.")
-            # Members' waiting invitations are not changed: they admit only while this setting is on (see may_invite).
             space.member_invites = body.member_invites
+            if not body.member_invites:
+                # As for an admin who stops being one, so turning the setting on again cannot revive them.
+                managers = select(SpaceMembership.account_id).where(
+                    SpaceMembership.space_id == identifier, SpaceMembership.role.in_(MANAGERS),
+                    SpaceMembership.status == "active",
+                )
+                senders = database.scalars(select(SpaceInvitation.inviter_id).distinct().where(
+                    SpaceInvitation.space_id == identifier, SpaceInvitation.status == "pending",
+                    SpaceInvitation.inviter_id.not_in(managers),
+                ).order_by(SpaceInvitation.inviter_id)).all()
+                for sender in senders:
+                    self.end_invitations_from(database, identifier, sender, caller.id)
             space.version += 1
             action = "space.member_invites_on" if body.member_invites else "space.member_invites_off"
             event_id = str(uuid4())
@@ -588,7 +599,7 @@ class SpaceService:
         )
 
     def end_invitations_from(self, database, space_id, inviter_id, actor_id):
-        """An invitation is valid only while its sender is the owner or an admin (DEC-018). When they stop being one, their
+        """An invitation is valid only while its sender may invite (DEC-018, DEC-026). When they stop being able to, their
         waiting invitations end, as on a handover of ownership, so a later return to the role cannot revive them."""
         invitations = database.scalars(select(SpaceInvitation).where(
             SpaceInvitation.space_id == space_id, SpaceInvitation.inviter_id == inviter_id,

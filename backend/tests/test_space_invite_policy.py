@@ -144,7 +144,7 @@ def test_with_the_setting_on_a_member_invites_and_handles_only_their_own_invitat
     assert inbox(client, later) == []
 
 
-def test_turning_the_setting_off_stops_members_waiting_invitations_until_it_is_on_again(client, app):
+def test_turning_the_setting_off_ends_members_waiting_invitations(client, app):
     owner = account(client, app)
     member = account(client, app, "member@example.test")
     helper = account(client, app, "helper@example.test")
@@ -162,16 +162,37 @@ def test_turning_the_setting_off_stops_members_waiting_invitations_until_it_is_o
     let_members_invite(client, owner, space_id, False)
     assert inbox(client, guest) == []
     late = accept(client, guest, waiting)
-    assert late.status_code == 404
+    assert late.status_code == 409 and late.json()["error"]["code"] == "INVITATION_CLOSED"
     assert invite_account(client, member, space_id, visitor["user"]["id"]).status_code == 404
     assert sent(client, member, space_id).status_code == 404
-    # The owner and admins still see it, and their own invitations are not affected.
-    assert {waiting, from_admin} <= sent_ids(client, helper, space_id)
+    # The owner and admins see it ended, and their own invitations are not affected.
+    statuses = {item["id"]: item["status"] for item in sent(client, helper, space_id).json()["data"]}
+    assert statuses[waiting] == "revoked" and statuses[from_admin] == "pending"
     assert accept(client, friend, from_admin).status_code == 200
 
+    # Turning it on again does not bring the ended invitation back.
     let_members_invite(client, owner, space_id)
-    assert inbox(client, guest) == [waiting]
-    assert accept(client, guest, waiting).status_code == 200
+    assert inbox(client, guest) == []
+    assert accept(client, guest, waiting).status_code == 409
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(SpaceAuditEvent).where(
+            SpaceAuditEvent.target_id == waiting, SpaceAuditEvent.action == "space.invitation_revoked",
+        )) == 1
+
+
+def test_a_members_invitation_admits_only_while_the_setting_is_on(client, app):
+    owner = account(client, app)
+    member = account(client, app, "member@example.test")
+    guest = account(client, app, "guest@example.test")
+    space_id = create_space(client, owner).json()["data"]["id"]
+    admit(client, owner, space_id, member)
+    let_members_invite(client, owner, space_id)
+    waiting = invited(client, member, space_id, guest)
+    # A change made outside the command, as a database restore could make, still leaves the invitation unusable.
+    with app.state.sessions.begin() as database:
+        database.execute(update(Space).where(Space.id == space_id).values(member_invites=False))
+    assert inbox(client, guest) == []
+    assert accept(client, guest, waiting).status_code == 404
 
 
 def test_a_member_who_invites_keeps_a_limited_number_waiting(client, app, monkeypatch):

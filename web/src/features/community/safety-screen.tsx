@@ -6,21 +6,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send, X } from "lucide-react";
 
 import type { Account } from "@/features/identity/client";
-import { appealModerationDecision, moderationActionLabels, moderationNotices, moderationTargetLabels, moderatorStatus, myBlocks, myReports, reasonLabels, textProblem, unblock } from "./client";
+import { useText } from "@/features/i18n/i18n";
+import { appealModerationDecision, moderationNotices, moderatorStatus, myBlocks, myReports, unblock } from "./client";
 import type { CreateIntent, ModerationNotice } from "./client";
-import { CommunityFrame, Failure, Loading, problemText, sessionLost, time, useViewer } from "./shared";
+import { CommunityFrame, Failure, Loading, problemText, sessionLost, useCommunityTime, useTextProblem, useViewer } from "./shared";
 import styles from "./community.module.css";
 import reviewStyles from "./moderation.module.css";
 
 export function SafetyScreen() {
+  const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
-  if (viewer.pending || viewer.signedOut) return <Loading label="Loading blocked pages and people" />;
+  if (viewer.pending || viewer.signedOut) return <Loading label={t("community.loadingBlocked")} />;
   if (!viewer.account) return <CommunityFrame account={null} current="safety"><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
   return <Blocks key={viewer.account.id} account={viewer.account} />;
 }
 
 function Blocks({ account }: { account: Account }) {
+  const t = useText();
+  const time = useCommunityTime();
   const queryClient = useQueryClient();
   const blocks = useQuery({ queryKey: ["blocks", account.id], queryFn: ({ signal }) => myBlocks(account.id, signal), networkMode: "always" });
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -31,29 +35,29 @@ function Blocks({ account }: { account: Account }) {
     setBusy(true);
     setError("");
     try { await unblock(account.id, id); setConfirm(null); await queryClient.invalidateQueries({ queryKey: ["blocks", account.id] }); }
-    catch (problem) { setError(problemText(problem, "Unblock failed.")); }
+    catch (problem) { setError(problemText(problem, t("community.unblockFailed"), t)); }
     finally { setBusy(false); }
   }
   return <CommunityFrame account={account} current="safety">
-    <div className={styles.heading}><h1>Blocked pages and people</h1></div>
-    <p className={styles.meta}>Blocking a page hides its posts from you and stops following it. Blocking a person hides their comments from you and stops them commenting on pages you own. Nobody is told that you blocked them.</p>
-    <p className={styles.meta}>Reports you send are stored for review and never show your name to the person you reported. Platform moderators review reports on public pages, posts and comments.</p>
+    <div className={styles.heading}><h1>{t("community.blockedHeading")}</h1></div>
+    <p className={styles.meta}>{t("community.blockingHint")}</p>
+    <p className={styles.meta}>{t("community.reportingHint")}</p>
     {error && <div className="message error" role="alert">{error}</div>}
-    {blocks.isPending && <p role="status">Loading...</p>}
+    {blocks.isPending && <p role="status">{t("community.loading")}</p>}
     {blocks.isError && !sessionLost(blocks.error) && <Failure error={blocks.error} retry={() => blocks.refetch()} />}
-    {blocks.data?.length === 0 && <p className={styles.empty}>You have not blocked anyone.</p>}
-    <ul className={`${styles.list} ${reviewStyles.blocked}`} aria-label="Blocked">
+    {blocks.data?.length === 0 && <p className={styles.empty}>{t("community.noBlocks")}</p>}
+    <ul className={`${styles.list} ${reviewStyles.blocked}`} aria-label={t("community.blocked")}>
       {blocks.data?.map(item => <li key={item.id} className={styles.row}>
         <span>
           {item.page_id ? <Link href={`/pages/${item.page_id}`}>{item.label}</Link> : <strong>{item.label}</strong>}
-          <span className={styles.meta}> / {item.target_type === "page" ? "Page" : "Person"} / blocked {time.format(new Date(item.created_at))}</span>
+          <span className={styles.meta}>{t("community.blockedSummary", { target: t(item.target_type === "page" ? "community.target.page" : "community.person"), date: time.format(new Date(item.created_at)) })}</span>
         </span>
         {confirm === item.id
-          ? <span className={styles.actions} role="group" aria-label={`Confirm unblock ${item.label}`}>
-            <button className="primary-button" disabled={busy} onClick={() => remove(item.id)}>Unblock</button>
-            <button className="secondary-button" disabled={busy} onClick={() => setConfirm(null)}>Keep blocked</button>
+          ? <span className={styles.actions} role="group" aria-label={t("community.confirmUnblock", { name: item.label })}>
+            <button className="primary-button" disabled={busy} onClick={() => remove(item.id)}>{t("community.unblock")}</button>
+            <button className="secondary-button" disabled={busy} onClick={() => setConfirm(null)}>{t("community.keepBlocked")}</button>
           </span>
-          : <button className="secondary-button" disabled={busy} onClick={() => setConfirm(item.id)} aria-label={`Unblock ${item.label}`}>Unblock</button>}
+          : <button className="secondary-button" disabled={busy} onClick={() => setConfirm(item.id)} aria-label={t("community.unblockName", { name: item.label })}>{t("community.unblock")}</button>}
       </li>)}
     </ul>
     <SafetyHistory account={account} />
@@ -61,9 +65,11 @@ function Blocks({ account }: { account: Account }) {
 }
 
 type AppealIntent = CreateIntent<{ note: string }> & { decisionId: string };
-const appealLabels = { open: "Appeal waiting", upheld: "Decision kept after appeal", overturned: "Restored after appeal" } as const;
+const appealLabels = { open: "community.appealStatus.open", upheld: "community.appealStatus.upheld", overturned: "community.appealStatus.overturned" } as const;
 
 function SafetyHistory({ account }: { account: Account }) {
+  const t = useText();
+  const time = useCommunityTime();
   const queryClient = useQueryClient();
   const heading = useId();
   const noticesKey = ["moderation-notices", account.id];
@@ -72,43 +78,43 @@ function SafetyHistory({ account }: { account: Account }) {
   const access = useQuery({ queryKey: ["platform-moderator", account.id], queryFn: ({ signal }) => moderatorStatus(account.id, signal), retry: false, networkMode: "always" });
   const [selection, setSelection] = useState<ModerationNotice | null>(null);
   const [intents, setIntents] = useState<Record<string, AppealIntent>>({});
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<"community.appealSent" | "">("");
   useEffect(() => {
     if (sessionLost(notices.error) || sessionLost(reports.error) || sessionLost(access.error)) window.location.replace("/login");
   }, [notices.error, reports.error, access.error]);
   return <div className={reviewStyles.safety}>
-    {access.data?.moderator && <Link className="text-button" href="/app/moderation">Moderation queue</Link>}
+    {access.data?.moderator && <Link className="text-button" href="/app/moderation">{t("community.moderationQueue")}</Link>}
     {access.isError && !sessionLost(access.error) && <Failure error={access.error} retry={() => access.refetch()} />}
-    {message && <p className={styles.notice} role="status">{message}</p>}
+    {message && <p className={styles.notice} role="status">{t(message)}</p>}
     <section className={styles.stack} aria-labelledby={`${heading}-notices`}>
-      <h2 id={`${heading}-notices`}>Decisions about your content</h2>
-      {notices.isPending && <p role="status">Loading decisions...</p>}
+      <h2 id={`${heading}-notices`}>{t("community.decisionsHeading")}</h2>
+      {notices.isPending && <p role="status">{t("community.loadingDecisions")}</p>}
       {notices.isError && !sessionLost(notices.error) && <Failure error={notices.error} retry={() => notices.refetch()} />}
-      {notices.isSuccess && notices.data.length === 0 && <p className={styles.empty}>No decisions about your content.</p>}
-      <ul className={styles.list} aria-label="Decisions about your content">
+      {notices.isSuccess && notices.data.length === 0 && <p className={styles.empty}>{t("community.noDecisions")}</p>}
+      <ul className={styles.list} aria-label={t("community.decisionsHeading")}>
         {notices.data?.map(item => <li key={item.id} className={styles.row}>
           <div className={reviewStyles.notice}>
-            <strong>{moderationTargetLabels[item.target_type]} / {moderationActionLabels[item.action]}</strong>
-            <span>{reasonLabels[item.reason]}</span>
+            <strong>{t("community.summary", { first: t(`community.target.${item.target_type}`), second: t(`community.action.${item.action}`) })}</strong>
+            <span>{t(`community.reason.${item.reason}`)}</span>
             <time className={reviewStyles.meta} dateTime={item.decided_at}>{time.format(new Date(item.decided_at))}</time>
-            {item.appeal_status && <span>{appealLabels[item.appeal_status]}</span>}
-            {item.action === "restore" && item.appeal_of !== null && item.appeal_status === null && <span>Restored after appeal</span>}
+            {item.appeal_status && <span>{t(appealLabels[item.appeal_status])}</span>}
+            {item.action === "restore" && item.appeal_of !== null && item.appeal_status === null && <span>{t("community.appealStatus.overturned")}</span>}
           </div>
           {item.action === "hide" && item.appeal_status === null && item.appeal_of === null
-            && <button className="secondary-button" onClick={() => { setSelection(item); setMessage(""); }}>Appeal</button>}
+            && <button className="secondary-button" onClick={() => { setSelection(item); setMessage(""); }}>{t("community.appeal")}</button>}
         </li>)}
       </ul>
     </section>
     <section className={styles.stack} aria-labelledby={`${heading}-reports`}>
-      <h2 id={`${heading}-reports`}>Your reports</h2>
-      {reports.isPending && <p role="status">Loading your reports...</p>}
+      <h2 id={`${heading}-reports`}>{t("community.yourReports")}</h2>
+      {reports.isPending && <p role="status">{t("community.loadingYourReports")}</p>}
       {reports.isError && !sessionLost(reports.error) && <Failure error={reports.error} retry={() => reports.refetch()} />}
-      {reports.isSuccess && reports.data.length === 0 && <p className={styles.empty}>You have not sent any reports.</p>}
-      <ul className={styles.list} aria-label="Your reports">
+      {reports.isSuccess && reports.data.length === 0 && <p className={styles.empty}>{t("community.noYourReports")}</p>}
+      <ul className={styles.list} aria-label={t("community.yourReports")}>
         {reports.data?.map(item => <li key={item.id} className={styles.row}>
           <div className={reviewStyles.notice}>
-            <strong>{moderationTargetLabels[item.target_type]} / {reasonLabels[item.reason]}</strong>
-            <span>{item.status === "open" ? "Waiting for review" : item.outcome === "action_taken" ? "Reviewed: action taken" : "Reviewed: no action"}</span>
+            <strong>{t("community.summary", { first: t(`community.target.${item.target_type}`), second: t(`community.reason.${item.reason}`) })}</strong>
+            <span>{t(item.status === "open" ? "community.reportWaiting" : item.outcome === "action_taken" ? "community.reportAction" : "community.reportNoAction")}</span>
           </div>
         </li>)}
       </ul>
@@ -119,7 +125,7 @@ function SafetyHistory({ account }: { account: Account }) {
         queryClient.setQueryData<ModerationNotice[]>(noticesKey, previous => previous?.map(item => item.id === selection.id ? { ...item, appeal_status: status } : item));
         setIntents(previous => { const next = { ...previous }; delete next[selection.id]; return next; });
         setSelection(null);
-        setMessage("Appeal sent.");
+        setMessage("community.appealSent");
       }} />}
   </div>;
 }
@@ -128,6 +134,8 @@ function AppealDialog({ account, notice, intent, keepIntent, close, done }: {
   account: Account; notice: ModerationNotice; intent: AppealIntent | null; keepIntent: (intent: AppealIntent) => void;
   close: () => void; done: (status: "open" | "upheld" | "overturned") => void;
 }) {
+  const t = useText();
+  const textProblem = useTextProblem();
   const heading = useId();
   const [dialog, setDialog] = useState<HTMLDialogElement | null>(null);
   const [note, setNote] = useState(intent?.body.note ?? "");
@@ -145,23 +153,23 @@ function AppealDialog({ account, notice, intent, keepIntent, close, done }: {
     try { const result = await appealModerationDecision(command); done(result.status); }
     catch (problem) {
       if (sessionLost(problem)) { window.location.replace("/login"); return; }
-      setError(problemText(problem, "The appeal was not sent."));
+      setError(problemText(problem, t("community.appealFailed"), t));
     } finally { setBusy(false); }
   }
   return <dialog ref={setDialog} className={`${styles.dialog} ${reviewStyles.dialog}`} aria-labelledby={heading}
     onCancel={event => { event.preventDefault(); if (!busy) close(); }}>
-    <h2 id={heading}>Appeal decision</h2>
-    <p>{moderationTargetLabels[notice.target_type]} / {reasonLabels[notice.reason]}</p>
+    <h2 id={heading}>{t("community.appealDecision")}</h2>
+    <p>{t("community.summary", { first: t(`community.target.${notice.target_type}`), second: t(`community.reason.${notice.reason}`) })}</p>
     <form className={reviewStyles.form} onSubmit={send}>
-      <label htmlFor={`${heading}-note`}>Note</label>
+      <label htmlFor={`${heading}-note`}>{t("community.note")}</label>
       <textarea id={`${heading}-note`} required value={note} maxLength={2000} disabled={busy || intent !== null}
         onChange={event => setNote(event.target.value)} aria-describedby={`${heading}-count`} aria-invalid={note !== "" && Boolean(noteProblem)} />
-      <p id={`${heading}-count`} className={reviewStyles.meta}>{[...note].length}/1000 characters</p>
+      <p id={`${heading}-count`} className={reviewStyles.meta}>{t("community.noteCount", { count: [...note].length })}</p>
       {note !== "" && noteProblem && <p className="field-error">{noteProblem}</p>}
       {error && <p className="message error" role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button type="button" className="secondary-button" disabled={busy} onClick={close}><X size={17} aria-hidden />Cancel</button>
-        <button type="submit" className="primary-button" disabled={busy || Boolean(noteProblem)}><Send size={17} aria-hidden />Send appeal</button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={close}><X size={17} aria-hidden />{t("community.cancel")}</button>
+        <button type="submit" className="primary-button" disabled={busy || Boolean(noteProblem)}><Send size={17} aria-hidden />{t("community.sendAppeal")}</button>
       </div>
     </form>
   </dialog>;

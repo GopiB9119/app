@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { api, ApiError } from "@/features/identity/client";
+import { api, ApiError, chars } from "@/features/identity/client";
 
 const itemSchema = z.object({
-  id: z.string().uuid(), title: z.string().min(1).max(200), checked: z.boolean(),
+  id: z.string().uuid(), title: chars(1, 200), checked: z.boolean(),
   checked_at: z.string().datetime({ offset: true }).nullable(), checked_by_account_id: z.string().uuid().nullable(),
 }).refine(item => item.checked === (item.checked_at !== null) && item.checked === (item.checked_by_account_id !== null));
 export const checklistSchema = z.object({
-  task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: z.string().min(1).max(200),
+  task_id: z.string().uuid(), space_id: z.string().uuid(), task_title: chars(1, 200),
   task_status: z.enum(["open", "in_progress", "completed", "cancelled"]), task_version: z.string().regex(/^[1-9][0-9]*$/),
   can_manage: z.boolean(), can_check: z.boolean(), items: z.array(itemSchema).max(50), etag: z.string().regex(/^"[a-f0-9]{64}"$/),
 }).refine(value => new Set(value.items.map(item => item.id)).size === value.items.length

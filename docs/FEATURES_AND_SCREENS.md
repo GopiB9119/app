@@ -177,9 +177,9 @@ Rules: organize confirmed instructions only. No diagnosis, prescribing, inferred
 | Capability | B / W / A | Status |
 | --- | --- | --- |
 | Report content or people, block, mute | Yes / Yes / Yes | Working (limited): report and block on public content; mute and chat blocking not built |
-| Moderation cases, reviewer queues, restrictions, appeals | No / No / No | Not built |
-| Export your data | Yes / No / No | Backend only |
-| Delete your account and derived data | No / No / No | Not built |
+| Moderation cases, reviewer queues, restrictions, appeals | Yes / Yes / Yes | Working (limited): platform moderators review reported public pages, posts and comments, hide them or take no action, and resolve appeals; authors see decisions and appeal once; reporters see whether their report was reviewed ([DEC-024](DECISIONS.md#accepted-decisions), [T69](TASKS.md#owners-critical-gaps)); restrictions on people not built |
+| Export your data | Yes / Yes / Yes | Working (limited): choose categories, download for 24 hours in the browser or phone that asked, cancel ([T68](TASKS.md#owners-critical-gaps)) |
+| Delete your account and derived data | Yes / Yes / Yes | Working (limited): password, refused while you own a Space with other members, 7-day grace with cancel at sign-in, then erased; shared items stay for others as from a deleted account ([DEC-022](DECISIONS.md#accepted-decisions), [T68](TASKS.md#owners-critical-gaps)) |
 | Age and guardian policy | No / No / No | Not built; needs qualified policy |
 
 ### 2.15 Files and Documents
@@ -213,11 +213,12 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | `/app/pages` | Your pages, create a page, pages you follow | Working (limited) |
 | `/app/events` | Space events and RSVP | Working (limited) |
 | `/app/care` | Medication instructions and daily care reminders | Working (limited): day plan and medicines list; no notifications |
-| `/app/safety` | Blocked pages and people, under Profile | Working (limited) |
+| `/app/safety` | Blocked pages and people, decisions about your content with appeals, your reports, and for moderators a link to the queue, under Profile | Working (limited) |
+| `/app/moderation` | Moderators only: reported public content with decisions, and appeals ([T69](TASKS.md#owners-critical-gaps)) | Working (limited) |
 | `/app/documents` | Documents of a Space: add, list, open at cited lines, delete | Working (limited) |
 | `/app/search` | Search inside your Spaces | Working (limited) |
 | `/app/agent` | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Working (limited): no AI model; under provisional DEC-012 |
-| `/app/settings/privacy` | Export and deletion | Not built |
+| `/app/settings/data` | Your data: download your data, delete your account ([T68](TASKS.md#owners-critical-gaps)) | Working (limited) |
 
 ### Android screens
 
@@ -238,7 +239,8 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Documents: add, list, open at cited lines, delete | Space detail | Working (limited); 7 offline screen tests and a live journey on the emulator |
 | Search inside your Spaces | Home header | Working (limited); covered by the same device tests |
 | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Profile | Working (limited): no AI model; under provisional DEC-012; 6 offline screen tests and a live journey on the emulator ([T35](TASKS.md#approved-requirements-not-built-yet)) |
-| Safety, privacy, export, deletion | Profile | The blocked list works, opened from Profile; privacy, export and deletion not built |
+| Safety, privacy, export, deletion | Profile | Working (limited): the blocked list, decisions about your content with appeals and your reports; for moderators the moderation screen with 7 device tests ([T69](TASKS.md#owners-critical-gaps)); "Your data" with the download and account deletion ([T68](TASKS.md#owners-critical-gaps)), its device tests not yet run |
+| Phone alerts for new reminders and messages | Reminder inbox settings | Working (limited): checks about every 15 minutes after you turn them on; no push provider ([DEC-020](DECISIONS.md#accepted-decisions), [T66](TASKS.md#owners-critical-gaps)) |
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.
 

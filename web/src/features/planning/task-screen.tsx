@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ZodError } from "zod";
 import { Ban, Bell, CalendarDays, Check, ClipboardList, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
@@ -208,7 +209,9 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
       };
       setIntent(command); setError(""); mutation.mutate(command);
     } catch (problem) {
-      setError(problem instanceof Error && !problem.message.startsWith("[") ? problem.message : "Check the task title, date and assignee.");
+      // The draft schema's messages are written for people, such as "Use up to 200 characters."
+      setError(problem instanceof ZodError ? problem.issues[0]?.message ?? "Check the task title, date and assignee."
+        : problem instanceof Error && !problem.message.startsWith("[") ? problem.message : "Check the task title, date and assignee.");
     }
   }
 
@@ -228,8 +231,8 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
   function field(name: keyof TaskDraft, value: string) { setDraft(current => ({ ...current, [name]: value })); setError(""); }
   return <form className={styles.form} onSubmit={submit}>
     <fieldset disabled={disabled || locked || readOnly}>
-      <label>Task title<input name="task_title" autoComplete="off" required maxLength={200} value={draft.title} onChange={event => field("title", event.target.value)} /></label>
-      <label><span id={`${formId}-notes`}>Notes</span><textarea aria-labelledby={`${formId}-notes`} name="task_description" rows={4} maxLength={5000} value={draft.description} onChange={event => field("description", event.target.value)} /></label>
+      <label>Task title<input name="task_title" autoComplete="off" required maxLength={400} value={draft.title} onChange={event => field("title", event.target.value)} /></label>
+      <label><span id={`${formId}-notes`}>Notes</span><textarea aria-labelledby={`${formId}-notes`} name="task_description" rows={4} maxLength={10000} value={draft.description} onChange={event => field("description", event.target.value)} /></label>
       <label>Due date<input name="task_due_date" type="date" value={draft.due_date} onChange={event => field("due_date", event.target.value)} /></label>
       <label><span id={`${formId}-assignee`}>Assignee</span><select aria-labelledby={`${formId}-assignee`} name="task_assignee" value={draft.assignee_account_id} disabled={assignees.isPending || assignees.isError} onChange={event => field("assignee_account_id", event.target.value)}>
         <option value="">Unassigned</option>

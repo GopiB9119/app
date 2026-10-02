@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, chars } from "@/features/identity/client";
 
 const base = {
   id: z.string().uuid(), space_id: z.string().uuid(),
-  title: z.string().min(1).max(200), date: z.string().date(),
+  title: chars(1, 200), date: z.string().date(),
 };
 const taskId = z.string().uuid();
 const timed = {

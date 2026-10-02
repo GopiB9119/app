@@ -57,14 +57,16 @@ class AlertSwitch(private val prefs: AlertPrefs, private val schedule: AlertSche
     private val state = MutableStateFlow(prefs.accountId)
     /** The account alerts are on for, or null. */
     val account: StateFlow<String?> = state.asStateFlow()
+    /** Held while a check posts and while alerts are turned off, so nothing is posted for an account after sign-out. */
+    val lock = Any()
 
-    fun turnOn(accountId: String) {
+    fun turnOn(accountId: String) = synchronized(lock) {
         prefs.turnOn(accountId)
         state.value = accountId
         schedule.start()
     }
 
-    fun turnOff() {
+    fun turnOff() = synchronized(lock) {
         prefs.clear()
         state.value = null
         schedule.stop()
@@ -122,25 +124,27 @@ class AlertChecker(
             // An answer that could not be read changes nothing; the next check tries again.
             return
         }
-        // Alerts may have been turned off, or the account changed, while the server answered.
-        if (prefs.accountId != account || signedIn() != account) return
-        val since = clock().minus(ALERT_WINDOW)
-        val fresh = items.filter { it.readAt == null && created(it)?.isAfter(since) == true }
-        val alerted = prefs.alerted.toMutableList()
-        if (!prefs.primed) {
-            // What was already there when alerts were turned on is not alerted.
-            alerted += fresh.map { it.id }.filterNot { it in alerted }
+        // Alerts may have been turned off, or the account changed, while the server answered; turning off waits for this.
+        synchronized(alerts.lock) {
+            if (prefs.accountId != account || signedIn() != account) return
+            val since = clock().minus(ALERT_WINDOW)
+            val fresh = items.filter { it.readAt == null && created(it)?.isAfter(since) == true }
+            val alerted = prefs.alerted.toMutableList()
+            if (!prefs.primed) {
+                // What was already there when alerts were turned on is not alerted.
+                alerted += fresh.map { it.id }.filterNot { it in alerted }
+                prefs.record(true, alerted.takeLast(MAX_ALERTED), unread)
+                return
+            }
+            for (item in fresh) {
+                if (item.id in alerted) continue
+                notifier.reminder(item.id, item.taskTitle)
+                alerted += item.id
+            }
+            if (unread > 0 && unread != prefs.unread) notifier.messages(unread)
+            if (unread == 0 && prefs.unread != 0) notifier.cancelMessages()
             prefs.record(true, alerted.takeLast(MAX_ALERTED), unread)
-            return
         }
-        for (item in fresh) {
-            if (item.id in alerted) continue
-            notifier.reminder(item.id, item.taskTitle)
-            alerted += item.id
-        }
-        if (unread > 0 && unread != prefs.unread) notifier.messages(unread)
-        if (unread == 0 && prefs.unread != 0) notifier.cancelMessages()
-        prefs.record(true, alerted.takeLast(MAX_ALERTED), unread)
     }
 
     private fun created(item: InboxNotificationDto): Instant? = try { Instant.parse(item.createdAt) } catch (_error: Exception) { null }

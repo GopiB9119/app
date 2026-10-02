@@ -4,7 +4,7 @@
 .navigation a, .navigation span, .sourceLink { display: inline-flex; align-items: center; gap: 7px; }
 .navigation a { color: #52615a; }
 .navigation [aria-current] { color: #176047; font-weight: 650; }
-.heading { justify-content: space-between; margin-bottom: 24px; }
+.heading { justify-content: space-between; flex-wrap: wrap; margin-bottom: 24px; }
 .heading h1 { font-size: 30px; margin: 0; }
 .heading > span { font-size: 14px; color: #52615a; }
 .filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; max-width: 660px; }
@@ -16,7 +16,7 @@
 .monthGrid { min-width: 0; }
 .weekdays, .dates { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
 .weekdays span { text-align: center; font-size: 13px; color: #58645e; padding: 8px 0; }
-.dates button { min-width: 0; height: 46px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #263c31; font: inherit; cursor: pointer; }
+.dates button { min-width: 0; height: 46px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #263c31; font: inherit; cursor: pointer; }
 .dates button:hover { background: #e6efea; }
 .dates button[aria-current] { border-color: #207453; font-weight: 700; }
 .dates button[aria-pressed="true"] { background: #176047; color: white; }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ApiError, api } from "@/features/identity/client";
+import { ApiError, api, characters, chars } from "@/features/identity/client";
 
 export const taskStatusSchema = z.enum(["open", "in_progress", "completed", "cancelled"]);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
@@ -10,12 +10,12 @@ export const statusLabels: Record<TaskStatus, string> = {
 export const actionLabels: Record<TaskStatus, string> = {
   open: "Reopen task", in_progress: "Start task", completed: "Complete task", cancelled: "Cancel task",
 };
-export const assigneeSchema = z.object({ account_id: z.string().uuid(), display_name: z.string().min(1).max(80) });
+export const assigneeSchema = z.object({ account_id: z.string().uuid(), display_name: chars(1, 80) });
 export const assigneesSchema = z.array(assigneeSchema).max(50);
 const etagSchema = z.string().regex(/^"[a-f0-9]{64}"$/);
 const taskRecordSchema = z.object({
   id: z.string().uuid(), space_id: z.string().uuid(),
-  title: z.string().min(1).max(200), description: z.string().max(5000),
+  title: chars(1, 200), description: chars(0, 5000),
   due_date: z.string().date().nullable(), status: taskStatusSchema,
   assignee: assigneeSchema.nullable(), assignee_unavailable: z.boolean(),
   created_by_account_id: z.string().uuid(), completed_by_account_id: z.string().uuid().nullable(),
@@ -41,8 +41,8 @@ export type FamilyTask = z.infer<typeof taskSchema>;
 export type TaskItem = z.infer<typeof taskItemSchema>;
 
 export const taskDraftSchema = z.object({
-  title: z.string().trim().min(1, "Enter a task title.").max(200),
-  description: z.string().max(5000),
+  title: z.string().trim().min(1, "Enter a task title.").refine(value => characters(value) <= 200, "Use up to 200 characters."),
+  description: chars(0, 5000),
   due_date: z.union([z.literal(""), z.string().date("Enter a valid calendar date.")]),
   assignee_account_id: z.union([z.literal(""), z.literal("unavailable"), z.string().uuid()]),
 }).strict();

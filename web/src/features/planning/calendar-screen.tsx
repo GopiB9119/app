@@ -38,6 +38,9 @@ function CalendarWorkspace({ user, initialSpaceId }: { user: Account; initialSpa
   const [selectedDate, setSelectedDate] = useState("");
   const spaces = useQuery({ queryKey: ["spaces", user.id], queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }) });
   useCalendarAccountGuard(spaces.error);
+  useEffect(() => {
+    if (!spaceId && spaces.data?.data[0]) setSpaceId(spaces.data.data[0].id);
+  }, [spaceId, spaces.data]);
   const selectedSpace = spaces.data?.data.find(space => space.id === spaceId) ?? (!spaceId ? spaces.data?.data[0] : undefined);
   function changeMonth(value: string) {
     try { calendarRange(value); setMonth(value); setSelectedDate(""); } catch { return; }
@@ -51,7 +54,7 @@ function CalendarWorkspace({ user, initialSpaceId }: { user: Account; initialSpa
       {spaces.data?.data.length === 0 ? <div className={styles.empty}><CalendarDays size={34} aria-hidden /><h2>No family Spaces yet</h2><Link href="/app/spaces">Open Spaces</Link></div> : <>
         <div className={styles.filters}>
           <label><span id="calendar-space-label">{selectedSpace?.space_type === "solo" ? "Solo Space" : "Family Space"}</span><select aria-labelledby="calendar-space-label" value={selectedSpace?.id ?? spaceId} onChange={event => { setSpaceId(event.target.value); setSelectedDate(""); }}>{!selectedSpace && <option value={spaceId}>Space unavailable</option>}{spaces.data?.data.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
-          <label><span id="calendar-zone-label">Display timezone</span><select aria-labelledby="calendar-zone-label" value={timezone} onChange={event => setTimezone(event.target.value)}>{[...new Set([user.timezone, "UTC"])].map(zone => <option key={zone}>{zone}</option>)}</select></label>
+          <label><span id="calendar-zone-label">Display timezone</span><select aria-labelledby="calendar-zone-label" value={timezone} onChange={event => setTimezone(event.target.value)}>{[...new Set([timezone, user.timezone, "UTC"])].map(zone => <option key={zone}>{zone}</option>)}</select></label>
         </div>
         <div className={styles.toolbar}>
           <button className="icon-button" aria-label="Previous month" title="Previous month" disabled={month === "1900-01"} onClick={() => changeMonth(adjacentMonth(month, -1))}><ArrowLeft size={18} aria-hidden /></button>

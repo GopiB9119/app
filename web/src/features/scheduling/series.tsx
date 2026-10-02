@@ -8,10 +8,13 @@ import { CalendarClock, Check, LoaderCircle, Pause, Pencil, Play, RefreshCw, Rep
 import { api, ApiError } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { TimezoneListProblem } from "@/features/identity/timezone-list-problem";
+import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
+import { translate, type Language, type MessageId, type MessageValues } from "@/features/i18n/messages";
+import { en as reminderMessages } from "@/features/i18n/areas/reminders";
 import { dateInZone } from "@/features/planning/calendar-client";
-import { commandSeries, describeRule, moveSeries, offsetLabel, previewSeries, replaceSeries, saveSeries, seriesPage, seriesReason, seriesStatusLabels, weekdayLabels, weekdayNames } from "./client";
+import { commandSeries, describeRule, moveSeries, offsetLabel, previewSeries, replaceSeries, saveSeries, seriesPage, weekdayNames } from "./client";
 import type { ReminderSeries, ReminderSeriesPreview, SeriesCommandIntent, SeriesIntent, SeriesMoveIntent, SeriesOperation, SeriesRule, Weekday } from "./client";
-import { displayInstant, protectedReminderError, ReminderDialog } from "./reminder-common";
+import { displayInstant, displayReminderTime, protectedReminderError, ReminderDialog } from "./reminder-common";
 import styles from "./reminders.module.css";
 
 function addDays(day: string, days: number) {
@@ -20,8 +23,21 @@ function addDays(day: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 
-export function formatLocalDate(day: string) {
-  return new Intl.DateTimeFormat("en", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(new Date(`${day}T12:00:00Z`));
+export function formatLocalDate(day: string, language: Language = "en") {
+  return formatDateTime(language, new Date(`${day}T12:00:00Z`), { timeZone: "UTC", weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
+function displayRule(rule: SeriesRule, language: Language) {
+  if (language === "en") return describeRule(rule);
+  const values = { count: rule.repeat_every, time: rule.local_time, days: rule.weekdays.map(day => translate(language, `reminders.series.day.${day}`)).join(", ") };
+  return translate(language, rule.frequency === "daily"
+    ? rule.repeat_every === 1 ? "reminders.series.rule.daily.one" : "reminders.series.rule.daily.other"
+    : rule.repeat_every === 1 ? "reminders.series.rule.weekly.one" : "reminders.series.rule.weekly.other", values);
+}
+
+function displayReason(reason: string, language: Language) {
+  const id = `reminders.series.reason.${reason}`;
+  return translate(language, Object.hasOwn(reminderMessages, id) ? id as keyof typeof reminderMessages : "reminders.series.reason.stopped");
 }
 
 function useLeaveWarning(active: boolean) {
@@ -33,18 +49,14 @@ function useLeaveWarning(active: boolean) {
   }, [active]);
 }
 
-const adjustmentNotes = {
-  none: "", shifted_forward: "The clock skips this time, so it reminds just after the jump.",
-  repeated_time_first: "The clock repeats this time, so it reminds once, the first time.",
-  moved: "You moved this time.",
-};
-const changeNotes = { shifted_forward: "moves past the clock change", repeated_time_first: "reminds once, the first time", skipped: "no reminder" };
-
 export function SeriesForm({ user, taskId, frequency, zones, disabled, onLocked, onDenied, onSaved, replacing, onCancel }: {
   user: Account; taskId: string; frequency: "daily" | "weekly"; zones: string[]; disabled: boolean;
   onLocked: (locked: boolean) => void; onDenied: (error: Error) => void; onSaved: (result: ReminderSeries) => Promise<void>;
   replacing?: ReminderSeries; onCancel?: () => void;
 }) {
+  const { language: selectedLanguage } = useLanguage();
+  const language = replacing ? "en" : selectedLanguage;
+  const t = (id: MessageId, values?: MessageValues) => translate(language, id, values);
   const fieldId = useId();
   const today = dateInZone(new Date(), user.timezone);
   // A change starts from the current rule; a series that began earlier continues from today.
@@ -90,77 +102,67 @@ export function SeriesForm({ user, taskId, frequency, zones, disabled, onLocked,
     const result = review.preview;
     const skips = result.clock_changes.some(change => change.change !== "repeated_time_first");
     return <section className={styles.review} aria-labelledby={`${fieldId}-review`}>
-      <h3 id={`${fieldId}-review`}>{replacing ? "Review the change" : "Review repeating reminder"}</h3>
+      <h3 id={`${fieldId}-review`}>{replacing ? "Review the change" : t("reminders.series.review")}</h3>
       <dl className={styles.facts}>
-        <dt>Task</dt><dd>{result.task_title}</dd><dt>Recipient</dt><dd>{result.recipient.display_name} (you)</dd>
-        <dt>Repeats</dt><dd>{describeRule(result)}</dd><dt>From</dt><dd>{formatLocalDate(result.start_date)}</dd>
-        <dt>Until</dt><dd>{formatLocalDate(result.end_date)}</dd><dt>Timezone</dt><dd>{result.timezone}</dd>
-        <dt>Reminders</dt><dd>{result.occurrence_count}</dd><dt>Channel</dt><dd>In-app only</dd>
+        <dt>{t("reminders.task")}</dt><dd>{result.task_title}</dd><dt>{t("reminders.recipient")}</dt><dd>{t("reminders.you", { name: result.recipient.display_name })}</dd>
+        <dt>{t("reminders.series.repeats")}</dt><dd>{displayRule(result, language)}</dd><dt>{t("reminders.from")}</dt><dd>{formatLocalDate(result.start_date, language)}</dd>
+        <dt>{t("reminders.series.until")}</dt><dd>{formatLocalDate(result.end_date, language)}</dd><dt>{t("reminders.timezone")}</dt><dd>{result.timezone}</dd>
+        <dt>{t("reminders.series.count")}</dt><dd>{result.occurrence_count}</dd><dt>{t("reminders.channel")}</dt><dd>{t("reminders.inApp")}</dd>
       </dl>
-      <h4 className={styles.subheading}>First times</h4>
+      <h4 className={styles.subheading}>{t("reminders.series.firstTimes")}</h4>
       <ol className={styles.occurrences}>{result.occurrences.map(item => <li key={item.local_date}>
-        <strong>{formatLocalDate(item.local_date)}, {item.display_time}</strong>
-        <small>{offsetLabel(item.utc_offset_minutes)} / {item.scheduled_at.replace("T", " ")}</small>
-        {adjustmentNotes[item.adjustment] && <small>{adjustmentNotes[item.adjustment]}</small>}
+        <strong>{formatLocalDate(item.local_date, language)}, {item.display_time}</strong>
+        <small>{offsetLabel(item.utc_offset_minutes)} / {displayReminderTime(item.scheduled_at, language)}</small>
+        {item.adjustment !== "none" && <small>{item.adjustment === "moved" ? "You moved this time." : t(item.adjustment === "shifted_forward" ? "reminders.series.shifted" : "reminders.series.repeated")}</small>}
       </li>)}</ol>
-      {result.clock_changes.length > 0 && <p className={styles.disclosure}>Clock changes: {result.clock_changes.map(change => `${formatLocalDate(change.local_date)} ${changeNotes[change.change]}`).join("; ")}.</p>}
-      {skips && <fieldset className={styles.options} disabled={locked}><legend>When the clock skips {result.local_time}</legend>
-        <label className={styles.option}><input type="radio" name={`${fieldId}-policy`} checked={result.clock_change_policy === "shift_forward"} onChange={() => preview.mutate({ ...review.rule, clock_change_policy: "shift_forward" })} /><span><strong>Remind after the jump</strong><small>For example, 02:30 becomes 03:30 that day.</small></span></label>
-        <label className={styles.option}><input type="radio" name={`${fieldId}-policy`} checked={result.clock_change_policy === "skip"} onChange={() => preview.mutate({ ...review.rule, clock_change_policy: "skip" })} /><span><strong>Skip that day</strong><small>No reminder on the day the clock skips this time.</small></span></label>
+      {result.clock_changes.length > 0 && <p className={styles.disclosure}>{t("reminders.series.clockChanges", { changes: result.clock_changes.map(change => t(`reminders.series.change.${change.change}`, { date: formatLocalDate(change.local_date, language) })).join("; ") })}</p>}
+      {skips && <fieldset className={styles.options} disabled={locked}><legend>{t("reminders.series.policyTitle", { time: result.local_time })}</legend>
+        <label className={styles.option}><input type="radio" name={`${fieldId}-policy`} checked={result.clock_change_policy === "shift_forward"} onChange={() => preview.mutate({ ...review.rule, clock_change_policy: "shift_forward" })} /><span><strong>{t("reminders.series.policyShift")}</strong><small>{t("reminders.series.policyExample")}</small></span></label>
+        <label className={styles.option}><input type="radio" name={`${fieldId}-policy`} checked={result.clock_change_policy === "skip"} onChange={() => preview.mutate({ ...review.rule, clock_change_policy: "skip" })} /><span><strong>{t("reminders.series.policySkip")}</strong><small>{t("reminders.series.policySkipDisclosure")}</small></span></label>
       </fieldset>}
-      <p className={styles.disclosure}>Only the next reminder is scheduled at any time. If the task changes or closes, the series pauses until you review and resume it. No push alert or external message.</p>
+      <p className={styles.disclosure}>{t("reminders.series.disclosure")}</p>
       {replacing && <p className={styles.disclosure}>Saving stops the current repeating reminder, including its next reminder and any waiting snooze, and starts this one. Reminders already in your inbox stay.</p>}
       <div className={styles.actions}>
-        <button className="secondary-button" disabled={locked} onClick={() => setReview(null)}>Change</button>
+        <button className="secondary-button" disabled={locked} onClick={() => setReview(null)}>{t("reminders.series.change")}</button>
         <button className="primary-button" disabled={save.isPending || preview.isPending || disabled} onClick={() => {
           const command = intent ?? { accountId: user.id, taskId, key: crypto.randomUUID(), previewToken: result.preview_token, rule: review.rule };
           setIntent(command); setError(""); save.mutate(command);
-        }}>{save.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Check size={17} />}{intent && !save.isPending ? "Retry original save" : replacing ? "Save change" : "Save repeating reminder"}</button>
+        }}>{save.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Check size={17} />}{intent && !save.isPending ? t("reminders.retrySave") : replacing ? "Save change" : t("reminders.series.save")}</button>
       </div>
       {error && <p className="message error" role="alert">{error}</p>}
     </section>;
   }
   return <form className={styles.form} onSubmit={event => { event.preventDefault(); if (!valid) return; setError(""); preview.mutate(rule("shift_forward")); }}>
     <div className={styles.fieldRow}>
-      <label>Time<input name="series_local_time" type="time" required step={60} value={time} disabled={locked} onChange={event => { setTime(event.target.value); setError(""); }} /></label>
-      <label>{frequency === "weekly" ? "Every (weeks)" : "Every (days)"}<input name="series_repeat_every" type="number" inputMode="numeric" min={1} max={most} required value={every} disabled={locked} onChange={event => { setEvery(event.target.value); setError(""); }} /></label>
+      <label>{t("reminders.series.time")}<input name="series_local_time" type="time" required step={60} value={time} disabled={locked} onChange={event => { setTime(event.target.value); setError(""); }} /></label>
+      <label>{t(frequency === "weekly" ? "reminders.series.everyWeeks" : "reminders.series.everyDays")}<input name="series_repeat_every" type="number" inputMode="numeric" min={1} max={most} required value={every} disabled={locked} onChange={event => { setEvery(event.target.value); setError(""); }} /></label>
     </div>
-    {frequency === "weekly" && <fieldset className={styles.weekdays} disabled={locked}><legend>Weekdays</legend>{weekdayNames.map(day => <label key={day}>
-      <input type="checkbox" name={`series_weekday_${day}`} checked={days.includes(day)} onChange={event => { const checked = event.target.checked; setDays(current => checked ? [...current, day] : current.filter(item => item !== day)); setError(""); }} />{weekdayLabels[day]}
+    {frequency === "weekly" && <fieldset className={styles.weekdays} disabled={locked}><legend>{t("reminders.series.weekdays")}</legend>{weekdayNames.map(day => <label key={day}>
+      <input type="checkbox" name={`series_weekday_${day}`} checked={days.includes(day)} onChange={event => { const checked = event.target.checked; setDays(current => checked ? [...current, day] : current.filter(item => item !== day)); setError(""); }} />{t(`reminders.series.day.${day}`)}
     </label>)}</fieldset>}
     <div className={styles.fieldRow}>
-      <label>First day<input name="series_start_date" type="date" required min={today} value={start} disabled={locked} onChange={event => { setStart(event.target.value); setError(""); }} /></label>
-      <label>Last day<input name="series_end_date" type="date" required min={start} max={latestEnd} value={end} disabled={locked} onChange={event => { setEnd(event.target.value); setError(""); }} /></label>
+      <label>{t("reminders.series.firstDay")}<input name="series_start_date" type="date" required min={today} value={start} disabled={locked} onChange={event => { setStart(event.target.value); setError(""); }} /></label>
+      <label>{t("reminders.series.lastDay")}<input name="series_end_date" type="date" required min={start} max={latestEnd} value={end} disabled={locked} onChange={event => { setEnd(event.target.value); setError(""); }} /></label>
     </div>
-    <label><span id={`${fieldId}-zone`}>Timezone</span><select aria-labelledby={`${fieldId}-zone`} name="series_timezone" value={timezone} disabled={locked} onChange={event => { setTimezone(event.target.value); setError(""); }}>{zones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>
-    <p className={styles.disclosure}>Up to one year. The last day can be at most 365 days after the first.</p>
+    <label><span id={`${fieldId}-zone`}>{t("reminders.timezone")}</span><select aria-labelledby={`${fieldId}-zone`} name="series_timezone" value={timezone} disabled={locked} onChange={event => { setTimezone(event.target.value); setError(""); }}>{zones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>
+    <p className={styles.disclosure}>{t("reminders.series.limit")}</p>
     <div className={styles.actions}>
-      {onCancel && <button type="button" className="secondary-button" disabled={locked} onClick={onCancel}>Keep as is</button>}
-      <button className="primary-button" type="submit" disabled={locked || !valid}>{preview.isPending ? <LoaderCircle size={17} className="spin" /> : <Repeat size={17} />}{replacing ? "Review change" : "Review repeating reminder"}</button>
+      {onCancel && <button type="button" className="secondary-button" disabled={locked} onClick={onCancel}>{t("reminders.series.keep")}</button>}
+      <button className="primary-button" type="submit" disabled={locked || !valid}>{preview.isPending ? <LoaderCircle size={17} className="spin" /> : <Repeat size={17} />}{replacing ? "Review change" : t("reminders.series.review")}</button>
     </div>
     {error && <p className="message error" role="alert">{error}</p>}
   </form>;
 }
 
-const titles: Record<SeriesOperation, string> = {
-  pause: "Pause this repeating reminder?", resume: "Resume this repeating reminder?", skip: "Skip the next reminder?", cancel: "Cancel this repeating reminder?",
-};
-const explanations: Record<SeriesOperation, string> = {
-  pause: "No reminders until you resume it. Reminders already in your inbox stay, and a waiting snooze still arrives.",
-  resume: "Reminders continue from the next time after now. Resuming confirms the task as it is now.",
-  skip: "Only the next reminder is skipped. The series continues after it.",
-  cancel: "Stops all future reminders of this series, including a waiting snooze. Reminders already in your inbox stay.",
-};
-const confirmations: Record<SeriesOperation, string> = { pause: "Pause", resume: "Resume", skip: "Skip next reminder", cancel: "Cancel repeating reminder" };
-
 function outcome(result: ReminderSeries, operation: SeriesOperation) {
-  if (result.status === "ended") return "No reminder times remain, so the repeating reminder ended.";
-  return { pause: "Repeating reminder paused.", resume: "Repeating reminder resumed.", skip: "Next reminder skipped.", cancel: "Repeating reminder cancelled." }[operation];
+  return result.status === "ended" ? "reminders.series.outcome.ended" : `reminders.series.outcome.${operation}`;
 }
 
 export function SeriesList({ user, taskId, disabled, onLocked, onDenied, onNotice }: {
   user: Account; taskId: string; disabled: boolean; onLocked: (locked: boolean) => void; onDenied: (error: Error) => void; onNotice: (message: string) => void;
 }) {
+  const t = useText();
+  const { language } = useLanguage();
   const client = useQueryClient();
   const titleId = useId();
   const [selection, setSelection] = useState<{ series: ReminderSeries; operation: SeriesOperation } | null>(null);
@@ -226,42 +228,42 @@ export function SeriesList({ user, taskId, disabled, onLocked, onDenied, onNotic
   const closeMove = () => { setMoving(null); setError(""); };
   const busy = disabled || locked || !!selection || !!editing || !!moving;
   return <section className={styles.requests} aria-labelledby={titleId}>
-    <div className={styles.sectionHeading}><h2 id={titleId}>Repeating reminders</h2><button className="icon-button" aria-label="Refresh repeating reminders" title="Refresh repeating reminders" disabled={busy || records.isFetching} onClick={() => records.refetch()}><RefreshCw size={18} className={records.isFetching ? "spin" : ""} /></button></div>
-    {records.isPending && <p role="status">Loading repeating reminders...</p>}
+    <div className={styles.sectionHeading}><h2 id={titleId}>{t("reminders.series.heading")}</h2><button className="icon-button" aria-label={t("reminders.series.refresh")} title={t("reminders.series.refresh")} disabled={busy || records.isFetching} onClick={() => records.refetch()}><RefreshCw size={18} className={records.isFetching ? "spin" : ""} /></button></div>
+    {records.isPending && <p role="status">{t("reminders.series.loading")}</p>}
     {(records.error || (error && !selection && !moving)) && <p className="message error" role="alert">{records.error?.message ?? error}</p>}
-    {!records.isPending && !records.isError && rows.length === 0 && <p className={styles.empty}>No repeating reminders{taskId ? " for this task" : ""}.</p>}
+    {!records.isPending && !records.isError && rows.length === 0 && <p className={styles.empty}>{t(taskId ? "reminders.series.emptyTask" : "reminders.series.empty")}</p>}
     {!records.isError && <ul className={styles.list}>{rows.map(item => <li key={item.id}>
-      <div className={styles.rowHeading}><h3>{item.task_title}</h3><span className={styles.status}>{seriesStatusLabels[item.status]}</span></div>
-      <span>{describeRule(item)}</span>
-      <span className={styles.zone}>{formatLocalDate(item.start_date)} to {formatLocalDate(item.end_date)} / {item.timezone}</span>
-      {item.next_occurrence && <p className={styles.next}>{item.next_occurrence.adjustment === "moved" ? "Next (moved): " : "Next: "}<time dateTime={item.next_occurrence.scheduled_at}>{displayInstant(item.next_occurrence.scheduled_at, item.timezone)}</time></p>}
+      <div className={styles.rowHeading}><h3>{item.task_title}</h3><span className={styles.status}>{t(`reminders.series.status.${item.status}`)}</span></div>
+      <span>{displayRule(item, language)}</span>
+      <span className={styles.zone}>{t("reminders.series.range", { start: formatLocalDate(item.start_date, language), end: formatLocalDate(item.end_date, language), zone: item.timezone })}</span>
+      {item.next_occurrence && <p className={styles.next}>{item.next_occurrence.adjustment === "moved" ? "Next (moved): " : t("reminders.series.next")}<time dateTime={item.next_occurrence.scheduled_at}>{displayInstant(item.next_occurrence.scheduled_at, item.timezone, item.next_occurrence.adjustment === "moved" ? "en" : language)}</time></p>}
       {item.replaced_by && <p className={styles.reason}>Replaced by a changed repeating reminder.</p>}
-      {item.reason && <p className={styles.reason}>{seriesReason(item.reason)}</p>}
-      {item.status === "active" && item.source_changed && <p className={styles.reason}>Task changed since review. The next reminder will pause this series.</p>}
-      <div className={styles.actions}><Link href={`/app/reminders?task_id=${item.task_id}`}>Task reminders</Link>
+      {item.reason && <p className={styles.reason}>{displayReason(item.reason, language)}</p>}
+      {item.status === "active" && item.source_changed && <p className={styles.reason}>{t("reminders.series.sourceChanged")}</p>}
+      <div className={styles.actions}><Link href={`/app/reminders?task_id=${item.task_id}`}>{t("reminders.series.taskReminders")}</Link>
         {item.status === "active" && item.next_occurrence && <button className="secondary-button" aria-label={`Move next reminder: ${item.task_title}`} disabled={busy} onClick={() => openMove(item)}><CalendarClock size={17} />Move next</button>}
-        {item.status === "active" && item.next_occurrence && <button className="secondary-button" aria-label={`Skip next reminder: ${item.task_title}`} disabled={busy} onClick={() => open(item, "skip")}><SkipForward size={17} />Skip next</button>}
+        {item.status === "active" && item.next_occurrence && <button className="secondary-button" aria-label={t("reminders.series.skipLabel", { title: item.task_title })} disabled={busy} onClick={() => open(item, "skip")}><SkipForward size={17} />{t("reminders.series.skip")}</button>}
         {(item.status === "active" || item.status === "paused") && <button className="secondary-button" aria-label={`Change repeating reminder: ${item.task_title}`} disabled={busy} onClick={() => { setError(""); setEditFrequency(item.frequency); setEditing(item); }}><Pencil size={17} />Change</button>}
-        {item.status === "active" && <button className="secondary-button" aria-label={`Pause repeating reminder: ${item.task_title}`} disabled={busy} onClick={() => open(item, "pause")}><Pause size={17} />Pause</button>}
-        {item.status === "paused" && <button className="secondary-button" aria-label={`Resume repeating reminder: ${item.task_title}`} disabled={busy} onClick={() => open(item, "resume")}><Play size={17} />Resume</button>}
-        {(item.status === "active" || item.status === "paused") && <button className="secondary-button" aria-label={`Cancel repeating reminder: ${item.task_title}`} disabled={busy} onClick={() => open(item, "cancel")}><X size={17} />Cancel</button>}
+        {item.status === "active" && <button className="secondary-button" aria-label={t("reminders.series.pauseLabel", { title: item.task_title })} disabled={busy} onClick={() => open(item, "pause")}><Pause size={17} />{t("reminders.series.confirm.pause")}</button>}
+        {item.status === "paused" && <button className="secondary-button" aria-label={t("reminders.series.resumeLabel", { title: item.task_title })} disabled={busy} onClick={() => open(item, "resume")}><Play size={17} />{t("reminders.series.confirm.resume")}</button>}
+        {(item.status === "active" || item.status === "paused") && <button className="secondary-button" aria-label={t("reminders.series.cancelLabel", { title: item.task_title })} disabled={busy} onClick={() => open(item, "cancel")}><X size={17} />{t("reminders.series.cancel")}</button>}
       </div>
     </li>)}</ul>}
-    {records.hasNextPage && <button className="text-button" disabled={busy || records.isFetching} onClick={() => records.fetchNextPage()}>Load more repeating reminders</button>}
-    {selection && <ReminderDialog title={titles[selection.operation]} locked={locked} onClose={close}>
+    {records.hasNextPage && <button className="text-button" disabled={busy || records.isFetching} onClick={() => records.fetchNextPage()}>{t("reminders.series.more")}</button>}
+    {selection && <ReminderDialog title={t(`reminders.series.title.${selection.operation}`)} closeLabel={t("reminders.closeDialog")} locked={locked} onClose={close}>
       <p className={styles.reviewTitle}>{selection.series.task_title}</p>
       <dl className={styles.facts}>
-        <dt>Repeats</dt><dd>{describeRule(selection.series)}</dd><dt>Timezone</dt><dd>{selection.series.timezone}</dd>
-        {selection.series.next_occurrence && <><dt>Next</dt><dd>{displayInstant(selection.series.next_occurrence.scheduled_at, selection.series.timezone)}</dd></>}
-        <dt>Until</dt><dd>{formatLocalDate(selection.series.end_date)}</dd>
+        <dt>{t("reminders.series.repeats")}</dt><dd>{displayRule(selection.series, language)}</dd><dt>{t("reminders.timezone")}</dt><dd>{selection.series.timezone}</dd>
+        {selection.series.next_occurrence && <><dt>{t("reminders.series.nextLabel")}</dt><dd>{displayInstant(selection.series.next_occurrence.scheduled_at, selection.series.timezone, language)}</dd></>}
+        <dt>{t("reminders.series.until")}</dt><dd>{formatLocalDate(selection.series.end_date, language)}</dd>
       </dl>
-      <p className={styles.disclosure}>{explanations[selection.operation]}</p>
+      <p className={styles.disclosure}>{t(`reminders.series.effect.${selection.operation}`)}</p>
       {error && <p className="message error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button className="secondary-button" disabled={locked} onClick={close}>Keep as is</button>
+      <div className="dialog-actions"><button className="secondary-button" disabled={locked} onClick={close}>{t("reminders.series.keep")}</button>
         <button className="primary-button" disabled={command.isPending} onClick={() => {
           const next = intent ?? { accountId: user.id, series: selection.series, operation: selection.operation, key: crypto.randomUUID() };
           setIntent(next); setError(""); command.mutate(next);
-        }}>{command.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Check size={17} />}{intent && !command.isPending ? "Retry original change" : confirmations[selection.operation]}</button>
+        }}>{command.isPending ? <LoaderCircle size={17} className="spin" /> : intent ? <RefreshCw size={17} /> : <Check size={17} />}{t(intent && !command.isPending ? "reminders.series.retryChange" : `reminders.series.confirm.${selection.operation}`)}</button>
       </div>
     </ReminderDialog>}
     {editing && <ReminderDialog title="Change repeating reminder" locked={editLocked} onClose={() => setEditing(null)}>

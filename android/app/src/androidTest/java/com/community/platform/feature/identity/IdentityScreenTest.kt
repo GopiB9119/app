@@ -215,6 +215,25 @@ class IdentityScreenTest {
         compose.runOnIdle { assertEquals(Triple("Second draft", "Asia/Kolkata", "\"profile-3\""), changes.last()) }
     }
 
+    // T100: the server counts a name in characters, an emoji counting once. Each name field keeps 80 of them, never half of one.
+    @Test fun theProfileNameKeepsEightyCharactersCountedAsTheServerCountsThem() {
+        val emoji = "\uD83D\uDE00"
+        compose.setContent { CommunityTheme { IdentityScreen(IdentityState(loading = false, profile = Profile(user, "\"profile-1\"")), actions()) } }
+        compose.onNodeWithTag("profile-name").performScrollTo().performTextReplacement(emoji.repeat(80))
+        compose.onNodeWithTag("profile-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(emoji.repeat(80))))
+        compose.onNodeWithTag("profile-name").performTextReplacement("a" + emoji.repeat(80))
+        compose.onNodeWithTag("profile-name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("a" + emoji.repeat(79))))
+    }
+
+    @Test fun theSignUpNameKeepsEightyCharactersCountedAsTheServerCountsThem() {
+        val emoji = "\uD83D\uDE00"
+        compose.setContent { CommunityTheme { IdentityScreen(IdentityState(loading = false, mode = EntryMode.REGISTER, challengeEmail = "native-ui@example.test"), actions()) } }
+        compose.onNodeWithTag("name").performScrollTo().performTextReplacement(emoji.repeat(80))
+        compose.onNodeWithTag("name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(emoji.repeat(80))))
+        compose.onNodeWithTag("name").performTextReplacement("a" + emoji.repeat(80))
+        compose.onNodeWithTag("name").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("a" + emoji.repeat(79))))
+    }
+
     private fun capture(name: String) {
         val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
         val context = InstrumentationRegistry.getInstrumentation().targetContext

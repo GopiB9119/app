@@ -6,22 +6,25 @@ import { Ban, Flag, LoaderCircle, Pencil, Pin, PinOff, Send, Trash2, UserCheck, 
 
 import type { Account } from "@/features/identity/client";
 import { ApiError } from "@/features/identity/client";
+import { useText } from "@/features/i18n/i18n";
 import {
   TOPICS, block, createPost, deletePost, drafts, followPage, isUnknown, myBlocks, pagePosts, pinPost, pinnedPosts, publishPost, readPage,
-  reasonLabels, textProblem, topicLabels, unblock, updatePage, updatePost,
+  unblock, updatePage, updatePost,
 } from "./client";
 import type { CreateIntent, PublicPage, PublicPost, ReportTarget, Topic } from "./client";
-import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useViewer } from "./shared";
+import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useTextProblem, useViewer } from "./shared";
 import styles from "./community.module.css";
 
 export function PublicPageScreen({ reference }: { reference: string }) {
+  const t = useText();
   const viewer = useViewer();
-  if (viewer.pending) return <Loading label="Loading page" />;
+  if (viewer.pending) return <Loading label={t("community.loadingPage")} />;
   if (viewer.error) return <CommunityFrame account={null} current={null}><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
   return <PageView key={viewer.account?.id ?? "signed-out"} viewer={viewer.account} reference={reference} />;
 }
 
 function PageView({ viewer, reference }: { viewer: Account | null; reference: string }) {
+  const t = useText();
   const queryClient = useQueryClient();
   const [report, setReport] = useState<ReportTarget | null>(null);
   const [confirmBlock, setConfirmBlock] = useState(false);
@@ -68,16 +71,16 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
     try { await action(); refresh(); }
     catch (failure) {
       if (sessionLost(failure)) { window.location.reload(); return; }
-      setError(problemText(failure, "The change failed."));
+      setError(problemText(failure, t("community.changeFailed"), t));
       refresh();
     } finally { setBusy(false); setConfirmBlock(false); }
   }
 
-  if (page.isPending) return <CommunityFrame account={viewer} current={null}><p role="status" aria-busy="true">Loading page...</p></CommunityFrame>;
+  if (page.isPending) return <CommunityFrame account={viewer} current={null}><p role="status" aria-busy="true">{t("community.loadingPageStatus")}</p></CommunityFrame>;
   if (!current) {
     const missing = page.error instanceof ApiError && page.error.status === 404;
     return <CommunityFrame account={viewer} current={null}>
-      {missing ? <><h1>Page not found</h1><p className={styles.empty}>This page does not exist or is no longer public.</p></> : <Failure error={page.error} retry={() => page.refetch()} />}
+      {missing ? <><h1>{t("community.pageNotFound")}</h1><p className={styles.empty}>{t("community.pageMissing")}</p></> : <Failure error={page.error} retry={() => page.refetch()} />}
     </CommunityFrame>;
   }
   const blockId = blocks.data?.find(item => item.page_id === current.id)?.id;
@@ -90,80 +93,82 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
       <h1>{current.name}</h1>
       <span className={styles.handle}>@{current.handle}</span>
       <div className={styles.actions}>
-        <span className={styles.badge}>{topicLabels[current.topic]}</span>
-        <span className={styles.meta}>{current.follower_count === 1 ? "1 follower" : `${current.follower_count} followers`}</span>
-        {current.can_manage && <span className={styles.badge}>You own this page</span>}
+        <span className={styles.badge}>{t(`community.topic.${current.topic}`)}</span>
+        <span className={styles.meta}>{current.follower_count === 1 ? t("community.followers.one") : t("community.followers.other", { count: current.follower_count })}</span>
+        {current.can_manage && <span className={styles.badge}>{t("community.youOwnPage")}</span>}
       </div>
       {current.description && <p className={styles.description}>{current.description}</p>}
-      {current.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[current.moderation.reason]}. Only you can see it.</p>}
+      {current.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${current.moderation.reason}`) })}</p>}
       {viewer && !current.can_manage && <div className={styles.actions}>
         {!current.blocked && <button className={current.following ? "secondary-button" : "primary-button"} aria-pressed={current.following} disabled={busy}
           onClick={() => run(() => followPage(viewer.id, current.id, !current.following))}>
-          {current.following ? <UserCheck size={17} aria-hidden /> : <UserPlus size={17} aria-hidden />}{current.following ? "Following" : "Follow"}
+          {current.following ? <UserCheck size={17} aria-hidden /> : <UserPlus size={17} aria-hidden />}{t(current.following ? "community.following" : "community.follow")}
         </button>}
         {current.blocked
-          ? <button className="secondary-button" disabled={busy || !blockId} onClick={() => blockId && run(() => unblock(viewer.id, blockId))}>Unblock page</button>
-          : <button className="text-button" disabled={busy} onClick={() => setConfirmBlock(true)}><Ban size={17} aria-hidden />Block page</button>}
-        <button className="text-button" onClick={() => setReport({ type: "page", id: current.id, label: current.name })}><Flag size={17} aria-hidden />Report page</button>
+          ? <button className="secondary-button" disabled={busy || !blockId} onClick={() => blockId && run(() => unblock(viewer.id, blockId))}>{t("community.unblockPage")}</button>
+          : <button className="text-button" disabled={busy} onClick={() => setConfirmBlock(true)}><Ban size={17} aria-hidden />{t("community.blockPage")}</button>}
+        <button className="text-button" onClick={() => setReport({ type: "page", id: current.id, label: current.name })}><Flag size={17} aria-hidden />{t("community.reportPage")}</button>
       </div>}
-      {confirmBlock && viewer && <div className={styles.notice} role="group" aria-label="Confirm block">
-        <p>Block {current.name}? Its posts are hidden from you everywhere and you stop following it. The page is not told.</p>
+      {confirmBlock && viewer && <div className={styles.notice} role="group" aria-label={t("community.confirmBlock")}>
+        <p>{t("community.blockPageQuestion", { name: current.name })}</p>
         <div className={styles.actions}>
-          <button className="primary-button" disabled={busy} onClick={() => run(() => block(viewer.id, "page", current.id))}>Block</button>
-          <button className="secondary-button" disabled={busy} onClick={() => setConfirmBlock(false)}>Cancel</button>
+          <button className="primary-button" disabled={busy} onClick={() => run(() => block(viewer.id, "page", current.id))}>{t("community.block")}</button>
+          <button className="secondary-button" disabled={busy} onClick={() => setConfirmBlock(false)}>{t("community.cancel")}</button>
         </div>
       </div>}
-      {!viewer && <p className={styles.meta}>Sign in to follow this page, like, save or comment.</p>}
-      {current.can_manage && !editing && <div className={styles.actions}><button className="secondary-button" onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />Edit page</button></div>}
+      {!viewer && <p className={styles.meta}>{t("community.signInForPage")}</p>}
+      {current.can_manage && !editing && <div className={styles.actions}><button className="secondary-button" onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />{t("community.editPage")}</button></div>}
     </header>
     {current.rules && <section className={styles.stack} aria-labelledby="rules-heading">
-      <h2 id="rules-heading">Rules</h2>
+      <h2 id="rules-heading">{t("community.rules")}</h2>
       <p className={styles.body}>{current.rules}</p>
     </section>}
     {error && <div className="message error" role="alert">{error}</div>}
     {current.can_manage && viewer && editing && <PageEditor account={viewer} page={current} onDone={() => { setEditing(false); refresh(); }} />}
     {current.can_manage && viewer && <Composer account={viewer} page={current} onCreated={refresh} />}
     {current.can_manage && viewer && <section className={styles.stack} aria-labelledby="drafts-heading">
-      <h2 id="drafts-heading">Drafts</h2>
-      {draftList.isPending && <p role="status">Loading drafts...</p>}
+      <h2 id="drafts-heading">{t("community.drafts")}</h2>
+      {draftList.isPending && <p role="status">{t("community.loadingDrafts")}</p>}
       {draftList.isError && !sessionLost(draftList.error) && <Failure error={draftList.error} retry={() => draftList.refetch()} />}
-      {draftList.data?.length === 0 && <p className={styles.empty}>No drafts. New posts start as private drafts.</p>}
+      {draftList.data?.length === 0 && <p className={styles.empty}>{t("community.noDrafts")}</p>}
       {draftList.data?.map(post => <PostCard key={post.id} post={post} account={viewer} onChange={refresh}>
-        {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
+        {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
         <PostManager account={viewer} post={post} onChanged={refresh} />
       </PostCard>)}
     </section>}
     {!current.blocked && pinned.isError && !sessionLost(pinned.error) && <Failure error={pinned.error} retry={() => pinned.refetch()} />}
     {!current.blocked && pinned.data && pinned.data.length > 0 && <section className={styles.stack} aria-labelledby="pinned-heading">
-      <h2 id="pinned-heading">Pinned</h2>
+      <h2 id="pinned-heading">{t("community.pinned")}</h2>
       {pinned.data.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} pinnedMark onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
-          {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
+          {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
           {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}
     </section>}
     <section className={styles.stack} aria-labelledby="posts-heading">
-      <h2 id="posts-heading">Posts</h2>
-      {current.blocked && <p className={styles.notice}>You blocked this page. Its posts are hidden from you.</p>}
-      {posts.isPending && !current.blocked && <p role="status" aria-busy="true">Loading posts...</p>}
+      <h2 id="posts-heading">{t("community.posts")}</h2>
+      {current.blocked && <p className={styles.notice}>{t("community.pageBlocked")}</p>}
+      {posts.isPending && !current.blocked && <p role="status" aria-busy="true">{t("community.loadingPosts")}</p>}
       {posts.isError && !sessionLost(posts.error) && <Failure error={posts.error} retry={() => posts.refetch()} />}
-      {!current.blocked && !posts.isPending && !posts.isError && shown.length === 0 && !posts.hasNextPage && <p className={styles.empty}>{items.length === 0 ? "No published posts yet." : "No other posts."}</p>}
+      {!current.blocked && !posts.isPending && !posts.isError && shown.length === 0 && !posts.hasNextPage && <p className={styles.empty}>{t(items.length === 0 ? "community.noPublishedPosts" : "community.noOtherPosts")}</p>}
       {shown.map(item => {
         const post = updates[item.id] ?? item;
         return <PostCard key={post.id} post={post} account={viewer} onChange={next => setUpdates(value => ({ ...value, [next.id]: next }))} onReport={setReport}>
-          {post.moderation && <p className={styles.meta}>Hidden by moderators: {reasonLabels[post.moderation.reason]}. Only you can see it.</p>}
+          {post.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${post.moderation.reason}`) })}</p>}
           {post.can_manage && viewer && <PostManager account={viewer} post={post} onChanged={refresh} />}
         </PostCard>;
       })}
-      {posts.hasNextPage && !posts.isError && <button className="secondary-button" disabled={posts.isFetchingNextPage} onClick={() => posts.fetchNextPage()}>Load more posts</button>}
+      {posts.hasNextPage && !posts.isError && <button className="secondary-button" disabled={posts.isFetchingNextPage} onClick={() => posts.fetchNextPage()}>{t("community.morePosts")}</button>}
     </section>
     {report && viewer && <ReportDialog account={viewer} target={report} onClose={() => setReport(null)} />}
   </CommunityFrame>;
 }
 
 function PageEditor({ account, page: shown, onDone }: { account: Account; page: PublicPage; onDone: () => void }) {
+  const t = useText();
+  const textProblem = useTextProblem();
   // Saved against the version the editor opened with, so a newer version is refused instead of overwritten.
   const [page] = useState(shown);
   const [name, setName] = useState(page.name);
@@ -187,24 +192,24 @@ function PageEditor({ account, page: shown, onDone }: { account: Account; page: 
     try { await updatePage(account.id, page, changes); onDone(); }
     catch (problem) {
       if (sessionLost(problem)) { window.location.reload(); return; }
-      setError(problem instanceof ApiError && problem.status === 412 ? "This page changed since you opened the editor. Close it and reload before editing again."
-        : isUnknown(problem) ? "The change is not confirmed. Close the editor and reload the page to check it." : problemText(problem, "The page was not saved."));
+      setError(problem instanceof ApiError && problem.status === 412 ? t("community.pageEditConflict")
+        : isUnknown(problem) ? t("community.pageEditUnknown") : problemText(problem, t("community.pageSaveFailed"), t));
     } finally { setBusy(false); }
   }
-  return <form className={styles.form} onSubmit={save} aria-label="Edit page">
-    <h2>Edit page</h2>
-    <label>Name<input value={name} maxLength={160} onChange={event => setName(event.target.value)} disabled={busy} /></label>
-    <label>Topic<select aria-label="Topic" value={topic} onChange={event => setTopic(event.target.value as Topic)} disabled={busy}>
-      {TOPICS.map(item => <option key={item} value={item}>{topicLabels[item]}</option>)}
+  return <form className={styles.form} onSubmit={save} aria-label={t("community.editPage")}>
+    <h2>{t("community.editPage")}</h2>
+    <label>{t("community.name")}<input value={name} maxLength={160} onChange={event => setName(event.target.value)} disabled={busy} /></label>
+    <label>{t("community.topic")}<select aria-label={t("community.topic")} value={topic} onChange={event => setTopic(event.target.value as Topic)} disabled={busy}>
+      {TOPICS.map(item => <option key={item} value={item}>{t(`community.topic.${item}`)}</option>)}
     </select></label>
-    <label>Description<textarea value={description} maxLength={1000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
-    <label>Rules (optional)<textarea value={rules} maxLength={4000} aria-describedby="page-rules-hint" onChange={event => setRules(event.target.value)} disabled={busy} /></label>
-    <p id="page-rules-hint" className={styles.meta}>Rules are shown on your page to everyone, up to 2,000 characters.</p>
+    <label>{t("community.description")}<textarea value={description} maxLength={1000} onChange={event => setDescription(event.target.value)} disabled={busy} /></label>
+    <label>{t("community.rulesOptional")}<textarea value={rules} maxLength={4000} aria-describedby="page-rules-hint" onChange={event => setRules(event.target.value)} disabled={busy} /></label>
+    <p id="page-rules-hint" className={styles.meta}>{t("community.rulesHint")}</p>
     {invalid && <span className="field-error">{invalid}</span>}
     {error && <div className="message error" role="alert">{error}</div>}
     <div className={styles.actions}>
-      <button className="primary-button" type="submit" disabled={busy || Boolean(invalid)}>{busy && <LoaderCircle size={17} className="spin" aria-hidden />}Save page</button>
-      <button className="secondary-button" type="button" disabled={busy} onClick={onDone}>Close editor</button>
+      <button className="primary-button" type="submit" disabled={busy || Boolean(invalid)}>{busy && <LoaderCircle size={17} className="spin" aria-hidden />}{t("community.savePage")}</button>
+      <button className="secondary-button" type="button" disabled={busy} onClick={onDone}>{t("community.closeEditor")}</button>
     </div>
   </form>;
 }
@@ -212,6 +217,8 @@ function PageEditor({ account, page: shown, onDone }: { account: Account; page: 
 type DraftIntent = CreateIntent<{ title: string | null; body: string }> & { pageId: string };
 
 function Composer({ account, page, onCreated }: { account: Account; page: PublicPage; onCreated: () => void }) {
+  const t = useText();
+  const textProblem = useTextProblem();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [intent, setIntent] = useState<DraftIntent | null>(null);
@@ -228,8 +235,8 @@ function Composer({ account, page, onCreated }: { account: Account; page: Public
       onCreated();
     } catch (problem) {
       if (sessionLost(problem)) { window.location.reload(); return; }
-      if (isUnknown(problem)) { setState("unknown"); setError(problemText(problem, "The draft was not confirmed.")); return; }
-      setIntent(null); setState("idle"); setError(problemText(problem, "The draft was not saved."));
+      if (isUnknown(problem)) { setState("unknown"); setError(problemText(problem, t("community.draftUnknown"), t)); return; }
+      setIntent(null); setState("idle"); setError(problemText(problem, t("community.draftSaveFailed"), t));
     }
   }
   function submit(event: React.FormEvent) {
@@ -238,25 +245,27 @@ function Composer({ account, page, onCreated }: { account: Account; page: Public
     void send({ accountId: account.id, pageId: page.id, key: crypto.randomUUID(), body: { title: title.trim() || null, body: body.trim() } });
   }
   const locked = state !== "idle";
-  return <form className={styles.form} onSubmit={submit} aria-label="New post">
-    <h2>New post</h2>
-    <p className={styles.meta}>Saved as a private draft. Nothing is public until you publish it.</p>
-    <label>Title (optional)<input value={title} maxLength={240} onChange={event => setTitle(event.target.value)} disabled={locked} /></label>
-    <label>Text<textarea value={body} maxLength={10000} onChange={event => setBody(event.target.value)} disabled={locked} /></label>
+  return <form className={styles.form} onSubmit={submit} aria-label={t("community.newPost")}>
+    <h2>{t("community.newPost")}</h2>
+    <p className={styles.meta}>{t("community.privateDraftHint")}</p>
+    <label>{t("community.titleOptional")}<input value={title} maxLength={240} onChange={event => setTitle(event.target.value)} disabled={locked} /></label>
+    <label>{t("community.text")}<textarea value={body} maxLength={10000} onChange={event => setBody(event.target.value)} disabled={locked} /></label>
     {body && invalid && <span className="field-error">{invalid}</span>}
     {error && <div className="message error" role="alert">{error}</div>}
     <div className={styles.actions}>
       {state === "unknown" && intent
         ? <>
-          <button className="primary-button" type="button" onClick={() => send(intent)}>Retry saving draft</button>
-          <button className="secondary-button" type="button" onClick={() => { if (window.confirm("The draft may already be saved. Stop tracking this attempt?")) { setIntent(null); setState("idle"); onCreated(); } }}>Stop tracking</button>
+          <button className="primary-button" type="button" onClick={() => send(intent)}>{t("community.retryDraft")}</button>
+          <button className="secondary-button" type="button" onClick={() => { if (window.confirm(t("community.stopDraftQuestion"))) { setIntent(null); setState("idle"); onCreated(); } }}>{t("community.stopTracking")}</button>
         </>
-        : <button className="primary-button" type="submit" disabled={locked || Boolean(invalid)}>{state === "sending" ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Pencil size={17} aria-hidden />}Save draft</button>}
+        : <button className="primary-button" type="submit" disabled={locked || Boolean(invalid)}>{state === "sending" ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Pencil size={17} aria-hidden />}{t("community.saveDraft")}</button>}
     </div>
   </form>;
 }
 
 function PostManager({ account, post, onChanged }: { account: Account; post: PublicPost; onChanged: () => void }) {
+  const t = useText();
+  const textProblem = useTextProblem();
   const [mode, setMode] = useState<"idle" | "edit" | "publish" | "delete">("idle");
   // The editor starts from the post shown when Edit is chosen and saves against that version only.
   const [base, setBase] = useState(post);
@@ -271,11 +280,11 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
     try { await action(); setMode("idle"); onChanged(); }
     catch (problem) {
       if (sessionLost(problem)) { window.location.reload(); return; }
-      setError(problem instanceof ApiError && problem.status === 412 ? "This post changed since you opened it. Reload to review the current version."
-        : isUnknown(problem) ? "Not confirmed. Reload to check the current post before trying again." : problemText(problem, "The change failed."));
+      setError(problem instanceof ApiError && problem.status === 412 ? t("community.postEditConflict")
+        : isUnknown(problem) ? t("community.postEditUnknown") : problemText(problem, t("community.changeFailed"), t));
     } finally { setBusy(false); }
   }
-  const label = post.title ?? "this post";
+  const label = post.title ?? t("community.thisPost");
   function edit() {
     setBase(post);
     setTitle(post.title ?? "");
@@ -284,14 +293,14 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
   }
   return <div className={styles.stack}>
     {mode === "idle" && <div className={styles.actions}>
-      <button className="text-button" onClick={edit}><Pencil size={16} aria-hidden />Edit</button>
-      {post.status === "draft" && <button className="text-button" onClick={() => setMode("publish")}><Send size={16} aria-hidden />Publish</button>}
+      <button className="text-button" onClick={edit}><Pencil size={16} aria-hidden />{t("community.edit")}</button>
+      {post.status === "draft" && <button className="text-button" onClick={() => setMode("publish")}><Send size={16} aria-hidden />{t("community.publish")}</button>}
       {post.status === "published" && <button className="text-button" disabled={busy} onClick={() => void run(() => pinPost(account.id, post.id, !post.pinned))}>
-        {post.pinned ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />}{post.pinned ? "Unpin" : "Pin to top"}
+        {post.pinned ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />}{t(post.pinned ? "community.unpin" : "community.pin")}
       </button>}
-      <button className="text-button" onClick={() => setMode("delete")}><Trash2 size={16} aria-hidden />Delete</button>
+      <button className="text-button" onClick={() => setMode("delete")}><Trash2 size={16} aria-hidden />{t("community.delete")}</button>
     </div>}
-    {mode === "edit" && <form className={styles.form} aria-label={`Edit ${label}`} onSubmit={event => {
+    {mode === "edit" && <form className={styles.form} aria-label={t("community.editPostLabel", { name: label })} onSubmit={event => {
       event.preventDefault();
       if (invalid || busy) return;
       const changes: { title?: string | null; body?: string } = {};
@@ -300,27 +309,27 @@ function PostManager({ account, post, onChanged }: { account: Account; post: Pub
       if (Object.keys(changes).length === 0) { setMode("idle"); return; }
       void run(() => updatePost(account.id, base, changes));
     }}>
-      <label>Title (optional)<input value={title} maxLength={240} onChange={event => setTitle(event.target.value)} disabled={busy} /></label>
-      <label>Text<textarea value={body} maxLength={10000} onChange={event => setBody(event.target.value)} disabled={busy} /></label>
+      <label>{t("community.titleOptional")}<input value={title} maxLength={240} onChange={event => setTitle(event.target.value)} disabled={busy} /></label>
+      <label>{t("community.text")}<textarea value={body} maxLength={10000} onChange={event => setBody(event.target.value)} disabled={busy} /></label>
       {invalid && <span className="field-error">{invalid}</span>}
-      {post.status === "published" && <p className={styles.meta}>Saving changes the public post and marks it as edited.</p>}
+      {post.status === "published" && <p className={styles.meta}>{t("community.editPublishedHint")}</p>}
       <div className={styles.actions}>
-        <button className="primary-button" type="submit" disabled={busy || Boolean(invalid)}>Save changes</button>
-        <button className="secondary-button" type="button" disabled={busy} onClick={() => setMode("idle")}>Cancel</button>
+        <button className="primary-button" type="submit" disabled={busy || Boolean(invalid)}>{t("community.saveChanges")}</button>
+        <button className="secondary-button" type="button" disabled={busy} onClick={() => setMode("idle")}>{t("community.cancel")}</button>
       </div>
     </form>}
-    {mode === "publish" && <div className={styles.notice} role="group" aria-label="Confirm publication">
-      <p>Publish {label}? Anyone can see it, including people who are not signed in, and followers see it in Home.</p>
+    {mode === "publish" && <div className={styles.notice} role="group" aria-label={t("community.confirmPublication")}>
+      <p>{t("community.publishQuestion", { name: label })}</p>
       <div className={styles.actions}>
-        <button className="primary-button" disabled={busy} onClick={() => run(() => publishPost(account.id, post))}>Publish now</button>
-        <button className="secondary-button" disabled={busy} onClick={() => setMode("idle")}>Keep as draft</button>
+        <button className="primary-button" disabled={busy} onClick={() => run(() => publishPost(account.id, post))}>{t("community.publishNow")}</button>
+        <button className="secondary-button" disabled={busy} onClick={() => setMode("idle")}>{t("community.keepDraft")}</button>
       </div>
     </div>}
-    {mode === "delete" && <div className={styles.notice} role="group" aria-label="Confirm deletion">
-      <p>Delete {label}? It is removed for everyone, with its comments. Copies people already saw or saved elsewhere cannot be recalled.</p>
+    {mode === "delete" && <div className={styles.notice} role="group" aria-label={t("community.confirmDeletion")}>
+      <p>{t("community.deletePostQuestion", { name: label })}</p>
       <div className={styles.actions}>
-        <button className="primary-button" disabled={busy} onClick={() => run(() => deletePost(account.id, post))}>Delete post</button>
-        <button className="secondary-button" disabled={busy} onClick={() => setMode("idle")}>Keep post</button>
+        <button className="primary-button" disabled={busy} onClick={() => run(() => deletePost(account.id, post))}>{t("community.deletePost")}</button>
+        <button className="secondary-button" disabled={busy} onClick={() => setMode("idle")}>{t("community.keepPost")}</button>
       </div>
     </div>}
     {error && <div className="message error" role="alert">{error}</div>}

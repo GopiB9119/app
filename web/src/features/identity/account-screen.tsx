@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Check, CheckCheck, Clock3, Download, Globe2, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, X } from "lucide-react";
-import { Account, ApiError, api, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
+import { Account, ApiError, api, characters, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
 import { Shell } from "./shell";
 import { TimezoneListProblem } from "./timezone-list-problem";
 
@@ -30,6 +30,8 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
   const events = useQuery({ queryKey: ["events", user.id], queryFn: ({ signal }) => api("me/security-events", z.array(eventSchema), { accountId: user.id, signal }) });
   const zones = useQuery({ queryKey: ["timezones"], queryFn: ({ signal }) => api("timezones", z.array(z.string()), { signal }) });
   const changed = draft.display_name !== user.display_name || draft.timezone !== user.timezone;
+  // The server counts characters, an emoji counting once; the input allows twice as many UTF-16 units.
+  const nameTooLong = characters(draft.display_name.trim()) > 80;
 
   useEffect(() => {
     if (!changed) return;
@@ -88,11 +90,12 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
         <section className="profile-section" aria-labelledby="profile-title">
           <div className="section-title"><UserRound size={20} /><h2 id="profile-title">Profile</h2></div>
           <div className="person-row"><div className="avatar" aria-hidden>{user.display_name.split(" ").map(value => value[0]).slice(0, 2).join("").toUpperCase()}</div><div><strong>{user.display_name}</strong><span>{user.email}</span></div><CheckCheck className="person-check" size={19} aria-hidden /></div>
-          <form className="profile-form" onSubmit={event => { event.preventDefault(); setNotice(""); setError(""); save.mutate(); }}>
-            <label>Display name<input name="display_name" autoComplete="name" required maxLength={80} value={draft.display_name} onChange={event => setDraft({ ...draft, display_name: event.target.value })} /></label>
+          <form className="profile-form" onSubmit={event => { event.preventDefault(); setNotice(""); setError(""); if (!nameTooLong) save.mutate(); }}>
+            <label>Display name<input name="display_name" autoComplete="name" required maxLength={160} aria-invalid={nameTooLong || undefined} value={draft.display_name} onChange={event => setDraft({ ...draft, display_name: event.target.value })} /></label>
+            {nameTooLong && <p className="field-error" role="alert">Use up to 80 characters.</p>}
             <label><span id="profile-timezone-label">Timezone</span><div className="input-label-icon"><Globe2 size={16} aria-hidden /><select name="timezone" aria-labelledby="profile-timezone-label" value={draft.timezone} onChange={event => setDraft({ ...draft, timezone: event.target.value })}>{timezoneOptions.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></div></label>
             {zones.isError && <TimezoneListProblem retry={() => zones.refetch()} />}
-            <div className="form-actions"><button className="primary-button" type="submit" disabled={!changed || save.isPending}>{save.isPending ? <LoaderCircle size={17} className="spin" /> : <Save size={17} />}Save changes</button>{changed && <button type="button" className="text-button" onClick={() => { setDraft({ display_name: user.display_name, timezone: user.timezone }); setDraftVersion(etag); }}>Discard</button>}</div>
+            <div className="form-actions"><button className="primary-button" type="submit" disabled={!changed || save.isPending || nameTooLong}>{save.isPending ? <LoaderCircle size={17} className="spin" /> : <Save size={17} />}Save changes</button>{changed && <button type="button" className="text-button" onClick={() => { setDraft({ display_name: user.display_name, timezone: user.timezone }); setDraftVersion(etag); }}>Discard</button>}</div>
           </form>
           <div className="account-facts"><span>Account status<strong><span className="status-square" />Active</strong></span><span>Email verification<strong>Verified</strong></span></div>
         </section>

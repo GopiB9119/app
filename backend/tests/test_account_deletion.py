@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 from app.db import Base
 from app.modules.identity import deletion
 from app.modules.identity.models import AccountSession, User
+from app.modules.scheduling.models import Reminder, ReminderSeries
 from app.modules.spaces.models import Space
 from tests.test_agents import approve, ask, rename
 from tests.test_care import create_instruction
@@ -19,6 +20,7 @@ from tests.test_identity import PASSWORD, account, auth
 from tests.test_live_updates import Hints, change
 from tests.test_messaging import admit, open_chat, send
 from tests.test_reminder_delivery_guards import preview_reminder
+from tests.test_reminder_series import create_series, source_for
 from tests.test_space_directory import ask as ask_to_join, group
 from tests.test_spaces import create_space
 from tests.test_tasks import create_task
@@ -161,6 +163,27 @@ def test_cancelling_after_the_grace_period_is_refused(client, app):
     assert request_deletion(client, alex).status_code == 202
     app.state.clock.now += timedelta(days=7)
     assert client.post("/v1/auth/cancel-deletion", json={"email": "alex@example.test", "password": PASSWORD}).status_code == 401
+
+
+def test_cancelling_brings_back_repeating_reminders_that_stopped_while_waiting(client, app):
+    alex, task_id = source_for(client, app, "alex@example.test")
+    _preview, created = create_series(client, alex, task_id)
+    assert created.status_code == 201, created.text
+    series_id = created.json()["data"]["id"]
+    assert request_deletion(client, alex).status_code == 202
+    # The first occurrence, 16:00 in Kolkata (10:30 UTC), falls due while the account waits to be deleted.
+    app.state.clock.now += timedelta(hours=1)
+    app.state.reminders.dispatch_due(limit=20)
+    with app.state.sessions() as database:
+        stopped = database.get(ReminderSeries, series_id)
+        assert (stopped.status, stopped.reason) == ("suppressed", "account_inactive")
+    cancelled = client.post("/v1/auth/cancel-deletion", json={"email": "alex@example.test", "password": PASSWORD})
+    assert cancelled.status_code == 200, cancelled.text
+    with app.state.sessions() as database:
+        series = database.get(ReminderSeries, series_id)
+        assert (series.status, series.reason) == ("active", None)
+        upcoming = database.scalars(select(Reminder).where(Reminder.series_id == series_id, Reminder.status == "scheduled")).all()
+        assert [(item.occurrence_date.isoformat(), item.scheduled_at > app.state.clock.now) for item in upcoming] == [("2026-09-20", True)]
 
 
 def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
