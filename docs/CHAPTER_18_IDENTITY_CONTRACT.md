@@ -4,7 +4,7 @@ Status: DRAFT FOR PRODUCT AND SECURITY REVIEW. This is a design contract, not im
 
 ## 1. Scope and Authority
 
-This advances the [Chapter 1 release plan](CHAPTER_01_RELEASE_PLAN.md), especially C1-J01 account/onboarding, C1-J03 private membership, C1-J08 data rights and C1-T03 identity handoff. The original [Chapter 18](../Chapter18.md) remains unchanged.
+This advances the [Chapter 1 release plan](CHAPTER_01_RELEASE_PLAN.md), especially C1-J01 account/onboarding, C1-J03 private membership, C1-J08 data rights and C1-T03 identity handoff. The original [Chapter 18](Chapter18.md) remains unchanged.
 
 - M1 needs verified accounts, profiles/timezones, revocable sessions, targeted invitations, accepted family membership and a recovery contract. A supplied phone number is not a membership or permission grant.
 - The full chapter also covers relationships, contact discovery, join requests, blocking, public/page identities, account lifecycle, export and Agent delegation. These are retained without silently adding every advanced capability to M1.
@@ -14,7 +14,7 @@ This advances the [Chapter 1 release plan](CHAPTER_01_RELEASE_PLAN.md), especial
 
 ## 2. Source Architecture Decisions
 
-All 20 decisions in [section 18.31](../Chapter18.md#L2815) are retained verbatim. They describe the complete identity domain; they are not proof that it exists.
+All 20 decisions in [section 18.31](Chapter18.md#L2815) are retained verbatim. They describe the complete identity domain; they are not proof that it exists.
 
 | ID | Source final architecture decision |
 | --- | --- |
@@ -41,7 +41,7 @@ All 20 decisions in [section 18.31](../Chapter18.md#L2815) are retained verbatim
 
 ## 3. Source Acceptance Ledger
 
-All 23 criteria in [section 18.32](../Chapter18.md#L2859) are retained verbatim. Their presence does not mean every capability is a Chapter 1 MVP requirement. Release applicability is called out in the workflows and handoff; every criterion currently has status NOT RUN.
+All 23 criteria in [section 18.32](Chapter18.md#L2859) are retained verbatim. Their presence does not mean every capability is a Chapter 1 MVP requirement. Release applicability is called out in the workflows and handoff; every criterion currently has status NOT RUN.
 
 | ID | Source acceptance criterion |
 | --- | --- |
@@ -71,7 +71,7 @@ All 23 criteria in [section 18.32](../Chapter18.md#L2859) are retained verbatim.
 
 ## 4. Initial Identity Boundaries
 
-The [core model](../Chapter18.md#L45), [verification model](../Chapter18.md#L531) and [membership/invitation model](../Chapter18.md#L1154) establish the following contract direction:
+The [core model](Chapter18.md#L45), [verification model](Chapter18.md#L531) and [membership/invitation model](Chapter18.md#L1154) establish the following contract direction:
 
 1. A stable internal account ID owns resources. A phone number, email, username, profile label or external provider email claim is not that account ID.
 2. Authentication identities and verified contact points are separate from public profile fields. External identities use their stable provider subject, not an email-only account merge.
@@ -104,7 +104,7 @@ Only the recommendation is selected for discussion, not approved for implementat
 
 ## 6. Identity Records and Ownership
 
-This is a logical model derived from [18.2](../Chapter18.md#L45) and [18.22](../Chapter18.md#L2030), not executable DDL. The security invariants are contract requirements; table names, identifiers and exact migrations are reviewed in Chapter 6. Use maintained authentication, cryptographic and parsing libraries, not a custom authentication protocol.
+This is a logical model derived from [18.2](Chapter18.md#L45) and [18.22](Chapter18.md#L2030), not executable DDL. The security invariants are contract requirements; table names, identifiers and exact migrations are reviewed in Chapter 6. Use maintained authentication, cryptographic and parsing libraries, not a custom authentication protocol.
 
 | Record or relationship | Ownership and information | Required invariant |
 | --- | --- | --- |
@@ -127,7 +127,7 @@ For lookup, a keyed destination identifier with server-controlled key/version ca
 
 ## 7. Lifecycle and Authorization Rules
 
-[18.3](../Chapter18.md#L263) presents a lifecycle diagram and a different state table; [18.11](../Chapter18.md#L1154) mixes invitations and muting into membership states. C18-D06 remains open. The following proposed behavior separates concerns rather than declaring those source enums interchangeable.
+[18.3](Chapter18.md#L263) presents a lifecycle diagram and a different state table; [18.11](Chapter18.md#L1154) mixes invitations and muting into membership states. C18-D06 remains open. The following proposed behavior separates concerns rather than declaring those source enums interchangeable.
 
 | State or condition | Allowed behavior | Explicit boundary |
 | --- | --- | --- |
@@ -150,7 +150,7 @@ The workflows below are implementation proposals constrained by the source rules
 
 ### C18-W01 Registration and Credential Enrollment
 
-Source: [18.3-18.5](../Chapter18.md#L373). Applies to M1 once C18-D01, C18-D02 and C18-D05 are confirmed.
+Source: [18.3-18.5](Chapter18.md#L373). Applies to M1 once C18-D01, C18-D02 and C18-D05 are confirmed.
 
 1. Validate the chosen identifier and credential format, required terms and age/region eligibility; enforce account/IP/device/destination abuse budgets. Contacts, exact location and optional profile fields are not prerequisites.
 2. Create or resume a short-lived pending registration operation bound to the initiating browser/app context and idempotency key. Normalize identifiers consistently without merging unrelated accounts. Do not return another account's ID or existence from registration conflict handling.
@@ -163,7 +163,7 @@ Use Argon2id with per-password salt and reviewed parameters via a maintained lib
 
 ### C18-W02 Challenge, Contact Linking and Destination Change
 
-Source: [18.4.3-18.5.1](../Chapter18.md#L470). Required for the selected M1 verification channel; full chapter acceptance includes both email and phone.
+Source: [18.4.3-18.5.1](Chapter18.md#L470). Required for the selected M1 verification channel; full chapter acceptance includes both email and phone.
 
 - Challenges are bound to purpose, account or pending attempt, channel, canonical destination, binding version and server expiry. For short low-entropy OTPs, use a reviewed keyed verifier or provider-owned verification, not a plain unsalted digest vulnerable to offline enumeration. High-entropy links still need expiry, one-time consumption and protected digests.
 - Limit guesses/resends across challenge, destination, account, device and network origin. Issuing a new challenge must not reset the aggregate abuse budget. Atomically check and consume; expired, already used, wrong-purpose or wrong-destination proof fails generically.
@@ -174,7 +174,7 @@ Source: [18.4.3-18.5.1](../Chapter18.md#L470). Required for the selected M1 veri
 
 ### C18-W03 Login, Devices and Revocable Sessions
 
-Source: [18.6](../Chapter18.md#L596). Required for M1.
+Source: [18.6](Chapter18.md#L596). Required for M1.
 
 1. Validate credentials through the selected provider/library, apply current account restrictions and risk controls, and use generic unauthenticated failures. A provider-subject mapping must validate issuer/audience/signature and the chosen OAuth/OIDC flow; no email-only linking.
 2. Create a new revocable server session associated with the authenticated account and device. Recommended internal design: an opaque session handle or a checked session identifier behind validated short-lived tokens; self-contained long-lived JWTs alone cannot provide immediate revocation.
@@ -185,7 +185,7 @@ Source: [18.6](../Chapter18.md#L596). Required for M1.
 
 ### C18-W04 Account Recovery
 
-Source: [18.14](../Chapter18.md#L1429). Required before real-user account rollout, even if a controlled M1 demo uses test reset fixtures.
+Source: [18.14](Chapter18.md#L1429). Required before real-user account rollout, even if a controlled M1 demo uses test reset fixtures.
 
 Recovery starts with a generic response, rate limits and an enrolled route selected without public account enumeration. Use recent proof appropriate to the requested account and a risk evaluation; a newly supplied phone/email or Agent-assigned relationship is not a recovery route. A retired number cannot be used as sole proof to recover the historical holder's account.
 
@@ -195,7 +195,7 @@ If all enrolled methods are unavailable, follow the reviewed recovery policy and
 
 ### C18-W05 Targeted Family Invitation and Admission
 
-Source: [18.12](../Chapter18.md#L1242). The phone-first family idea is retained, with current identity proof and acceptance rather than automatic admission after installation.
+Source: [18.12](Chapter18.md#L1242). The phone-first family idea is retained, with current identity proof and acceptance rather than automatic admission after installation.
 
 1. The authenticated inviter selects the private Space and an intended account or phone/email destination. The backend checks current invite permission, account restrictions, resource lifecycle, roles they may grant, relevant blocks, quotas and duplicate pending invitations. It does not disclose whether arbitrary numbers have accounts.
 2. Create a high-entropy, resource/recipient/role-bound invitation with an expiry, protected token digest and a one-use policy for M1. Capture recipient binding version where known. Owner status is not an ordinary invited role; ownership transfer has its own confirmation and audit flow.
@@ -211,7 +211,7 @@ For an existing account invitation, bind to immutable account ID; later phone re
 
 ### C18-W06 Profiles, Handles and Optional Contact Discovery
 
-Source: [18.7-18.9](../Chapter18.md#L686). Basic profile/timezone and field privacy are M1; optional discovery is full-domain work, not an onboarding prerequisite.
+Source: [18.7-18.9](Chapter18.md#L686). Basic profile/timezone and field privacy are M1; optional discovery is full-domain work, not an onboarding prerequisite.
 
 Use non-unique localized display names for presentation and a separately normalized unique handle for lookup. Specify normalization, length, reserved names, impersonation review and rename/reuse policy before migrations; two visually similar names are not automatically the same account. Version updates and unique indexes must handle concurrent handle claims.
 
@@ -221,7 +221,7 @@ If contact discovery is enabled, show its purpose and retention, accept denied/l
 
 ### C18-W07 Relationships, Join Requests, Roles and Ownership
 
-Source: [18.10-18.13](../Chapter18.md#L1008). Basic invitation and scoped roles are M1; full relationship types and configurable join policies follow the release matrix.
+Source: [18.10-18.13](Chapter18.md#L1008). Basic invitation and scoped roles are M1; full relationship types and configurable join policies follow the release matrix.
 
 Relationships are proposed, accepted or declined, and later revocable/expiring with explicit visibility and direction. Deduplicate pending requests; sensitive guardian/dependent authority requires its own legal/verification model. A couple relationship or trusted-contact label does not expose all personal messages, files or memory. Consent to receive selected reminders is a separate grant.
 
@@ -231,7 +231,7 @@ Role changes and removal check current actor/target roles, resource version, own
 
 ### C18-W08 Blocking, Consent and Communication Preferences
 
-Source: [18.17](../Chapter18.md#L1663) and [18.21](../Chapter18.md#L1951). Required for exposed interactions; detailed channel delivery belongs to Chapter 20.
+Source: [18.17](Chapter18.md#L1663) and [18.21](Chapter18.md#L1951). Required for exposed interactions; detailed channel delivery belongs to Chapter 20.
 
 Blocking governs prohibited interaction, muting governs chosen notifications/feed visibility, and restrictions govern policy-limited capabilities. Define server behavior for DMs, invitations, follows, comments, profile lookup, shared groups, scheduled delivery and Agent tools. Blocking does not promise removal of already shared group history. A muted member remains a member; a restricted member cannot clear enforcement by toggling preferences.
 
@@ -239,11 +239,11 @@ Store consent as versioned purpose/channel/resource evidence with revocation, no
 
 ### C18-W09 Deactivation, Deletion and Export
 
-Source: [18.15-18.16](../Chapter18.md#L1491). Account deletion and export remain proposed full-MVP obligations in C1-O16; they are not implemented by an account-row delete or a JSON dump.
+Source: [18.15-18.16](Chapter18.md#L1491). Account deletion and export remain proposed full-MVP obligations in C1-O16; they are not implemented by an account-row delete or a JSON dump.
 
 Before destructive action, require online recent authentication and show owned/shared resources, schedules, integrations and irreversible effects. Deactivation is reversible and prevents new ordinary use as defined by policy, while retention and reactivation remain explicit. It is not deletion.
 
-For deletion, C18-D09 proposes committing the deletion request together with ordinary session/delegation revocation and prevention of new authorized actions. A grace/cancellation window may delay purge only. The source Chapter 18 flow places revocation later; [Chapter 1's safety acceptance](../Chapter1.md#L4409) requires it at request time. This proposed reconciliation is not silently approved. Cancellation needs a narrowly scoped reauthentication route because old sessions are already revoked.
+For deletion, C18-D09 proposes committing the deletion request together with ordinary session/delegation revocation and prevention of new authorized actions. A grace/cancellation window may delay purge only. The source Chapter 18 flow places revocation later; [Chapter 1's safety acceptance](Chapter1.md#L4409) requires it at request time. This proposed reconciliation is not silently approved. Cancellation needs a narrowly scoped reauthentication route because old sessions are already revoked.
 
 Run an idempotent resumable purge across account/profile/contact data, eligible authored/shared content, private objects and derivatives, Agent memory/checkpoints, provider integrations, search/caches and scheduled work. Track domain checkpoints, retries, legal holds and disclosed backup expiry. Resolve sole ownership before deleting its principal; archival/transfer requirements must not retain unwanted ordinary login as a workaround. Do not mark complete until required domains finish; retained legal/audit/backup categories and downstream provider limitations are disclosed.
 
@@ -251,7 +251,7 @@ For export, use recent authentication, explicitly selected eligible categories a
 
 ### C18-W10 Page Identities, Badges and Agent Delegation
 
-Source: [18.18-18.20](../Chapter18.md#L1736). Page attribution is public-community MVP; organization identities and advanced verification follow the release matrix; controlled Agent delegation comes after M1.
+Source: [18.18-18.20](Chapter18.md#L1736). Page attribution is public-community MVP; organization identities and advanced verification follow the release matrix; controlled Agent delegation comes after M1.
 
 Record both the authenticated human initiator and the separately authorized acting page/organization identity. A selected page avatar in the UI is not authorization. Badges communicate their actual verification method; verified email/phone is not proof of real-world identity, safety or expertise and never bypasses permissions.
 
@@ -261,7 +261,7 @@ Revoking delegation prevents subsequent tool calls and cancels/pauses affected r
 
 ## 9. API and Transaction Handoff
 
-Source route families are in [18.23](../Chapter18.md#L2097). The routes below retain source-relative spellings, except operations explicitly labeled as contract gaps. Chapter 18 proposes `/api/v1`, while other chapters use `/v1`; C1-D06 and C18-D06 require one canonical contract before clients or an OpenAPI document are generated. This table specifies behavior, not a second API envelope or implemented endpoints.
+Source route families are in [18.23](Chapter18.md#L2097). The routes below retain source-relative spellings, except operations explicitly labeled as contract gaps. Chapter 18 proposes `/api/v1`, while other chapters use `/v1`; C1-D06 and C18-D06 require one canonical contract before clients or an OpenAPI document are generated. This table specifies behavior, not a second API envelope or implemented endpoints.
 
 | Operation family | Source-relative routes or gap | Request and successful result | Authorization, retry and failure contract |
 | --- | --- | --- | --- |
@@ -291,15 +291,15 @@ All successful writes derive actor identity from authentication; client actor ID
 
 ### Events, Secrets and Provider Failure
 
-Use the [18.24 event contract](../Chapter18.md#L2206): event ID/type, aggregate type/ID, human actor, acting identity, timestamp, schema version and correlation ID. Registration-pending, account activation, invitation creation and actual membership admission are distinct events. A subscriber must not treat `invitation.created` or a provider callback as `membership.created`.
+Use the [18.24 event contract](Chapter18.md#L2206): event ID/type, aggregate type/ID, human actor, acting identity, timestamp, schema version and correlation ID. Registration-pending, account activation, invitation creation and actual membership admission are distinct events. A subscriber must not treat `invitation.created` or a provider callback as `membership.created`.
 
 Publish state-changing domain events from durable outbox intent; consumers deduplicate and revalidate their own action. Record safe event metadata and result/error categories, not passwords, OTPs, tokens, recovery codes, full contacts, private relationship labels or sensitive message contents. Pseudonymous IDs and destination digests remain protected data with retention and scoped audit access.
 
-Delivery/provider failure must not silently verify an identity, admit a user or switch to a weaker channel. Keep the pending challenge/delivery state, apply controlled retries and only offer separately enrolled/approved alternatives. Follow [18.29](../Chapter18.md#L2676) for resumable lifecycle jobs, role version conflicts and stopped Agent delegation. Scope audit visibility separately from ordinary product analytics.
+Delivery/provider failure must not silently verify an identity, admit a user or switch to a weaker channel. Keep the pending challenge/delivery state, apply controlled retries and only offer separately enrolled/approved alternatives. Follow [18.29](Chapter18.md#L2676) for resumable lifecycle jobs, role version conflicts and stopped Agent delegation. Scope audit visibility separately from ordinary product analytics.
 
 ## 10. Android and Web Experience Contract
 
-The [Android inventory](../Chapter18.md#L2291) and [web settings routes](../Chapter18.md#L2431) remain source requirements. This is a consolidated flow/state specification, not a claim of screens, Figma assets or prototype implementation.
+The [Android inventory](Chapter18.md#L2291) and [web settings routes](Chapter18.md#L2431) remain source requirements. This is a consolidated flow/state specification, not a claim of screens, Figma assets or prototype implementation.
 
 | Flow surface | Required behavior and states | Release applicability |
 | --- | --- | --- |
@@ -385,4 +385,4 @@ Proposed identity demo: create and verify organizer -> sign in on Android/web ->
 
 The remaining choices are deliberate decision points, not forgotten requirements. In particular, initial sign-in methods and providers, previously unbound phone-invitation confirmation, recovery assurance, lifecycle grace behavior, age/region policy and authorization state names must be settled before dependent implementation. No numerical security limits, legal compliance, vendor features or delivery guarantees are inferred from examples.
 
-Next: [Chapter 3](../Chapter3.md) to define Space ownership, role hierarchy, invitation admission, couple capacity, shared/private conversation visibility, history on joining/leaving, removal/rejoin and temporary expiry. Carry these rules into [Chapter 6](../Chapter6.md) relational constraints and [Chapter 7](../Chapter7.md) canonical API/event contracts, with [Chapter 11](../Chapter11.md) security and [Chapter 19](../Chapter19.md) encryption decisions alongside. The Chapter 1 release scope remains a draft pending confirmation.
+Next: [Chapter 3](Chapter3.md) to define Space ownership, role hierarchy, invitation admission, couple capacity, shared/private conversation visibility, history on joining/leaving, removal/rejoin and temporary expiry. Carry these rules into [Chapter 6](Chapter6.md) relational constraints and [Chapter 7](Chapter7.md) canonical API/event contracts, with [Chapter 11](Chapter11.md) security and [Chapter 19](Chapter19.md) encryption decisions alongside. The Chapter 1 release scope remains a draft pending confirmation.

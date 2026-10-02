@@ -6,18 +6,18 @@ Document role: retained alternate proposal. Use the [detailed messaging draft](C
 
 ## 1. Scope and Authority
 
-This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), the [Space contract](CHAPTER_03_SPACE_CONTRACT.md), the [API contract](CHAPTER_07_API_REALTIME_CONTRACT.md) and the [delivery contract](CHAPTER_20_DELIVERY_CONTRACT.md). The original [Chapter 19](../Chapter19.md) remains unchanged.
+This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), the [Space contract](CHAPTER_03_SPACE_CONTRACT.md), the [API contract](CHAPTER_07_API_REALTIME_CONTRACT.md) and the [delivery contract](CHAPTER_20_DELIVERY_CONTRACT.md). The original [Chapter 19](Chapter19.md) remains unchanged.
 
-- [Chapter 19](../Chapter19.md) is the owning source for conversation types, membership, the message model, ordering, delivery/read states, offline sync, presence, typing, E2E modes and keys, attachments, edit/delete, reactions/threads/mentions, agent messaging, moderation hooks and failure handling.
+- [Chapter 19](Chapter19.md) is the owning source for conversation types, membership, the message model, ordering, delivery/read states, offline sync, presence, typing, E2E modes and keys, attachments, edit/delete, reactions/threads/mentions, agent messaging, moderation hooks and failure handling.
 - This alternate proposes **domain semantics** (what a conversation, message, receipt or key is and who may act); the [detailed messaging draft](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) is the current review reference and the [Chapter 7 contract](CHAPTER_07_API_REALTIME_CONTRACT.md) owns transport/envelope reconciliation.
 - It addresses cross-chapter dependencies but does not approve or close them. [ADR-0005](adr/0005-mvp-scope-and-milestones.md) remains PROPOSED and its M2-M4 sequence conflicts with the release plan. The [team plan](TEAM_ORGANIZATION_EXECUTION_PLAN.md) requires owner reconciliation; this file does not establish M3 messaging, a launch encryption default or full-MVP channel scope as accepted decisions.
 - The source defines three E2E agent-access designs (A/B/C) but does not select one; selection is C19-D07 and requires the cryptography review gate.
 - All implementation, protocol, key-ceremony and sync evidence is NOT RUN. IDs identify planned contracts and checks, not executed work.
-- The source ends at 19.34 without a numbered final-decision ledger; the 12 domain principles in [19.2](../Chapter19.md#L65) are adopted verbatim as the source requirement ledger below. Added workflows and state tables are explicitly proposed design.
+- The source ends at 19.34 without a numbered final-decision ledger; the 12 domain principles in [19.2](Chapter19.md#L65) are adopted verbatim as the source requirement ledger below. Added workflows and state tables are explicitly proposed design.
 
 ## 2. Exact Source Domain Principles
 
-All 12 principles in [19.2](../Chapter19.md#L65) are retained verbatim. They bind REST, WebSocket, workers, clients and agents together.
+All 12 principles in [19.2](Chapter19.md#L65) are retained verbatim. They bind REST, WebSocket, workers, clients and agents together.
 
 | ID | Source principle |
 | --- | --- |
@@ -40,65 +40,65 @@ All 34 numbered source sections are retained with exact titles. Coverage does no
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C19-S01 | Purpose and Scope | [19.1](../Chapter19.md#L3) |
-| C19-S02 | Communication Domain Principles | [19.2](../Chapter19.md#L65) |
-| C19-S03 | Communication Model | [19.3](../Chapter19.md#L93) |
-| C19-S04 | Conversation Lifecycle | [19.4](../Chapter19.md#L157) |
-| C19-S05 | Conversation Membership | [19.5](../Chapter19.md#L258) |
-| C19-S06 | Message Model | [19.6](../Chapter19.md#L343) |
-| C19-S07 | Message Sending Flow | [19.7](../Chapter19.md#L408) |
-| C19-S08 | Idempotency and Duplicate Prevention | [19.8](../Chapter19.md#L446) |
-| C19-S09 | Message Ordering | [19.9](../Chapter19.md#L486) |
-| C19-S10 | Delivery and Read States | [19.10](../Chapter19.md#L534) |
-| C19-S11 | Offline-First Messaging | [19.11](../Chapter19.md#L610) |
-| C19-S12 | Realtime Transport | [19.12](../Chapter19.md#L667) |
-| C19-S13 | Realtime Event Envelope | [19.13](../Chapter19.md#L739) |
-| C19-S14 | Presence Architecture | [19.14](../Chapter19.md#L785) |
-| C19-S15 | Typing Indicators | [19.15](../Chapter19.md#L853) |
-| C19-S16 | End-to-End Encryption Architecture | [19.16](../Chapter19.md#L894) |
-| C19-S17 | E2E Encryption Modes | [19.17](../Chapter19.md#L916) |
-| C19-S18 | Encryption Key Architecture | [19.18](../Chapter19.md#L1000) |
-| C19-S19 | Message Metadata and Privacy | [19.19](../Chapter19.md#L1062) |
-| C19-S20 | Attachments and Media | [19.20](../Chapter19.md#L1106) |
-| C19-S21 | Message Editing and Deletion | [19.21](../Chapter19.md#L1170) |
-| C19-S22 | Reactions, Replies, Threads, and Mentions | [19.22](../Chapter19.md#L1202) |
-| C19-S23 | Agent Messaging Architecture | [19.23](../Chapter19.md#L1270) |
-| C19-S24 | Moderation and Reporting | [19.24](../Chapter19.md#L1356) |
-| C19-S25 | Search Architecture | [19.25](../Chapter19.md#L1415) |
-| C19-S26 | Notification Architecture | [19.26](../Chapter19.md#L1453) |
-| C19-S27 | APIs | [19.27](../Chapter19.md#L1508) |
-| C19-S28 | Database Model | [19.28](../Chapter19.md#L1604) |
-| C19-S29 | Android Screens | [19.29](../Chapter19.md#L1666) |
-| C19-S30 | Web/Desktop Screens | [19.30](../Chapter19.md#L1749) |
-| C19-S31 | Performance and Scaling | [19.31](../Chapter19.md#L1793) |
-| C19-S32 | Security Architecture | [19.32](../Chapter19.md#L1866) |
-| C19-S33 | Observability | [19.33](../Chapter19.md#L1936) |
-| C19-S34 | Failure Handling | [19.34](../Chapter19.md#L2003) |
+| C19-S01 | Purpose and Scope | [19.1](Chapter19.md#L3) |
+| C19-S02 | Communication Domain Principles | [19.2](Chapter19.md#L65) |
+| C19-S03 | Communication Model | [19.3](Chapter19.md#L93) |
+| C19-S04 | Conversation Lifecycle | [19.4](Chapter19.md#L157) |
+| C19-S05 | Conversation Membership | [19.5](Chapter19.md#L258) |
+| C19-S06 | Message Model | [19.6](Chapter19.md#L343) |
+| C19-S07 | Message Sending Flow | [19.7](Chapter19.md#L408) |
+| C19-S08 | Idempotency and Duplicate Prevention | [19.8](Chapter19.md#L446) |
+| C19-S09 | Message Ordering | [19.9](Chapter19.md#L486) |
+| C19-S10 | Delivery and Read States | [19.10](Chapter19.md#L534) |
+| C19-S11 | Offline-First Messaging | [19.11](Chapter19.md#L610) |
+| C19-S12 | Realtime Transport | [19.12](Chapter19.md#L667) |
+| C19-S13 | Realtime Event Envelope | [19.13](Chapter19.md#L739) |
+| C19-S14 | Presence Architecture | [19.14](Chapter19.md#L785) |
+| C19-S15 | Typing Indicators | [19.15](Chapter19.md#L853) |
+| C19-S16 | End-to-End Encryption Architecture | [19.16](Chapter19.md#L894) |
+| C19-S17 | E2E Encryption Modes | [19.17](Chapter19.md#L916) |
+| C19-S18 | Encryption Key Architecture | [19.18](Chapter19.md#L1000) |
+| C19-S19 | Message Metadata and Privacy | [19.19](Chapter19.md#L1062) |
+| C19-S20 | Attachments and Media | [19.20](Chapter19.md#L1106) |
+| C19-S21 | Message Editing and Deletion | [19.21](Chapter19.md#L1170) |
+| C19-S22 | Reactions, Replies, Threads, and Mentions | [19.22](Chapter19.md#L1202) |
+| C19-S23 | Agent Messaging Architecture | [19.23](Chapter19.md#L1270) |
+| C19-S24 | Moderation and Reporting | [19.24](Chapter19.md#L1356) |
+| C19-S25 | Search Architecture | [19.25](Chapter19.md#L1415) |
+| C19-S26 | Notification Architecture | [19.26](Chapter19.md#L1453) |
+| C19-S27 | APIs | [19.27](Chapter19.md#L1508) |
+| C19-S28 | Database Model | [19.28](Chapter19.md#L1604) |
+| C19-S29 | Android Screens | [19.29](Chapter19.md#L1666) |
+| C19-S30 | Web/Desktop Screens | [19.30](Chapter19.md#L1749) |
+| C19-S31 | Performance and Scaling | [19.31](Chapter19.md#L1793) |
+| C19-S32 | Security Architecture | [19.32](Chapter19.md#L1866) |
+| C19-S33 | Observability | [19.33](Chapter19.md#L1936) |
+| C19-S34 | Failure Handling | [19.34](Chapter19.md#L2003) |
 
 ## 4. Decisions and Release Gates
 
 | ID | Choice | Proposed direction or unresolved contract | Status |
 | --- | --- | --- | --- |
-| C19-D01 | Conversation and membership canonicalization | Reconcile source conversation types ([19.3.1](../Chapter19.md#L115)) with Chapter 3/6 Space models and explicit participant admission/history. Parent Space membership does not automatically join every conversation; public-read and participant-write permissions remain distinct. | PROPOSED |
+| C19-D01 | Conversation and membership canonicalization | Reconcile source conversation types ([19.3.1](Chapter19.md#L115)) with Chapter 3/6 Space models and explicit participant admission/history. Parent Space membership does not automatically join every conversation; public-read and participant-write permissions remain distinct. | PROPOSED |
 | C19-D02 | Message identity and idempotency | Client-generated `client_message_id` unique per (conversation, sender); server ID and per-conversation sequence allocated transactionally; retries return the canonical message, never a duplicate. | PROPOSED |
 | C19-D03 | Ordering and synchronization | Per-conversation monotonic sequence; consistent snapshot watermark plus bounded catch-up with an explicit `requires_full_sync` path (C7-D09); cursors persisted with applied state. | PROPOSED |
 | C19-D04 | Delivery and read model | Persisted, device-received, decrypted, read and business acknowledgment remain distinct. Group cursor/interval/per-message optimizations require explicit eligible-history coverage and multi-device aggregation; a maximum observed sequence is not proof all earlier messages were received or read. | PROPOSED |
 | C19-D05 | Encryption mode selection | Choose a disclosed mode per conversation class. Server-readable encryption is an unapproved baseline option, not an adopted MVP default. True E2E needs a reviewed protocol and explicit endpoint/history policy; Agent access may remain disabled or use a separately approved disclosure design. | OPEN |
 | C19-D06 | Key architecture and custody | Select key types, device custody (Keystore/WebCrypto/secure enclave), rotation triggers, multi-device enrollment and backup/recovery separation; key recovery policy is a separate C18-linked decision. | OPEN |
-| C19-D07 | Agent access under E2E | Select no Agent access or a separately approved Design A (authorized conversation device), B (user-approved message forwarding) or C (local agent processing) from [19.17.3](../Chapter19.md#L958). Disclose the actual plaintext recipients and provider processing; no design may hide backend access behind a human-only E2E claim. | OPEN |
+| C19-D07 | Agent access under E2E | Select no Agent access or a separately approved Design A (authorized conversation device), B (user-approved message forwarding) or C (local agent processing) from [19.17.3](Chapter19.md#L958). Disclose the actual plaintext recipients and provider processing; no design may hide backend access behind a human-only E2E claim. | OPEN |
 | C19-D08 | Offline command allowlist | Queue only reviewed ordinary sends with stable IDs and bounded reconciliation; approvals, invitations, moderation and destructive/external actions require online confirmation (aligns C8-D06). | PROPOSED |
 | C19-D09 | Edit and delete semantics | Author-edit window, moderator-only paths, tombstones propagated to caches/indexes/notifications/exports; for true E2E, deletion is honest about already-authorized devices. | PROPOSED |
 | C19-D10 | Attachments and media | Separate immutable attachment records and current download authority. Server-readable content follows scan/quarantine rules; opaque E2E content needs a disclosed reviewed endpoint-safety design or the incompatible feature remains blocked. Ciphertext scanning cannot certify plaintext safety. | PROPOSED |
 | C19-D11 | Presence and typing limits | Ephemeral TTL state, rate-limited, privacy-minimized presence; typing indicators never persisted and never shown to unauthorized viewers. | PROPOSED |
 | C19-D12 | Reactions, replies, threads, mentions | Canonical records with uniqueness constraints, thread inheritance from the parent conversation, participant-validated mentions with rate and abuse limits. | PROPOSED |
-| C19-D13 | Agent messaging | Agent participants are typed and labeled; agent messages are never disguised as human messages; agent-to-agent traffic uses the reviewed structured protocol from [Chapter 7](../Chapter7.md) with bounded scope, hops, time and aggregate budgets. | PROPOSED |
+| C19-D13 | Agent messaging | Agent participants are typed and labeled; agent messages are never disguised as human messages; agent-to-agent traffic uses the reviewed structured protocol from [Chapter 7](Chapter7.md) with bounded scope, hops, time and aggregate budgets. | PROPOSED |
 | C19-D14 | Performance and fanout budgets | Define connection limits, fanout strategy (shared vs per-conversation streams), retention of the realtime journal and measurable SLOs before load claims; source figures are not benchmarks. | OPEN |
 
 These ten proposals and four open decisions remain unapproved. C19-D05 through C19-D07 gate any true-E2E claim; no milestone may advertise E2E before the cryptography review passes.
 
 ## 5. Conversation and Membership Model
 
-Source: [19.3](../Chapter19.md#L93), [19.4](../Chapter19.md#L157), [19.5](../Chapter19.md#L258). Proposed canonical rules:
+Source: [19.3](Chapter19.md#L93), [19.4](Chapter19.md#L157), [19.5](Chapter19.md#L258). Proposed canonical rules:
 
 - Conversation types reconcile to: `direct`, `space_group`, `space_agent`, `private_agent`, `page_discussion`, `event`, `announcement`, `system`. Space-linked conversations always reference an authorized Space (C19-D01); a `direct` conversation is a resource in its own right with its own membership.
 - The earlier `draft -> active -> locked -> read_only -> archived -> deletion_pending -> deleted` sketch is a local proposal, not an adopted sequence copied from Space states. Publication, shared lock/restriction, personal mute, archive, expiry and deletion/retention need separate reviewed transition contracts.
@@ -110,7 +110,7 @@ Source: [19.3](../Chapter19.md#L93), [19.4](../Chapter19.md#L157), [19.5](../Cha
 
 ### C19-W01 Send, Persist and Fanout
 
-Source: [19.7](../Chapter19.md#L408), [19.8](../Chapter19.md#L446), [19.9](../Chapter19.md#L486), [19.10](../Chapter19.md#L534).
+Source: [19.7](Chapter19.md#L408), [19.8](Chapter19.md#L446), [19.9](Chapter19.md#L486), [19.10](Chapter19.md#L534).
 
 1. Client generates `client_message_id`, renders locally as pending, and sends via REST command (C7-D03).
 2. Authenticate the actual non-null human/Agent/system actor and current conversation/parent/device/history policy. Personal notification mute is not a posting restriction. Validate bounded structured payload, mode/epoch and attachment/reply scope without pretending an opaque E2E body is server-readable.
@@ -120,7 +120,7 @@ Source: [19.7](../Chapter19.md#L408), [19.8](../Chapter19.md#L446), [19.9](../Ch
 
 ### C19-W02 Offline, Reconnect and Synchronization
 
-Source: [19.11](../Chapter19.md#L610), [19.12](../Chapter19.md#L667), [19.13](../Chapter19.md#L739).
+Source: [19.11](Chapter19.md#L610), [19.12](Chapter19.md#L667), [19.13](Chapter19.md#L739).
 
 1. Offline sends persist locally as queued with their `client_message_id`; queued sends are never silently discarded and retry through the durable outbox on the client (WorkManager) with bounded attempts.
 2. On reconnect the client re-authenticates, restores server-defined subscriptions (never client-asserted scopes), and resumes from its last event cursor.
@@ -130,7 +130,7 @@ Source: [19.11](../Chapter19.md#L610), [19.12](../Chapter19.md#L667), [19.13](..
 
 ### C19-W03 Editing and Deletion
 
-Source: [19.21](../Chapter19.md#L1170). Implements C19-R12 across every projection.
+Source: [19.21](Chapter19.md#L1170). Implements C19-R12 across every projection.
 
 - Authors may edit within a configured window; edits carry an edited marker and version, and significant changes may trigger re-moderation (Chapter 2 rule).
 - Deletion types are explicit: `delete_for_me`, `delete_for_everyone`, `moderator_remove`, `retention_expired`, `temporary_message_expired`; each defines its effect on history, receipts, unread counts, notifications, search indexes, attachments and exports.
@@ -139,7 +139,7 @@ Source: [19.21](../Chapter19.md#L1170). Implements C19-R12 across every projecti
 
 ### C19-W04 Attachments and Media
 
-Source: [19.20](../Chapter19.md#L1106), [Chapter 14](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md).
+Source: [19.20](Chapter19.md#L1106), [Chapter 14](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md).
 
 1. An attachment is a separate record linked to a message with its own authorization, processing status and (for E2E) its own encrypted file key.
 2. Upload follows Chapter 14's immutable source-version and current audience contract. Actual plaintext scanning/quarantine gates apply where the selected mode exposes plaintext to an authorized scanner. Server checksum/scan of opaque E2E bytes is not a plaintext safety verdict; require an explicitly reviewed endpoint-processing path or leave the incompatible capability unavailable.
@@ -148,7 +148,7 @@ Source: [19.20](../Chapter19.md#L1106), [Chapter 14](CHAPTER_14_FILE_DOCUMENT_RA
 
 ### C19-W05 Presence and Typing Indicators
 
-Source: [19.14](../Chapter19.md#L785), [19.15](../Chapter19.md#L853). Implements C19-R06.
+Source: [19.14](Chapter19.md#L785), [19.15](Chapter19.md#L853). Implements C19-R06.
 
 - Source presence values are `online/away/busy/do_not_disturb/offline/invisible`. Live status uses bounded per-device TTL leases and current privacy; expiry or Redis loss means unknown availability under policy, not evidence of a person's intent. Do not persist every heartbeat as permanent truth.
 - Exact activity timestamps are not exposed beyond what the user's privacy settings permit; hidden conversation membership never leaks through presence.
@@ -156,7 +156,7 @@ Source: [19.14](../Chapter19.md#L785), [19.15](../Chapter19.md#L853). Implements
 
 ## 7. End-to-End Encryption Contract
 
-Source: [19.16](../Chapter19.md#L894), [19.17](../Chapter19.md#L916), [19.18](../Chapter19.md#L1000), [19.19](../Chapter19.md#L1062). This section records alternatives, not a resolved cryptography decision. Its local C19-D05 through C19-D07 remain OPEN; the detailed draft separately gates protocol, modes, device authority, recovery and Agent disclosure.
+Source: [19.16](Chapter19.md#L894), [19.17](Chapter19.md#L916), [19.18](Chapter19.md#L1000), [19.19](Chapter19.md#L1062). This section records alternatives, not a resolved cryptography decision. Its local C19-D05 through C19-D07 remain OPEN; the detailed draft separately gates protocol, modes, device authority, recovery and Agent disclosure.
 
 ### 7.1 Disclosed Modes
 
@@ -192,7 +192,7 @@ Ciphertext does not by itself hide routing, membership, timing, size or delivery
 
 ## 8. Agent Messaging Architecture
 
-Source: [19.23](../Chapter19.md#L1270), [Chapter 12](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [Chapter 5](../Chapter5.md). Implements this alternate's C19-R08 and C19-D13 subject to the detailed draft's current disclosure and protocol gates.
+Source: [19.23](Chapter19.md#L1270), [Chapter 12](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [Chapter 5](Chapter5.md). Implements this alternate's C19-R08 and C19-D13 subject to the detailed draft's current disclosure and protocol gates.
 
 - Agent participants are typed (`personal_agent`, `space_agent`, `conversation_agent`) and always labeled in UI and data; an agent message is never stored or rendered as a human message (sender type is explicit, Chapter 4 rule).
 - Agent participation in a conversation requires explicit membership or delegation per Chapters 3/12/18; the agent reads only messages its scope and consent permit, at context-assembly time, permission-aware before ranking (never "retrieve all, ask the model to skip").
@@ -202,7 +202,7 @@ Source: [19.23](../Chapter19.md#L1270), [Chapter 12](CHAPTER_12_AGENT_RUNTIME_CO
 
 ## 9. Moderation, Search and Notification Boundaries
 
-Source: [19.24](../Chapter19.md#L1356), [19.25](../Chapter19.md#L1415), [19.26](../Chapter19.md#L1453).
+Source: [19.24](Chapter19.md#L1356), [19.25](Chapter19.md#L1415), [19.26](Chapter19.md#L1453).
 
 - Reporting is available for messages/conversations within the privacy model: the reporter's own view plus consented evidence only; private-message and E2E evidence handling is a C16-D10 decision, not a default capability.
 - Moderators act under Chapter 16 authority: no access to private conversations outside the space, no private agent memory, no platform-level ban from a Space role (source §16.21 restrictions apply here).

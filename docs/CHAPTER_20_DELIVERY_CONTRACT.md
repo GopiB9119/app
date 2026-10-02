@@ -8,7 +8,7 @@ Document role: working Chapter 20 review reference, not an approved canonical sp
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md) and the delivery handoffs in the [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [event](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) drafts. It addresses C1-D03, C13-D07, C13-D12 and C19-T12 without approving those proposals.
 
-- [Chapter 20](../Chapter20.md) is the owning source for in-app, push, email, SMS, WhatsApp, voice, templates, quiet hours, escalation and provider adapters. This contract proposes the canonical delivery design; it does not approve live providers or deployment.
+- [Chapter 20](Chapter20.md) is the owning source for in-app, push, email, SMS, WhatsApp, voice, templates, quiet hours, escalation and provider adapters. This contract proposes the canonical delivery design; it does not approve live providers or deployment.
 - Chapter 13 owns schedule/occurrence timing. This contract owns notification command admission, recipient/channel policy, delivery and provider outcomes, reusing the same occurrence and escalation authorities rather than adding an independent timer or business-acknowledgment engine.
 - The centralized policy engine authorizes permitted work; authorized dispatch workers invoke provider adapters. Agents and unrelated domain modules cannot bypass that path or obtain provider credentials. Policy evaluation itself need not make network calls.
 - M1 remains synthetic manual family task plus confirmed one-time in-app reminder, without required Agent code, push or email proof. [ADR-0005](adr/0005-mvp-scope-and-milestones.md) proposes additional M1/M2 and M6 channel sequencing but remains PROPOSED. The [team plan](TEAM_ORGANIZATION_EXECUTION_PLAN.md) records the milestone conflict and OPEN C1-D03; this chapter does not close either. SMS/WhatsApp/voice and real care workflows remain separately gated.
@@ -19,7 +19,7 @@ This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md) and the delivery h
 
 ## 2. Exact Source Final Decisions
 
-All 25 decisions in [20.34](../Chapter20.md#L2276) are retained verbatim. They are design requirements, not proof of capability.
+All 25 decisions in [20.34](Chapter20.md#L2276) are retained verbatim. They are design requirements, not proof of capability.
 
 | ID | Source final decision |
 | --- | --- |
@@ -85,41 +85,41 @@ All 35 numbered source sections are retained with exact titles. Coverage does no
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C20-S01 | Purpose and Scope | [20.1](../Chapter20.md#L3) |
-| C20-S02 | Core Architecture Principle | [20.2](../Chapter20.md#L59) |
-| C20-S03 | Notification Types | [20.3](../Chapter20.md#L107) |
-| C20-S04 | Notification Lifecycle | [20.4](../Chapter20.md#L231) |
-| C20-S05 | Notification Domain Components | [20.5](../Chapter20.md#L393) |
-| C20-S06 | Notification Command | [20.6](../Chapter20.md#L414) |
-| C20-S07 | Notification Categories and Priority | [20.7](../Chapter20.md#L448) |
-| C20-S08 | Recipient Resolution | [20.8](../Chapter20.md#L599) |
-| C20-S09 | Consent Architecture | [20.9](../Chapter20.md#L649) |
-| C20-S10 | User Communication Preferences | [20.10](../Chapter20.md#L720) |
-| C20-S11 | Quiet Hours and Timezones | [20.11](../Chapter20.md#L763) |
-| C20-S12 | Template Architecture | [20.12](../Chapter20.md#L809) |
-| C20-S13 | In-App Notification Architecture | [20.13](../Chapter20.md#L862) |
-| C20-S14 | Push Notification Architecture | [20.14](../Chapter20.md#L917) |
-| C20-S15 | Email Architecture | [20.15](../Chapter20.md#L983) |
-| C20-S16 | SMS Architecture | [20.16](../Chapter20.md#L1048) |
-| C20-S17 | WhatsApp Architecture | [20.17](../Chapter20.md#L1096) |
-| C20-S18 | Voice Call Architecture | [20.18](../Chapter20.md#L1180) |
-| C20-S19 | Escalation Architecture | [20.19](../Chapter20.md#L1261) |
-| C20-S20 | Medicine Reminder Communication | [20.20](../Chapter20.md#L1366) |
-| C20-S21 | Notification Scheduling | [20.21](../Chapter20.md#L1427) |
-| C20-S22 | Provider Adapter Contract | [20.22](../Chapter20.md#L1502) |
-| C20-S23 | Retry Architecture | [20.23](../Chapter20.md#L1567) |
-| C20-S24 | Delivery Tracking | [20.24](../Chapter20.md#L1635) |
-| C20-S25 | Notification APIs | [20.25](../Chapter20.md#L1685) |
-| C20-S26 | Database Model | [20.26](../Chapter20.md#L1738) |
-| C20-S27 | Android Screens | [20.27](../Chapter20.md#L1785) |
-| C20-S28 | Web/Desktop Screens | [20.28](../Chapter20.md#L1848) |
-| C20-S29 | Security and Privacy | [20.29](../Chapter20.md#L1885) |
-| C20-S30 | Agent Integration | [20.30](../Chapter20.md#L1989) |
-| C20-S31 | Observability and Metrics | [20.31](../Chapter20.md#L2051) |
-| C20-S32 | Failure Handling | [20.32](../Chapter20.md#L2131) |
-| C20-S33 | Repository Structure | [20.33](../Chapter20.md#L2217) |
-| C20-S34 | Final Architecture Decision | [20.34](../Chapter20.md#L2276) |
-| C20-S35 | Acceptance Criteria | [20.35](../Chapter20.md#L2330) |
+| C20-S01 | Purpose and Scope | [20.1](Chapter20.md#L3) |
+| C20-S02 | Core Architecture Principle | [20.2](Chapter20.md#L59) |
+| C20-S03 | Notification Types | [20.3](Chapter20.md#L107) |
+| C20-S04 | Notification Lifecycle | [20.4](Chapter20.md#L231) |
+| C20-S05 | Notification Domain Components | [20.5](Chapter20.md#L393) |
+| C20-S06 | Notification Command | [20.6](Chapter20.md#L414) |
+| C20-S07 | Notification Categories and Priority | [20.7](Chapter20.md#L448) |
+| C20-S08 | Recipient Resolution | [20.8](Chapter20.md#L599) |
+| C20-S09 | Consent Architecture | [20.9](Chapter20.md#L649) |
+| C20-S10 | User Communication Preferences | [20.10](Chapter20.md#L720) |
+| C20-S11 | Quiet Hours and Timezones | [20.11](Chapter20.md#L763) |
+| C20-S12 | Template Architecture | [20.12](Chapter20.md#L809) |
+| C20-S13 | In-App Notification Architecture | [20.13](Chapter20.md#L862) |
+| C20-S14 | Push Notification Architecture | [20.14](Chapter20.md#L917) |
+| C20-S15 | Email Architecture | [20.15](Chapter20.md#L983) |
+| C20-S16 | SMS Architecture | [20.16](Chapter20.md#L1048) |
+| C20-S17 | WhatsApp Architecture | [20.17](Chapter20.md#L1096) |
+| C20-S18 | Voice Call Architecture | [20.18](Chapter20.md#L1180) |
+| C20-S19 | Escalation Architecture | [20.19](Chapter20.md#L1261) |
+| C20-S20 | Medicine Reminder Communication | [20.20](Chapter20.md#L1366) |
+| C20-S21 | Notification Scheduling | [20.21](Chapter20.md#L1427) |
+| C20-S22 | Provider Adapter Contract | [20.22](Chapter20.md#L1502) |
+| C20-S23 | Retry Architecture | [20.23](Chapter20.md#L1567) |
+| C20-S24 | Delivery Tracking | [20.24](Chapter20.md#L1635) |
+| C20-S25 | Notification APIs | [20.25](Chapter20.md#L1685) |
+| C20-S26 | Database Model | [20.26](Chapter20.md#L1738) |
+| C20-S27 | Android Screens | [20.27](Chapter20.md#L1785) |
+| C20-S28 | Web/Desktop Screens | [20.28](Chapter20.md#L1848) |
+| C20-S29 | Security and Privacy | [20.29](Chapter20.md#L1885) |
+| C20-S30 | Agent Integration | [20.30](Chapter20.md#L1989) |
+| C20-S31 | Observability and Metrics | [20.31](Chapter20.md#L2051) |
+| C20-S32 | Failure Handling | [20.32](Chapter20.md#L2131) |
+| C20-S33 | Repository Structure | [20.33](Chapter20.md#L2217) |
+| C20-S34 | Final Architecture Decision | [20.34](Chapter20.md#L2276) |
+| C20-S35 | Acceptance Criteria | [20.35](Chapter20.md#L2330) |
 
 ### Source Types and Status Meanings
 
@@ -331,7 +331,7 @@ Before enabling an adapter, record verified provider/account/environment capabil
 
 ### C20-W01 In-App Notification (M1 slice)
 
-Source: [20.13](../Chapter20.md#L862), [20.4](../Chapter20.md#L231). This is the synthetic ordinary in-app M1 slice, not proof of push/email or the full MVP.
+Source: [20.13](Chapter20.md#L862), [20.4](Chapter20.md#L231). This is the synthetic ordinary in-app M1 slice, not proof of push/email or the full MVP.
 
 1. A business change (reminder due, approval needed, invitation result) commits its record plus a durable notification command in one PostgreSQL transaction (C6-D11).
 2. Resolve the explicitly approved recipient set or governed selector, then check current eligibility. Exclude revoked/departed recipients; do not silently add new members to a previously approved static audience.
@@ -343,7 +343,7 @@ Source: [20.13](../Chapter20.md#L862), [20.4](../Chapter20.md#L231). This is the
 
 ### C20-W02 Push and Email (Release Gated)
 
-Source: [20.14](../Chapter20.md#L917), [20.15](../Chapter20.md#L983).
+Source: [20.14](Chapter20.md#L917), [20.15](Chapter20.md#L983).
 
 1. Activation requires approved C20-D04/C20-D05 gates: provider credentials in secret management, device/destination registration flows, redaction templates and quota/cost wiring (C20-R24).
 2. Bind push endpoints to current account/device/provider/environment and token generation. Redact before provider/SDK auto-display, including titles, E2E previews and deep-link metadata. Token rotation, logout/reassignment and late invalid-token callbacks must not disable or leak to a newer binding; supported multi-device fanout is not multiple human acknowledgments.
@@ -352,7 +352,7 @@ Source: [20.14](../Chapter20.md#L917), [20.15](../Chapter20.md#L983).
 
 ### C20-W03 External Channels: SMS, WhatsApp, Voice (gated)
 
-Source: [20.16](../Chapter20.md#L1048), [20.17](../Chapter20.md#L1096), [20.18](../Chapter20.md#L1180).
+Source: [20.16](Chapter20.md#L1048), [20.17](Chapter20.md#L1096), [20.18](Chapter20.md#L1180).
 
 1. No channel activates without its gate decision (C20-D12), an approved provider contract and kill-switch capability (C20-R18).
 2. WhatsApp destinations must be verified and linked with purpose-scoped consent; only provider-approved templates are used; provider message IDs are retained for reconciliation.
@@ -361,7 +361,7 @@ Source: [20.16](../Chapter20.md#L1048), [20.17](../Chapter20.md#L1096), [20.18](
 
 ### C20-W04 Uncertainty, Retry and Reconciliation
 
-Source: [20.23](../Chapter20.md#L1567), [20.24](../Chapter20.md#L1635), [20.32](../Chapter20.md#L2131).
+Source: [20.23](Chapter20.md#L1567), [20.24](Chapter20.md#L1635), [20.32](Chapter20.md#L2131).
 
 1. Separate one logical recipient/channel effect from numbered durable transport attempts. Bind the reviewed destination/version, payload/template and stable business identity; a new worker attempt is not a new notification.
 2. Recheck current resource/recipient authority, purpose-specific consent, destination binding, expiry, quiet hours, approval and kill switches before a documented durable dispatch commitment. Cancellation or revocation committed before that boundary prevents a new send. After commitment, an effect may be in flight and cannot be presumed recalled.
@@ -372,7 +372,7 @@ Source: [20.23](../Chapter20.md#L1567), [20.24](../Chapter20.md#L1635), [20.32](
 
 ### C20-W05 Escalation State Machine
 
-Source: [20.19](../Chapter20.md#L1261). Policy-driven, never improvised by an agent (source rule).
+Source: [20.19](Chapter20.md#L1261). Policy-driven, never improvised by an agent (source rule).
 
 1. An escalation policy defines trigger, initial delay, ordered steps, recipients/channels/templates, maximum attempts and stop conditions. Its delay basis must be explicit; do not add an initial delay twice or infer a new timer from each retry.
 2. Stop conditions include the authorized domain acknowledgment/completion, cancellation, consent revocation, loss of recipient/resource authority, maximum attempts, expiry or the trigger becoming false. Reading the inbox alone does not prove the underlying task was completed.
@@ -382,7 +382,7 @@ Source: [20.19](../Chapter20.md#L1261). Policy-driven, never improvised by an ag
 
 ### C20-W06 Medicine Reminder Communication
 
-Source: [20.20](../Chapter20.md#L1366). Coordination and reminders only, never autonomous medical behavior.
+Source: [20.20](Chapter20.md#L1366). Coordination and reminders only, never autonomous medical behavior.
 
 - Allowed: store confirmed reminder text and schedule, notify the recipient and explicitly authorized caregivers, record acknowledgment, escalate missed acknowledgment per consent, link user-provided instructions.
 - Prohibited: inferring dosage from images, changing or recommending dosage, stopping medication, doubling missed doses, diagnosing, treating unverified OCR or schedules as medically confirmed, or disclosing sensitive details to an unauthorized third party. Automatic emergency contact is unavailable without a separately designed and authorized process.
@@ -467,7 +467,7 @@ Retain command/effect/receipt/dedup and audit evidence for the reviewed retry/pr
 
 ## 7. Agent Integration Boundaries
 
-Source: [20.30](../Chapter20.md#L1989). Agents issue structured requests through Chapter 12's allowlisted tools and the same authorized service as manual creation. Draft/preview may exist without dispatch authority; executing a permitted external effect requires the exact policy-approved human action and current recipient/channel/template/version checks. This does not enable external communication or health-record access prohibited in the MVP Agent scope. No provider credentials, arbitrary contact lookup or self-assigned critical priority reaches the model.
+Source: [20.30](Chapter20.md#L1989). Agents issue structured requests through Chapter 12's allowlisted tools and the same authorized service as manual creation. Draft/preview may exist without dispatch authority; executing a permitted external effect requires the exact policy-approved human action and current recipient/channel/template/version checks. This does not enable external communication or health-record access prohibited in the MVP Agent scope. No provider credentials, arbitrary contact lookup or self-assigned critical priority reaches the model.
 
 All nine tool names are retained. `notification.acknowledge` cannot impersonate a human recipient: it requires an authenticated authorized human/domain action or an explicit reviewed representative workflow, and still records the true actor. `communication_consent.check` is a scoped read, not grant modification or a global phone-number oracle.
 
@@ -502,7 +502,7 @@ Source reminders/context never become control instructions. Stable effect receip
 
 ## 8. Security and Privacy Boundaries
 
-Source: [20.29](../Chapter20.md#L1885). The following fourteen threat labels and nineteen control labels are preserved verbatim. They identify requirements and possible risks, not observed vulnerabilities or validated provider capabilities.
+Source: [20.29](Chapter20.md#L1885). The following fourteen threat labels and nineteen control labels are preserved verbatim. They identify requirements and possible risks, not observed vulnerabilities or validated provider capabilities.
 
 | ID | Source threat |
 | --- | --- |

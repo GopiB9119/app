@@ -6,15 +6,15 @@ Status: DRAFT FOR PRODUCT AND SECURITY REVIEW. This is a planning contract, not 
 
 This continues the [Chapter 1 release plan](CHAPTER_01_RELEASE_PLAN.md) and [Chapter 18 identity contract](CHAPTER_18_IDENTITY_CONTRACT.md). It refines C1-J03 private membership, C1-J04 conversations, C1-J05 planning and C1-T04 Space policy. C18-W05 admission, C18-W07 roles and C18-D03 recipient confirmation remain linked proposals, not newly approved behavior.
 
-- [Chapter 3](../Chapter3.md) is the owning source for private family, couple, solo, custom and temporary-event Spaces. Public participation stays a separate Page contract; shared infrastructure does not make a private Space publicly discoverable.
+- [Chapter 3](Chapter3.md) is the owning source for private family, couple, solo, custom and temporary-event Spaces. Public participation stays a separate Page contract; shared infrastructure does not make a private Space publicly discoverable.
 - Family is the first delivery slice. Couple, solo and custom remain in the proposed full MVP; temporary-event behavior is retained in the wider product without silently changing release priority.
 - Original chapters and earlier planning drafts remain unchanged. Continuing planning does not authorize coding, real invitations, sensitive data use, deployment or paid providers.
-- The source ends at [3.27.1 Android Feature Modules](../Chapter3.md#L2066) without a module list or final acceptance section. New UI, transaction and test details in this document are explicitly design proposals, not invented source text.
+- The source ends at [3.27.1 Android Feature Modules](Chapter3.md#L2066) without a module list or final acceptance section. New UI, transaction and test details in this document are explicitly design proposals, not invented source text.
 - All product tests and implementation evidence are NOT RUN. Source coverage checks validate the draft's traceability, not runtime privacy, reliability or production readiness.
 
 ## 2. Exact Source Guarantees
 
-All ten guarantees in [section 3.1](../Chapter3.md#L3) are retained verbatim. Application permissions must make these enforceable rather than leave them as Agent prompt instructions.
+All ten guarantees in [section 3.1](Chapter3.md#L3) are retained verbatim. Application permissions must make these enforceable rather than leave them as Agent prompt instructions.
 
 | ID | Source guarantee |
 | --- | --- |
@@ -35,37 +35,37 @@ All 27 numbered topics are retained with their exact source titles. This index r
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C3-S01 | Purpose | [3.1](../Chapter3.md#L3) |
-| C3-S02 | Private Space Types | [3.2](../Chapter3.md#L29) |
-| C3-S03 | Space Lifecycle | [3.3](../Chapter3.md#L267) |
-| C3-S04 | Generic Space Data Model | [3.4](../Chapter3.md#L398) |
-| C3-S05 | Space Policy Model | [3.5](../Chapter3.md#L463) |
-| C3-S06 | Membership Architecture | [3.6](../Chapter3.md#L508) |
-| C3-S07 | Role Permissions | [3.7](../Chapter3.md#L564) |
-| C3-S08 | Membership Rules by Space Type | [3.8](../Chapter3.md#L700) |
-| C3-S09 | Invitation Architecture | [3.9](../Chapter3.md#L784) |
-| C3-S10 | Contact-Based Invitations | [3.10](../Chapter3.md#L868) |
-| C3-S11 | Joining a Private Space | [3.11](../Chapter3.md#L911) |
-| C3-S12 | Private Content Model | [3.12](../Chapter3.md#L987) |
-| C3-S13 | Private Conversations | [3.13](../Chapter3.md#L1088) |
-| C3-S14 | Private Messaging Architecture | [3.14](../Chapter3.md#L1139) |
-| C3-S15 | Realtime Private Messaging | [3.15](../Chapter3.md#L1229) |
-| C3-S16 | Shared Tasks | [3.16](../Chapter3.md#L1275) |
-| C3-S17 | Shared Events | [3.17](../Chapter3.md#L1344) |
-| C3-S18 | Reminders and Notifications | [3.18](../Chapter3.md#L1420) |
-| C3-S19 | Health-Related Private Data | [3.19](../Chapter3.md#L1497) |
-| C3-S20 | Private Agent Architecture | [3.20](../Chapter3.md#L1572) |
-| C3-S21 | Agent Memory Isolation | [3.21](../Chapter3.md#L1630) |
-| C3-S22 | Agent Action Approval | [3.22](../Chapter3.md#L1698) |
-| C3-S23 | Family Admin Escalation | [3.23](../Chapter3.md#L1784) |
-| C3-S24 | Files and Media | [3.24](../Chapter3.md#L1837) |
-| C3-S25 | Private Space API Design | [3.25](../Chapter3.md#L1900) |
-| C3-S26 | Authorization Middleware | [3.26](../Chapter3.md#L1984) |
-| C3-S27 | Android Architecture | [3.27](../Chapter3.md#L2042) |
+| C3-S01 | Purpose | [3.1](Chapter3.md#L3) |
+| C3-S02 | Private Space Types | [3.2](Chapter3.md#L29) |
+| C3-S03 | Space Lifecycle | [3.3](Chapter3.md#L267) |
+| C3-S04 | Generic Space Data Model | [3.4](Chapter3.md#L398) |
+| C3-S05 | Space Policy Model | [3.5](Chapter3.md#L463) |
+| C3-S06 | Membership Architecture | [3.6](Chapter3.md#L508) |
+| C3-S07 | Role Permissions | [3.7](Chapter3.md#L564) |
+| C3-S08 | Membership Rules by Space Type | [3.8](Chapter3.md#L700) |
+| C3-S09 | Invitation Architecture | [3.9](Chapter3.md#L784) |
+| C3-S10 | Contact-Based Invitations | [3.10](Chapter3.md#L868) |
+| C3-S11 | Joining a Private Space | [3.11](Chapter3.md#L911) |
+| C3-S12 | Private Content Model | [3.12](Chapter3.md#L987) |
+| C3-S13 | Private Conversations | [3.13](Chapter3.md#L1088) |
+| C3-S14 | Private Messaging Architecture | [3.14](Chapter3.md#L1139) |
+| C3-S15 | Realtime Private Messaging | [3.15](Chapter3.md#L1229) |
+| C3-S16 | Shared Tasks | [3.16](Chapter3.md#L1275) |
+| C3-S17 | Shared Events | [3.17](Chapter3.md#L1344) |
+| C3-S18 | Reminders and Notifications | [3.18](Chapter3.md#L1420) |
+| C3-S19 | Health-Related Private Data | [3.19](Chapter3.md#L1497) |
+| C3-S20 | Private Agent Architecture | [3.20](Chapter3.md#L1572) |
+| C3-S21 | Agent Memory Isolation | [3.21](Chapter3.md#L1630) |
+| C3-S22 | Agent Action Approval | [3.22](Chapter3.md#L1698) |
+| C3-S23 | Family Admin Escalation | [3.23](Chapter3.md#L1784) |
+| C3-S24 | Files and Media | [3.24](Chapter3.md#L1837) |
+| C3-S25 | Private Space API Design | [3.25](Chapter3.md#L1900) |
+| C3-S26 | Authorization Middleware | [3.26](Chapter3.md#L1984) |
+| C3-S27 | Android Architecture | [3.27](Chapter3.md#L2042) |
 
 ## 4. Space Types and Human Membership
 
-The source type values in [3.4.1](../Chapter3.md#L420) are preserved. A type supplies defaults and constraints, not separate duplicated identity, messaging, scheduling or Agent implementations.
+The source type values in [3.4.1](Chapter3.md#L420) are preserved. A type supplies defaults and constraints, not separate duplicated identity, messaging, scheduling or Agent implementations.
 
 | ID | Source type | Human membership contract | Important boundary |
 | --- | --- | --- | --- |
@@ -276,7 +276,7 @@ Deletion tracks a grace/purge workflow across records, subscriptions, schedules,
 
 ## 9. Data Invariants and Transaction Handoff
 
-These are logical requirements for [Chapter 6](../Chapter6.md), not executable SQL or a final schema. Retain one ownership boundary for memberships and admissions across Chapter 18's generic resource model and this chapter's Space tables; do not create two conflicting sources of truth.
+These are logical requirements for [Chapter 6](Chapter6.md), not executable SQL or a final schema. Retain one ownership boundary for memberships and admissions across Chapter 18's generic resource model and this chapter's Space tables; do not create two conflicting sources of truth.
 
 | Aggregate or relationship | Constraint to enforce | Failure prevented |
 | --- | --- | --- |
@@ -306,13 +306,13 @@ Revocation is effective for new protected operations at the agreed execution bou
 
 ### Events and Policy Versions
 
-[Chapter 7](../Chapter7.md) owns the canonical envelope. Proposed event families include Space creation/policy/lifecycle change, membership admission/role/end/suspension, invitation/request state and relevant object changes. Use stable event ID, type, schema version, aggregate/version, Space, authorized actor/acting identity, occurrence time and correlation ID; these are proposals, not finalized new event names.
+[Chapter 7](Chapter7.md) owns the canonical envelope. Proposed event families include Space creation/policy/lifecycle change, membership admission/role/end/suspension, invitation/request state and relevant object changes. Use stable event ID, type, schema version, aggregate/version, Space, authorized actor/acting identity, occurrence time and correlation ID; these are proposals, not finalized new event names.
 
 Consumers deduplicate and re-evaluate their own action. A membership event is not an unrestricted snapshot of the private roster, phone numbers, relationship labels, history or health details. Event metadata, audit and logs have access and retention controls. Security logs use safe action/result categories; never include invitation tokens, secrets, message bodies or unredacted care information.
 
 ## 10. Source API Inventory and Contract Boundaries
 
-All 40 source method/path pairs from [3.25](../Chapter3.md#L1900) are retained below. They are a source inventory, not generated OpenAPI or a commitment to duplicate Chapter 18's `/resources` routes. Choose a single canonical prefix and domain operation in Chapter 7. REST is the client command/query baseline, WebSocket carries realtime updates, and selected internal gRPC requires an actual boundary rather than being mandatory for every service.
+All 40 source method/path pairs from [3.25](Chapter3.md#L1900) are retained below. They are a source inventory, not generated OpenAPI or a commitment to duplicate Chapter 18's `/resources` routes. Choose a single canonical prefix and domain operation in Chapter 7. REST is the client command/query baseline, WebSocket carries realtime updates, and selected internal gRPC requires an actual boundary rather than being mandatory for every service.
 
 | ID | Source operation | Owning workflow | Required contract boundary |
 | --- | --- | --- | --- |
@@ -363,7 +363,7 @@ Responses use safe versioned schemas and narrow field projections, current autho
 
 ## 11. Android and Web Screen Contract
 
-The source specifies the Android stack but stops before its feature module list. The following flows are proposed additions linked to [Chapter 8](../Chapter8.md) and [Chapter 9](../Chapter9.md), not recovered missing text. Retain Kotlin/Compose, ViewModel/StateFlow, repositories and permitted Room state, and the selected Retrofit/OkHttp baseline; the source's Ktor alternative is not a reason to add a second HTTP client. The web client uses the same backend contracts and does not duplicate domain policy.
+The source specifies the Android stack but stops before its feature module list. The following flows are proposed additions linked to [Chapter 8](Chapter8.md) and [Chapter 9](Chapter9.md), not recovered missing text. Retain Kotlin/Compose, ViewModel/StateFlow, repositories and permitted Room state, and the selected Retrofit/OkHttp baseline; the source's Ktor alternative is not a reason to add a second HTTP client. The web client uses the same backend contracts and does not duplicate domain policy.
 
 | Surface | User outcome | Required exceptional states |
 | --- | --- | --- |
@@ -458,6 +458,6 @@ Broader Space demonstrations add concurrent last-slot couple joins, solo convers
 | Treat owner policy edits or generic approval as authority over personal data. | Privilege escalation or prohibited Agent/clinical action. | Target-aware capabilities, actual data-owner consent and absolute prohibited-action boundaries. |
 | Archive/delete only the Space record. | Orphaned jobs continue sending, indexes retain private data or purge is falsely reported complete. | Transactional state change plus resumable, permission-aware dependent-work cleanup and retention. |
 
-Next is [Chapter 6: database architecture](../Chapter6.md), using this contract and the identity draft to select canonical entities, constraints, admission/ownership transactions, state models and migration boundaries. Follow with [Chapter 7: API/event contracts](../Chapter7.md); carry [Chapter 11 security](../Chapter11.md), [Chapter 19 encryption](../Chapter19.md), [Chapter 13 scheduling](../Chapter13.md), [Chapter 14 files](../Chapter14.md) and [Chapter 20 delivery](../Chapter20.md) alongside their affected records.
+Next is [Chapter 6: database architecture](Chapter6.md), using this contract and the identity draft to select canonical entities, constraints, admission/ownership transactions, state models and migration boundaries. Follow with [Chapter 7: API/event contracts](Chapter7.md); carry [Chapter 11 security](Chapter11.md), [Chapter 19 encryption](Chapter19.md), [Chapter 13 scheduling](Chapter13.md), [Chapter 14 files](Chapter14.md) and [Chapter 20 delivery](Chapter20.md) alongside their affected records.
 
 The immediate product decisions remain the proposed role hierarchy, private/history defaults, intended-recipient confirmation, couple departure/replacement, owner continuity and restore/rejoin policy. This draft advances design without selecting those policies on the user's behalf or starting application implementation.

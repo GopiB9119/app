@@ -43,4 +43,4 @@ The recommendation below aligns document planning with the existing provisional 
 
 ## References
 
-See the [release plan](../CHAPTER_01_RELEASE_PLAN.md), [team plan](../TEAM_ORGANIZATION_EXECUTION_PLAN.md), [delivery draft](../CHAPTER_20_DELIVERY_CONTRACT.md) and unchanged [Chapter 1 source](../../Chapter1.md). The source's phase/order conflicts remain traceable; this ADR does not certify complete planning or production readiness.
+See the [release plan](../CHAPTER_01_RELEASE_PLAN.md), [team plan](../TEAM_ORGANIZATION_EXECUTION_PLAN.md), [delivery draft](../CHAPTER_20_DELIVERY_CONTRACT.md) and unchanged [Chapter 1 source](../Chapter1.md). The source's phase/order conflicts remain traceable; this ADR does not certify complete planning or production readiness.

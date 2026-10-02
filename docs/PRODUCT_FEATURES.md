@@ -16,27 +16,27 @@ Messaging now has a limited Space chat and direct-message implementation on all 
 
 | Original | Product responsibility and controlling contract |
 | --- | --- |
-| [idea.md](../idea.md) | Overall product, public/private separation, workflows and delivery principles |
-| [Chapter1.md](../Chapter1.md) | Release scope and acceptance: [release plan](CHAPTER_01_RELEASE_PLAN.md) |
-| [Chapter2.md](../Chapter2.md) | Public pages, posts, comments, following: [public content](CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md) |
-| [Chapter3.md](../Chapter3.md) | Family/couple/solo/custom/temporary Spaces: [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
-| [Chapter4.md](../Chapter4.md) | Messaging, events and delivery: [reconciliation](CONTRACT_RECONCILIATION.md) |
-| [Chapter5.md](../Chapter5.md) | Agent baseline; retained but deferred: [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
-| [Chapter6.md](../Chapter6.md) | Database, ownership, transactions: [data](CHAPTER_06_DATA_CONTRACT.md) |
-| [Chapter7.md](../Chapter7.md) | HTTP, realtime, jobs and sync: [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
-| [Chapter8.md](../Chapter8.md) | Kotlin app, navigation, state and offline behavior: [Android](CHAPTER_08_ANDROID_CONTRACT.md) |
-| [Chapter9.md](../Chapter9.md) | Web routes, session BFF and responsive UI: [web](CHAPTER_09_WEB_CONTRACT.md) |
-| [Chapter10.md](../Chapter10.md) | Workers, operations and recovery: [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |
-| [Chapter11.md](../Chapter11.md) | Privacy, security and care boundaries: [security](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
-| [Chapter12.md](../Chapter12.md) | Agent engine, tools, memory and approvals; deferred |
-| [Chapter13.md](../Chapter13.md) | Reminders, dates, recurrence and calendar: [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
-| [Chapter14.md](../Chapter14.md) | Files, scan, extraction and retrieval: [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
-| [Chapter15.md](../Chapter15.md) | Home, search, ranking and personalization: [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
-| [Chapter16.md](../Chapter16.md) | Reporting, blocking, moderation and appeals: [safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
-| [Chapter17.md](../Chapter17.md) | Events, RSVP, polls, expenses and workspaces: [events](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
-| [Chapter18.md](../Chapter18.md) | Authentication, profiles, sessions and data rights: [identity](CHAPTER_18_IDENTITY_CONTRACT.md) |
-| [Chapter19.md](../Chapter19.md) | Messaging and encryption: [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
-| [Chapter20.md](../Chapter20.md) | Inbox, providers, consent and delivery truth: [delivery](CHAPTER_20_DELIVERY_CONTRACT.md) |
+| [idea.md](idea.md) | Overall product, public/private separation, workflows and delivery principles |
+| [Chapter1.md](Chapter1.md) | Release scope and acceptance: [release plan](CHAPTER_01_RELEASE_PLAN.md) |
+| [Chapter2.md](Chapter2.md) | Public pages, posts, comments, following: [public content](CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md) |
+| [Chapter3.md](Chapter3.md) | Family/couple/solo/custom/temporary Spaces: [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
+| [Chapter4.md](Chapter4.md) | Messaging, events and delivery: [reconciliation](CONTRACT_RECONCILIATION.md) |
+| [Chapter5.md](Chapter5.md) | Agent baseline; retained but deferred: [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
+| [Chapter6.md](Chapter6.md) | Database, ownership, transactions: [data](CHAPTER_06_DATA_CONTRACT.md) |
+| [Chapter7.md](Chapter7.md) | HTTP, realtime, jobs and sync: [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
+| [Chapter8.md](Chapter8.md) | Kotlin app, navigation, state and offline behavior: [Android](CHAPTER_08_ANDROID_CONTRACT.md) |
+| [Chapter9.md](Chapter9.md) | Web routes, session BFF and responsive UI: [web](CHAPTER_09_WEB_CONTRACT.md) |
+| [Chapter10.md](Chapter10.md) | Workers, operations and recovery: [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |
+| [Chapter11.md](Chapter11.md) | Privacy, security and care boundaries: [security](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
+| [Chapter12.md](Chapter12.md) | Agent engine, tools, memory and approvals; deferred |
+| [Chapter13.md](Chapter13.md) | Reminders, dates, recurrence and calendar: [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
+| [Chapter14.md](Chapter14.md) | Files, scan, extraction and retrieval: [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
+| [Chapter15.md](Chapter15.md) | Home, search, ranking and personalization: [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
+| [Chapter16.md](Chapter16.md) | Reporting, blocking, moderation and appeals: [safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
+| [Chapter17.md](Chapter17.md) | Events, RSVP, polls, expenses and workspaces: [events](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
+| [Chapter18.md](Chapter18.md) | Authentication, profiles, sessions and data rights: [identity](CHAPTER_18_IDENTITY_CONTRACT.md) |
+| [Chapter19.md](Chapter19.md) | Messaging and encryption: [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
+| [Chapter20.md](Chapter20.md) | Inbox, providers, consent and delivery truth: [delivery](CHAPTER_20_DELIVERY_CONTRACT.md) |
 
 The two Chapter 19 drafts and two Chapter 20 drafts are retained alternatives, routed through the reconciliation document. Their similarly named decision IDs are not interchangeable. Original Chapters 3, 4, 7, 12, 13 and 15 have incomplete endings; absent requirements must not be invented or silently declared delivered. Proposed/open policy choices remain proposed/open.
 

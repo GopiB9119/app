@@ -905,7 +905,7 @@ Permission rules as built:
 | Entity | The boundary an agent works within. Not built. |
 | Purpose | **CONFIRMED** Every agent works within an explicit scope (R7). |
 | Owner | Module `agents`. |
-| Scope | **PROPOSED** personal, a Space (family, couple, solo or custom), or a page or event ([idea.md](../idea.md) section 24). Working across several Spaces is **TBD** (Product Understanding section 21). |
+| Scope | **PROPOSED** personal, a Space (family, couple, solo or custom), or a page or event ([idea.md](idea.md) section 24). Working across several Spaces is **TBD** (Product Understanding section 21). |
 | Lifecycle | **TBD** (U-15). |
 | States | **TBD** (U-15). |
 | Relationships | **PROPOSED** decides which data, permissions and memory rules apply to an agent. Built, not connected: each agent run is bound to one Space, account, admission and session. |

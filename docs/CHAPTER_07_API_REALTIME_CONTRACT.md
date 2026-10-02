@@ -8,8 +8,8 @@ Source-of-truth role: the [documentation map](README.md) names this contract as 
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md), [Space contract](CHAPTER_03_SPACE_CONTRACT.md) and [data contract](CHAPTER_06_DATA_CONTRACT.md). It develops C1-T05, C18-V22, C3-D11 and C6-T12 into a shared client/backend handoff.
 
-- [Chapter 7](../Chapter7.md) is the source for REST, WebSocket, internal RPC, queue, webhook and synchronization behavior. Preserve source inventories without assuming the illustrative routes or envelopes are already canonical across chapters.
-- The source ends at [7.31 Rate Limiting](../Chapter7.md#L1542) with 'Rate limits should'. It has no completed rate policy or final acceptance list. New protocol details, limits, missing operations and tests are proposals, not recovered source text.
+- [Chapter 7](Chapter7.md) is the source for REST, WebSocket, internal RPC, queue, webhook and synchronization behavior. Preserve source inventories without assuming the illustrative routes or envelopes are already canonical across chapters.
+- The source ends at [7.31 Rate Limiting](Chapter7.md#L1542) with 'Rate limits should'. It has no completed rate policy or final acceptance list. New protocol details, limits, missing operations and tests are proposals, not recovered source text.
 - M1 remains verified identity, private family admission, an ordinary shared task, one-time in-app reminder and acknowledgment. Public content, messaging, Agent and advanced integrations follow the release scope; a route's presence here does not add a capability to M1.
 - Earlier product/policy/provider/encryption decisions remain pending. No original chapter or earlier draft is modified. No code, dependency install, live message, server, database or deployment is authorized by this planning continuation.
 - All API/runtime acceptance evidence is NOT RUN. Document checks verify inventories and consistency, not endpoint correctness, authorization, delivery, recovery or production readiness.
@@ -20,37 +20,37 @@ All 31 numbered source topics are retained with exact titles and anchors.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C7-S01 | Purpose | [7.1](../Chapter7.md#L3) |
-| C7-S02 | Communication Architecture | [7.2](../Chapter7.md#L35) |
-| C7-S03 | Communication Protocol Decision | [7.3](../Chapter7.md#L65) |
-| C7-S04 | REST API Design | [7.4](../Chapter7.md#L214) |
-| C7-S05 | Authentication | [7.5](../Chapter7.md#L262) |
-| C7-S06 | Authorization Model | [7.6](../Chapter7.md#L301) |
-| C7-S07 | Standard API Response Format | [7.7](../Chapter7.md#L365) |
-| C7-S08 | API Error Categories | [7.8](../Chapter7.md#L420) |
-| C7-S09 | Core API Surface | [7.9](../Chapter7.md#L569) |
-| C7-S10 | Pagination | [7.10](../Chapter7.md#L693) |
-| C7-S11 | Idempotency | [7.11](../Chapter7.md#L733) |
-| C7-S12 | WebSocket Architecture | [7.12](../Chapter7.md#L773) |
-| C7-S13 | WebSocket Event Envelope | [7.13](../Chapter7.md#L803) |
-| C7-S14 | WebSocket Client Events | [7.14](../Chapter7.md#L844) |
-| C7-S15 | WebSocket Reconnection | [7.15](../Chapter7.md#L879) |
-| C7-S16 | Missed Event Recovery | [7.16](../Chapter7.md#L912) |
-| C7-S17 | Message Sending Architecture | [7.17](../Chapter7.md#L959) |
-| C7-S18 | Message Delivery States | [7.18](../Chapter7.md#L993) |
-| C7-S19 | Internal Service Communication | [7.19](../Chapter7.md#L1019) |
-| C7-S20 | Example gRPC Service Boundaries | [7.20](../Chapter7.md#L1053) |
-| C7-S21 | Message Queue Architecture | [7.21](../Chapter7.md#L1104) |
-| C7-S22 | Queue Job Envelope | [7.22](../Chapter7.md#L1152) |
-| C7-S23 | Retry Policy | [7.23](../Chapter7.md#L1177) |
-| C7-S24 | Dead-Letter Queue | [7.24](../Chapter7.md#L1224) |
-| C7-S25 | Agent Communication Flow | [7.25](../Chapter7.md#L1262) |
-| C7-S26 | Agent-to-Agent Communication | [7.26](../Chapter7.md#L1304) |
-| C7-S27 | Preventing Agent Loops | [7.27](../Chapter7.md#L1363) |
-| C7-S28 | External Messaging Architecture | [7.28](../Chapter7.md#L1409) |
-| C7-S29 | Webhook Processing | [7.29](../Chapter7.md#L1473) |
-| C7-S30 | Realtime Presence | [7.30](../Chapter7.md#L1512) |
-| C7-S31 | Rate Limiting | [7.31](../Chapter7.md#L1542) |
+| C7-S01 | Purpose | [7.1](Chapter7.md#L3) |
+| C7-S02 | Communication Architecture | [7.2](Chapter7.md#L35) |
+| C7-S03 | Communication Protocol Decision | [7.3](Chapter7.md#L65) |
+| C7-S04 | REST API Design | [7.4](Chapter7.md#L214) |
+| C7-S05 | Authentication | [7.5](Chapter7.md#L262) |
+| C7-S06 | Authorization Model | [7.6](Chapter7.md#L301) |
+| C7-S07 | Standard API Response Format | [7.7](Chapter7.md#L365) |
+| C7-S08 | API Error Categories | [7.8](Chapter7.md#L420) |
+| C7-S09 | Core API Surface | [7.9](Chapter7.md#L569) |
+| C7-S10 | Pagination | [7.10](Chapter7.md#L693) |
+| C7-S11 | Idempotency | [7.11](Chapter7.md#L733) |
+| C7-S12 | WebSocket Architecture | [7.12](Chapter7.md#L773) |
+| C7-S13 | WebSocket Event Envelope | [7.13](Chapter7.md#L803) |
+| C7-S14 | WebSocket Client Events | [7.14](Chapter7.md#L844) |
+| C7-S15 | WebSocket Reconnection | [7.15](Chapter7.md#L879) |
+| C7-S16 | Missed Event Recovery | [7.16](Chapter7.md#L912) |
+| C7-S17 | Message Sending Architecture | [7.17](Chapter7.md#L959) |
+| C7-S18 | Message Delivery States | [7.18](Chapter7.md#L993) |
+| C7-S19 | Internal Service Communication | [7.19](Chapter7.md#L1019) |
+| C7-S20 | Example gRPC Service Boundaries | [7.20](Chapter7.md#L1053) |
+| C7-S21 | Message Queue Architecture | [7.21](Chapter7.md#L1104) |
+| C7-S22 | Queue Job Envelope | [7.22](Chapter7.md#L1152) |
+| C7-S23 | Retry Policy | [7.23](Chapter7.md#L1177) |
+| C7-S24 | Dead-Letter Queue | [7.24](Chapter7.md#L1224) |
+| C7-S25 | Agent Communication Flow | [7.25](Chapter7.md#L1262) |
+| C7-S26 | Agent-to-Agent Communication | [7.26](Chapter7.md#L1304) |
+| C7-S27 | Preventing Agent Loops | [7.27](Chapter7.md#L1363) |
+| C7-S28 | External Messaging Architecture | [7.28](Chapter7.md#L1409) |
+| C7-S29 | Webhook Processing | [7.29](Chapter7.md#L1473) |
+| C7-S30 | Realtime Presence | [7.30](Chapter7.md#L1512) |
+| C7-S31 | Rate Limiting | [7.31](Chapter7.md#L1542) |
 
 ## 3. Exact Core API Inventory
 
@@ -140,7 +140,7 @@ These are all 77 method/path pairs in source section 7.9, in source order. They 
 
 ## 4. Source Error and Event Catalogs
 
-All 13 error codes in [section 7.8](../Chapter7.md#L420) are retained exactly. Their final status/retry/visibility mapping is proposed later. The source response example uses `SPACE_ACCESS_DENIED`, which is not in this catalog; this draft proposes normalizing it to `ACCESS_DENIED` where existence may be disclosed, not silently inventing competing client vocabularies.
+All 13 error codes in [section 7.8](Chapter7.md#L420) are retained exactly. Their final status/retry/visibility mapping is proposed later. The source response example uses `SPACE_ACCESS_DENIED`, which is not in this catalog; this draft proposes normalizing it to `ACCESS_DENIED` where existence may be disclosed, not silently inventing competing client vocabularies.
 
 | ID | Source error code |
 | --- | --- |
@@ -158,7 +158,7 @@ All 13 error codes in [section 7.8](../Chapter7.md#L420) are retained exactly. T
 | C7-E12 | TEMPORARY_UNAVAILABLE |
 | C7-E13 | INTERNAL_ERROR |
 
-All seven listed event-envelope fields from [section 7.13](../Chapter7.md#L803) are retained. Schema version, object revision, stream order and client resume cursor are distinct concepts that the source example does not fully specify.
+All seven listed event-envelope fields from [section 7.13](Chapter7.md#L803) are retained. Schema version, object revision, stream order and client resume cursor are distinct concepts that the source example does not fully specify.
 
 | ID | Source event field |
 | --- | --- |
@@ -465,7 +465,7 @@ Inventory gaps are implementation blockers for their dependent workflows, not ju
 
 ### C7-W08 Authenticate, Subscribe, Synchronize and Reconnect
 
-Source: [7.12-7.18](../Chapter7.md#L773) and [presence](../Chapter7.md#L1512). This proposes a single application connection manager per signed-in client context, with explicitly authorized logical subscriptions. It is not a permanently trusted connection to every private Space.
+Source: [7.12-7.18](Chapter7.md#L773) and [presence](Chapter7.md#L1512). This proposes a single application connection manager per signed-in client context, with explicitly authorized logical subscriptions. It is not a permanently trusted connection to every private Space.
 
 **Connection:** negotiate the supported application protocol over WSS. Browser WebSocket APIs do not generally allow arbitrary Authorization headers; choose reviewed cookie-plus-Origin checks or an HTTPS-issued, short-lived one-use ticket delivered through a bounded authentication frame. Native clients can use supported protected headers. Bind any ticket to current session, audience, purpose, allowed origin and expiry; consuming a ticket does not freeze authority forever. Do not put long-lived bearer tokens in query strings, subprotocol values, analytics or proxy logs.
 
@@ -564,7 +564,7 @@ Bound connections per actor/device, subscriptions, frame sizes, decompression, q
 
 ### C7-W09 Execute Authorized Internal and Background Work
 
-Source: [7.19-7.27](../Chapter7.md#L1019). Start with domain calls inside the modular backend; use internal REST/gRPC only at justified process/service boundaries. The source's AgentRuntime, DocumentProcessor and RealtimeGateway protobuf examples describe possible interfaces, not required initial microservices or generated stubs.
+Source: [7.19-7.27](Chapter7.md#L1019). Start with domain calls inside the modular backend; use internal REST/gRPC only at justified process/service boundaries. The source's AgentRuntime, DocumentProcessor and RealtimeGateway protobuf examples describe possible interfaces, not required initial microservices or generated stubs.
 
 Every internal request has authenticated service identity, audience, operation schema, deadline, payload/concurrency limits, trace context and an explicit authority model. When acting for a user, a trusted ingress may issue a bounded delegated context that the receiver verifies against current policy. A raw `user_id` or `X-User-ID` forwarded through an internal network is not proof. Least privilege also applies to worker consumers and administrative replay tools.
 
@@ -616,7 +616,7 @@ The reusable product Agent's orchestration is distinct from this project's Astra
 
 ### C7-W10 Send Through Approved Adapters and Process Callbacks
 
-Source: [7.28-7.29](../Chapter7.md#L1409), with delivery rules in [Chapter 20](../Chapter20.md). External channels remain separately gated; the MVP Agent does not gain WhatsApp/SMS/call/health-record powers from this interface design.
+Source: [7.28-7.29](Chapter7.md#L1409), with delivery rules in [Chapter 20](Chapter20.md). External channels remain separately gated; the MVP Agent does not gain WhatsApp/SMS/call/health-record powers from this interface design.
 
 Before an approved send, resolve intended recipient and current verified endpoint, account/Space/object authority, purpose-specific consent, quiet hours/preferences, template/language/field redaction, required exact approval, budget/rate limits and current cancellation. Use one authoritative notification service and reviewed provider adapters. A generic `send_message` method is not evidence that a vendor supports group creation, calls, online presence, status lookup, idempotency or cancellation.
 
@@ -740,6 +740,6 @@ The first release-scoped demo remains account/proof -> family creation -> intend
 | Trust internal IDs, queue flags or signed callback payloads as unlimited authority. | Privilege escalation and unintended provider actions. | Verified actor/service/provider binding plus current domain and consent checks. |
 | Let every client invent errors, versions and sync rules. | Hard-to-reproduce Android/web disagreement and broken old clients. | One published contract, typed adapters and versioned compatibility tests. |
 
-Next: [Chapter 8](../Chapter8.md), translating these identity, Space, data and API contracts into Android navigation, feature/state ownership, Room synchronization, screen states, accessibility and testable user flows. Carry [Chapter 9 web](../Chapter9.md) parity alongside the shared workflow, and retain [Chapter 11 security](../Chapter11.md) and [Chapter 19 encryption](../Chapter19.md) gates before dependent implementation.
+Next: [Chapter 8](Chapter8.md), translating these identity, Space, data and API contracts into Android navigation, feature/state ownership, Room synchronization, screen states, accessibility and testable user flows. Carry [Chapter 9 web](Chapter9.md) parity alongside the shared workflow, and retain [Chapter 11 security](Chapter11.md) and [Chapter 19 encryption](Chapter19.md) gates before dependent implementation.
 
 This completes the proposed Chapter 7 handoff. Source inventories are preserved, open choices are visible, and the document does not certify generated schemas, deployed APIs, live integrations or runnable clients.

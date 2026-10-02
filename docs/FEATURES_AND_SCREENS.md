@@ -2,7 +2,7 @@
 
 Updated: 2026-10-01. Product: Community Platform. The Agent is built by a separate workstream; everything below must work without any model.
 
-This is the readable build list for the human product: every product area from [idea.md](../idea.md) and Chapters 1-20, what already works on backend / web / Kotlin Android, which pages and screens exist or are missing, and the rules every feature must follow. The per-key ledger of all 190 catalog groups stays in [PRODUCT_FEATURES.md](PRODUCT_FEATURES.md); test evidence and limitations stay in [BUILD_STATUS.md](BUILD_STATUS.md). When a feature changes state, update both this list and the ledger in the same change.
+This is the readable build list for the human product: every product area from [idea.md](idea.md) and Chapters 1-20, what already works on backend / web / Kotlin Android, which pages and screens exist or are missing, and the rules every feature must follow. The per-key ledger of all 190 catalog groups stays in [PRODUCT_FEATURES.md](PRODUCT_FEATURES.md); test evidence and limitations stay in [BUILD_STATUS.md](BUILD_STATUS.md). When a feature changes state, update both this list and the ledger in the same change.
 
 Status words used here:
 

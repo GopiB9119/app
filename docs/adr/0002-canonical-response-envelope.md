@@ -8,9 +8,9 @@ Date: 2026-09-19
 
 Three independently evolving envelope definitions exist in the sources:
 
-- [Chapter 7](../../Chapter7.md) §7.7: `data` + `request_id`, collection `pagination`, or typed `error` (no `error: null` on success).
-- [Chapter 9](../../Chapter9.md) §9.11: `data` + `meta` + `error: null` wrapper.
-- [Chapter 1](../../Chapter1.md) and [idea.md](../../idea.md) §9: nested `error` object with `code`, `message`, `request_id`.
+- [Chapter 7](../Chapter7.md) §7.7: `data` + `request_id`, collection `pagination`, or typed `error` (no `error: null` on success).
+- [Chapter 9](../Chapter9.md) §9.11: `data` + `meta` + `error: null` wrapper.
+- [Chapter 1](../Chapter1.md) and [idea.md](../idea.md) §9: nested `error` object with `code`, `message`, `request_id`.
 
 The [API contract](../CHAPTER_07_API_REALTIME_CONTRACT.md) C7-D02 and the [web contract](../CHAPTER_09_WEB_CONTRACT.md) C9-D05 both require a single source of truth. Clients must match stable machine-readable codes, never human-readable messages.
 

@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, BACKEND, PLATFORM, SECURITY AND OPERATIONS REVIEW. Th
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md), [Space contract](CHAPTER_03_SPACE_CONTRACT.md), [data contract](CHAPTER_06_DATA_CONTRACT.md), [API/realtime contract](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android contract](CHAPTER_08_ANDROID_CONTRACT.md) and [web contract](CHAPTER_09_WEB_CONTRACT.md). It develops C6-T10/C6-T11, C7-T06/C7-T11 and C9-T12 into process ownership and operational evidence requirements.
 
-- [Chapter 10](../Chapter10.md) is the source. Begin with a domain-owned modular monolith, durable storage and separately executable worker/realtime roles. Logical domains do not require one deployed microservice or database per domain.
+- [Chapter 10](Chapter10.md) is the source. Begin with a domain-owned modular monolith, durable storage and separately executable worker/realtime roles. Logical domains do not require one deployed microservice or database per domain.
 - M1 remains the synthetic account/family/task/one-time in-app-reminder workflow. Infrastructure should support that complete slice without making every future Agent, OCR, voice or public-feed service a prerequisite.
 - Source tables, diagrams, configuration values and library choices are design inputs, not an approved cloud/vendor/version/cost commitment. Earlier product, identity, encryption, retention and provider gates stay pending.
 - Preserve all original chapters and prior drafts. No container/image pull, network-policy change, service start, account creation, secret collection, migration, real message, spend or deployment is authorized by this planning continuation.
@@ -18,46 +18,46 @@ All 40 numbered topics are retained with exact titles and anchors.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C10-S01 | Purpose | [10.1](../Chapter10.md#L3) |
-| C10-S02 | Architecture Principle | [10.2](../Chapter10.md#L57) |
-| C10-S03 | Initial Backend Topology | [10.3](../Chapter10.md#L105) |
-| C10-S04 | Backend Domain Modules | [10.4](../Chapter10.md#L147) |
-| C10-S05 | Service Responsibilities | [10.5](../Chapter10.md#L221) |
-| C10-S06 | Modular Monolith Rules | [10.6](../Chapter10.md#L425) |
-| C10-S07 | API Runtime | [10.7](../Chapter10.md#L466) |
-| C10-S08 | Worker Architecture | [10.8](../Chapter10.md#L515) |
-| C10-S09 | Queue Selection | [10.9](../Chapter10.md#L554) |
-| C10-S10 | Transactional Outbox | [10.10](../Chapter10.md#L594) |
-| C10-S11 | Idempotency | [10.11](../Chapter10.md#L653) |
-| C10-S12 | Database Scaling | [10.12](../Chapter10.md#L707) |
-| C10-S13 | Connection Pooling | [10.13](../Chapter10.md#L762) |
-| C10-S14 | Large Table Strategy | [10.14](../Chapter10.md#L792) |
-| C10-S15 | Redis Responsibilities | [10.15](../Chapter10.md#L847) |
-| C10-S16 | Distributed Locking | [10.16](../Chapter10.md#L891) |
-| C10-S17 | Agent Runtime Scaling | [10.17](../Chapter10.md#L919) |
-| C10-S18 | Agent Worker Isolation | [10.18](../Chapter10.md#L983) |
-| C10-S19 | External Provider Adapters | [10.19](../Chapter10.md#L1022) |
-| C10-S20 | External Messaging Safety | [10.20](../Chapter10.md#L1066) |
-| C10-S21 | Cloud Infrastructure | [10.21](../Chapter10.md#L1101) |
-| C10-S22 | Network Design | [10.22](../Chapter10.md#L1169) |
-| C10-S23 | Secrets Management | [10.23](../Chapter10.md#L1219) |
-| C10-S24 | Deployment Environments | [10.24](../Chapter10.md#L1269) |
-| C10-S25 | Deployment Pipeline | [10.25](../Chapter10.md#L1328) |
-| C10-S26 | Database Migration Strategy | [10.26](../Chapter10.md#L1385) |
-| C10-S27 | Health Checks | [10.27](../Chapter10.md#L1408) |
-| C10-S28 | Autoscaling | [10.28](../Chapter10.md#L1460) |
-| C10-S29 | Rate Limiting | [10.29](../Chapter10.md#L1506) |
-| C10-S30 | Disaster Recovery | [10.30](../Chapter10.md#L1564) |
-| C10-S31 | Recovery Objectives | [10.31](../Chapter10.md#L1618) |
-| C10-S32 | Backup Testing | [10.32](../Chapter10.md#L1661) |
-| C10-S33 | Failure Handling | [10.33](../Chapter10.md#L1695) |
-| C10-S34 | Circuit Breakers | [10.34](../Chapter10.md#L1753) |
-| C10-S35 | Observability Architecture | [10.35](../Chapter10.md#L1791) |
-| C10-S36 | Security Operations | [10.36](../Chapter10.md#L1871) |
-| C10-S37 | Cost Control | [10.37](../Chapter10.md#L1919) |
-| C10-S38 | Production Readiness Checklist | [10.38](../Chapter10.md#L1967) |
-| C10-S39 | Final Backend Architecture Decision | [10.39](../Chapter10.md#L2037) |
-| C10-S40 | Chapter 10 Acceptance Criteria | [10.40](../Chapter10.md#L2085) |
+| C10-S01 | Purpose | [10.1](Chapter10.md#L3) |
+| C10-S02 | Architecture Principle | [10.2](Chapter10.md#L57) |
+| C10-S03 | Initial Backend Topology | [10.3](Chapter10.md#L105) |
+| C10-S04 | Backend Domain Modules | [10.4](Chapter10.md#L147) |
+| C10-S05 | Service Responsibilities | [10.5](Chapter10.md#L221) |
+| C10-S06 | Modular Monolith Rules | [10.6](Chapter10.md#L425) |
+| C10-S07 | API Runtime | [10.7](Chapter10.md#L466) |
+| C10-S08 | Worker Architecture | [10.8](Chapter10.md#L515) |
+| C10-S09 | Queue Selection | [10.9](Chapter10.md#L554) |
+| C10-S10 | Transactional Outbox | [10.10](Chapter10.md#L594) |
+| C10-S11 | Idempotency | [10.11](Chapter10.md#L653) |
+| C10-S12 | Database Scaling | [10.12](Chapter10.md#L707) |
+| C10-S13 | Connection Pooling | [10.13](Chapter10.md#L762) |
+| C10-S14 | Large Table Strategy | [10.14](Chapter10.md#L792) |
+| C10-S15 | Redis Responsibilities | [10.15](Chapter10.md#L847) |
+| C10-S16 | Distributed Locking | [10.16](Chapter10.md#L891) |
+| C10-S17 | Agent Runtime Scaling | [10.17](Chapter10.md#L919) |
+| C10-S18 | Agent Worker Isolation | [10.18](Chapter10.md#L983) |
+| C10-S19 | External Provider Adapters | [10.19](Chapter10.md#L1022) |
+| C10-S20 | External Messaging Safety | [10.20](Chapter10.md#L1066) |
+| C10-S21 | Cloud Infrastructure | [10.21](Chapter10.md#L1101) |
+| C10-S22 | Network Design | [10.22](Chapter10.md#L1169) |
+| C10-S23 | Secrets Management | [10.23](Chapter10.md#L1219) |
+| C10-S24 | Deployment Environments | [10.24](Chapter10.md#L1269) |
+| C10-S25 | Deployment Pipeline | [10.25](Chapter10.md#L1328) |
+| C10-S26 | Database Migration Strategy | [10.26](Chapter10.md#L1385) |
+| C10-S27 | Health Checks | [10.27](Chapter10.md#L1408) |
+| C10-S28 | Autoscaling | [10.28](Chapter10.md#L1460) |
+| C10-S29 | Rate Limiting | [10.29](Chapter10.md#L1506) |
+| C10-S30 | Disaster Recovery | [10.30](Chapter10.md#L1564) |
+| C10-S31 | Recovery Objectives | [10.31](Chapter10.md#L1618) |
+| C10-S32 | Backup Testing | [10.32](Chapter10.md#L1661) |
+| C10-S33 | Failure Handling | [10.33](Chapter10.md#L1695) |
+| C10-S34 | Circuit Breakers | [10.34](Chapter10.md#L1753) |
+| C10-S35 | Observability Architecture | [10.35](Chapter10.md#L1791) |
+| C10-S36 | Security Operations | [10.36](Chapter10.md#L1871) |
+| C10-S37 | Cost Control | [10.37](Chapter10.md#L1919) |
+| C10-S38 | Production Readiness Checklist | [10.38](Chapter10.md#L1967) |
+| C10-S39 | Final Backend Architecture Decision | [10.39](Chapter10.md#L2037) |
+| C10-S40 | Chapter 10 Acceptance Criteria | [10.40](Chapter10.md#L2085) |
 
 ## 3. Source Rules and Architecture Inventory
 
@@ -602,6 +602,6 @@ The demonstration is the M1 slice under tested conditions, not full production c
 | Automatically roll back incompatible schema/config/key changes. | Old code corrupts new state or retained data becomes unrecoverable. | Compatibility gates and reviewed roll-forward/restore choices with actual evidence. |
 | Save every private request to logs for easier debugging. | The observability system becomes an uncontrolled copy of family/health/identity data. | Minimal structured evidence, safe correlation, classification/retention and audited privileged investigation. |
 
-Next: [Chapter 11](../Chapter11.md), consolidating identity/resource/Agent/operator trust boundaries, threat models, encryption and key policies, data classification, consent/retention, abuse controls and security verification. Carry [Chapter 12 Agent runtime](../Chapter12.md), [Chapter 13 scheduling](../Chapter13.md), [Chapter 16 trust operations](../Chapter16.md), [Chapter 19 encryption](../Chapter19.md) and [Chapter 20 delivery](../Chapter20.md) into their dependent security decisions.
+Next: [Chapter 11](Chapter11.md), consolidating identity/resource/Agent/operator trust boundaries, threat models, encryption and key policies, data classification, consent/retention, abuse controls and security verification. Carry [Chapter 12 Agent runtime](Chapter12.md), [Chapter 13 scheduling](Chapter13.md), [Chapter 16 trust operations](Chapter16.md), [Chapter 19 encryption](Chapter19.md) and [Chapter 20 delivery](Chapter20.md) into their dependent security decisions.
 
 This completes the proposed Chapter 10 operational handoff. All original requirements remain traceable, decisions remain labeled, and no infrastructure build, live integration, recovery exercise or production readiness is claimed.

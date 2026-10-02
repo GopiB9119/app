@@ -8,8 +8,8 @@ Document role: working Chapter 19 review reference, not an approved canonical sp
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md), [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [event planning](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) drafts. It develops C17-T12 into conversation authority, durable messaging, device/key boundaries and scoped synchronization.
 
-- [Chapter 19](../Chapter19.md) is the source owner. [Chapter 20](../Chapter20.md) remains the notification/provider detail owner. Conversation participation, parent Space/event membership, device enrollment, cryptographic membership, Agent delegation and notification consent are distinct authorities.
-- Source Chapter 19 contains thirty-four numbered sections and ends at [19.34.4 Encryption Failure](../Chapter19.md#L2047) with 'Do not send plaintext as fallback'. There is no completed final architecture/acceptance list after it. Added workflows, tests and release gates are proposed refinements, not recovered source text.
+- [Chapter 19](Chapter19.md) is the source owner. [Chapter 20](Chapter20.md) remains the notification/provider detail owner. Conversation participation, parent Space/event membership, device enrollment, cryptographic membership, Agent delegation and notification consent are distinct authorities.
+- Source Chapter 19 contains thirty-four numbered sections and ends at [19.34.4 Encryption Failure](Chapter19.md#L2047) with 'Do not send plaintext as fallback'. There is no completed final architecture/acceptance list after it. Added workflows, tests and release gates are proposed refinements, not recovered source text.
 - Server-readable encrypted storage is not true E2E. Endpoint-only keys prevent ordinary backend plaintext processing; server-side search, scanning, moderation and Agent features must respect that constraint instead of silently decrypting or downgrading a conversation.
 - M1 remains the synthetic ordinary family task and one-time in-app reminder. A later messaging or E2E demonstration is a separate slice, not an added M1 prerequisite or evidence that the complete MVP exists. Selecting a first messaging mode does not approve every conversation's encryption default or the product's security claims.
 - Preserve all original sources and earlier drafts. Continued planning does not authorize application code, packages, real chats/keys/contacts, device enrollment, model/provider calls, network/security changes, provisioning, spending or deployment.
@@ -21,40 +21,40 @@ All thirty-four numbered topic titles and anchors are retained, including the fi
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C19-S01 | Purpose and Scope | [19.1](../Chapter19.md#L3) |
-| C19-S02 | Communication Domain Principles | [19.2](../Chapter19.md#L65) |
-| C19-S03 | Communication Model | [19.3](../Chapter19.md#L93) |
-| C19-S04 | Conversation Lifecycle | [19.4](../Chapter19.md#L157) |
-| C19-S05 | Conversation Membership | [19.5](../Chapter19.md#L258) |
-| C19-S06 | Message Model | [19.6](../Chapter19.md#L343) |
-| C19-S07 | Message Sending Flow | [19.7](../Chapter19.md#L408) |
-| C19-S08 | Idempotency and Duplicate Prevention | [19.8](../Chapter19.md#L446) |
-| C19-S09 | Message Ordering | [19.9](../Chapter19.md#L486) |
-| C19-S10 | Delivery and Read States | [19.10](../Chapter19.md#L534) |
-| C19-S11 | Offline-First Messaging | [19.11](../Chapter19.md#L610) |
-| C19-S12 | Realtime Transport | [19.12](../Chapter19.md#L667) |
-| C19-S13 | Realtime Event Envelope | [19.13](../Chapter19.md#L739) |
-| C19-S14 | Presence Architecture | [19.14](../Chapter19.md#L785) |
-| C19-S15 | Typing Indicators | [19.15](../Chapter19.md#L853) |
-| C19-S16 | End-to-End Encryption Architecture | [19.16](../Chapter19.md#L894) |
-| C19-S17 | E2E Encryption Modes | [19.17](../Chapter19.md#L916) |
-| C19-S18 | Encryption Key Architecture | [19.18](../Chapter19.md#L1000) |
-| C19-S19 | Message Metadata and Privacy | [19.19](../Chapter19.md#L1062) |
-| C19-S20 | Attachments and Media | [19.20](../Chapter19.md#L1106) |
-| C19-S21 | Message Editing and Deletion | [19.21](../Chapter19.md#L1170) |
-| C19-S22 | Reactions, Replies, Threads, and Mentions | [19.22](../Chapter19.md#L1202) |
-| C19-S23 | Agent Messaging Architecture | [19.23](../Chapter19.md#L1270) |
-| C19-S24 | Moderation and Reporting | [19.24](../Chapter19.md#L1356) |
-| C19-S25 | Search Architecture | [19.25](../Chapter19.md#L1415) |
-| C19-S26 | Notification Architecture | [19.26](../Chapter19.md#L1453) |
-| C19-S27 | APIs | [19.27](../Chapter19.md#L1508) |
-| C19-S28 | Database Model | [19.28](../Chapter19.md#L1604) |
-| C19-S29 | Android Screens | [19.29](../Chapter19.md#L1666) |
-| C19-S30 | Web/Desktop Screens | [19.30](../Chapter19.md#L1749) |
-| C19-S31 | Performance and Scaling | [19.31](../Chapter19.md#L1793) |
-| C19-S32 | Security Architecture | [19.32](../Chapter19.md#L1866) |
-| C19-S33 | Observability | [19.33](../Chapter19.md#L1936) |
-| C19-S34 | Failure Handling | [19.34](../Chapter19.md#L2003) |
+| C19-S01 | Purpose and Scope | [19.1](Chapter19.md#L3) |
+| C19-S02 | Communication Domain Principles | [19.2](Chapter19.md#L65) |
+| C19-S03 | Communication Model | [19.3](Chapter19.md#L93) |
+| C19-S04 | Conversation Lifecycle | [19.4](Chapter19.md#L157) |
+| C19-S05 | Conversation Membership | [19.5](Chapter19.md#L258) |
+| C19-S06 | Message Model | [19.6](Chapter19.md#L343) |
+| C19-S07 | Message Sending Flow | [19.7](Chapter19.md#L408) |
+| C19-S08 | Idempotency and Duplicate Prevention | [19.8](Chapter19.md#L446) |
+| C19-S09 | Message Ordering | [19.9](Chapter19.md#L486) |
+| C19-S10 | Delivery and Read States | [19.10](Chapter19.md#L534) |
+| C19-S11 | Offline-First Messaging | [19.11](Chapter19.md#L610) |
+| C19-S12 | Realtime Transport | [19.12](Chapter19.md#L667) |
+| C19-S13 | Realtime Event Envelope | [19.13](Chapter19.md#L739) |
+| C19-S14 | Presence Architecture | [19.14](Chapter19.md#L785) |
+| C19-S15 | Typing Indicators | [19.15](Chapter19.md#L853) |
+| C19-S16 | End-to-End Encryption Architecture | [19.16](Chapter19.md#L894) |
+| C19-S17 | E2E Encryption Modes | [19.17](Chapter19.md#L916) |
+| C19-S18 | Encryption Key Architecture | [19.18](Chapter19.md#L1000) |
+| C19-S19 | Message Metadata and Privacy | [19.19](Chapter19.md#L1062) |
+| C19-S20 | Attachments and Media | [19.20](Chapter19.md#L1106) |
+| C19-S21 | Message Editing and Deletion | [19.21](Chapter19.md#L1170) |
+| C19-S22 | Reactions, Replies, Threads, and Mentions | [19.22](Chapter19.md#L1202) |
+| C19-S23 | Agent Messaging Architecture | [19.23](Chapter19.md#L1270) |
+| C19-S24 | Moderation and Reporting | [19.24](Chapter19.md#L1356) |
+| C19-S25 | Search Architecture | [19.25](Chapter19.md#L1415) |
+| C19-S26 | Notification Architecture | [19.26](Chapter19.md#L1453) |
+| C19-S27 | APIs | [19.27](Chapter19.md#L1508) |
+| C19-S28 | Database Model | [19.28](Chapter19.md#L1604) |
+| C19-S29 | Android Screens | [19.29](Chapter19.md#L1666) |
+| C19-S30 | Web/Desktop Screens | [19.30](Chapter19.md#L1749) |
+| C19-S31 | Performance and Scaling | [19.31](Chapter19.md#L1793) |
+| C19-S32 | Security Architecture | [19.32](Chapter19.md#L1866) |
+| C19-S33 | Observability | [19.33](Chapter19.md#L1936) |
+| C19-S34 | Failure Handling | [19.34](Chapter19.md#L2003) |
 
 All twelve numbered communication principles in section 19.2 are preserved verbatim.
 
@@ -862,4 +862,4 @@ Record exact builds/configuration/protocol/library versions, actor/device/epoch/
 - Server scanning/search/moderation cannot inspect opaque E2E plaintext without an explicit additional disclosure. Metadata, receipts, notifications, attachments and reports remain privacy surfaces even when message bodies are encrypted.
 - Critical observed unauthorized disclosure, plaintext downgrade, duplicate acceptance/effect, history skip, stale key enrollment or unsafe recovery blocks the affected release. Unrun tests and undocumented custody/retention choices are not passes; risk acceptance cannot replace mandatory permission or qualified cryptographic review.
 
-Next is [Chapter 20](../Chapter20.md): notifications, in-app history, push delivery, external communication adapters, consent/preferences, escalation and delivery reconciliation. Carry the [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) boundaries. Continue design/developer handoff without authorizing provider messages, key collection, implementation or policy changes.
+Next is [Chapter 20](Chapter20.md): notifications, in-app history, push delivery, external communication adapters, consent/preferences, escalation and delivery reconciliation. Carry the [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) and [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) boundaries. Continue design/developer handoff without authorizing provider messages, key collection, implementation or policy changes.
