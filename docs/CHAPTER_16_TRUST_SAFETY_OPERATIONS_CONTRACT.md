@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, TRUST OPERATIONS, SECURITY AND PRIVACY REVIEW. This i
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) and [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) drafts. It develops C15-T12 into policy governance, operator authority, evidence custody and reliable safety operations.
 
-- [Chapter 16](../Chapter16.md) is the source owner. Chapter 15 already defines publication eligibility, report/appeal behavior and current restrictions; this chapter refines operational responsibility without building a second independent enforcement engine. [Chapter 19](../Chapter19.md) and [Chapter 20](../Chapter20.md) remain encryption and notification dependencies.
+- [Chapter 16](Chapter16.md) is the source owner. Chapter 15 already defines publication eligibility, report/appeal behavior and current restrictions; this chapter refines operational responsibility without building a second independent enforcement engine. [Chapter 19](Chapter19.md) and [Chapter 20](Chapter20.md) remain encryption and notification dependencies.
 - A platform role, community administrator, assigned case, service credential, classifier prediction or Agent label is not universal authority over private conversations, health records, files or memory. Access requires current actor/action/target/context/purpose and appropriate case or grant, with narrowly scoped privileged sessions where required.
 - The source has complete final architecture and acceptance sections. Preserve those below; added policy, data, transaction, test and runbook details are proposed refinements, not approved law, product choices or operating evidence.
 - M1 remains the synthetic ordinary family task and one-time in-app reminder. A later synthetic safety-operations exercise is a separate slice. Public features still need the safety/appeal/operating controls they depend on; a narrow demonstration cannot imply complete platform readiness.
@@ -19,49 +19,49 @@ All forty-three numbered topic titles and anchors are retained, including the fi
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C16-S01 | Purpose and Scope | [16.1](../Chapter16.md#L3) |
-| C16-S02 | Trust and Safety Objectives | [16.2](../Chapter16.md#L49) |
-| C16-S03 | Governance Model | [16.3](../Chapter16.md#L95) |
-| C16-S04 | Policy Hierarchy | [16.4](../Chapter16.md#L195) |
-| C16-S05 | Community Policy Structure | [16.5](../Chapter16.md#L222) |
-| C16-S06 | Enforcement Principles | [16.6](../Chapter16.md#L300) |
-| C16-S07 | Enforcement Levels | [16.7](../Chapter16.md#L340) |
-| C16-S08 | Enforcement Scope | [16.8](../Chapter16.md#L444) |
-| C16-S09 | Moderation Sources | [16.9](../Chapter16.md#L477) |
-| C16-S10 | Moderation Case Lifecycle | [16.10](../Chapter16.md#L521) |
-| C16-S11 | Case Priority | [16.11](../Chapter16.md#L558) |
-| C16-S12 | Moderator Queue Architecture | [16.12](../Chapter16.md#L592) |
-| C16-S13 | Moderator Roles | [16.13](../Chapter16.md#L637) |
-| C16-S14 | Moderator Authorization | [16.14](../Chapter16.md#L695) |
-| C16-S15 | Evidence Management | [16.15](../Chapter16.md#L730) |
-| C16-S16 | Privacy-Safe Moderation | [16.16](../Chapter16.md#L784) |
-| C16-S17 | Automated Moderation | [16.17](../Chapter16.md#L818) |
-| C16-S18 | Human-in-the-Loop Requirements | [16.18](../Chapter16.md#L878) |
-| C16-S19 | Appeals Architecture | [16.19](../Chapter16.md#L906) |
-| C16-S20 | Appeals Outcomes | [16.20](../Chapter16.md#L957) |
-| C16-S21 | Community-Level Moderation | [16.21](../Chapter16.md#L988) |
-| C16-S22 | Group Governance | [16.22](../Chapter16.md#L1034) |
-| C16-S23 | Agent Trust and Safety | [16.23](../Chapter16.md#L1075) |
-| C16-S24 | Agent Misuse Cases | [16.24](../Chapter16.md#L1147) |
-| C16-S25 | Spam and Coordinated Abuse Operations | [16.25](../Chapter16.md#L1189) |
-| C16-S26 | Fraud and Scam Protection | [16.26](../Chapter16.md#L1239) |
-| C16-S27 | Child and Vulnerable User Safety | [16.27](../Chapter16.md#L1287) |
-| C16-S28 | Threat and Emergency Handling | [16.28](../Chapter16.md#L1315) |
-| C16-S29 | Safety Notifications | [16.29](../Chapter16.md#L1357) |
-| C16-S30 | Moderator Quality Assurance | [16.30](../Chapter16.md#L1389) |
-| C16-S31 | Safety Analytics | [16.31](../Chapter16.md#L1431) |
-| C16-S32 | Safety Incident Management | [16.32](../Chapter16.md#L1487) |
-| C16-S33 | Audit Architecture | [16.33](../Chapter16.md#L1546) |
-| C16-S34 | Data Retention | [16.34](../Chapter16.md#L1596) |
-| C16-S35 | APIs | [16.35](../Chapter16.md#L1712) |
-| C16-S36 | Event Contracts | [16.36](../Chapter16.md#L1817) |
-| C16-S37 | Android Safety Screens | [16.37](../Chapter16.md#L1867) |
-| C16-S38 | Web/Desktop Safety Screens | [16.38](../Chapter16.md#L1925) |
-| C16-S39 | Failure Handling | [16.39](../Chapter16.md#L1979) |
-| C16-S40 | Security Requirements | [16.40](../Chapter16.md#L2031) |
-| C16-S41 | Repository Structure | [16.41](../Chapter16.md#L2063) |
-| C16-S42 | Final Architecture Decision | [16.42](../Chapter16.md#L2157) |
-| C16-S43 | Acceptance Criteria | [16.43](../Chapter16.md#L2219) |
+| C16-S01 | Purpose and Scope | [16.1](Chapter16.md#L3) |
+| C16-S02 | Trust and Safety Objectives | [16.2](Chapter16.md#L49) |
+| C16-S03 | Governance Model | [16.3](Chapter16.md#L95) |
+| C16-S04 | Policy Hierarchy | [16.4](Chapter16.md#L195) |
+| C16-S05 | Community Policy Structure | [16.5](Chapter16.md#L222) |
+| C16-S06 | Enforcement Principles | [16.6](Chapter16.md#L300) |
+| C16-S07 | Enforcement Levels | [16.7](Chapter16.md#L340) |
+| C16-S08 | Enforcement Scope | [16.8](Chapter16.md#L444) |
+| C16-S09 | Moderation Sources | [16.9](Chapter16.md#L477) |
+| C16-S10 | Moderation Case Lifecycle | [16.10](Chapter16.md#L521) |
+| C16-S11 | Case Priority | [16.11](Chapter16.md#L558) |
+| C16-S12 | Moderator Queue Architecture | [16.12](Chapter16.md#L592) |
+| C16-S13 | Moderator Roles | [16.13](Chapter16.md#L637) |
+| C16-S14 | Moderator Authorization | [16.14](Chapter16.md#L695) |
+| C16-S15 | Evidence Management | [16.15](Chapter16.md#L730) |
+| C16-S16 | Privacy-Safe Moderation | [16.16](Chapter16.md#L784) |
+| C16-S17 | Automated Moderation | [16.17](Chapter16.md#L818) |
+| C16-S18 | Human-in-the-Loop Requirements | [16.18](Chapter16.md#L878) |
+| C16-S19 | Appeals Architecture | [16.19](Chapter16.md#L906) |
+| C16-S20 | Appeals Outcomes | [16.20](Chapter16.md#L957) |
+| C16-S21 | Community-Level Moderation | [16.21](Chapter16.md#L988) |
+| C16-S22 | Group Governance | [16.22](Chapter16.md#L1034) |
+| C16-S23 | Agent Trust and Safety | [16.23](Chapter16.md#L1075) |
+| C16-S24 | Agent Misuse Cases | [16.24](Chapter16.md#L1147) |
+| C16-S25 | Spam and Coordinated Abuse Operations | [16.25](Chapter16.md#L1189) |
+| C16-S26 | Fraud and Scam Protection | [16.26](Chapter16.md#L1239) |
+| C16-S27 | Child and Vulnerable User Safety | [16.27](Chapter16.md#L1287) |
+| C16-S28 | Threat and Emergency Handling | [16.28](Chapter16.md#L1315) |
+| C16-S29 | Safety Notifications | [16.29](Chapter16.md#L1357) |
+| C16-S30 | Moderator Quality Assurance | [16.30](Chapter16.md#L1389) |
+| C16-S31 | Safety Analytics | [16.31](Chapter16.md#L1431) |
+| C16-S32 | Safety Incident Management | [16.32](Chapter16.md#L1487) |
+| C16-S33 | Audit Architecture | [16.33](Chapter16.md#L1546) |
+| C16-S34 | Data Retention | [16.34](Chapter16.md#L1596) |
+| C16-S35 | APIs | [16.35](Chapter16.md#L1712) |
+| C16-S36 | Event Contracts | [16.36](Chapter16.md#L1817) |
+| C16-S37 | Android Safety Screens | [16.37](Chapter16.md#L1867) |
+| C16-S38 | Web/Desktop Safety Screens | [16.38](Chapter16.md#L1925) |
+| C16-S39 | Failure Handling | [16.39](Chapter16.md#L1979) |
+| C16-S40 | Security Requirements | [16.40](Chapter16.md#L2031) |
+| C16-S41 | Repository Structure | [16.41](Chapter16.md#L2063) |
+| C16-S42 | Final Architecture Decision | [16.42](Chapter16.md#L2157) |
+| C16-S43 | Acceptance Criteria | [16.43](Chapter16.md#L2219) |
 
 The nine enforcement principles in section 16.6 retain their exact wording. Reports, predictions, disagreements, suspected violations, confirmed violations and technical errors remain different forms of evidence/state.
 
@@ -763,4 +763,4 @@ Record actual policy/component/artifact versions, actor/grant/case/action identi
 - Age/guardian authority, E2E evidence, legal requests, preservation/holds, emergency escalation and external contact need separately approved qualified procedures. This draft does not authorize live investigations, private-data collection or automatic emergency/clinical/financial actions.
 - Critical observed authority/audit bypass, private-data leakage, retaliation or stale restoration blocks the affected release. Unrun tests, missing staffing and unknown capabilities are not passes; residual-risk acceptance cannot waive mandatory law or safety controls.
 
-Next is [Chapter 17](../Chapter17.md): events, polls, contributions, shared budgets, tasks and collaborative planning. Carry the [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [encryption](../Chapter19.md) and [notification delivery](../Chapter20.md) boundaries. Continue design/developer handoff without authorizing payments, implementation, providers or policy changes.
+Next is [Chapter 17](Chapter17.md): events, polls, contributions, shared budgets, tasks and collaborative planning. Carry the [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [encryption](Chapter19.md) and [notification delivery](Chapter20.md) boundaries. Continue design/developer handoff without authorizing payments, implementation, providers or policy changes.

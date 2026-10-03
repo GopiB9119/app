@@ -46,7 +46,7 @@ test('product delivery ledger retains every feature and original source without 
   const expected = catalog.domains.flatMap(domain => domain.features.map(feature => `${domain.id}.${feature}`));
   assert.deepEqual(rows.map(row => row[1]).sort(), expected.sort());
   assert.equal(new Set(rows.map(row => row[1])).size, expected.length);
-  for (const source of sourceFiles) assert.ok(text.includes(`](../${source})`), source);
+  for (const source of sourceFiles) assert.ok(text.includes(`](${source})`), source);
   for (const match of text.matchAll(/\]\(([^)]+)\)/g)) {
     if (!match[1].startsWith('http')) assert.ok(existsSync(new URL(match[1].split('#')[0], location)), match[1]);
   }

@@ -16,27 +16,27 @@ Messaging now has a limited Space chat and direct-message implementation on all 
 
 | Original | Product responsibility and controlling contract |
 | --- | --- |
-| [idea.md](../idea.md) | Overall product, public/private separation, workflows and delivery principles |
-| [Chapter1.md](../Chapter1.md) | Release scope and acceptance: [release plan](CHAPTER_01_RELEASE_PLAN.md) |
-| [Chapter2.md](../Chapter2.md) | Public pages, posts, comments, following: [public content](CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md) |
-| [Chapter3.md](../Chapter3.md) | Family/couple/solo/custom/temporary Spaces: [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
-| [Chapter4.md](../Chapter4.md) | Messaging, events and delivery: [reconciliation](CONTRACT_RECONCILIATION.md) |
-| [Chapter5.md](../Chapter5.md) | Agent baseline; retained but deferred: [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
-| [Chapter6.md](../Chapter6.md) | Database, ownership, transactions: [data](CHAPTER_06_DATA_CONTRACT.md) |
-| [Chapter7.md](../Chapter7.md) | HTTP, realtime, jobs and sync: [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
-| [Chapter8.md](../Chapter8.md) | Kotlin app, navigation, state and offline behavior: [Android](CHAPTER_08_ANDROID_CONTRACT.md) |
-| [Chapter9.md](../Chapter9.md) | Web routes, session BFF and responsive UI: [web](CHAPTER_09_WEB_CONTRACT.md) |
-| [Chapter10.md](../Chapter10.md) | Workers, operations and recovery: [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |
-| [Chapter11.md](../Chapter11.md) | Privacy, security and care boundaries: [security](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
-| [Chapter12.md](../Chapter12.md) | Agent engine, tools, memory and approvals; deferred |
-| [Chapter13.md](../Chapter13.md) | Reminders, dates, recurrence and calendar: [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
-| [Chapter14.md](../Chapter14.md) | Files, scan, extraction and retrieval: [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
-| [Chapter15.md](../Chapter15.md) | Home, search, ranking and personalization: [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
-| [Chapter16.md](../Chapter16.md) | Reporting, blocking, moderation and appeals: [safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
-| [Chapter17.md](../Chapter17.md) | Events, RSVP, polls, expenses and workspaces: [events](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
-| [Chapter18.md](../Chapter18.md) | Authentication, profiles, sessions and data rights: [identity](CHAPTER_18_IDENTITY_CONTRACT.md) |
-| [Chapter19.md](../Chapter19.md) | Messaging and encryption: [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
-| [Chapter20.md](../Chapter20.md) | Inbox, providers, consent and delivery truth: [delivery](CHAPTER_20_DELIVERY_CONTRACT.md) |
+| [idea.md](idea.md) | Overall product, public/private separation, workflows and delivery principles |
+| [Chapter1.md](Chapter1.md) | Release scope and acceptance: [release plan](CHAPTER_01_RELEASE_PLAN.md) |
+| [Chapter2.md](Chapter2.md) | Public pages, posts, comments, following: [public content](CHAPTER_02_PUBLIC_CONTENT_CONTRACT.md) |
+| [Chapter3.md](Chapter3.md) | Family/couple/solo/custom/temporary Spaces: [Spaces](CHAPTER_03_SPACE_CONTRACT.md) |
+| [Chapter4.md](Chapter4.md) | Messaging, events and delivery: [reconciliation](CONTRACT_RECONCILIATION.md) |
+| [Chapter5.md](Chapter5.md) | Agent baseline; retained but deferred: [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) |
+| [Chapter6.md](Chapter6.md) | Database, ownership, transactions: [data](CHAPTER_06_DATA_CONTRACT.md) |
+| [Chapter7.md](Chapter7.md) | HTTP, realtime, jobs and sync: [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md) |
+| [Chapter8.md](Chapter8.md) | Kotlin app, navigation, state and offline behavior: [Android](CHAPTER_08_ANDROID_CONTRACT.md) |
+| [Chapter9.md](Chapter9.md) | Web routes, session BFF and responsive UI: [web](CHAPTER_09_WEB_CONTRACT.md) |
+| [Chapter10.md](Chapter10.md) | Workers, operations and recovery: [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) |
+| [Chapter11.md](Chapter11.md) | Privacy, security and care boundaries: [security](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) |
+| [Chapter12.md](Chapter12.md) | Agent engine, tools, memory and approvals; deferred |
+| [Chapter13.md](Chapter13.md) | Reminders, dates, recurrence and calendar: [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md) |
+| [Chapter14.md](Chapter14.md) | Files, scan, extraction and retrieval: [files](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md) |
+| [Chapter15.md](Chapter15.md) | Home, search, ranking and personalization: [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md) |
+| [Chapter16.md](Chapter16.md) | Reporting, blocking, moderation and appeals: [safety](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md) |
+| [Chapter17.md](Chapter17.md) | Events, RSVP, polls, expenses and workspaces: [events](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) |
+| [Chapter18.md](Chapter18.md) | Authentication, profiles, sessions and data rights: [identity](CHAPTER_18_IDENTITY_CONTRACT.md) |
+| [Chapter19.md](Chapter19.md) | Messaging and encryption: [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) |
+| [Chapter20.md](Chapter20.md) | Inbox, providers, consent and delivery truth: [delivery](CHAPTER_20_DELIVERY_CONTRACT.md) |
 
 The two Chapter 19 drafts and two Chapter 20 drafts are retained alternatives, routed through the reconciliation document. Their similarly named decision IDs are not interchangeable. Original Chapters 3, 4, 7, 12, 13 and 15 have incomplete endings; absent requirements must not be invented or silently declared delivered. Proposed/open policy choices remain proposed/open.
 
@@ -66,9 +66,9 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| community.pages | P/P/P | Public page detail by handle, signed-out reads, owner edits with reviewed version (Android too since T73), public rules of up to 2,000 characters (T83); archive/delete/lifecycle remain |
+| community.pages | P/P/P | Public page detail by handle, signed-out reads, owner edits with reviewed version (Android too since T73), public rules of up to 2,000 characters (T83); archive (read only), delete with 7 days to restore, then erasure keeping the handle (T85) |
 | community.page-onboarding | P/P/P | Explicit page creation (handle/name/topic/description) with exact retry; publication review remains |
-| community.page-roles | U/U/U | Owner only today; editors/admins, acting-page attribution and target-aware role changes remain |
+| community.page-roles | P/P/P | One owner and up to 10 moderators invited by account ID, who pin posts and remove comments and are never shown publicly; handing a page over to a moderator (T84); editors/admins and acting-page attribution remain |
 | community.page-membership | U/U/U | Admission separate from following |
 | community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following; the list of pages you follow on web and Android (T72) |
 | community.posts-drafts | P/P/P | Private drafts, explicit publish, owner edits (edited mark) on web and Android ([T31](TASKS.md#approved-requirements-not-built-yet)), tombstone delete, up to 3 posts pinned to the top of the page (T83); revision history remains |
@@ -93,7 +93,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | spaces.temporary-event | U/U/U | Explicit expiry, read-only/archive and retained-data policy |
 | spaces.invitations | P/P/P | Existing verified account, inbox/review/accept/decline/revoke; no external contact send |
 | spaces.admission | P/P/P | Exact admission epochs, new invitation for return, no old task grants |
-| spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; owner, admin and member roles ([DEC-018](DECISIONS.md#accepted-decisions), provisional: admins invite, remove ordinary members and answer join requests; only the owner changes roles). Moderators, guests, observers, restrictions and per-Space permission settings remain |
+| spaces.memberships-roles | P/P/P | Roster/member removal/self-leave; owner, admin and member roles ([DEC-018](DECISIONS.md#accepted-decisions), provisional: admins invite, remove ordinary members and answer join requests; only the owner changes roles). Since [DEC-026](DECISIONS.md#accepted-decisions) (provisional) the owner of a family or group Space can let everyone in it invite people. Moderators, guests, observers, restrictions and other per-Space permission settings remain |
 | spaces.join-requests | P/P/P | Requests to public groups with an optional note, owner approval as a new admission, withdrawal, 14-day expiry and a 7-day wait after a decline ([T22](TASKS.md#spaces)) |
 | spaces.ownership-transfer | P/P/P | Two-party exact review and one-owner continuity; native device evidence pending |
 | spaces.history-policy | P/P/P | Creation-time task grants; configurable history sharing not implemented |
@@ -155,10 +155,10 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| events.shared-events | P/P/P | Space events with title, details, location, IANA zone and exact UTC start/end; reviewed edit and cancel. Public events and organizer workspaces remain |
+| events.shared-events | P/P/P | Space events with title, details, location, IANA zone and exact UTC start/end; reviewed edit and cancel. Web uses API zone names ([T118](BUILD_STATUS.md#web-event-timezone-checkpoint)); protects in-page drafts, links errors to fields, counts characters, localizes dates and offers Refresh ([T121/T123](BUILD_STATUS.md#web-event-workflow-improvements-checkpoint)). Public events, durable drafts and organizer workspaces remain |
 | events.public-events | U/U/U | Public projection excludes private workspace/roster/finance |
 | events.organizer-workspaces | U/U/U | Role-scoped event modules |
-| events.rsvp | P/P/P | Going/Maybe/Not going per admission; a response is intent, not attendance. Invitations to people outside the Space remain |
+| events.rsvp | P/P/P | Going/Maybe/Not going per admission; a response is intent, not attendance. Web lists now visibly mark the person's response as before the time change when reconfirmation is needed (T123). Invitations to people outside the Space remain |
 | events.registration-capacity | U/U/U | Serialized capacity including guests and idempotent reservations |
 | events.waitlists | U/U/U | Explicit promotion/expiry/release |
 | events.attendance | U/U/U | Attributed check-in, not inferred from Going |
@@ -287,7 +287,7 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | realtime.authorized-replay | U/U/U | No old history grant through replay |
 | realtime.snapshot-cursors | U/U/U | Coherent snapshot/log boundary and account/scope-bound cursors |
 | realtime.client-reconciliation | U/U/U | Stable logical IDs across REST/event orderings |
-| realtime.backpressure | P/P/P | At most 5 streams per account, 100 queued hints per stream, 30-minute streams, resync after a lost listener, client backoff (T65) |
+| realtime.backpressure | P/P/P | At most 5 streams per account, 100 queued hints per stream, 30-minute streams, resync after a lost listener, client backoff (T65). Web 429 retries honor the server's Retry-After deadline across network changes and same-account remounts; verified with virtual browser time and continued chat polling ([T120](BUILD_STATUS.md#web-live-retry-after-checkpoint)) |
 
 ### Platform and Client Quality
 

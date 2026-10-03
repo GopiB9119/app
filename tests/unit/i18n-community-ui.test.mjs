@@ -175,6 +175,13 @@ async function fixture(context, options = {}) {
       if (url.pathname === `/api/pages/${pageId}` && method === 'PATCH') { Object.assign(state.publicPage, body); return reply(state.publicPage); }
       if (url.pathname === '/api/me/pages' && method === 'GET') return reply([{ ...state.publicPage, can_manage: true, etag: '"page-1"' }]);
       if (url.pathname === '/api/me/following' && method === 'GET') return paged([]);
+      // Page roles and handover (T84) have nothing to show here: no moderators, roles or offers.
+      if (url.pathname === `/api/pages/${pageId}/moderators` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/handover` && method === 'GET') {
+        return new Response(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'No handover offer.', details: {} }, request_id: 'offline-community-i18n' }), { status: 404 });
+      }
+      if (url.pathname === '/api/me/moderator-roles' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/handover-offers' && method === 'GET') return reply([]);
       if (url.pathname === `/api/posts/${postId}` && method === 'GET') return reply(state.post);
       if (url.pathname === `/api/posts/${postId}/comments` && method === 'GET') return paged(state.comments);
       if (url.pathname === `/api/posts/${postId}/comments` && method === 'POST') {

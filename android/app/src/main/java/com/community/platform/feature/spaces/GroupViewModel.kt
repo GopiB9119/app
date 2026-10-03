@@ -35,6 +35,7 @@ data class GroupState(
     val error: String? = null,
     val notice: String? = null,
     val managedSpace: SpaceDto? = null,
+    val messageId: Long = 0,
 ) {
     val managing: Boolean get() = managedSpaceId != null
     val locked: Boolean get() = busy || pendingAsk != null || pendingVisibility != null
@@ -73,16 +74,16 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
                 update(expected) {
                     val definite = error.status in 400..499 && error.status != 408
                     when {
-                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> GroupState(accountId = it.accountId, requiresSignIn = true, error = error.message)
-                        error.status in setOf(403, 404) && it.managing -> it.copy(managedSpace = null, settings = null, reviews = emptyList(), pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message)
+                        error.status == 401 || error.code == "ACCOUNT_CHANGED" -> GroupState(accountId = it.accountId, requiresSignIn = true, error = error.message, messageId = it.messageId + 1)
+                        error.status in setOf(403, 404) && it.managing -> it.copy(managedSpace = null, settings = null, reviews = emptyList(), pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message, messageId = it.messageId + 1)
                         // A refused command is final; only an unconfirmed one keeps its key for an exact retry.
-                        definite -> it.copy(pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message)
-                        else -> it.copy(error = error.message)
+                        definite -> it.copy(pendingAsk = null, pendingVisibility = null, confirmingVisibility = false, error = error.message, messageId = it.messageId + 1)
+                        else -> it.copy(error = error.message, messageId = it.messageId + 1)
                     }
                 }
             }
-            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.") } }
-            catch (_error: Exception) { update(expected) { it.copy(error = "The group service returned an unexpected response. Changes are not confirmed.") } }
+            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.", messageId = it.messageId + 1) } }
+            catch (_error: Exception) { update(expected) { it.copy(error = "The group service returned an unexpected response. Changes are not confirmed.", messageId = it.messageId + 1) } }
             finally { update(expected) { it.copy(busy = false) } }
         }
     }
@@ -150,7 +151,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
         val note = current.note.trim()
         val disallowed = setOf(Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.SURROGATE.toInt(), Character.PRIVATE_USE.toInt(), Character.UNASSIGNED.toInt())
         if (current.pendingAsk == null && note.codePoints().anyMatch { it != '\n'.code && Character.getType(it) in disallowed }) {
-            mutableState.update { it.copy(error = "Remove control and text-direction characters from the note.") }; return
+            mutableState.update { it.copy(error = "Remove control and text-direction characters from the note.", messageId = it.messageId + 1) }; return
         }
         val intent = current.pendingAsk ?: JoinIntent(accountId, entry.id, entry.name, note, UUID.randomUUID().toString())
         mutableState.update { it.copy(pendingAsk = intent) }
@@ -158,7 +159,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
             val request = repository.ask(intent)
             val requests = repository.mine(account)
             val page = repository.find(account, mutableState.value.searched)
-            update(expected) { it.copy(pendingAsk = null, asking = null, note = "", requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request sent to ${request.spaceName}. The owner or an admin will review it.") }
+            update(expected) { it.copy(pendingAsk = null, asking = null, note = "", requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request sent to ${request.spaceName}. The owner or an admin will review it.", messageId = it.messageId + 1) }
         }
     }
 
@@ -168,7 +169,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
             val request = repository.withdraw(accountId, requestId)
             val requests = repository.mine(accountId)
             val page = repository.find(accountId, mutableState.value.searched)
-            update(expected) { it.copy(requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request to ${request.spaceName} withdrawn.") }
+            update(expected) { it.copy(requests = requests, groups = page.items, cursor = page.nextCursor, notice = "Request to ${request.spaceName} withdrawn.", messageId = it.messageId + 1) }
         }
     }
 
@@ -179,7 +180,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
         action { accountId, expected ->
             repository.decide(accountId, spaceId, review, approve)
             loadAccess(accountId, spaceId, expected)
-            update(expected) { it.copy(notice = if (approve) "${review.displayName} joined the group." else "You declined ${review.displayName}. They can ask again in 7 days.") }
+            update(expected) { it.copy(notice = if (approve) "${review.displayName} joined the group." else "You declined ${review.displayName}. They can ask again in 7 days.", messageId = it.messageId + 1) }
         }
     }
 
@@ -201,7 +202,7 @@ class GroupViewModel @Inject constructor(private val repository: GroupRepository
             val result = repository.changeVisibility(intent)
             val reviews = repository.pending(account, settings.id)
             update(expected) { it.copy(settings = result, reviews = reviews, pendingVisibility = null, confirmingVisibility = false,
-                notice = if (result.visibility == "public") "The group is public. People can find it and ask to join." else "The group is private. It no longer appears in Find groups, and waiting requests were closed.") }
+                notice = if (result.visibility == "public") "The group is public. People can find it and ask to join." else "The group is private. It no longer appears in Find groups, and waiting requests were closed.", messageId = it.messageId + 1) }
         }
     }
 }

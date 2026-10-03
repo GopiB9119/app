@@ -2,7 +2,7 @@
 
 Updated: 2026-10-01. Product: Community Platform. The Agent is built by a separate workstream; everything below must work without any model.
 
-This is the readable build list for the human product: every product area from [idea.md](../idea.md) and Chapters 1-20, what already works on backend / web / Kotlin Android, which pages and screens exist or are missing, and the rules every feature must follow. The per-key ledger of all 190 catalog groups stays in [PRODUCT_FEATURES.md](PRODUCT_FEATURES.md); test evidence and limitations stay in [BUILD_STATUS.md](BUILD_STATUS.md). When a feature changes state, update both this list and the ledger in the same change.
+This is the readable build list for the human product: every product area from [idea.md](idea.md) and Chapters 1-20, what already works on backend / web / Kotlin Android, which pages and screens exist or are missing, and the rules every feature must follow. The per-key ledger of all 190 catalog groups stays in [PRODUCT_FEATURES.md](PRODUCT_FEATURES.md); test evidence and limitations stay in [BUILD_STATUS.md](BUILD_STATUS.md). When a feature changes state, update both this list and the ledger in the same change.
 
 Status words used here:
 
@@ -59,7 +59,7 @@ Rule: discovery never uses private chats, family tasks, calendars, health data o
 
 | Capability | B / W / A | Status |
 | --- | --- | --- |
-| Public pages: create, view, owner/admin roles | Yes / Yes / Yes | Working (limited): create, view signed out, owner edits (on Android since 2026-10-01, [T73](TASKS.md#approved-requirements-not-built-yet)); public page rules and up to 3 pinned posts above the date-ordered posts ([T83](TASKS.md#community-management), [DEC-025](DECISIONS.md#accepted-decisions), provisional); editors/admins not built |
+| Public pages: create, view, owner/admin roles | Yes / Yes / Yes | Working (limited): create, view signed out, owner edits (on Android since 2026-10-01, [T73](TASKS.md#approved-requirements-not-built-yet)); public page rules and up to 3 pinned posts above the date-ordered posts ([T83](TASKS.md#community-management), [DEC-025](DECISIONS.md#accepted-decisions), provisional); moderators invited by account ID who pin and remove comments, handing a page over, and archive, delete and restore ([T84, T85](TASKS.md#community-management)); editors/admins not built |
 | Follow and unfollow pages | Yes / Yes / Yes | Working (limited); Android lists the pages you follow since 2026-10-01 ([T72](TASKS.md#approved-requirements-not-built-yet)) |
 | Posts: drafts, explicit publish, edit, delete | Yes / Yes / Yes | Working (limited); Android post editing added on 2026-10-01 ([T31](TASKS.md#approved-requirements-not-built-yet)) |
 | Comments and replies, reactions, saves, shares | Yes / Yes / Yes | Working (limited): comments with one reply level, like, save; shares not built |
@@ -91,7 +91,8 @@ Rule: a public feed is not production-ready until reporting, blocking and visibi
 | Space description, edited by the owner | Yes / Yes / Partly | Working (limited); Android sets it when creating a group but cannot edit it yet |
 | Join requests to public groups: ask with a note, withdraw, owner approves or declines, 14-day expiry, 7 days before asking again | Yes / Yes / Yes | Working (limited) ([T22](TASKS.md#spaces)) |
 | Space admins: the owner makes a member an admin, who invites, removes ordinary members and answers join requests ([DEC-018](DECISIONS.md#accepted-decisions), provisional) | Yes / Yes / Yes | Working (limited): family and group Spaces; only the owner changes roles ([T13](TASKS.md#approved-requirements-not-built-yet)) |
-| Moderator, guest and observer roles; per-Space permission settings; configurable history sharing | No / No / No | Not built |
+| Who can invite people: the owner of a family or group Space lets everyone in it invite, or keeps it to the owner and admins ([DEC-026](DECISIONS.md#accepted-decisions), provisional) | Yes / Yes / Yes | Working (limited): members invite as members and see only their own invitations ([checkpoint](BUILD_STATUS.md#who-can-invite-checkpoint)) |
+| Moderator, guest and observer roles; other per-Space permission settings; configurable history sharing | No / No / No | Not built |
 
 ### 2.6 Space Chat and Direct Messages
 
@@ -104,7 +105,7 @@ Rule: a public feed is not production-ready until reporting, blocking and visibi
 | Unread counts and read position | Yes / Yes / Yes | Working (limited) |
 | Author deletes own message for everyone (tombstone, no recall of seen copies) | Yes / Yes / Yes | Working (limited) |
 | Edits, threads, reactions, attachments, typing/presence, calls, message reports | No / No / No | Not built |
-| Realtime push of new messages (WebSocket) | No / No / No | Not built; clients poll every 5 seconds while a chat is open |
+| Realtime push of new messages (WebSocket) | No / No / No | WebSocket transport is not built; live hints use server-sent events with polling fallback (T65). The web honors Retry-After after a 429 without stopping chat polling ([T120 checkpoint](BUILD_STATUS.md#web-live-retry-after-checkpoint)) |
 
 ### 2.7 Conversation Encryption
 
@@ -128,10 +129,12 @@ Every chat screen must state the real protection level. Never label server-reada
 
 | Capability | B / W / A | Status |
 | --- | --- | --- |
-| Space events with time, timezone, location and audience | Yes / Yes / Yes | Working (limited): current Space members only, from their admission onward; edit and cancel by organizer or owner |
+| Space events with time, timezone, location and audience | Yes / Yes / Yes | Working (limited): current Space members only, from their admission onward; edit and cancel by organizer or owner. Web timezone choices come from the API, with browser-alias mapping and retryable list failures ([T118 checkpoint](BUILD_STATUS.md#web-event-timezone-checkpoint)) |
 | RSVP (Going, Maybe, Not going) separate from attendance | Yes / Yes / Yes | Working (limited): reschedule asks people to confirm again |
 | Capacity, waitlist, check-in, polls, budgets, expenses, contributions | No / No / No | Not built |
 | Public events, invitations outside the Space, recurring events | No / No / No | Not built |
+
+Web workflow improvements ([T121/T123](BUILD_STATUS.md#web-event-workflow-improvements-checkpoint), 2026-10-02): protected in-page drafts and unconfirmed creates, stable Space selection across refresh, field-linked validation and focus, character counters, dates in the selected language, viewer-local times, visible outdated responses, explicit refresh and 44 px event targets. 28 focused checks and both live journeys passed, including 320 px with 200% text. Drafts are not durable offline storage; larger [recommended event features](../web/src/features/events/README.md#recommended-next-features) remain recommendations, not approvals.
 
 ### 2.10 Reminders
 

@@ -6,7 +6,7 @@ Status: DRAFT FOR PRODUCT, WEB, DESIGN AND SECURITY REVIEW. This is a design han
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity contract](CHAPTER_18_IDENTITY_CONTRACT.md), [Space contract](CHAPTER_03_SPACE_CONTRACT.md), [data contract](CHAPTER_06_DATA_CONTRACT.md), [API/realtime contract](CHAPTER_07_API_REALTIME_CONTRACT.md) and [Android contract](CHAPTER_08_ANDROID_CONTRACT.md). It develops C1-T09 and C8-T12 into web-native workflows while retaining the same business authority and user outcomes.
 
-- [Chapter 9](../Chapter9.md) owns this source. Next.js renders and coordinates the browser experience; FastAPI/domain services remain responsible for authoritative identity, resource access, membership, schedules and Agent actions. A BFF is not a second business backend.
+- [Chapter 9](Chapter9.md) owns this source. Next.js renders and coordinates the browser experience; FastAPI/domain services remain responsible for authoritative identity, resource access, membership, schedules and Agent actions. A BFF is not a second business backend.
 - M1 is the ordinary synthetic family/task/one-time in-app-reminder workflow. Public community, chat, other Space types and controlled Agent features retain their agreed release scope. Browser routes do not silently add health, external calling, payments or advanced document capabilities.
 - Original chapters and previous drafts are unchanged. Continuing design does not approve open policy/provider/SDK choices or authorize app scaffolding, installation, live integrations, a server, deployment or publication.
 - All browser/runtime/visual/security acceptance scenarios are NOT RUN. Checks against source inventories establish document consistency, not a working website or a security certification.
@@ -17,43 +17,43 @@ All 37 numbered source topics are retained with exact titles and anchors.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C9-S01 | Purpose | [9.1](../Chapter9.md#L5) |
-| C9-S02 | Final Web Architecture Decision | [9.2](../Chapter9.md#L41) |
-| C9-S03 | Web Application Responsibilities | [9.3](../Chapter9.md#L256) |
-| C9-S04 | Recommended Repository Structure | [9.4](../Chapter9.md#L300) |
-| C9-S05 | Route Architecture | [9.5](../Chapter9.md#L407) |
-| C9-S06 | Rendering Strategy | [9.6](../Chapter9.md#L480) |
-| C9-S07 | Layout Architecture | [9.7](../Chapter9.md#L577) |
-| C9-S08 | Shared Design System | [9.8](../Chapter9.md#L638) |
-| C9-S09 | Authentication and Session Management | [9.9](../Chapter9.md#L775) |
-| C9-S10 | Backend-for-Frontend Pattern | [9.10](../Chapter9.md#L837) |
-| C9-S11 | Shared API Contracts | [9.11](../Chapter9.md#L883) |
-| C9-S12 | API Client Layer | [9.12](../Chapter9.md#L949) |
-| C9-S13 | Data Fetching and Client Cache | [9.13](../Chapter9.md#L1027) |
-| C9-S14 | Cache Rules | [9.14](../Chapter9.md#L1087) |
-| C9-S15 | Realtime WebSocket Architecture | [9.15](../Chapter9.md#L1186) |
-| C9-S16 | Chat Interface Architecture | [9.16](../Chapter9.md#L1291) |
-| C9-S17 | Agent Workspace | [9.17](../Chapter9.md#L1393) |
-| C9-S18 | Agent Execution UI States | [9.18](../Chapter9.md#L1534) |
-| C9-S19 | Agent Streaming | [9.19](../Chapter9.md#L1570) |
-| C9-S20 | Community Feed Architecture | [9.20](../Chapter9.md#L1610) |
-| C9-S21 | Space Architecture | [9.21](../Chapter9.md#L1676) |
-| C9-S22 | File Upload Architecture | [9.22](../Chapter9.md#L1725) |
-| C9-S23 | Browser Security | [9.23](../Chapter9.md#L1804) |
-| C9-S24 | Permission-Aware UI | [9.24](../Chapter9.md#L1934) |
-| C9-S25 | Loading, Error, and Empty States | [9.25](../Chapter9.md#L1974) |
-| C9-S26 | Performance Architecture | [9.26](../Chapter9.md#L2037) |
-| C9-S27 | Accessibility | [9.27](../Chapter9.md#L2102) |
-| C9-S28 | Internationalization | [9.28](../Chapter9.md#L2150) |
-| C9-S29 | Notifications | [9.29](../Chapter9.md#L2186) |
-| C9-S30 | Observability | [9.30](../Chapter9.md#L2229) |
-| C9-S31 | Testing Strategy | [9.31](../Chapter9.md#L2291) |
-| C9-S32 | Deployment Architecture | [9.32](../Chapter9.md#L2407) |
-| C9-S33 | CI/CD Pipeline | [9.33](../Chapter9.md#L2450) |
-| C9-S34 | Browser Offline Strategy | [9.34](../Chapter9.md#L2498) |
-| C9-S35 | Final Web Architecture | [9.35](../Chapter9.md#L2543) |
-| C9-S36 | Chapter 9 Acceptance Criteria | [9.36](../Chapter9.md#L2580) |
-| C9-S37 | Final Decision | [9.37](../Chapter9.md#L2618) |
+| C9-S01 | Purpose | [9.1](Chapter9.md#L5) |
+| C9-S02 | Final Web Architecture Decision | [9.2](Chapter9.md#L41) |
+| C9-S03 | Web Application Responsibilities | [9.3](Chapter9.md#L256) |
+| C9-S04 | Recommended Repository Structure | [9.4](Chapter9.md#L300) |
+| C9-S05 | Route Architecture | [9.5](Chapter9.md#L407) |
+| C9-S06 | Rendering Strategy | [9.6](Chapter9.md#L480) |
+| C9-S07 | Layout Architecture | [9.7](Chapter9.md#L577) |
+| C9-S08 | Shared Design System | [9.8](Chapter9.md#L638) |
+| C9-S09 | Authentication and Session Management | [9.9](Chapter9.md#L775) |
+| C9-S10 | Backend-for-Frontend Pattern | [9.10](Chapter9.md#L837) |
+| C9-S11 | Shared API Contracts | [9.11](Chapter9.md#L883) |
+| C9-S12 | API Client Layer | [9.12](Chapter9.md#L949) |
+| C9-S13 | Data Fetching and Client Cache | [9.13](Chapter9.md#L1027) |
+| C9-S14 | Cache Rules | [9.14](Chapter9.md#L1087) |
+| C9-S15 | Realtime WebSocket Architecture | [9.15](Chapter9.md#L1186) |
+| C9-S16 | Chat Interface Architecture | [9.16](Chapter9.md#L1291) |
+| C9-S17 | Agent Workspace | [9.17](Chapter9.md#L1393) |
+| C9-S18 | Agent Execution UI States | [9.18](Chapter9.md#L1534) |
+| C9-S19 | Agent Streaming | [9.19](Chapter9.md#L1570) |
+| C9-S20 | Community Feed Architecture | [9.20](Chapter9.md#L1610) |
+| C9-S21 | Space Architecture | [9.21](Chapter9.md#L1676) |
+| C9-S22 | File Upload Architecture | [9.22](Chapter9.md#L1725) |
+| C9-S23 | Browser Security | [9.23](Chapter9.md#L1804) |
+| C9-S24 | Permission-Aware UI | [9.24](Chapter9.md#L1934) |
+| C9-S25 | Loading, Error, and Empty States | [9.25](Chapter9.md#L1974) |
+| C9-S26 | Performance Architecture | [9.26](Chapter9.md#L2037) |
+| C9-S27 | Accessibility | [9.27](Chapter9.md#L2102) |
+| C9-S28 | Internationalization | [9.28](Chapter9.md#L2150) |
+| C9-S29 | Notifications | [9.29](Chapter9.md#L2186) |
+| C9-S30 | Observability | [9.30](Chapter9.md#L2229) |
+| C9-S31 | Testing Strategy | [9.31](Chapter9.md#L2291) |
+| C9-S32 | Deployment Architecture | [9.32](Chapter9.md#L2407) |
+| C9-S33 | CI/CD Pipeline | [9.33](Chapter9.md#L2450) |
+| C9-S34 | Browser Offline Strategy | [9.34](Chapter9.md#L2498) |
+| C9-S35 | Final Web Architecture | [9.35](Chapter9.md#L2543) |
+| C9-S36 | Chapter 9 Acceptance Criteria | [9.36](Chapter9.md#L2580) |
+| C9-S37 | Final Decision | [9.37](Chapter9.md#L2618) |
 
 ## 3. Exact Source Acceptance and Final Decisions
 
@@ -581,6 +581,6 @@ Once implementation is authorized, demonstrate the browser M1 with synthetic dat
 | Interpret status transitions or cached private content as current truth. | False delivery/completion and unauthorized data after revocation. | Canonical state/versions, safe stale behavior, current authorization and honest limits. |
 | Ship only a normal desktop screenshot. | Mobile/zoom/keyboard/screen-reader workflows break. | Responsive semantic layouts and actual supported-browser/assistive-tech evidence. |
 
-Next: [Chapter 10](../Chapter10.md), consolidating backend service/process ownership, deployment environments, queues/workers, secure network and secret boundaries, scaling, observability, backups, recovery and release gates. Carry [Chapter 11 security](../Chapter11.md), [Chapter 13 scheduling](../Chapter13.md), [Chapter 19 encryption](../Chapter19.md) and [Chapter 20 delivery](../Chapter20.md) into their affected operational decisions.
+Next: [Chapter 10](Chapter10.md), consolidating backend service/process ownership, deployment environments, queues/workers, secure network and secret boundaries, scaling, observability, backups, recovery and release gates. Carry [Chapter 11 security](Chapter11.md), [Chapter 13 scheduling](Chapter13.md), [Chapter 19 encryption](Chapter19.md) and [Chapter 20 delivery](Chapter20.md) into their affected operational decisions.
 
 This completes the proposed web design handoff. Source coverage, client parity and known conflicts are documented; no Next.js files, generated clients, website, deployment, browser test or approved visual artifact is claimed.

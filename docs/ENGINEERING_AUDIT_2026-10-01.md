@@ -176,6 +176,16 @@ All sessions share one working tree and one live stack, and the API and workers 
 
 **PROPOSED.** Until each session has its own branch or worktree, each session stages only the paths it changed (`git add <paths>`) and never `git add -A`.
 
+**Records lost (2026-10-02):** the shared tree also loses records when a session writes a whole document from an older copy it holds.
+
+- Commit `642e47b` ("feat: add page management and roles features", 10:54) changed the task list, the build status and the changelog only by taking text away. It removed tasks T105 to T111, sent T84, T85 and T101 to T104 back from Done, and deleted two checkpoints and three changelog records, among them the building session's own T84 and T85 records.
+- Later, a rewrite of the task list in the working copy brought most of these back but dropped T112, which had never been committed.
+- The code was not affected. The records were restored word for word ([T113](TASKS.md#documentation)).
+- `npm run check:records` now reports a record that disappears, and a task that goes back from Done, in the working copy and in the last commit, and `npm run verify` runs it first.
+- Commits that share a working tree also carry each other's unfinished work: commit `642e47b` included the audit session's five deletion tests (T110, T112, T106 part 4) before any of their fixes existed.
+
+**PROPOSED.** A session changes a shared document only by editing the lines it means to change, in a fresh read of the file, never by writing back a copy it held earlier, and runs `npm run check:records` before it commits. The owner's decision on branches or worktrees (above) would remove the cause.
+
 ### M7. Features are left half-finished across layers
 
 - **Personal data export.** The backend and a worker exist ([export_worker.py](../backend/app/export_worker.py)), but there is no Compose service and no web or Android screen, so nobody can use it. It also has a silent 1,000-row limit (T45).

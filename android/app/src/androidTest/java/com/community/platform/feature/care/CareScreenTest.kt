@@ -297,6 +297,18 @@ class CareScreenTest {
         }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val draft = CareDraft("Metformin", "500 mg", "tablet", "1 tablet", "With breakfast", "prescriber", listOf("08:00"), "Asia/Kolkata", today, "", true)
+        val lost = "Not confirmed. Retry sends the same medicine; it cannot be saved twice."
+        var current by mutableStateOf(state().copy(view = CareView.ADD, draft = draft))
+        val actions = CareActions(save = { current = current.copy(pendingCreate = CareCreateIntent(accountId, "original-create-key", careBody(current.draft)), error = lost) })
+        compose.setContent { CommunityTheme { CareScreen(current, actions) } }
+        reveal("care-save")
+        compose.onNodeWithTag("care-save").performClick()
+        // The answer was lost: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithTag("care-error").assertIsDisplayed().assertTextEquals(lost)
+    }
+
     @DeviceFontScale(2f)
     @Test fun narrowLargeTextKeepsDosesMedicinesAndTheStopQuestionUsable() {
         assertNarrowScreen()

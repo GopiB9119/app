@@ -8,9 +8,9 @@ The original chapters remain unchanged. The user authorized starting Chapter 1 p
 
 Turn the product idea into a release contract that product, design, client, backend, Agent, safety and QA owners can use together.
 
-- Proposed release baseline: [Chapter 1 must-haves](../Chapter1.md#L3977), [MVP modules and Agent boundaries](../Chapter1.md#L4181), [acceptance criteria](../Chapter1.md#L4329) and [final MVP definition](../Chapter1.md#L5000).
+- Proposed release baseline: [Chapter 1 must-haves](Chapter1.md#L3977), [MVP modules and Agent boundaries](Chapter1.md#L4181), [acceptance criteria](Chapter1.md#L4329) and [final MVP definition](Chapter1.md#L5000).
 - This proposal preserves the broad Android-and-web, public-and-private MVP. The first family-reminder journey is a smaller delivery milestone, not the complete MVP.
-- The [master blueprint](../idea.md) and other chapters remain requirements and design references. Differences in phase, terminology or behavior require an explicit decision; this plan does not silently rewrite them.
+- The [master blueprint](idea.md) and other chapters remain requirements and design references. Differences in phase, terminology or behavior require an explicit decision; this plan does not silently rewrite them.
 - Requirement IDs below are new planning identifiers. They are not claims of implemented features, passing tests or assigned engineers.
 - All implementation and acceptance evidence is currently pending for this plan. A documented test scenario is not an executed test.
 
@@ -124,13 +124,13 @@ Public pages, other Space types, messaging, events, Agent assistance, reporting,
 | C1-D05 | Auth methods, invitation delivery and recipient verification are not frozen. | Decide these in Chapter 18 before implementation; a local invite link is not evidence of delivered SMS, email or WhatsApp. | OPEN |
 | C1-D06 | Encryption and Agent access, health permissions, API envelopes and state names differ between chapters. | Resolve each owning contract before dependent code. Keep prohibited clinical decisions and unauthorized private-data access disallowed. | OPEN |
 
-The authority for the MVP Agent boundary is [section 33.3](../Chapter1.md#L4287): authorized answers and summaries, drafts, confirmed personal reminders and group tasks, explained actions and user-approved preferences. No MVP external messages, calls, health-record access, permission changes, member removal or financial actions. Approval does not make a prohibited action permitted.
+The authority for the MVP Agent boundary is [section 33.3](Chapter1.md#L4287): authorized answers and summaries, drafts, confirmed personal reminders and group tasks, explained actions and user-approved preferences. No MVP external messages, calls, health-record access, permission changes, member removal or financial actions. Approval does not make a prohibited action permitted.
 
-The source's [MVP exclusions](../Chapter1.md#L4157) and [launch readiness requirements](../Chapter1.md#L4908) remain binding planning inputs; readiness is not inferred from a successful happy-path demo.
+The source's [MVP exclusions](Chapter1.md#L4157) and [launch readiness requirements](Chapter1.md#L4908) remain binding planning inputs; readiness is not inferred from a successful happy-path demo.
 
 ## 6. Other Priorities and Exclusions
 
-These labels preserve [sections 32.2-32.4](../Chapter1.md#L4091), not a new promise that every should-have is postponed. A lower-priority label cannot silently remove a required final-MVP outcome or a safety prerequisite. Source conflicts stay open until the product owner confirms the release matrix.
+These labels preserve [sections 32.2-32.4](Chapter1.md#L4091), not a new promise that every should-have is postponed. A lower-priority label cannot silently remove a required final-MVP outcome or a safety prerequisite. Source conflicts stay open until the product owner confirms the release matrix.
 
 | ID | Source should-have | Treatment in this draft |
 | --- | --- | --- |
@@ -226,7 +226,7 @@ Design owner deliverables: mobile and desktop flow maps, reusable component/stat
 
 ## 9. Source Acceptance and Required Evidence
 
-All 39 acceptance criteria from [Chapter 1 section 34](../Chapter1.md#L4329) are retained verbatim. The evidence column describes planned checks, not test functions that already exist. Every row is NOT RUN.
+All 39 acceptance criteria from [Chapter 1 section 34](Chapter1.md#L4329) are retained verbatim. The evidence column describes planned checks, not test functions that already exist. Every row is NOT RUN.
 
 | ID | Source acceptance criterion | Required demonstration or test evidence |
 | --- | --- | --- |
@@ -319,7 +319,7 @@ Every implementation ticket must state source requirement IDs, one accountable o
 
 Roadmap authority note (2026-10-01): the [documentation map](README.md) names this section as the project roadmap, level 6 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy). It is still PROPOSED. The requirements approved on 2026-10-01 ([Product Constitution, Article 2](PRODUCT_CONSTITUTION.md#article-2-approved-requirements)) include the agent system and document retrieval; where they fit in this sequence is open. Other documents give conflicting build orders. See decisions D4 and D6 in [DECISIONS.md](DECISIONS.md).
 
-This sequencing recommendation requires C1-D04 approval because it differs from [section 39's broad order](../Chapter1.md#L4804). Cross-cutting security, privacy, accessibility and observability begin in every milestone; they are not postponed until hardening.
+This sequencing recommendation requires C1-D04 approval because it differs from [section 39's broad order](Chapter1.md#L4804). Cross-cutting security, privacy, accessibility and observability begin in every milestone; they are not postponed until hardening.
 
 | Milestone | User-visible result | Exit boundary |
 | --- | --- | --- |
@@ -335,7 +335,7 @@ Do not interpret the order as a mandate to delay session security, block enforce
 
 ## 13. Quality and Launch Gates
 
-Source: [non-functional requirements](../Chapter1.md#L4423), [API/data rules](../Chapter1.md#L4547), [analytics privacy](../Chapter1.md#L4786) and [launch checklist](../Chapter1.md#L4908).
+Source: [non-functional requirements](Chapter1.md#L4423), [API/data rules](Chapter1.md#L4547), [analytics privacy](Chapter1.md#L4786) and [launch checklist](Chapter1.md#L4908).
 
 | Gate | Required evidence before public release |
 | --- | --- |
@@ -366,7 +366,7 @@ Initial source targets: common read API p95 below 300 ms; common write API p95 b
 
 ## 15. Next Chapter and Decision Handoff
 
-The next design step is [Chapter 18: identity and invitation authority](../Chapter18.md), followed by [Chapter 3: Space permissions](../Chapter3.md), [Chapter 6: data invariants](../Chapter6.md) and [Chapter 7: API contracts](../Chapter7.md). Apply [security](../Chapter11.md), [Android](../Chapter8.md) and [web](../Chapter9.md) requirements alongside those decisions. Use [scheduling](../Chapter13.md) and [delivery](../Chapter20.md) to resolve M1 runtime behavior before implementation.
+The next design step is [Chapter 18: identity and invitation authority](Chapter18.md), followed by [Chapter 3: Space permissions](Chapter3.md), [Chapter 6: data invariants](Chapter6.md) and [Chapter 7: API contracts](Chapter7.md). Apply [security](Chapter11.md), [Android](Chapter8.md) and [web](Chapter9.md) requirements alongside those decisions. Use [scheduling](Chapter13.md) and [delivery](Chapter20.md) to resolve M1 runtime behavior before implementation.
 
 First product decision: confirm the proposed full MVP includes all four private Space types, public community, Android/core web and account export, while M1 is only an early family-reminder demonstration. Next identity decisions are auth method(s), initial verified contact channel(s), invitation delivery/binding and account recovery. Launch jurisdictions/ages, reminder authority/history rules and encryption must be settled before implementing dependent behavior.
 

@@ -3,12 +3,15 @@ package com.community.platform.feature.planning
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -458,6 +461,27 @@ class ChecklistScreenTest {
         compose.runOnIdle { assertTrue(calls.toString(), calls.isEmpty()); assertEquals(0, leaves) }
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val items = (1..8).map { milk.copy(id = "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a6$it", title = "Buy item $it") }
+        var current by mutableStateOf(state(basis.copy(items = items)).copy(title = "Buy batteries"))
+        val callbacks = actions(save = { current = current.copy(pending = intent(ChecklistChangeDto("add", title = "Buy batteries"), "original-add-key"), error = offline) })
+        compose.setContent { CommunityTheme { ChecklistScreen(current, callbacks, {}) } }
+        reveal("checklist-save")
+        compose.onNodeWithTag("checklist-save").performClick()
+        // The answer was lost: the message is the list's first item, far above the button that was pressed.
+        compose.onNodeWithText(offline).assertIsDisplayed()
+    }
+
+    @Test fun errorAndNoticeArePoliteLiveRegions() {
+        val notice = "Checklist saved."
+        val current = state(checklist = null).copy(error = offline, notice = notice)
+        compose.setContent { CommunityTheme { ChecklistScreen(current, actions(), {}) } }
+        for (message in listOf(offline, notice)) {
+            compose.onNodeWithText(message).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion))
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        }
+    }
+
     @DeviceFontScale(2f)
     @Test fun narrowLargeTextKeepsItemsTheEditorAndBothQuestionsUsable() {
         assertNarrowScreen()
@@ -529,5 +553,21 @@ class ChecklistScreenTest {
             val top = compose.onNodeWithText(button).fetchSemanticsNode().boundsInRoot.top
             assertTrue("\"$text\" ends at $bottom, below the top of $button at $top", bottom <= top)
         }
+    }
+
+    // At normal text size: run straight after the large-text test above, the font rule's change to 200% does not arrive (T125).
+    @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
+        assertNarrowScreen()
+        val items = (1..20).map { milk.copy(id = "synthetic-item-$it", title = "Buy item $it") }
+        var current by mutableStateOf(state(basis.copy(items = items)).copy(title = "Buy batteries"))
+        val callbacks = actions(save = { current = current.copy(error = offline, messageId = current.messageId + 1) })
+        compose.setContent { CommunityTheme { ChecklistScreen(current, callbacks, {}) } }
+        repeat(2) {
+            reveal("checklist-save")
+            compose.onNodeWithText(offline).assertIsNotDisplayed()
+            compose.onNodeWithTag("checklist-save").assertTextEquals("Add item").performClick()
+            compose.onNodeWithText(offline).assertIsDisplayed().assertTextEquals(offline)
+        }
+        compose.runOnIdle { assertEquals(2L, current.messageId) }
     }
 }

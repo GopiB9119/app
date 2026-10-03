@@ -242,3 +242,33 @@ test('offline chat shows every message after a long absence and marks read only 
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+test('the delete control and its confirmation take the 44 px target without covering the message, at 320 px and 200% text', async () => {
+  const text = 'Dinner at seven, and please bring the folding chairs from the garage';
+  for (const large of [false, true]) {
+    const context = await browser.newContext({ viewport: { width: 320, height: 720 } });
+    try {
+      const { page, outbound, errors, pane } = await fixture(context);
+      if (large) await page.addStyleTag({ content: 'html, body { font-size: 32px !important; }' });
+      await page.getByRole('button', { name: /^Morgan family/ }).click();
+      await pane.getByRole('heading', { name: 'Morgan family', exact: true }).waitFor();
+      await pane.getByLabel('Message', { exact: true }).fill(text);
+      await pane.getByRole('button', { name: 'Send', exact: true }).click();
+      const remove = pane.getByRole('button', { name: 'Delete message for everyone', exact: true });
+      await remove.waitFor();
+      const button = await remove.boundingBox();
+      const body = await pane.getByText(text, { exact: true }).boundingBox();
+      assert.ok(button.width >= 44 && button.height >= 44, `The delete button is ${button.width} by ${button.height} px.`);
+      const covers = button.x < body.x + body.width && body.x < button.x + button.width && button.y < body.y + body.height && body.y < button.y + button.height;
+      assert.equal(covers, false, 'The delete button must not cover the message text.');
+      if (large) await page.screenshot({ path: path.join(root, '.local/screenshots/messaging-delete-320-large-text.png'), fullPage: true });
+      await remove.click();
+      const choices = await pane.getByRole('group', { name: 'Confirm deletion', exact: true }).getByRole('button').all();
+      assert.equal(choices.length, 2);
+      for (const choice of choices) assert.ok((await choice.boundingBox()).height >= 44, `${await choice.innerText()} is at least 44 px tall.`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Nothing scrolls sideways.');
+      if (large) await page.screenshot({ path: path.join(root, '.local/screenshots/messaging-delete-confirm-320-large-text.png'), fullPage: true });
+      assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});

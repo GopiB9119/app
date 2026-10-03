@@ -23,7 +23,7 @@ These come from the drafts and apply only once the product owner confirms them.
 - **PROPOSED** Model output is only a proposal. Code validates it, and risky or shared actions need a person's approval of the exact action (Chapter 12 contract).
 - **PROPOSED** Answers built from documents cite the exact authorized source they used (Chapter 14 contract, C14-D12).
 - **PROPOSED** No medical decisions: no diagnosis, prescribing or dosage changes (Chapters 1, 11 and 13).
-- **PROPOSED** First-release agent limits: no external messages or calls, no health-record access, no permission changes, no member removal and no financial actions ([Chapter 1](../Chapter1.md) section 33.3; open decision D4).
+- **PROPOSED** First-release agent limits: no external messages or calls, no health-record access, no permission changes, no member removal and no financial actions ([Chapter 1](Chapter1.md) section 33.3; open decision D4).
 - **PROPOSED** Every manual feature keeps working without AI (agent safety gate in the [release plan](CHAPTER_01_RELEASE_PLAN.md#13-quality-and-launch-gates)).
 - **PROPOSED** Evaluation before release: test sets for normal, unclear, prompt-injection, privacy, approval, crash and retrieval cases. A critical safety failure blocks the release, and any change to prompts, models, tools or retrieval is evaluated again (Chapter 12 contract, section 13). Results are recorded in [EVALUATIONS.md](EVALUATIONS.md).
 

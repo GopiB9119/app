@@ -1,3 +1,4 @@
+import anyio
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer
@@ -24,9 +25,36 @@ STREAM = {
 }
 
 
+class LiveResponse(StreamingResponse):
+    """A stream that ends as soon as its client leaves (T124).
+
+    With an ASGI 2.4 server, Starlette stops listening for the client leaving and waits for a write to fail instead,
+    but uvicorn's h11 server drops writes to a closed connection without an error. A closed stream would then keep its
+    subscription, and its place in the per-account limit, until its time limit.
+    """
+
+    async def __call__(self, scope, receive, send):
+        try:
+            async with anyio.create_task_group() as group:
+                async def stream():
+                    await self.stream_response(send)
+                    group.cancel_scope.cancel()
+
+                group.start_soon(stream)
+                await self.listen_for_disconnect(receive)
+                group.cancel_scope.cancel()
+        except BaseExceptionGroup as failures:
+            if len(failures.exceptions) == 1:
+                raise failures.exceptions[0] from None
+            raise
+        finally:
+            # A stream cancelled while its frame was being sent is still paused at a yield: close it now.
+            await self.body_iterator.aclose()
+
+
 @router.get("/live", response_class=StreamingResponse, responses=STREAM)
 async def live(request: Request):
     value = token(request)
     service = request.app.state.live
     account_id = await run_in_threadpool(service.open, value)
-    return StreamingResponse(service.stream(value, account_id), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+    return LiveResponse(service.stream(value, account_id), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})

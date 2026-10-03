@@ -13,8 +13,10 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -34,6 +36,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNarrowScreen
 import com.community.platform.feature.spaces.DeviceFontScale
 import com.community.platform.feature.spaces.EmulatorFontScaleRule
 import java.io.File
@@ -290,5 +293,23 @@ class ReminderScreenTest {
         val file = File(context.getExternalFilesDir("test-evidence"), name)
         file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         assertTrue(file.length() > 1000)
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
+        assertNarrowScreen()
+        val notifications = (1..20).map { notification.copy(id = "synthetic-notification-$it", taskTitle = "Task $it") }
+        val offline = "No connection. Changes are not confirmed."
+        var current by mutableStateOf(state().copy(tab = ReminderTab.INBOX, inbox = notifications, inboxCursor = "synthetic-next"))
+        val callbacks = actions().copy(moreInbox = { current = current.copy(error = offline, messageId = current.messageId + 1) })
+        compose.setContent { CommunityTheme { ReminderScreen(current, callbacks, {}) } }
+        repeat(2) {
+            compose.onNodeWithTag("reminder-workspace").performScrollToNode(hasText("Load more notifications"))
+            compose.onNodeWithText("Load more notifications").performScrollTo()
+            compose.onNodeWithText(offline).assertIsNotDisplayed()
+            compose.onNodeWithText("Load more notifications").performClick()
+            compose.onNodeWithText(offline).assertIsDisplayed().assertTextEquals(offline)
+        }
+        compose.runOnIdle { assertEquals(2L, current.messageId) }
     }
 }

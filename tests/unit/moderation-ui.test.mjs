@@ -225,6 +225,11 @@ async function fixture(context, options = {}) {
       if (url.pathname === `/api/pages/${pageId}/posts` && method === 'GET') return paged([state.post]);
       if (url.pathname === `/api/pages/${pageId}/pinned-posts` && method === 'GET') return reply([]);
       if (url.pathname === `/api/pages/${pageId}/drafts` && method === 'GET') return reply([]);
+      // Page roles and handover (T84) have nothing to show here: no moderators, roles or offers.
+      if (url.pathname === `/api/pages/${pageId}/moderators` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/handover` && method === 'GET') return failure('NOT_FOUND', 'Handover offer not found.', 404);
+      if (url.pathname === '/api/me/moderator-roles' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/handover-offers' && method === 'GET') return reply([]);
       if (url.pathname === '/api/me/pages' && method === 'GET') return reply([state.publicPage]);
       if (url.pathname === '/api/me/following' && method === 'GET') return paged([]);
       state.unexpected.push(call);
@@ -607,6 +612,22 @@ for (const mode of ['moderation', 'safety']) test(`layout: ${mode} and its contr
     await page.addStyleTag({ content: 'html{font-size:200%}body{font-size:1rem}' });
     assert.equal(await bodyText.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize)), normalSize * 2, 'Body-sized screen text must really double.');
     await assertFits(page, `${mode} at 320px and 200% text`);
+    if (mode === 'moderation') {
+      // Each decision's radio sits beside its word, not as a 46 px radio stacked above it by the shared label and input styles.
+      const choices = await reportCard(page).getByRole('group', { name: 'Decision', exact: true }).locator('label').all();
+      assert.equal(choices.length, 2);
+      for (const choice of choices) {
+        const placement = await choice.evaluate(element => {
+          const radio = element.querySelector('input[type="radio"]').getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents([...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()));
+          const words = range.getBoundingClientRect();
+          return { radio: { left: radio.left, right: radio.right, top: radio.top, bottom: radio.bottom }, words: { left: words.left, top: words.top, bottom: words.bottom }, height: element.getBoundingClientRect().height };
+        });
+        const { radio, words } = placement;
+        assert.ok(radio.right <= words.left && radio.top < words.bottom && radio.bottom > words.top && placement.height >= 44, `${await choice.innerText()}: ${JSON.stringify(placement)}`);
+      }
+    }
     await page.screenshot({ path: path.join(root, `.local/gaps/web-${mode}-320-large.png`), fullPage: true });
     if (mode === 'moderation') {
       await page.getByRole('tab', { name: 'Appeals', exact: true }).click();

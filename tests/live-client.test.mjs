@@ -155,6 +155,8 @@ function liveClient(options = {}) {
   const document = { hidden: false };
   let timerId = 0;
   let focuses = 0;
+  let now = Date.UTC(2026, 9, 2, 13, 0, 28);
+  class Clock extends Date { static now() { return now; } }
   const navigations = [];
   class Notification {
     static permission = 'granted';
@@ -181,12 +183,14 @@ function liveClient(options = {}) {
     react: { useEffect(effect) { effects.push(effect()); }, useSyncExternalStore(_subscribe, snapshot) { return snapshot(); } },
     '@tanstack/react-query': { useQueryClient: () => ({ invalidateQueries({ queryKey }) { invalidations.push(Array.from(queryKey)); return Promise.resolve(); } }) },
     '@/features/scheduling/client': { notificationPage: options.notificationPage ?? (async () => ({ data: [], unreadCount: 0 })) },
-  }, { window, navigator, document, Math: Object.assign(Object.create(Math), { random: () => 0.4 }) });
+  }, { window, navigator, document, Date: Clock, Math: Object.assign(Object.create(Math), { random: () => 0.4 }) });
   return {
     client, calls, streams, effects, timers, invalidations, storage, alerts, Notification, navigator, document, navigations,
     focuses: () => focuses,
+    now: () => now,
+    advance(milliseconds) { now += milliseconds; },
     event(name) { target.dispatchEvent(new Event(name)); },
-    tick() { assert.equal(timers.size, 1); const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); return timer.milliseconds; },
+    tick() { assert.equal(timers.size, 1); const [id, timer] = timers.entries().next().value; timers.delete(id); now += timer.milliseconds; timer.callback(); return timer.milliseconds; },
     cleanup() { effects.splice(0).forEach(effect => effect?.()); },
   };
 }
@@ -331,6 +335,109 @@ test('401 and ACCOUNT_CHANGED stop reconnecting; 429 waits thirty seconds; other
       assert.equal(fixture.timers.size, delay === null ? 0 : 1);
       if (delay !== null) assert.equal([...fixture.timers.values()][0].milliseconds, delay);
       else { fixture.event('online'); await flush(); assert.equal(fixture.calls.length, 1); }
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test('Live Retry-After: a 429 waits for the server deadline instead of reconnecting after thirty seconds', async () => {
+  let attempt = 0;
+  const stream = sse();
+  const fixture = liveClient({ fetch: async (_url, config) => {
+    if (++attempt === 1) return Response.json({ error: { code: 'LIVE_LIMIT_REACHED' } }, { status: 429, headers: { 'Retry-After': '900' } });
+    config.signal.addEventListener('abort', () => stream.abort(), { once: true });
+    return stream.response;
+  } });
+  try {
+    fixture.client.useLiveUpdates(accountId); await flush();
+    assert.equal(fixture.client.useLiveConnected(), false);
+    assert.equal([...fixture.timers.values()][0].milliseconds, 900100);
+    fixture.event('online'); await flush();
+    assert.equal(fixture.calls.length, 1);
+    assert.equal(fixture.tick(), 900100); await flush();
+    assert.equal(fixture.calls.length, 2);
+    stream.send('ready', ready); await flush();
+    assert.equal(fixture.client.useLiveConnected(), true);
+    assert.equal(fixture.timers.size, 0);
+  } finally { fixture.cleanup(); }
+});
+
+test('Live Retry-After: going offline and online cannot bypass the remaining cooldown', async () => {
+  const fixture = liveClient({ fetch: async () => Response.json({ error: { code: 'LIVE_LIMIT_REACHED' } }, {
+    status: 429, headers: { 'Retry-After': '900' },
+  }) });
+  try {
+    fixture.client.useLiveUpdates(accountId); await flush();
+    fixture.advance(30000);
+    fixture.navigator.onLine = false; fixture.event('offline'); await flush();
+    assert.equal(fixture.timers.size, 0);
+    fixture.navigator.onLine = true; fixture.event('online'); await flush();
+    assert.equal(fixture.calls.length, 1, 'Reconnecting the network must not send before Retry-After');
+    assert.equal([...fixture.timers.values()][0].milliseconds, 870100);
+  } finally { fixture.cleanup(); }
+});
+
+test('Live Retry-After: remounting preserves the cooldown for that account without blocking another account', async () => {
+  const stream = sse();
+  const fixture = liveClient({ fetch: async (_url, config) => {
+    if (config.headers['X-Account-ID'] === accountId) return Response.json({ error: { code: 'LIVE_LIMIT_REACHED' } }, {
+      status: 429, headers: { 'Retry-After': '900' },
+    });
+    config.signal.addEventListener('abort', () => stream.abort(), { once: true });
+    return stream.response;
+  } });
+  try {
+    fixture.client.useLiveUpdates(accountId); await flush();
+    fixture.cleanup();
+    assert.equal(fixture.timers.size, 0);
+    fixture.advance(30000);
+    fixture.client.useLiveUpdates(otherId); await flush();
+    assert.equal(fixture.calls.length, 2);
+    assert.equal(fixture.calls[1].config.headers['X-Account-ID'], otherId);
+    fixture.cleanup(); await flush();
+    fixture.client.useLiveUpdates(accountId); await flush();
+    assert.equal(fixture.calls.length, 2, 'The original account must keep its deadline after remounting');
+    assert.equal([...fixture.timers.values()][0].milliseconds, 870100);
+  } finally { fixture.cleanup(); }
+});
+
+test('Live Retry-After: HTTP dates and seconds are accepted, while missing or invalid headers keep the existing fallback', async () => {
+  const now = Date.UTC(2026, 9, 2, 13, 0, 28);
+  for (const [value, expected] of [
+    ['900', 900100], [' 900 ', 900100], [new Date(now + 120000).toUTCString(), 120100],
+    ['0', 100], [new Date(now - 1000).toUTCString(), 100],
+    [null, 30100], ['', 30100], ['not-a-date', 30100], ['-1', 30100], ['1.5', 30100],
+  ]) {
+    const fixture = liveClient({ fetch: async () => Response.json({ error: { code: 'LIVE_LIMIT_REACHED' } }, {
+      status: 429, headers: value === null ? {} : { 'Retry-After': value },
+    }) });
+    try {
+      fixture.client.useLiveUpdates(accountId); await flush();
+      assert.equal(fixture.calls.length, 1);
+      assert.equal([...fixture.timers.values()][0].milliseconds, expected, String(value));
+    } finally { fixture.cleanup(); }
+  }
+});
+
+test('Live Retry-After: an early timer or an oversized delay cannot reconnect before the deadline', async () => {
+  for (const value of ['2147484', '9'.repeat(100)]) {
+    const fixture = liveClient({ fetch: async () => Response.json({ error: { code: 'LIVE_LIMIT_REACHED' } }, {
+      status: 429, headers: { 'Retry-After': value },
+    }) });
+    try {
+      fixture.client.useLiveUpdates(accountId); await flush();
+      const [id, early] = fixture.timers.entries().next().value;
+      assert.equal(early.milliseconds, 2147483647);
+      fixture.timers.delete(id); early.callback(); await flush();
+      assert.equal(fixture.calls.length, 1);
+      assert.equal(fixture.tick(), 2147483647); await flush();
+      assert.equal(fixture.calls.length, 1);
+      const remaining = [...fixture.timers.values()][0].milliseconds;
+      assert.ok(remaining > 0 && remaining <= 2147483647);
+      if (value === '2147484') {
+        assert.equal(remaining, 453);
+        fixture.tick(); await flush();
+        assert.equal(fixture.calls.length, 2);
+      }
     } finally { fixture.cleanup(); }
   }
 });

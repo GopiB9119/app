@@ -8,7 +8,7 @@ Source-of-truth role: the [documentation map](README.md) names this contract as 
 
 This consolidates the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [private Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md) and [backend operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) drafts. It develops C10-T12 and the existing security/privacy gates without replacing domain-specific requirements.
 
-- [Chapter 11](../Chapter11.md) is the owning source. Security applies to clients, sessions, data, APIs, realtime, Agents, tools, workers, providers, operators, telemetry, development and recovery, not just password handling.
+- [Chapter 11](Chapter11.md) is the owning source. Security applies to clients, sessions, data, APIs, realtime, Agents, tools, workers, providers, operators, telemetry, development and recovery, not just password handling.
 - Preserve the first-release boundaries: M1 is ordinary family/task/one-time in-app reminders. The MVP Agent cannot access health records, diagnose, prescribe/change dosage, call/send externally, manage permissions/members or execute financial actions merely because a generic approval field exists.
 - Requirements, proposed policies, known design conflicts and unverified runtime behavior remain distinct. Continuing planning does not approve earlier decisions or authorize code, live scans, exploit attempts, device access, cloud changes, real contacts/health data, provider calls, spending or deployment.
 - All original chapters and earlier drafts remain unchanged. Examples are synthetic and descriptive; no credentials or private user content are collected into this document.
@@ -20,50 +20,50 @@ All 44 numbered topics are retained with exact titles and source anchors.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C11-S01 | Purpose | [11.1](../Chapter11.md#L3) |
-| C11-S02 | Security Architecture Principles | [11.2](../Chapter11.md#L59) |
-| C11-S03 | Security Trust Zones | [11.3](../Chapter11.md#L93) |
-| C11-S04 | Identity Architecture | [11.4](../Chapter11.md#L158) |
-| C11-S05 | Account States | [11.5](../Chapter11.md#L200) |
-| C11-S06 | Authentication Requirements | [11.6](../Chapter11.md#L229) |
-| C11-S07 | Session Management | [11.7](../Chapter11.md#L279) |
-| C11-S08 | Authorization Model | [11.8](../Chapter11.md#L322) |
-| C11-S09 | Role-Based Access Control | [11.9](../Chapter11.md#L371) |
-| C11-S10 | Attribute-Based Authorization | [11.10](../Chapter11.md#L406) |
-| C11-S11 | Resource-Level Authorization | [11.11](../Chapter11.md#L441) |
-| C11-S12 | Agent Authorization | [11.12](../Chapter11.md#L464) |
-| C11-S13 | Tool Authorization | [11.13](../Chapter11.md#L518) |
-| C11-S14 | Encryption in Transit | [11.14](../Chapter11.md#L566) |
-| C11-S15 | Encryption at Rest | [11.15](../Chapter11.md#L604) |
-| C11-S16 | End-to-End Encryption | [11.16](../Chapter11.md#L626) |
-| C11-S17 | E2E Encryption and Agents | [11.17](../Chapter11.md#L673) |
-| C11-S18 | Key Management | [11.18](../Chapter11.md#L697) |
-| C11-S19 | Data Classification | [11.19](../Chapter11.md#L736) |
-| C11-S20 | Agent Data Minimization | [11.20](../Chapter11.md#L837) |
-| C11-S21 | Prompt Injection Defense | [11.21](../Chapter11.md#L880) |
-| C11-S22 | Tool Output Security | [11.22](../Chapter11.md#L915) |
-| C11-S23 | Dangerous Actions | [11.23](../Chapter11.md#L947) |
-| C11-S24 | Approval Object | [11.24](../Chapter11.md#L991) |
-| C11-S25 | Privacy Controls | [11.25](../Chapter11.md#L1015) |
-| C11-S26 | Consent Management | [11.26](../Chapter11.md#L1051) |
-| C11-S27 | Family and Group Privacy | [11.27](../Chapter11.md#L1090) |
-| C11-S28 | Medical Reminder Safety | [11.28](../Chapter11.md#L1127) |
-| C11-S29 | File Security | [11.29](../Chapter11.md#L1153) |
-| C11-S30 | SSRF Protection | [11.30](../Chapter11.md#L1207) |
-| C11-S31 | WebSocket Security | [11.31](../Chapter11.md#L1237) |
-| C11-S32 | API Security | [11.32](../Chapter11.md#L1270) |
-| C11-S33 | Audit Logging | [11.33](../Chapter11.md#L1310) |
-| C11-S34 | Security Monitoring | [11.34](../Chapter11.md#L1376) |
-| C11-S35 | Threat Modeling | [11.35](../Chapter11.md#L1418) |
-| C11-S36 | Threat Categories | [11.36](../Chapter11.md#L1486) |
-| C11-S37 | Security Testing | [11.37](../Chapter11.md#L1530) |
-| C11-S38 | Incident Response | [11.38](../Chapter11.md#L1584) |
-| C11-S39 | Key Compromise Response | [11.39](../Chapter11.md#L1632) |
-| C11-S40 | Privacy-Preserving Observability | [11.40](../Chapter11.md#L1654) |
-| C11-S41 | Compliance Readiness | [11.41](../Chapter11.md#L1690) |
-| C11-S42 | Security Architecture Summary | [11.42](../Chapter11.md#L1738) |
-| C11-S43 | Final Security Decisions | [11.43](../Chapter11.md#L1798) |
-| C11-S44 | Chapter 11 Acceptance Criteria | [11.44](../Chapter11.md#L1825) |
+| C11-S01 | Purpose | [11.1](Chapter11.md#L3) |
+| C11-S02 | Security Architecture Principles | [11.2](Chapter11.md#L59) |
+| C11-S03 | Security Trust Zones | [11.3](Chapter11.md#L93) |
+| C11-S04 | Identity Architecture | [11.4](Chapter11.md#L158) |
+| C11-S05 | Account States | [11.5](Chapter11.md#L200) |
+| C11-S06 | Authentication Requirements | [11.6](Chapter11.md#L229) |
+| C11-S07 | Session Management | [11.7](Chapter11.md#L279) |
+| C11-S08 | Authorization Model | [11.8](Chapter11.md#L322) |
+| C11-S09 | Role-Based Access Control | [11.9](Chapter11.md#L371) |
+| C11-S10 | Attribute-Based Authorization | [11.10](Chapter11.md#L406) |
+| C11-S11 | Resource-Level Authorization | [11.11](Chapter11.md#L441) |
+| C11-S12 | Agent Authorization | [11.12](Chapter11.md#L464) |
+| C11-S13 | Tool Authorization | [11.13](Chapter11.md#L518) |
+| C11-S14 | Encryption in Transit | [11.14](Chapter11.md#L566) |
+| C11-S15 | Encryption at Rest | [11.15](Chapter11.md#L604) |
+| C11-S16 | End-to-End Encryption | [11.16](Chapter11.md#L626) |
+| C11-S17 | E2E Encryption and Agents | [11.17](Chapter11.md#L673) |
+| C11-S18 | Key Management | [11.18](Chapter11.md#L697) |
+| C11-S19 | Data Classification | [11.19](Chapter11.md#L736) |
+| C11-S20 | Agent Data Minimization | [11.20](Chapter11.md#L837) |
+| C11-S21 | Prompt Injection Defense | [11.21](Chapter11.md#L880) |
+| C11-S22 | Tool Output Security | [11.22](Chapter11.md#L915) |
+| C11-S23 | Dangerous Actions | [11.23](Chapter11.md#L947) |
+| C11-S24 | Approval Object | [11.24](Chapter11.md#L991) |
+| C11-S25 | Privacy Controls | [11.25](Chapter11.md#L1015) |
+| C11-S26 | Consent Management | [11.26](Chapter11.md#L1051) |
+| C11-S27 | Family and Group Privacy | [11.27](Chapter11.md#L1090) |
+| C11-S28 | Medical Reminder Safety | [11.28](Chapter11.md#L1127) |
+| C11-S29 | File Security | [11.29](Chapter11.md#L1153) |
+| C11-S30 | SSRF Protection | [11.30](Chapter11.md#L1207) |
+| C11-S31 | WebSocket Security | [11.31](Chapter11.md#L1237) |
+| C11-S32 | API Security | [11.32](Chapter11.md#L1270) |
+| C11-S33 | Audit Logging | [11.33](Chapter11.md#L1310) |
+| C11-S34 | Security Monitoring | [11.34](Chapter11.md#L1376) |
+| C11-S35 | Threat Modeling | [11.35](Chapter11.md#L1418) |
+| C11-S36 | Threat Categories | [11.36](Chapter11.md#L1486) |
+| C11-S37 | Security Testing | [11.37](Chapter11.md#L1530) |
+| C11-S38 | Incident Response | [11.38](Chapter11.md#L1584) |
+| C11-S39 | Key Compromise Response | [11.39](Chapter11.md#L1632) |
+| C11-S40 | Privacy-Preserving Observability | [11.40](Chapter11.md#L1654) |
+| C11-S41 | Compliance Readiness | [11.41](Chapter11.md#L1690) |
+| C11-S42 | Security Architecture Summary | [11.42](Chapter11.md#L1738) |
+| C11-S43 | Final Security Decisions | [11.43](Chapter11.md#L1798) |
+| C11-S44 | Chapter 11 Acceptance Criteria | [11.44](Chapter11.md#L1825) |
 
 ## 3. Exact Source Principles and Decisions
 
@@ -493,6 +493,6 @@ The initial security demonstration, only after implementation and a disposable t
 | Rotate keys or restore backups without reviewing prior exposure and revocations. | Lost recoverability, resurrected deleted data or repeated external effects. | Key-type-specific incident response, isolated recovery and current privacy/effect reconciliation. |
 | Claim compliance or safety from completed documents and tools. | False assurance hides missing controls, limits and operational responsibility. | Evidence-backed release gates, honest residual uncertainty and qualified independent review where required. |
 
-Next: [Chapter 12](../Chapter12.md), specifying the complete Agent runtime under these boundaries: LangGraph states, tool registry, approvals, context/memory, child delegation, cancellation, recovery, budgets and evaluations. Reuse the architecture in [Chapter 5](../Chapter5.md) and carry [Chapter 13 scheduling](../Chapter13.md), [Chapter 14 files](../Chapter14.md), [Chapter 16 trust operations](../Chapter16.md), [Chapter 19 encryption](../Chapter19.md) and [Chapter 20 delivery](../Chapter20.md) into the relevant tools and workflows.
+Next: [Chapter 12](Chapter12.md), specifying the complete Agent runtime under these boundaries: LangGraph states, tool registry, approvals, context/memory, child delegation, cancellation, recovery, budgets and evaluations. Reuse the architecture in [Chapter 5](Chapter5.md) and carry [Chapter 13 scheduling](Chapter13.md), [Chapter 14 files](Chapter14.md), [Chapter 16 trust operations](Chapter16.md), [Chapter 19 encryption](Chapter19.md) and [Chapter 20 delivery](Chapter20.md) into the relevant tools and workflows.
 
 This completes the proposed Chapter 11 security/privacy handoff. Source requirements remain traceable and policy gaps remain open; no vulnerability assessment, encryption implementation, penetration test, live scan, compliance certification or production security is claimed.

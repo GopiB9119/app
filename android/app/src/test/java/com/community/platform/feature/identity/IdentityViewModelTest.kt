@@ -1,6 +1,7 @@
 package com.community.platform.feature.identity
 
 import com.google.gson.Gson
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -16,6 +17,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import retrofit2.Response
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class IdentityViewModelTest {
@@ -81,6 +84,30 @@ class IdentityViewModelTest {
         assertFalse(model.state.value.signInUnchecked)
         assertNull(model.state.value.profile)
         assertEquals(unreachable, model.state.value.error)
+    }
+
+    // Without the app-wide request lock (T82), a read sent beside a change could answer after it and show what came before.
+    @Test fun aRefreshDuringAnUnansweredChangeIsNotSent() = runBlocking {
+        store.save(Credentials(token, user.id))
+        val reached = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val held = object : IdentityApi by api {
+            override suspend fun me(authorization: String): Response<EnvelopeDto<UserDto>> { reads.incrementAndGet(); return api.me(authorization) }
+            override suspend fun revokeOthers(authorization: String): Response<EnvelopeDto<DoneDto>> {
+                reached.complete(Unit); release.await(); return api.revokeOthers(authorization)
+            }
+        }
+        val model = IdentityViewModel(AccountRepository(held, store, Gson())).also { idle(it) }
+        val before = reads.get()
+        model.revokeOthers()
+        withTimeout(5000) { reached.await() }
+        model.refresh()
+        release.complete(Unit)
+        idle(model)
+        // The change reads the account again itself once it is answered; the Refresh during it sent nothing.
+        assertEquals(before + 1, reads.get())
+        assertEquals("Other sessions signed out.", model.state.value.notice)
     }
 
     @Test fun signUpStartsInTheDeviceTimezoneUnderTheNameTheServiceLists() {

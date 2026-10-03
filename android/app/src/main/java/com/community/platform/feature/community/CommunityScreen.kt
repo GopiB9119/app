@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -141,6 +142,12 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
     BackHandler(onBack = back)
     val ask: (Confirmation) -> Unit = { confirmation = it }
     val report: (ReportTarget) -> Unit = { reporting = it }
+    // Under Your pages, an error about your own or followed pages is shown with that list instead of at the top.
+    val topError = state.error?.takeUnless { state.destination == Destination.MyPages && (it == state.ownedError || it == state.followedError) }
+    val list = rememberLazyListState()
+    // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
+    // so after an action further down, such as saving a post, bring it into view to be seen.
+    LaunchedEffect(topError, state.notice) { if (topError != null || state.notice != null) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -159,8 +166,8 @@ fun CommunityScreen(state: CommunityState, actions: CommunityActions, timezone: 
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("community-content"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    state.error?.takeUnless { state.destination == Destination.MyPages && (it == state.ownedError || it == state.followedError) }?.let {
+                LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("community-content"), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    topError?.let {
                         item("error") { Text(pageMessage(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("community-error")) }
                     }
                     state.notice?.let { item("notice") { Text(pageMessage(it), color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("community-notice")) } }
@@ -296,17 +303,17 @@ private fun PageItem(page: PageDto, state: CommunityState, actions: CommunityAct
 private fun PostItem(post: PostDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, report: (ReportTarget) -> Unit, open: Boolean = true, pinnedMark: Boolean = false) {
     Column(Modifier.fillMaxWidth().testTag("post-${post.id}"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("${post.pageName} / @${post.pageHandle}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clickable(role = Role.Button, enabled = !state.working) { actions.open(Destination.Page(post.pageHandle)) })
-        Text(listOfNotNull(time.show(post.publishedAt ?: post.createdAt), post.editedAt?.let { stringResource(R.string.community_edited) }, if (pinnedMark && post.pinned) stringResource(R.string.community_pinned) else null, if (post.status == "draft") stringResource(R.string.community_draft) else null).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
+        Text(listOfNotNull(time.show(post.publishedAt ?: post.createdAt), post.editedAt?.let { stringResource(R.string.community_edited) }, if (pinnedMark && post.pinned) stringResource(R.string.community_pinned) else null, if (post.status == "draft") stringResource(R.string.community_draft) else null, if (!post.pageWritable) stringResource(R.string.community_state_read_only) else null).joinToString(" / "), style = MaterialTheme.typography.bodySmall)
         post.title?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
         Text(post.body, style = MaterialTheme.typography.bodyLarge)
         ModerationMark(post.moderation)
         if (post.status == "published") FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            TextButton(onClick = { actions.like(post) }, enabled = !state.working, modifier = Modifier.testTag("like-${post.id}")) {
+            if (post.pageWritable || post.liked) TextButton(onClick = { actions.like(post) }, enabled = !state.working, modifier = Modifier.testTag("like-${post.id}")) {
                 Icon(if (post.liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null)
                 Text(stringResource(if (post.liked) R.string.community_liked else R.string.community_like, post.likeCount), Modifier.padding(start = 4.dp))
             }
             if (open) TextButton(onClick = { actions.open(Destination.Post(post.id)) }, enabled = !state.working, modifier = Modifier.testTag("comments-${post.id}")) { Text(stringResource(R.string.community_comments, post.commentCount)) }
-            TextButton(onClick = { actions.save(post) }, enabled = !state.working, modifier = Modifier.testTag("save-${post.id}")) {
+            if (post.pageWritable || post.saved) TextButton(onClick = { actions.save(post) }, enabled = !state.working, modifier = Modifier.testTag("save-${post.id}")) {
                 Icon(Icons.Default.Star, null); Text(stringResource(if (post.saved) R.string.community_saved_state else R.string.community_save), Modifier.padding(start = 4.dp))
             }
             if (!post.canManage) TextButton(onClick = { report(ReportTarget("post", post.id, post.title ?: post.pageName)) }, enabled = !state.working) { Text(stringResource(R.string.community_report)) }
@@ -656,20 +663,23 @@ private fun androidx.compose.foundation.lazy.LazyListScope.post(state: Community
     val post = state.post ?: return
     item("post") { PostItem(post, state, actions, time, report, open = false) }
     if (post.status != "published") return
-    item("comment-form") { CommentComposer(state, actions, null) }
+    item("comment-form") {
+        if (post.pageWritable) CommentComposer(state, actions, null)
+        else Text(stringResource(R.string.community_page_read_only), Modifier.testTag("post-read-only"))
+    }
     if (!state.loading && state.comments.isEmpty()) item("no-comments") { Text(stringResource(R.string.community_no_comments)) }
     val top = state.comments.filter { it.parentId == null }
     top.forEach { comment ->
-        item(comment.id) { CommentItem(comment, state, actions, time, ask, report) }
+        item(comment.id) { CommentItem(comment, state, actions, time, ask, report, pageWritable = post.pageWritable) }
         state.comments.filter { it.parentId == comment.id }.forEach { reply ->
-            item(reply.id) { Box(Modifier.padding(start = 24.dp)) { CommentItem(reply, state, actions, time, ask, report) } }
+            item(reply.id) { Box(Modifier.padding(start = 24.dp)) { CommentItem(reply, state, actions, time, ask, report, pageWritable = post.pageWritable) } }
         }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CommentItem(comment: CommentDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit, report: (ReportTarget) -> Unit) {
+private fun CommentItem(comment: CommentDto, state: CommunityState, actions: CommunityActions, time: DateTimeFormatter, ask: (Confirmation) -> Unit, report: (ReportTarget) -> Unit, pageWritable: Boolean) {
     var replying by remember { mutableStateOf(false) }
     val removeTitle = stringResource(if (comment.mine) R.string.community_delete_comment else R.string.community_remove_comment)
     val removeText = stringResource(if (comment.mine) R.string.community_delete_comment_text else R.string.community_remove_comment_text)
@@ -681,12 +691,12 @@ private fun CommentItem(comment: CommentDto, state: CommunityState, actions: Com
             style = if (comment.body == null) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge)
         ModerationMark(comment.moderation)
         if (comment.status == "visible") FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (comment.parentId == null) TextButton(onClick = { replying = !replying }, enabled = !state.working) { Text(stringResource(R.string.community_reply)) }
+            if (pageWritable && comment.parentId == null) TextButton(onClick = { replying = !replying }, enabled = !state.working) { Text(stringResource(R.string.community_reply)) }
             if (comment.canRemove) TextButton(onClick = { ask(Confirmation(removeTitle, removeText, removeTitle) { actions.endComment(comment) }) }, enabled = !state.working) { Text(removeTitle) }
             if (!comment.mine) TextButton(onClick = { ask(Confirmation(blockTitle, blockText, blockTitle) { actions.blockAuthor(comment) }) }, enabled = !state.working) { Text(blockTitle) }
             if (!comment.mine) TextButton(onClick = { report(ReportTarget("comment", comment.id, comment.authorName)) }, enabled = !state.working) { Text(stringResource(R.string.community_report)) }
         }
-        if (replying) CommentComposer(state, actions, comment) { replying = false }
+        if (pageWritable && replying) CommentComposer(state, actions, comment) { replying = false }
         HorizontalDivider()
     }
 }

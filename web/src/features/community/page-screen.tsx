@@ -151,7 +151,10 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         {active && <PostManager account={viewer} post={post} onChanged={refresh} />}
       </PostCard>)}
     </section>}
-    {current.can_manage && viewer && <PageManagement key={current.id} account={viewer} page={current} onChanged={refresh} />}
+    {current.can_manage && viewer && <PageManagement key={current.id} account={viewer} page={current} onChanged={updated => {
+      if (updated) queryClient.setQueryData(["public-page", reference, viewer.id], updated);
+      refresh();
+    }} />}
     {listed && pinned.isError && !sessionLost(pinned.error) && <Failure error={pinned.error} retry={() => pinned.refetch()} />}
     {listed && pinned.data && pinned.data.length > 0 && <section className={styles.stack} aria-labelledby="pinned-heading">
       <h2 id="pinned-heading">{t("community.pinned")}</h2>

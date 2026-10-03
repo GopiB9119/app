@@ -8,7 +8,7 @@ from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import AccountExport, AccountSession, OutboxEvent, User
-from app.modules.messaging.models import Conversation
+from app.modules.messaging.models import Conversation, ConversationMessage
 from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceMembership
 from app.telemetry import emit
@@ -19,7 +19,7 @@ ERASED_NAME = "Deleted account"
 # Run in this order inside one transaction per account, so a failure leaves nothing half done. Every statement is
 # scoped to the account (:a) or to the Spaces where it was the only current member (:alone).
 ERASE = (
-    # Sign-in records. Session rows stay, revoked and nameless, because ownership offers and agent runs refer to them.
+    # Sign-in records. Sessions are revoked and nameless at once, and deleted once the agent runs are gone (T110).
     ("mail", "DELETE FROM identity_mail_jobs WHERE id IN (SELECT id FROM identity_challenges WHERE account_id = :a OR email_lookup = :lookup)"),
     ("challenges", "DELETE FROM identity_challenges WHERE account_id = :a OR email_lookup = :lookup"),
     ("exports", "DELETE FROM account_exports WHERE account_id = :a"),
@@ -31,6 +31,14 @@ ERASE = (
     ("agent_approvals", "DELETE FROM agent_approvals WHERE account_id = :a OR run_id IN (SELECT id FROM agent_runs WHERE account_id = :a)"),
     ("agent_events", "DELETE FROM agent_run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE account_id = :a)"),
     ("agent_runs", "DELETE FROM agent_runs WHERE account_id = :a"),
+    # An ownership or page handover offer, kept for the other person, still names the session it was made from; that
+    # row keeps its identifier and nothing else, and every other session row goes.
+    ("unused_sessions", "DELETE FROM account_sessions s WHERE s.account_id = :a "
+                        "AND NOT EXISTS (SELECT 1 FROM space_ownership_transfers t WHERE t.from_session_id = s.id) "
+                        "AND NOT EXISTS (SELECT 1 FROM page_handovers h WHERE h.from_session_id = s.id)"),
+    ("kept_sessions", "UPDATE account_sessions SET device_name = 'Removed device', platform = 'removed', "
+                      "token_digest = md5(CAST(random() AS text) || id) || md5(id || CAST(clock_timestamp() AS text)), "
+                      "created_at = :now, expires_at = :now, revoked_at = :now WHERE account_id = :a"),
     # Care records are the person's own.
     ("care_alerts", "DELETE FROM care_dose_alerts WHERE account_id = :a OR instruction_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
     ("care_commands", "DELETE FROM care_commands WHERE account_id = :a OR target_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
@@ -69,6 +77,14 @@ ERASE = (
     ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
     ("reports", "UPDATE content_reports SET details = '' WHERE reporter_id = :a"),
     ("moderator", "DELETE FROM platform_moderators WHERE account_id = :a"),
+    # Page roles (DEC-025, T112): the person steps down on other pages and their open invitations end; on their own
+    # pages, which the purge archives, every role goes; handover offers that are still open end too.
+    ("page_roles", "UPDATE page_moderators SET status = CASE WHEN status = 'pending' THEN 'declined' ELSE 'stepped_down' END, "
+                   "expires_at = NULL, resolved_at = COALESCE(resolved_at, :now), version = version + 1 "
+                   "WHERE account_id = :a AND status IN ('pending', 'active') AND page_id NOT IN (SELECT id FROM public_pages WHERE owner_id = :a)"),
+    ("own_page_roles", "DELETE FROM page_moderators WHERE page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)"),
+    ("page_handovers", "UPDATE page_handovers SET status = 'invalidated', expires_at = NULL, resolved_at = :now, version = version + 1 "
+                       "WHERE status = 'pending' AND (from_account_id = :a OR to_account_id = :a)"),
     # An open appeal is about content the purge erases, so it ends; a resolved one stays in the moderation record,
     # with a note that says why it is gone, because an appeal is always shown with a note (T103).
     ("open_appeals", "DELETE FROM moderation_appeals WHERE account_id = :a AND status = 'open'"),
@@ -91,8 +107,11 @@ ERASE = (
     # A Space where the person was the only current member is closed and its contents erased.
     ("alone_messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL WHERE deleted_at IS NULL AND conversation_id IN (SELECT id FROM conversations WHERE space_id = ANY(:alone))"),
     ("alone_checklists", "UPDATE task_checklist_items SET title = 'Deleted item' WHERE task_id IN (SELECT id FROM tasks WHERE space_id = ANY(:alone))"),
-    ("alone_tasks", "UPDATE tasks SET title = 'Deleted task', description = '', updated_at = :now WHERE space_id = ANY(:alone)"),
-    ("alone_events", "UPDATE space_events SET title = 'Deleted event', description = '', location = '', updated_at = :now WHERE space_id = ANY(:alone)"),
+    ("alone_tasks", "UPDATE tasks SET title = 'Deleted task', description = '', due_date = NULL, updated_at = :now WHERE space_id = ANY(:alone)"),
+    # An event keeps only its creation time as its start, so its schedule says nothing about the person (T110).
+    ("alone_events", "UPDATE space_events SET title = 'Deleted event', description = '', location = '', timezone = 'UTC', "
+                     "starts_at = created_at, local_start = to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), "
+                     "ends_at = NULL, local_end = NULL, updated_at = :now WHERE space_id = ANY(:alone)"),
     ("alone_chunks", "DELETE FROM space_document_chunks WHERE space_id = ANY(:alone)"),
     ("alone_documents", "UPDATE space_documents SET status = 'deleted', name = NULL, media_type = NULL, size_bytes = NULL, line_count = NULL, sha256 = NULL, content = NULL, deleted_at = :now, deleted_by_id = :a WHERE space_id = ANY(:alone) AND status = 'active'"),
     ("alone_spaces", "UPDATE spaces SET status = 'archived', name = 'Deleted Space', description = '', visibility = 'private', version = version + 1 WHERE id = ANY(:alone)"),
@@ -186,29 +205,50 @@ class AccountDeletionService:
         ).all()
 
     @staticmethod
-    def announce_departure(database, space_id, account_id):
-        """Live hints for the people still in a shared Space: its chat shows the erased messages, and each direct chat
-        with the erased account can no longer take messages. Only current members are told, and in a direct chat only
-        while they are still there with the admission the chat belongs to. Sent inside the purge, so only a committed
-        purge sends them."""
-        current = dict(database.execute(select(SpaceMembership.account_id, SpaceMembership.admission_id).where(
-            SpaceMembership.space_id == space_id, SpaceMembership.status == "active")).all())
-        rows = database.execute(
-            select(Conversation.id, Conversation.kind, Conversation.first_account_id, Conversation.second_account_id,
-                   Conversation.first_admission_id, Conversation.second_admission_id)
-            .where(Conversation.space_id == space_id, or_(
-                Conversation.kind == "space", Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
-            )).order_by(Conversation.id)
+    def told(row, account_id, current):
+        """Who a hint about a chat reaches: a Space chat's current members, or the other person in a direct chat while
+        they are still there with the admission the chat belongs to."""
+        if row.kind == "space":
+            return list(current)
+        other, admission = ((row.second_account_id, row.second_admission_id) if row.first_account_id == account_id
+                            else (row.first_account_id, row.first_admission_id))
+        return [other] if current.get(other) == admission else []
+
+    @staticmethod
+    def chats(database, condition):
+        return database.execute(
+            select(Conversation.id, Conversation.space_id, Conversation.kind, Conversation.first_account_id,
+                   Conversation.second_account_id, Conversation.first_admission_id, Conversation.second_admission_id)
+            .where(condition).order_by(Conversation.id)
         ).all()
-        for row in rows:
-            if row.kind == "space":
-                accounts = list(current)
-            else:
-                other, admission = ((row.second_account_id, row.second_admission_id) if row.first_account_id == account_id
-                                    else (row.first_account_id, row.first_admission_id))
-                accounts = [other] if current.get(other) == admission else []
+
+    @staticmethod
+    def members(database, space_id):
+        return dict(database.execute(select(SpaceMembership.account_id, SpaceMembership.admission_id).where(
+            SpaceMembership.space_id == space_id, SpaceMembership.status == "active")).all())
+
+    @classmethod
+    def announce_departure(cls, database, space_id, account_id):
+        """Live hints for the people still in a shared Space: its chat shows the erased messages, and each direct chat
+        with the erased account can no longer take messages. Sent inside the purge, so only a committed purge sends them."""
+        current = cls.members(database, space_id)
+        for row in cls.chats(database, (Conversation.space_id == space_id) & or_(
+            Conversation.kind == "space", Conversation.first_account_id == account_id, Conversation.second_account_id == account_id,
+        )):
+            accounts = cls.told(row, account_id, current)
             if accounts:
                 signal(database, "conversation", accounts, conversation_id=row.id, space_id=space_id, reason="member_left")
+
+    @classmethod
+    def announce_erased(cls, database, account_id, conversation_ids):
+        """Chats in Spaces the person had already left lose their messages too, so their current members are told (T106)."""
+        current = {}
+        for row in cls.chats(database, Conversation.id.in_(conversation_ids)):
+            if row.space_id not in current:
+                current[row.space_id] = cls.members(database, row.space_id)
+            accounts = cls.told(row, account_id, current[row.space_id])
+            if accounts:
+                signal(database, "conversation", accounts, conversation_id=row.id, space_id=row.space_id, reason="deleted")
 
     def purge_due(self, limit=5):
         """Erases accounts whose grace period has ended, one transaction each, and returns counts only."""
@@ -250,6 +290,11 @@ class AccountDeletionService:
                 )
             ).all()))
             alone = sorted(set(spaces) - set(shared))
+            # Chats in Spaces the person already left, where their messages are about to be erased.
+            left_behind = sorted(set(database.scalars(
+                select(ConversationMessage.conversation_id).join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+                .where(ConversationMessage.sender_id == user.id, ConversationMessage.deleted_at.is_(None), Conversation.space_id.not_in(spaces))
+            ).all()))
             parameters = {"a": user.id, "lookup": user.email_lookup, "now": now, "alone": alone, "shared": shared}
             for _label, statement_text in ERASE:
                 database.execute(text(statement_text), parameters)
@@ -260,6 +305,8 @@ class AccountDeletionService:
                     OutboxEvent(id=identifier, event_type="space.member_left", actor_id=user.id, aggregate_id=space_id, schema_version=1, created_at=now),
                 ])
                 self.announce_departure(database, space_id, user.id)
+            if left_behind:
+                self.announce_erased(database, user.id, left_behind)
             user.display_name = ERASED_NAME
             user.email_cipher = None
             user.password_hash = None

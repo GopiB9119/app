@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -49,7 +50,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -89,6 +92,10 @@ fun CalendarScreen(state: CalendarState, actions: CalendarActions, onBack: () ->
     var choosingZone by remember { mutableStateOf(false) }
     var choosingDate by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
+    val list = rememberLazyListState()
+    // The error is the list's second item, after the controls. An error now hides the entries, so the shorter list already
+    // shows it; it is still brought into view, as on the other screens, in case entries are ever kept beside an error.
+    LaunchedEffect(state.error) { if (state.error != null) list.scrollToItem(1) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding()) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -98,7 +105,7 @@ fun CalendarScreen(state: CalendarState, actions: CalendarActions, onBack: () ->
             }
             HorizontalDivider()
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            LazyColumn(Modifier.widthIn(max = 760.dp).fillMaxSize().align(Alignment.CenterHorizontally).testTag("calendar-workspace"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            LazyColumn(Modifier.widthIn(max = 760.dp).fillMaxSize().align(Alignment.CenterHorizontally).testTag("calendar-workspace"), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 item("controls") {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box {
@@ -129,7 +136,7 @@ fun CalendarScreen(state: CalendarState, actions: CalendarActions, onBack: () ->
                     }
                 }
                 if (state.error != null) item("error") {
-                    Text(state.error, color = MaterialTheme.colorScheme.error)
+                    Text(state.error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     TextButton(onClick = actions.refresh, enabled = !state.busy) { Text(stringResource(R.string.calendar_retry)) }
                 }
                 if (state.loaded && !state.busy && state.error == null) {

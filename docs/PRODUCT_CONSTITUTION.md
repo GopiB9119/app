@@ -71,7 +71,7 @@ The [documentation map](README.md#authority-hierarchy) lists the documents at ea
 5. A decision in DECISIONS.md takes the level of the document it changes.
 6. Where two documents share a level, each governs its own subject. Where they overlap and disagree, that is a conflict.
 7. Outside the levels:
-   - The original sources, [idea.md](../idea.md) and Chapters 1–20, are input with no authority of their own.
+   - The original sources, [idea.md](idea.md) and Chapters 1–20, are input with no authority of their own.
    - The [Product Understanding](PRODUCT_UNDERSTANDING.md) records the product owner's explanation, the proposals and open questions drawn from it, and the conflict register. Its authority is limited to the requirements it passed to Article 2.
    - [AGENTS.md](../AGENTS.md) applies this Constitution to agent sessions and cannot change it.
 

@@ -258,6 +258,60 @@ class DocumentTest {
         assertEquals("different.md", api.creates[1].second.name)
     }
 
+    /** Holds the next list read or add once it reaches the server, so the test can act while it is unanswered. */
+    private inner class HeldDocuments : DocumentApi by api {
+        @Volatile var holdList: CompletableDeferred<Unit>? = null
+        @Volatile var holdCreate: CompletableDeferred<Unit>? = null
+        val reached = CompletableDeferred<Unit>()
+        override suspend fun list(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<DocumentDto>>> {
+            holdList?.let { gate -> reached.complete(Unit); gate.await() }
+            return api.list(authorization, spaceId, cursor, limit)
+        }
+        override suspend fun create(authorization: String, spaceId: String, key: String, body: DocumentBodyDto): Response<EnvelopeDto<DocumentDto>> {
+            holdCreate?.let { gate -> reached.complete(Unit); gate.await() }
+            return api.create(authorization, spaceId, key, body)
+        }
+    }
+
+    private suspend fun held(source: HeldDocuments): DocumentViewModel {
+        val current = DocumentViewModel(DocumentRepository(source, fixture.accounts)); model = current
+        current.bind(fixture.accountId, fixture.spaceId, "Morgan family"); idle(current)
+        current.choose(ChosenDocument("notes.md", content.toByteArray().size, content))
+        return current
+    }
+
+    // Without the app-wide request lock (T82), a read sent beside an add could answer after it and hide the added document.
+    @Test fun aRefreshWhileAnAddIsUnansweredIsNotSent() = runBlocking {
+        val source = HeldDocuments()
+        val current = held(source)
+        val reads = api.cursors.size
+        val gate = CompletableDeferred<Unit>()
+        source.holdCreate = gate
+        current.add()
+        withTimeout(5000) { source.reached.await() }
+        current.reload()
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertEquals(reads, api.cursors.size)
+        assertEquals(listOf(document), settled.documents)
+        assertEquals(DocumentNotice.ADDED, settled.notice)
+    }
+
+    @Test fun anAddWhileTheListLoadsIsNotSent() = runBlocking {
+        val source = HeldDocuments()
+        val current = held(source)
+        val gate = CompletableDeferred<Unit>()
+        source.holdList = gate
+        current.reload()
+        withTimeout(5000) { source.reached.await() }
+        current.add()
+        gate.complete(Unit)
+        val settled = idle(current)
+        assertTrue(api.creates.isEmpty())
+        assertNull(settled.pending)
+        assertEquals("notes.md", settled.chosen?.name)
+    }
+
     @Test fun retryAfterDocumentWasDeletedShowsDeletedInsteadOfAddingAgain() = runBlocking {
         val current = ready()
         current.choose(ChosenDocument("notes.md", content.toByteArray().size, content))

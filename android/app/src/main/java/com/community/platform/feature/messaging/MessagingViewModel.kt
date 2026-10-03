@@ -92,6 +92,7 @@ class MessagingViewModel @Inject constructor(
     private var accountJob: Job = SupervisorJob()
     private var chatJob: Job = SupervisorJob()
     private var listJob: Job? = null
+    private var listReads = 0L
     private var pollLoop: Job? = null
     private var visible = false
     private var entryOpened = false
@@ -216,7 +217,24 @@ class MessagingViewModel @Inject constructor(
         val current = mutableState.value
         val account = current.accountId ?: return
         if (current.requiresSignIn || listJob?.isActive == true) return
+        readList(account, quiet)
+    }
+
+    /**
+     * After a change of this screen's own (a send, a deletion, marking read, opening a conversation) or a chat found gone, a list read
+     * already under way started before it and could answer after it with what came before, so that read stops and the list is read again (T82).
+     */
+    private fun listChanged() {
+        val current = mutableState.value
+        val account = current.accountId ?: return
+        if (current.requiresSignIn) return
+        listJob?.cancel()
+        readList(account, quiet = true)
+    }
+
+    private fun readList(account: String, quiet: Boolean) {
         val expected = generation
+        val read = ++listReads
         mutableState.update { if (quiet) it.copy(listSyncing = true) else it.copy(listLoading = true, listError = null) }
         listJob = accountScope().launch {
             try {
@@ -227,7 +245,8 @@ class MessagingViewModel @Inject constructor(
                 if (sessionLost(error)) lose(expected)
                 else if (generation == expected) mutableState.update { it.copy(listError = describe(error, "Conversations could not be loaded.")) }
             } finally {
-                if (generation == expected) mutableState.update { it.copy(listLoading = false, listSyncing = false) }
+                // A read stopped by a change leaves its marks to the read that replaced it.
+                mutableState.update { if (generation == expected && listReads == read) it.copy(listLoading = false, listSyncing = false, loadingMore = false) else it }
             }
         }
     }
@@ -238,6 +257,7 @@ class MessagingViewModel @Inject constructor(
         val cursor = current.nextCursor ?: return
         if (current.loadingMore || listJob?.isActive == true) return
         val expected = generation
+        val read = ++listReads
         mutableState.update { it.copy(loadingMore = true, listError = null) }
         listJob = accountScope().launch {
             try {
@@ -254,7 +274,7 @@ class MessagingViewModel @Inject constructor(
                     mutableState.update { it.copy(listError = describe(error, "More conversations could not be loaded."), nextCursor = if (restart) null else it.nextCursor) }
                 }
             } finally {
-                if (generation == expected) mutableState.update { it.copy(loadingMore = false) }
+                mutableState.update { if (generation == expected && listReads == read) it.copy(loadingMore = false) else it }
             }
         }
     }
@@ -338,7 +358,7 @@ class MessagingViewModel @Inject constructor(
         accountScope().launch {
             try {
                 val conversation = repository.open(account, space, participantId)
-                if (generation == expected) { show(conversation); refreshList(quiet = true) }
+                if (generation == expected) { show(conversation); listChanged() }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 if (sessionLost(error)) lose(expected)
@@ -427,7 +447,7 @@ class MessagingViewModel @Inject constructor(
                 try {
                     val read = repository.markRead(account, conversationId, newest.toString())
                     updateChat(expectedChat) { it.copy(conversation = read) }
-                    refreshList(quiet = true)
+                    listChanged()
                 } catch (error: CancellationException) { throw error }
                 catch (error: Exception) {
                     markedThrough = previous
@@ -446,7 +466,7 @@ class MessagingViewModel @Inject constructor(
             val conversationId = mutableState.value.chat?.conversation?.id?.takeIf { chatGeneration == expectedChat }
             updateChat(expectedChat) { ChatState(it.conversation.copy(unreadCount = 0), loading = false, denied = true, error = "You no longer have access to this conversation.") }
             conversationId?.let(::forgetConversation)
-            refreshList(quiet = true)
+            listChanged()
             return
         }
         updateChat(expectedChat) { it.copy(error = describe(error, fallback)) }
@@ -523,7 +543,7 @@ class MessagingViewModel @Inject constructor(
                 forgetKept(listOf(intent.key))
                 absorb(expectedChat, listOf(message))
                 updateChat(expectedChat) { chat -> chat.copy(pending = chat.pending.filterNot { it.intent.key == intent.key }) }
-                refreshList(quiet = true)
+                listChanged()
             } catch (error: CancellationException) {
                 // The chat went away before the answer, so a kept message is sent in the background.
                 scheduleKept(intent.accountId)
@@ -601,7 +621,7 @@ class MessagingViewModel @Inject constructor(
         chatScope().launch {
             try {
                 absorb(expectedChat, listOf(repository.delete(account, chat.conversation.id, messageId)))
-                refreshList(quiet = true)
+                listChanged()
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 if ((error as? IdentityFailure)?.status == 404 && !sessionLost(error)) {

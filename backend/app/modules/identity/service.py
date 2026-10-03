@@ -209,7 +209,8 @@ class IdentityService:
             user = database.scalar(select(User).where(User.email_lookup == lookup).with_for_update())
             encoded = user.password_hash if user and user.password_hash else self.security.dummy_hash
             correct = self.security.verify_password(encoded, body.password)
-            if user and correct and user.status == "deletion_requested":
+            # After the 7-day grace period the account answers as if it were already erased (T110).
+            if user and correct and user.status == "deletion_requested" and user.purge_after > self.clock():
                 # Only someone who knows the password learns this; the answer offers to cancel the deletion.
                 raise DomainError(
                     409, "ACCOUNT_DELETION_PENDING", "This account is waiting to be deleted. You can still cancel the deletion.",

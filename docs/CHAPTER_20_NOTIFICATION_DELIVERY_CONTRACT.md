@@ -8,8 +8,8 @@ Document role: retained partial alternate proposal through six workflows. Use th
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md), [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md), [scheduling](CHAPTER_13_SCHEDULING_CONTRACT.md), [file/document](CHAPTER_14_FILE_DOCUMENT_RAG_CONTRACT.md), [discovery](CHAPTER_15_DISCOVERY_RANKING_CONTRACT.md), [trust operations](CHAPTER_16_TRUST_SAFETY_OPERATIONS_CONTRACT.md), [event planning](CHAPTER_17_EVENT_COLLABORATION_CONTRACT.md) and [messaging](CHAPTER_19_MESSAGING_ENCRYPTION_CONTRACT.md) drafts. It develops C19-T12 into shared recipient, consent, channel, attempt and recovery contracts.
 
-- [Chapter 20](../Chapter20.md) owns notification/provider delivery. Chapter 13 owns deterministic schedule/occurrence timing; Chapter 19 owns message acceptance and conversation receipt facts. Reuse those authorities instead of creating another scheduler, account directory or messaging status engine.
-- The source [core principle](../Chapter20.md#L59) prohibits unrestricted direct provider calls from every Agent or backend module. A centralized domain policy validates current purpose, actor, actual source, recipient, destination, consent, preferences, time, channel and budget before any permitted adapter effect.
+- [Chapter 20](Chapter20.md) owns notification/provider delivery. Chapter 13 owns deterministic schedule/occurrence timing; Chapter 19 owns message acceptance and conversation receipt facts. Reuse those authorities instead of creating another scheduler, account directory or messaging status engine.
+- The source [core principle](Chapter20.md#L59) prohibits unrestricted direct provider calls from every Agent or backend module. A centralized domain policy validates current purpose, actor, actual source, recipient, destination, consent, preferences, time, channel and budget before any permitted adapter effect.
 - M1 remains synthetic ordinary family task plus confirmed one-time in-app reminder, without required Agent code or push/email proof. The source's initial in-app/push/email direction is retained below but does not resolve OPEN C1-D03, approve the existing proposed ADRs or silently extend M1. SMS/WhatsApp/voice, real care workflows and emergency handling have separate gates.
 - Preserve all original chapters, earlier drafts, the team plan and proposed ADRs. Continued chapter planning does not approve unresolved policies or authorize installation, implementation, credentials, real contacts/health data, provider tests, messages/calls, spending, provisioning or deployment.
 - Provider capability, consent/legal basis, intended recipient identity and delivery evidence must be verified independently. Owning a phone/email or accepting a provider request is not proof of the intended person, human receipt, treatment adherence or emergency response.
@@ -21,41 +21,41 @@ All thirty-five numbered topic titles and source anchors are retained, including
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C20-S01 | Purpose and Scope | [20.1](../Chapter20.md#L3) |
-| C20-S02 | Core Architecture Principle | [20.2](../Chapter20.md#L59) |
-| C20-S03 | Notification Types | [20.3](../Chapter20.md#L107) |
-| C20-S04 | Notification Lifecycle | [20.4](../Chapter20.md#L231) |
-| C20-S05 | Notification Domain Components | [20.5](../Chapter20.md#L393) |
-| C20-S06 | Notification Command | [20.6](../Chapter20.md#L414) |
-| C20-S07 | Notification Categories and Priority | [20.7](../Chapter20.md#L448) |
-| C20-S08 | Recipient Resolution | [20.8](../Chapter20.md#L599) |
-| C20-S09 | Consent Architecture | [20.9](../Chapter20.md#L649) |
-| C20-S10 | User Communication Preferences | [20.10](../Chapter20.md#L720) |
-| C20-S11 | Quiet Hours and Timezones | [20.11](../Chapter20.md#L763) |
-| C20-S12 | Template Architecture | [20.12](../Chapter20.md#L809) |
-| C20-S13 | In-App Notification Architecture | [20.13](../Chapter20.md#L862) |
-| C20-S14 | Push Notification Architecture | [20.14](../Chapter20.md#L917) |
-| C20-S15 | Email Architecture | [20.15](../Chapter20.md#L983) |
-| C20-S16 | SMS Architecture | [20.16](../Chapter20.md#L1048) |
-| C20-S17 | WhatsApp Architecture | [20.17](../Chapter20.md#L1096) |
-| C20-S18 | Voice Call Architecture | [20.18](../Chapter20.md#L1180) |
-| C20-S19 | Escalation Architecture | [20.19](../Chapter20.md#L1261) |
-| C20-S20 | Medicine Reminder Communication | [20.20](../Chapter20.md#L1366) |
-| C20-S21 | Notification Scheduling | [20.21](../Chapter20.md#L1427) |
-| C20-S22 | Provider Adapter Contract | [20.22](../Chapter20.md#L1502) |
-| C20-S23 | Retry Architecture | [20.23](../Chapter20.md#L1567) |
-| C20-S24 | Delivery Tracking | [20.24](../Chapter20.md#L1635) |
-| C20-S25 | Notification APIs | [20.25](../Chapter20.md#L1685) |
-| C20-S26 | Database Model | [20.26](../Chapter20.md#L1738) |
-| C20-S27 | Android Screens | [20.27](../Chapter20.md#L1785) |
-| C20-S28 | Web/Desktop Screens | [20.28](../Chapter20.md#L1848) |
-| C20-S29 | Security and Privacy | [20.29](../Chapter20.md#L1885) |
-| C20-S30 | Agent Integration | [20.30](../Chapter20.md#L1989) |
-| C20-S31 | Observability and Metrics | [20.31](../Chapter20.md#L2051) |
-| C20-S32 | Failure Handling | [20.32](../Chapter20.md#L2131) |
-| C20-S33 | Repository Structure | [20.33](../Chapter20.md#L2217) |
-| C20-S34 | Final Architecture Decision | [20.34](../Chapter20.md#L2276) |
-| C20-S35 | Acceptance Criteria | [20.35](../Chapter20.md#L2330) |
+| C20-S01 | Purpose and Scope | [20.1](Chapter20.md#L3) |
+| C20-S02 | Core Architecture Principle | [20.2](Chapter20.md#L59) |
+| C20-S03 | Notification Types | [20.3](Chapter20.md#L107) |
+| C20-S04 | Notification Lifecycle | [20.4](Chapter20.md#L231) |
+| C20-S05 | Notification Domain Components | [20.5](Chapter20.md#L393) |
+| C20-S06 | Notification Command | [20.6](Chapter20.md#L414) |
+| C20-S07 | Notification Categories and Priority | [20.7](Chapter20.md#L448) |
+| C20-S08 | Recipient Resolution | [20.8](Chapter20.md#L599) |
+| C20-S09 | Consent Architecture | [20.9](Chapter20.md#L649) |
+| C20-S10 | User Communication Preferences | [20.10](Chapter20.md#L720) |
+| C20-S11 | Quiet Hours and Timezones | [20.11](Chapter20.md#L763) |
+| C20-S12 | Template Architecture | [20.12](Chapter20.md#L809) |
+| C20-S13 | In-App Notification Architecture | [20.13](Chapter20.md#L862) |
+| C20-S14 | Push Notification Architecture | [20.14](Chapter20.md#L917) |
+| C20-S15 | Email Architecture | [20.15](Chapter20.md#L983) |
+| C20-S16 | SMS Architecture | [20.16](Chapter20.md#L1048) |
+| C20-S17 | WhatsApp Architecture | [20.17](Chapter20.md#L1096) |
+| C20-S18 | Voice Call Architecture | [20.18](Chapter20.md#L1180) |
+| C20-S19 | Escalation Architecture | [20.19](Chapter20.md#L1261) |
+| C20-S20 | Medicine Reminder Communication | [20.20](Chapter20.md#L1366) |
+| C20-S21 | Notification Scheduling | [20.21](Chapter20.md#L1427) |
+| C20-S22 | Provider Adapter Contract | [20.22](Chapter20.md#L1502) |
+| C20-S23 | Retry Architecture | [20.23](Chapter20.md#L1567) |
+| C20-S24 | Delivery Tracking | [20.24](Chapter20.md#L1635) |
+| C20-S25 | Notification APIs | [20.25](Chapter20.md#L1685) |
+| C20-S26 | Database Model | [20.26](Chapter20.md#L1738) |
+| C20-S27 | Android Screens | [20.27](Chapter20.md#L1785) |
+| C20-S28 | Web/Desktop Screens | [20.28](Chapter20.md#L1848) |
+| C20-S29 | Security and Privacy | [20.29](Chapter20.md#L1885) |
+| C20-S30 | Agent Integration | [20.30](Chapter20.md#L1989) |
+| C20-S31 | Observability and Metrics | [20.31](Chapter20.md#L2051) |
+| C20-S32 | Failure Handling | [20.32](Chapter20.md#L2131) |
+| C20-S33 | Repository Structure | [20.33](Chapter20.md#L2217) |
+| C20-S34 | Final Architecture Decision | [20.34](Chapter20.md#L2276) |
+| C20-S35 | Acceptance Criteria | [20.35](Chapter20.md#L2330) |
 
 All five type headings from section 20.3 are retained. Category, priority, sensitivity and channel choice are related policy inputs, not equivalent grants.
 

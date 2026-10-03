@@ -25,10 +25,14 @@ before(async () => {
         import { Providers } from './src/app/providers';
         import { PublicPageScreen } from './src/features/community/page-screen';
         import { MyPagesScreen } from './src/features/community/pages-screen';
+        import { HomeScreen } from './src/features/community/home-screen';
+        import { PostScreen } from './src/features/community/post-screen';
         import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
         window.renderCommunityFixture = () => root.render(<Providers><PublicPageScreen reference="garden-club" /></Providers>);
-        window.renderMyPagesFixture = () => root.render(<Providers><MyPagesScreen /></Providers>);`,
+        window.renderMyPagesFixture = () => root.render(<Providers><MyPagesScreen /></Providers>);
+        window.renderHomeFixture = () => root.render(<Providers><HomeScreen /></Providers>);
+        window.renderPostFixture = id => root.render(<Providers><PostScreen postId={id} /></Providers>);`,
       resolveDir: web, sourcefile: 'offline-community.tsx', loader: 'tsx',
     },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
@@ -52,7 +56,8 @@ before(async () => {
 after(async () => { await browser?.close(); });
 
 // The owner's page with one published post. Saves are refused unless If-Match names the stored version, as the API does.
-async function fixture(context) {
+// With manage: false it is someone else's page, so its post offers Report instead of the editing actions.
+async function fixture(context, options = {}) {
   const outbound = [];
   const errors = [];
   await context.route('**/*', route => { outbound.push(route.request().url()); return route.abort('blockedbyclient'); });
@@ -60,18 +65,18 @@ async function fixture(context) {
   page.on('pageerror', error => errors.push(error.message));
   await page.setContent('<html><head><title>Offline community</title></head><body><div id="root"></div></body></html>');
   await page.addStyleTag({ content: css });
-  await page.evaluate(({ accountId, pageId, postId }) => {
+  await page.evaluate(({ accountId, pageId, postId, manage }) => {
     const created = '2026-09-19T10:00:00Z';
     const state = window.communityFixture = {
       calls: [],
       page: {
         id: pageId, handle: 'garden-club', name: 'Garden Club', description: 'Weekly meetups in the park.', topic: 'hobbies',
-        follower_count: 3, created_at: created, updated_at: created, following: false, blocked: false, can_manage: true, etag: '"page-1"',
+        follower_count: 3, created_at: created, updated_at: created, following: false, blocked: false, can_manage: manage, etag: manage ? '"page-1"' : null,
       },
       post: {
         id: postId, page_id: pageId, page_handle: 'garden-club', page_name: 'Garden Club', title: 'Spring plants', body: 'Seeds are in.',
         status: 'published', like_count: 0, comment_count: 0, created_at: created, published_at: created, edited_at: null,
-        liked: false, saved: false, can_manage: true, etag: '"post-1"',
+        liked: false, saved: false, can_manage: manage, etag: manage ? '"post-1"' : null,
       },
     };
     const next = etag => etag.replace(/(\d+)"$/, (_match, number) => `${Number(number) + 1}"`);
@@ -110,9 +115,10 @@ async function fixture(context) {
       // The owner's page has no moderators and no handover offer (DEC-025); page-roles-ui.test.mjs covers them.
       if (url.pathname === `/api/pages/${pageId}/moderators` && method === 'GET') return reply([]);
       if (url.pathname === `/api/pages/${pageId}/handover` && method === 'GET') return failed(404, 'NOT_FOUND', 'Handover offer not found.');
+      if (url.pathname === '/api/me/moderator-roles' && method === 'GET') return reply([]);
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
     };
-  }, { accountId, pageId, postId });
+  }, { accountId, pageId, postId, manage: options.manage ?? true });
   await page.addScriptTag({ content: javascript });
   await page.evaluate(() => window.renderCommunityFixture());
   await page.getByRole('heading', { name: 'Garden Club', exact: true }).waitFor();
@@ -325,6 +331,169 @@ test('followed pages show loading and failure instead of claiming the person fol
     await following.getByRole('button', { name: 'Unfollow Garden Club', exact: true }).waitFor();
     assert.equal(await following.getByRole('alert').count(), 0);
     assert.equal(await empty.count(), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// A radio beside its words ends before them and overlaps their lines; shared label and input styles can instead stack a full-width radio above them.
+async function radioPlacement(label) {
+  return label.evaluate(element => {
+    const radio = element.querySelector('input[type="radio"]').getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents([...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()));
+    const words = range.getBoundingClientRect();
+    return { radio: { left: radio.left, right: radio.right, top: radio.top, bottom: radio.bottom }, words: { left: words.left, top: words.top, bottom: words.bottom } };
+  });
+}
+
+test('report reasons are rows that take the 44 px target, each radio beside its reason, at 320 px and 200% text', async () => {
+  for (const large of [false, true]) {
+    const context = await browser.newContext({ viewport: { width: 320, height: 720 } });
+    try {
+      const { page, outbound, errors } = await fixture(context, { manage: false });
+      if (large) await page.addStyleTag({ content: 'html, body { font-size: 32px !important; }' });
+      await page.getByRole('article', { name: 'Spring plants', exact: true }).getByRole('button', { name: 'Report', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Report post', exact: true });
+      const reasons = await dialog.getByRole('group', { name: 'Why are you reporting this?', exact: true }).locator('label').all();
+      assert.ok(reasons.length >= 3);
+      for (const reason of reasons) {
+        const name = await reason.innerText();
+        assert.ok((await reason.boundingBox()).height >= 44, `${name} is at least 44 px tall.`);
+        const { radio, words } = await radioPlacement(reason);
+        assert.ok(radio.right <= words.left && radio.top < words.bottom && radio.bottom > words.top, `The radio for ${name} sits beside it: ${JSON.stringify({ radio, words })}`);
+      }
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Nothing scrolls sideways.');
+      if (large) await page.screenshot({ path: path.join(root, '.local/screenshots/community-report-320-large-text.png') });
+      assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+// Posts of an archived page: the feed holds one active post, one read-only post and one read-only post the viewer liked and saved.
+// The server refuses a new like, save and comment on an archived page (409 PAGE_READ_ONLY), but allows undoing a like or save.
+const archivedIds = {
+  open: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a01', closed: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a02', kept: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a03',
+  mine: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a11', theirs: '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a12',
+};
+async function archivedFixture(context, screen) {
+  const outbound = [];
+  const errors = [];
+  await context.route('**/*', route => { outbound.push(route.request().url()); return route.abort('blockedbyclient'); });
+  const page = await context.newPage();
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setContent('<html><head><title>Offline archived posts</title></head><body><div id="root"></div></body></html>');
+  await page.addStyleTag({ content: css });
+  await page.evaluate(({ accountId, pageId, ids }) => {
+    const created = '2026-09-19T10:00:00Z';
+    const post = (id, title, extra) => ({
+      id, page_id: pageId, page_handle: 'garden-club', page_name: 'Garden Club', title, body: `${title} body.`,
+      status: 'published', like_count: 0, comment_count: 0, created_at: created, published_at: created, edited_at: null,
+      liked: false, saved: false, can_manage: false, etag: null, page_status: 'read_only', ...extra,
+    });
+    const comment = (id, mine, body) => ({ id, post_id: ids.closed, parent_id: null, author_name: mine ? 'Alex Morgan' : 'Sam Rivera', body, status: 'visible', created_at: created, mine, can_remove: false });
+    const state = window.archivedFixture = {
+      calls: [],
+      posts: [post(ids.open, 'Open post', { page_status: 'active' }), post(ids.closed, 'Closed post', { comment_count: 2 }),
+        post(ids.kept, 'Kept post', { liked: true, saved: true, like_count: 1 })],
+      comments: [comment(ids.mine, true, 'My earlier note.'), comment(ids.theirs, false, 'Welcome back.')],
+    };
+    const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-archived', ...extra }), { status: 200 });
+    const failed = (status, code, message) => new Response(JSON.stringify({ error: { code, message }, request_id: 'offline-archived' }), { status });
+    window.fetch = async (input, config = {}) => {
+      const url = new URL(String(input), 'https://offline.invalid');
+      const method = config.method ?? 'GET';
+      state.calls.push({ route: url.pathname, method, body: config.body ? JSON.parse(config.body) : null });
+      if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
+      if (url.pathname === '/api/feed' && method === 'GET') return reply(state.posts, { pagination: { next_cursor: null, has_more: false } });
+      const found = state.posts.find(item => url.pathname.startsWith(`/api/posts/${item.id}`));
+      if (found && url.pathname === `/api/posts/${found.id}` && method === 'GET') return reply(found);
+      if (found && url.pathname === `/api/posts/${found.id}/comments` && method === 'GET') {
+        return reply(found.id === ids.closed ? state.comments : [], { pagination: { next_cursor: null, has_more: false } });
+      }
+      if (found && url.pathname === `/api/posts/${found.id}/unlike` && method === 'POST') { found.liked = false; found.like_count -= 1; return reply(found); }
+      if (found && method === 'POST') return failed(409, 'PAGE_READ_ONLY', 'This page is archived.');
+      throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
+    };
+  }, { accountId, pageId, ids: archivedIds });
+  await page.addScriptTag({ content: javascript });
+  if (screen === 'feed') {
+    await page.evaluate(() => window.renderHomeFixture());
+    await page.getByRole('article', { name: 'Kept post', exact: true }).waitFor();
+  } else {
+    await page.evaluate(id => window.renderPostFixture(id), archivedIds.closed);
+    await page.getByText('My earlier note.', { exact: true }).waitFor();
+  }
+  return { page, outbound, errors };
+}
+
+test('on an archived page the feed offers no new Like or Save, keeps undoing them, and marks the post read only', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await archivedFixture(context, 'feed');
+    const open = page.getByRole('article', { name: 'Open post', exact: true });
+    const closed = page.getByRole('article', { name: 'Closed post', exact: true });
+    const kept = page.getByRole('article', { name: 'Kept post', exact: true });
+    await open.getByRole('button', { name: /^Like/ }).waitFor();
+    await open.getByRole('button', { name: 'Save', exact: true }).waitFor();
+    assert.equal(await open.getByText('Archived, read only', { exact: true }).count(), 0, 'An active post has no archive badge.');
+    assert.equal(await closed.getByRole('button', { name: /^Like/ }).count(), 0);
+    assert.equal(await closed.getByRole('button', { name: 'Save', exact: true }).count(), 0);
+    assert.equal(await closed.getByRole('button', { name: 'Saved', exact: true }).count(), 0);
+    await closed.getByText('Archived, read only', { exact: true }).waitFor();
+    await closed.getByRole('link', { name: /^Comments/ }).waitFor();
+    await kept.getByText('Archived, read only', { exact: true }).waitFor();
+    assert.equal(await kept.getByRole('button', { name: /^Like/ }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await kept.getByRole('button', { name: 'Saved', exact: true }).getAttribute('aria-pressed'), 'true');
+
+    await kept.getByRole('button', { name: /^Like/ }).click();
+    await page.waitForFunction(() => window.archivedFixture.calls.some(call => call.method === 'POST'));
+    await kept.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+    assert.equal(await kept.getByRole('button', { name: /^Like/ }).count(), 0, 'With the like undone, a read-only post offers no new Like.');
+    const commands = await page.evaluate(() => window.archivedFixture.calls.filter(call => call.method === 'POST').map(call => [call.route, call.body]));
+    assert.deepEqual(commands, [[`/api/posts/${archivedIds.kept}/unlike`, {}]]);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+const archivedNotice = 'This page is archived. You can read it, but nothing new can be posted, commented on, liked or followed.';
+async function checkArchivedPostScreen(page) {
+  await page.getByRole('status').filter({ hasText: archivedNotice }).waitFor();
+  await page.getByText('Welcome back.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('textbox').count(), 0, 'No comment form.');
+  assert.equal(await page.getByRole('button', { name: 'Post comment', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Reply', exact: true }).count(), 0, 'No Reply button.');
+  assert.equal(await page.getByRole('button', { name: 'Delete', exact: true }).count(), 0, 'No Delete, even on the viewer\'s own comment.');
+  assert.equal(await page.getByRole('button', { name: 'Remove', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: /^Like/ }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Save', exact: true }).count(), 0);
+}
+
+test('the post screen of an archived page shows the notice instead of the comment form, Reply and Delete', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await archivedFixture(context, 'post');
+    await checkArchivedPostScreen(page);
+    const theirs = page.getByRole('article').filter({ hasText: 'Welcome back.' });
+    await theirs.getByRole('button', { name: 'Report', exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.archivedFixture.calls.filter(call => call.method !== 'GET').length), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('the archived page notice on the post screen stays readable at 320 px and 200% text', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await archivedFixture(context, 'post');
+    await page.evaluate(() => document.fonts.ready);
+    const normalSize = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+    await page.evaluate(size => { document.documentElement.style.fontSize = `${size * 2}px`; }, normalSize);
+    await checkArchivedPostScreen(page);
+    const notice = page.getByRole('status').filter({ hasText: archivedNotice });
+    await notice.scrollIntoViewIfNeeded();
+    const box = await notice.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= 320, 'The notice stays inside the 320 px window.');
+    assert.equal(await notice.evaluate(element => element.scrollWidth <= element.clientWidth), true, 'The notice text is not clipped.');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Nothing scrolls sideways.');
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

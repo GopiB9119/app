@@ -8,7 +8,7 @@ export const catalog = JSON.parse(readFileSync(path.join(root, 'packages/feature
 export const sourceFiles = ['idea.md', ...Array.from({ length: 20 }, (_, index) => `Chapter${index + 1}.md`)];
 
 export function sourceFingerprint(file) {
-  const content = readFileSync(path.join(root, file));
+  const content = readFileSync(path.join(root, 'docs', file));
   return { file, sha256: createHash('sha256').update(content).digest('hex'), bytes: content.length };
 }
 
@@ -18,7 +18,7 @@ export function sourceInventory() {
     const owners = catalog.domains.filter(domain => !chapter || domain.chapters.includes(chapter)).map(domain => domain.id);
     const topics = [];
     let fence = null;
-    for (const [index, line] of readFileSync(path.join(root, file), 'utf8').split(/\r?\n/).entries()) {
+    for (const [index, line] of readFileSync(path.join(root, 'docs', file), 'utf8').split(/\r?\n/).entries()) {
       const delimiter = line.match(/^\s*(`{3,}|~{3,})/);
       if (delimiter) {
         if (!fence) fence = delimiter[1][0];

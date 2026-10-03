@@ -84,7 +84,7 @@ async function open(context, { owner = true, moderators = [], roles = [], offers
   await page.addStyleTag({ content: css });
   await page.evaluate(({ accountId, pageId, postId, invitedId, offerId, created, later, owner, moderators, roles, offers }) => {
     const state = window.rolesFixture = {
-      calls: [], moderators, roles, offers, handover: null, sequence: 0, reauthenticate: false,
+      calls: [], moderators, roles, offers, handover: null, sequence: 0, reauthenticate: false, holdPage: false, held: [],
       page: {
         id: pageId, handle: 'garden-club', name: 'Garden Club', description: 'Weekly meetups in the park.', rules: '', topic: 'hobbies',
         status: 'active', purge_after: null, follower_count: 3, created_at: created, updated_at: created, following: false, blocked: false,
@@ -97,6 +97,8 @@ async function open(context, { owner = true, moderators = [], roles = [], offers
       },
     };
     Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => `00000000-0000-4000-8000-${(++state.sequence).toString(16).padStart(12, '0')}` });
+    // A slow server: reading the page waits until the test lets it answer.
+    state.releasePage = () => { state.holdPage = false; state.held.splice(0).forEach(resolve => resolve()); };
     const next = etag => etag.replace(/(\d+)"$/, (_match, number) => `${Number(number) + 1}"`);
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-page-roles', ...extra }), { status: 200 });
     const failed = (status, code, message) => new Response(JSON.stringify({ error: { code, message, details: {} }, request_id: 'offline-page-roles' }), { status });
@@ -109,7 +111,10 @@ async function open(context, { owner = true, moderators = [], roles = [], offers
       state.calls.push({ route: url.pathname, method, body, headers });
       const base = `/api/pages/${pageId}`;
       if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
-      if (url.pathname === '/api/pages/garden-club' && method === 'GET') return reply(state.page);
+      if (url.pathname === '/api/pages/garden-club' && method === 'GET') {
+        if (state.holdPage) await new Promise(resolve => state.held.push(resolve));
+        return reply(state.page);
+      }
       if (url.pathname === `${base}/posts` && method === 'GET') return reply([state.post], { pagination: { next_cursor: null, has_more: false } });
       if (url.pathname === `${base}/pinned-posts` && method === 'GET') return reply(state.post.pinned ? [state.post] : []);
       if (url.pathname === `${base}/drafts` && method === 'GET') return reply([]);
@@ -333,6 +338,37 @@ test('archiving makes the page read only; deleting needs its exact name, hides i
       [`pages/${pageId}/restore`, {}, '"page-2"'],
       [`pages/${pageId}/delete`, { confirm: 'Garden Club' }, '"page-3"'],
       [`pages/${pageId}/restore`, {}, '"page-4"'],
+    ]);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// Found by the live journey: Delete right after Restore was sent with the version before the restore and refused as changed.
+test('a page change shows the version the server answered with at once, so the next change is not refused while the page reloads', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await open(context);
+    const state = page.getByRole('region', { name: 'Archive or delete', exact: true });
+    await page.getByRole('form', { name: 'New post' }).waitFor();
+    await state.getByRole('button', { name: 'Archive page', exact: true }).click();
+    await state.getByRole('group', { name: 'Archive page', exact: true }).getByRole('button', { name: 'Archive page', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'Page archived. It is read only until you restore it.' }).waitFor();
+    await page.evaluate(() => { window.rolesFixture.holdPage = true; });
+
+    await state.getByRole('button', { name: 'Restore page', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'Page restored.' }).waitFor();
+    await state.getByRole('button', { name: 'Archive page', exact: true }).waitFor();
+    await state.getByRole('button', { name: 'Delete page', exact: true }).click();
+    const remove = state.getByRole('form', { name: 'Delete page' });
+    await remove.getByRole('textbox', { name: "Type the page's name to confirm" }).fill('Garden Club');
+    await remove.getByRole('button', { name: 'Delete page', exact: true }).click();
+    await page.getByRole('region', { name: 'Deleted', exact: true }).getByText('You deleted this page, so nobody else can see it. Restore it before', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('alert').count(), 0);
+    await page.evaluate(() => window.rolesFixture.releasePage());
+    assert.deepEqual((await commands(page)).map(([route, body, version]) => [route, body, version]), [
+      [`pages/${pageId}/archive`, {}, '"page-1"'],
+      [`pages/${pageId}/restore`, {}, '"page-2"'],
+      [`pages/${pageId}/delete`, { confirm: 'Garden Club' }, '"page-3"'],
     ]);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }

@@ -10,6 +10,8 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +23,8 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountDataViewModelTest {
@@ -191,6 +195,44 @@ class AccountDataViewModelTest {
         dispatcher.scheduler.advanceTimeBy(15000)
         dispatcher.scheduler.runCurrent()
         assertEquals(3, fixture.requests.size)
+    }
+
+    // Without the app-wide request lock (T82), a list read sent beside a change could answer after it and show what came before.
+    @Test fun aRefreshWhileAnExportIsUnansweredIsNotSent() = runBlocking {
+        val model = model()
+        model.visible(true); idle(model)
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        fixture.respond = { request ->
+            if (request.method == "POST") { reached.countDown(); release.await(5, TimeUnit.SECONDS); 202 to fixture.envelope(fixture.export) }
+            else fixture.defaultResponse(request)
+        }
+        model.prepare()
+        withContext(Dispatchers.IO) { assertTrue(reached.await(5, TimeUnit.SECONDS)) }
+        model.refresh()
+        release.countDown()
+        val settled = idle(model)
+        assertEquals(1, fixture.requests.count { it.method == "GET" && it.path == "/v1/me/exports" })
+        assertEquals(listOf(fixture.export), settled.downloads)
+    }
+
+    @Test fun aChangeStopsAListReadThatIsStillUnanswered() = runBlocking {
+        val model = model()
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        fixture.respond = { request ->
+            if (request.method == "GET") { reached.countDown(); release.await(5, TimeUnit.SECONDS); fixture.defaultResponse(request) }
+            else 202 to fixture.envelope(fixture.export)
+        }
+        model.visible(true)
+        withContext(Dispatchers.IO) { assertTrue(reached.await(5, TimeUnit.SECONDS)) }
+        model.prepare()
+        withTimeout(5000) { model.state.first { !it.busy } }
+        release.countDown()
+        val settled = idle(model)
+        assertEquals(listOf(fixture.export), settled.downloads)
+        // The screen is idle before a read that was not stopped answers, so wait for that older, empty answer.
+        assertNull(withTimeoutOrNull(2000) { model.state.first { it.downloads.isEmpty() } })
     }
 
     @Test fun downloadWritesPrettyJsonOnlyToTheSelectedStream() = runBlocking {

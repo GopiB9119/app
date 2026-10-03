@@ -10,6 +10,8 @@
     "tokens": "node scripts/design-tokens.mjs",
     "check:tokens": "node scripts/design-tokens.mjs --check",
     "test:tokens": "node --test scripts/design-tokens.test.mjs",
+    "check:records": "node scripts/records-check.mjs",
+    "test:records": "node --test scripts/records-check.test.mjs",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1"
   },
   "engines": { "node": ">=22" }

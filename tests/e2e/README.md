@@ -8,10 +8,9 @@ Live journeys through a real browser, the web proxy, the API and PostgreSQL. The
 | `scheduling.test.mjs` | Repeating reminders and snooze, with a real delivery by the worker |
 | `alerts.test.mjs` | Alerts, quiet hours and backup people (conflict C10 in the Product Understanding) |
 
-Run every journey from `web/`; the script picks up every `*.test.mjs` file in this folder:
+Run every journey from `web/`; the script picks up every `*.test.mjs` file in this folder. The tests use the Chromium that comes with the installed Playwright (build 1223 for Playwright 1.60); set `COMMUNITY_CHROMIUM_PATH` only to use another installed Chromium.
 
 ```powershell
-$env:COMMUNITY_CHROMIUM_PATH = Join-Path $env:LOCALAPPDATA 'ms-playwright/chromium-1228/chrome-win64/chrome.exe'
 npm run test:e2e
 ```
 

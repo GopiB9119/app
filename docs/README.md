@@ -29,7 +29,7 @@ Level 1 is the highest. The rules are in [Article 4 of the Product Constitution]
 | 8 | Implementation | Code and configuration in `backend/`, `web/`, `android/`, `agent/`, `infra/`, `packages/` (including the generated [openapi.json](../packages/openapi/openapi.json)) and `scripts/`; module READMEs; the [runbooks](runbooks/README.md) |
 | 9 | Tests and verification evidence | Tests in `backend/tests/`, `tests/` and the Android test folders; [BUILD_STATUS.md](BUILD_STATUS.md); [EVALUATIONS.md](EVALUATIONS.md); [INCIDENTS.md](INCIDENTS.md); the status columns in [PRODUCT_FEATURES.md](PRODUCT_FEATURES.md); the dated [engineering baseline](ENGINEERING_BASELINE_2026-09-30.md) and [engineering audit](ENGINEERING_AUDIT_2026-10-01.md) |
 
-Outside the levels: [DECISIONS.md](DECISIONS.md), where each decision takes the level of the document it changes; the [Product Understanding](PRODUCT_UNDERSTANDING.md), which records the product owner's explanation, the proposals and open questions, and the conflict register; the [changelog](../CHANGELOG.md); [AGENTS.md](../AGENTS.md); the original sources ([idea.md](../idea.md) and Chapters 1–20); and the supporting documents listed below.
+Outside the levels: [DECISIONS.md](DECISIONS.md), where each decision takes the level of the document it changes; the [Product Understanding](PRODUCT_UNDERSTANDING.md), which records the product owner's explanation, the proposals and open questions, and the conflict register; the [changelog](../CHANGELOG.md); [AGENTS.md](../AGENTS.md); the original sources ([idea.md](idea.md) and Chapters 1–20); and the supporting documents listed below.
 
 ## Authoritative Documents
 

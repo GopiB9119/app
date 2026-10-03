@@ -221,7 +221,7 @@ function FamilySpaces({ user }: { user: Account }) {
           </form>
         </section>
       </div>
-      {managedSpace && <ManageInvitations key={managedSpace.id} user={user} space={managedSpace} ended={false} onClose={() => setManagedSpaceId(null)} />}
+      {managedSpace && <ManageInvitations key={managedSpace.id} user={user} space={managedSpace} ended={!canInvite(managedSpace)} onClose={() => setManagedSpaceId(null)} />}
       {membersSpace && <ManageMembers key={membersSpace.id} user={user} space={membersSpace} onClose={() => setMembersSpaceId(null)} />}
       {settingsSpaceId && !accountChanged && <ManageSpaceSettings key={`${user.id}:${settingsSpaceId}`} accountId={user.id} spaceId={settingsSpaceId} onClose={() => setSettingsSpaceId(null)} />}
       {requestsSpace && <ManageJoinRequests key={requestsSpace.id} user={user} space={requestsSpace} onClose={() => setRequestsSpaceId(null)} />}

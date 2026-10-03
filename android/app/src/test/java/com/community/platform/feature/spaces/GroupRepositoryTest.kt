@@ -276,4 +276,18 @@ class GroupRepositoryTest {
         override suspend fun settings(authorization: String, spaceId: String) = result(settings).also { settingsReads += 1 }
         override suspend fun visibility(authorization: String, spaceId: String, etag: String, key: String, body: VisibilityChangeDto) = result(settings).also { etags.add(etag) }
     }
+
+    @Test fun theSameInvalidJoinNoteIncrementsTheMessageIdEachTime() = runBlocking {
+        val value = GroupViewModel(repository).also { model = it }
+        value.bind(accountId)
+        withTimeout(5000) { value.state.first { !it.busy } }
+        value.startAsk(entry)
+        value.note("Hello\u0001there")
+        val initialMessageId = value.state.value.messageId
+        repeat(2) { attempt ->
+            value.sendAsk()
+            assertEquals("Remove control and text-direction characters from the note.", value.state.value.error)
+            assertEquals(initialMessageId + attempt + 1L, value.state.value.messageId)
+        }
+    }
 }

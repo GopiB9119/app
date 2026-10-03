@@ -16,7 +16,7 @@ Code status reflects the repository at 2026-10-01 00:12. Other agent sessions we
 | TBD | Not decided anywhere yet. |
 | CONFLICTING | Your statement disagrees with the repository or documents, or the documents disagree with each other. |
 
-Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a standing instruction from earlier sessions. **Sources** = [idea.md](../idea.md) and Chapter1–20. **Drafts** = planning contracts and ADRs in `docs/`. **Code** = the repository. **Shared** = the text you shared on 2026-10-01 on how experienced designers and engineers make a product feel polished and consistent. **Part A** = the text you shared on 2026-10-01, "A. Community and Public Content — End-to-End Engineering Deep Dive", on the global community platform, public community pages, posts, discovery, news and ads; it calls news and ads "the two additional content types you mentioned". Part A also covers its follow-up, "Additional features and missing requirements", which you shared next: 102 more entries in nine areas and nine open decisions (see the [Part A inventory](#part-a-inventory)). "Built", "Partly built" and "Not built" describe the code, not the requirement.
+Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a standing instruction from earlier sessions. **Sources** = [idea.md](idea.md) and Chapter1–20. **Drafts** = planning contracts and ADRs in `docs/`. **Code** = the repository. **Shared** = the text you shared on 2026-10-01 on how experienced designers and engineers make a product feel polished and consistent. **Part A** = the text you shared on 2026-10-01, "A. Community and Public Content — End-to-End Engineering Deep Dive", on the global community platform, public community pages, posts, discovery, news and ads; it calls news and ads "the two additional content types you mentioned". Part A also covers its follow-up, "Additional features and missing requirements", which you shared next: 102 more entries in nine areas and nine open decisions (see the [Part A inventory](#part-a-inventory)). "Built", "Partly built" and "Not built" describe the code, not the requirement.
 
 ## Change Control
 
@@ -75,7 +75,7 @@ Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a s
 - **PROPOSED** Account, profile, relationship, follow, Space membership, conversation membership, consent and agent delegation are separate concepts. (Sources: idea.md, Chapter 18)
 - **PROPOSED** Each period of membership is recorded separately; rejoining starts a new one and does not restore old access. (Drafts: Space contract) Code: built.
 - **PROPOSED** A user has a public profile, a personal space, public pages, private spaces and agent workspaces, which "should share one consistent model". (Sources: idea.md section 24)
-- **CONFLICTING** The sources disagree on public versus private. [idea.md](../idea.md) lists public pages and private spaces separately; [Chapter 3](../Chapter3.md) treats Spaces as private; [Chapter 6](../Chapter6.md) section 6.8 allows public and discoverable Spaces. (Sources)
+- **CONFLICTING** The sources disagree on public versus private. [idea.md](idea.md) lists public pages and private spaces separately; [Chapter 3](Chapter3.md) treats Spaces as private; [Chapter 6](Chapter6.md) section 6.8 allows public and discoverable Spaces. (Sources)
 
 ## 6. Space types
 
@@ -116,7 +116,7 @@ Sources in brackets: **You** = your explanation on 2026-10-01. **Earlier** = a s
 - **CONFIRMED** Retrieval respects permissions. (You)
 - **PROPOSED** Every read and write checks the current account, the current membership and access to that specific item. (Sources: Chapter 11) Code: built.
 - **PROPOSED** Per-item audiences: whole Space, members only, chosen roles, owner only, author only, agent only. (Sources: Chapter 3) Code: not built.
-- **TBD** Per-Space permission settings, such as who may create tasks or events. Code: fixed rules.
+- **TBD** Per-Space permission settings, such as who may create tasks or events. Code: fixed rules, except who can invite people, which the owner of a family or group Space chooses since [DEC-026](DECISIONS.md#accepted-decisions) (provisional).
 
 ## 10. Community
 
@@ -228,7 +228,7 @@ You have not described moderation yet.
 - **CONFIRMED** Agents support conversations, task assistance, scheduling, notifications, memory, retrieval and other authorized workflows. (You)
 - **CONFIRMED** Agents assist; they are never the source of truth. (You)
 - **PROPOSED** One shared agent engine configured per scope, not a separately trained model or always-running process per group. (Sources: idea.md, Chapters 5, 12)
-- **PROPOSED** First-release limits: answers, summaries, drafts, confirmed personal reminders and group tasks. No external messages or calls, no health-record access, no permission changes, no member removal, no financial actions. (Sources: [Chapter 1](../Chapter1.md) section 33.3) See D4.
+- **PROPOSED** First-release limits: answers, summaries, drafts, confirmed personal reminders and group tasks. No external messages or calls, no health-record access, no permission changes, no member removal, no financial actions. (Sources: [Chapter 1](Chapter1.md) section 33.3) See D4.
 - **ASSUMED** The human product is built first and the agent by a separate workstream. (Earlier instruction recorded in the feature documents; please re-confirm.)
 - **TBD** What "other authorized workflows" covers.
 - **TBD** AI model provider and budget. None approved.
@@ -377,7 +377,7 @@ Approved by you on 2026-10-01 ([DEC-001](DECISIONS.md#accepted-decisions)). The 
 | ID | Requirement | Code today |
 | --- | --- | --- |
 | R1 | Users can belong to many Spaces. | Built |
-| R2 | Each Space has its own membership, roles, permissions and resources. | Partly built: owner, admin and member roles (admin under [DEC-018](DECISIONS.md#accepted-decisions), provisional); no per-Space permission settings |
+| R2 | Each Space has its own membership, roles, permissions and resources. | Partly built: owner, admin and member roles (admin under [DEC-018](DECISIONS.md#accepted-decisions), provisional); one per-Space permission setting, who can invite people ([DEC-026](DECISIONS.md#accepted-decisions), provisional) |
 | R3 | Public communities and private Spaces both exist. | Built; the public side is Pages (see D1) |
 | R4 | The public side has posts, comments, reactions, follows, discovery and search. | Partly built |
 | R5 | The private side has conversations, tasks, events and documents. | Partly built: text documents (T14; [DEC-015](DECISIONS.md#accepted-decisions), provisional); PDF, images and office files wait for the scanner decision |
@@ -516,7 +516,7 @@ Conflicts are recorded and resolved as [Article 5 of the Product Constitution](P
 | G1 | R11: retrieval respects membership | Fixed on 2026-10-01 (T02): a new member no longer sees a chat message or event created at the same moment they joined. History now compares admission order numbers instead of timestamps. |
 | G2 | R12: security | Fixed on 2026-10-01: a direct message sent after the other person left (T03), changes saved after sign-in expired during a wait (T04), and one sign-in limit shared by all web users when the web app runs behind a trusted proxy (T10). Since T11, the encryption key can be replaced in stages without signing anyone out or losing stored data. Still open: production key custody (C11-D08); the lookup key itself is not rotated. |
 | G3 | R12: observability | Since 2026-10-01: request logs without private data, trace IDs from the web proxy to the API and a key-protected metrics endpoint (T09), which also shows how much background work waits, for how long, and how much failed (T32). Missing: a collector, dashboards, alerts (targets, Q19), database server metrics, and traces into workers. |
-| G4 | R2: roles and permissions | Owner, admin and member roles (admin since [DEC-018](DECISIONS.md#accepted-decisions), provisional); no per-Space permission settings yet. |
+| G4 | R2: roles and permissions | Owner, admin and member roles (admin since [DEC-018](DECISIONS.md#accepted-decisions), provisional); one per-Space permission setting, who can invite people ([DEC-026](DECISIONS.md#accepted-decisions), provisional); others not decided. |
 | G5 | R5 and R10: documents and retrieval | Since 2026-10-01: text documents in private Spaces and search by words over documents, tasks and events, without a model (T14, T15). Missing: other file types and virus scanning (the scanner decision), and embeddings (Q17). |
 | G6 | R6: couple and custom Spaces | Built: custom groups (T22, [DEC-011](DECISIONS.md#accepted-decisions)) and couple Spaces (T12, [DEC-017](DECISIONS.md#accepted-decisions)), both provisional until you review them. |
 | G7 | R7 and R8: agents | Since 2026-10-01: an agent without an AI model, limited to the person's own access, with exact approvals and memory, on backend, web and Android (T33–T35). Missing: conversation with a model (Q17) and the owner's review of DEC-012. |

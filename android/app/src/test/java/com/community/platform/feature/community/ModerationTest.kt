@@ -7,6 +7,7 @@ import com.community.platform.feature.identity.PaginationDto
 import com.community.platform.feature.spaces.SpaceRepositoryTest
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -33,6 +34,8 @@ import org.junit.Test
 import java.io.IOException
 import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ModerationTest {
@@ -72,6 +75,10 @@ class ModerationTest {
         var appeals = listOf(review)
         var notices = listOf(notice)
         var reports = listOf(MyReportDto(otherId, "post", targetId, "spam", "open", null, null, stamp, null))
+        /** A request to this path waits, once recorded, until [hold] is released, so the test can act while it is unanswered. */
+        @Volatile var holdPath: String? = null
+        val hold = CountDownLatch(1)
+        val holding = CompletableDeferred<Unit>()
         val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
             val request = chain.request()
             val buffer = Buffer()
@@ -79,6 +86,7 @@ class ModerationTest {
             val body = buffer.readUtf8()
             requests += Recorded(request, body)
             val path = request.url.encodedPath
+            if (path == holdPath) { holding.complete(Unit); check(hold.await(5, TimeUnit.SECONDS)) { "The held request was never released" } }
             val gson = Gson()
             when {
                 path == "/v1/me/moderator" -> response(request, EnvelopeDto(ModeratorStatusDto(moderator), null))
@@ -227,6 +235,41 @@ class ModerationTest {
         assertEquals(listOf(remaining), current.state.value.queue.items)
         assertEquals(ModerationMessage.DECISION_RECORDED, current.state.value.message)
         assertFalse(current.state.value.decisions.containsKey(item.key))
+    }
+
+    // Without the app-wide request lock (T82), a read sent beside a decision could answer after it and bring the decided item back.
+    @Test fun aRefreshDuringAnUnansweredDecisionIsNotSentSoItCannotBringBackTheItem() = runBlocking {
+        val wire = Wire()
+        val current = ready(wire)
+        choose(current)
+        wire.holdPath = "/v1/moderation/decisions"
+        current.recordDecision(item)
+        withTimeout(5000) { wire.holding.await() }
+        val sent = wire.requests.size
+        current.refresh()
+        current.loadQueue()
+        current.selectTab(ModerationTab.APPEALS)
+        wire.hold.countDown()
+        val settled = idle(current)
+        assertEquals(sent, wire.requests.size)
+        assertTrue(settled.queue.items.isEmpty())
+        assertEquals(ModerationTab.REPORTS, settled.tab)
+        assertEquals(ModerationMessage.DECISION_RECORDED, settled.message)
+    }
+
+    @Test fun aDecisionWhileTheQueueLoadsIsNotSentSoTheQueuesOlderAnswerCannotBringTheItemBack() = runBlocking {
+        val wire = Wire()
+        val current = ready(wire)
+        choose(current)
+        wire.holdPath = "/v1/moderation/queue"
+        current.loadQueue()
+        withTimeout(5000) { wire.holding.await() }
+        current.recordDecision(item)
+        wire.hold.countDown()
+        val settled = idle(current)
+        assertTrue(wire.decisions().isEmpty())
+        assertEquals(listOf(item), settled.queue.items)
+        assertEquals("Review note", settled.draft(item).note)
     }
 
     @Test fun conflictOfInterestKeepsTheItemAndServerMessage() = runBlocking {

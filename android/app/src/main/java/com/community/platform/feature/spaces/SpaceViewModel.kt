@@ -43,6 +43,7 @@ data class SpaceWorkspaceState(
     val requiresSignIn: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
+    val messageId: Long = 0,
 ) {
     val locked: Boolean get() = busy || pending != null
     val dirty: Boolean get() = nameDraft.isNotEmpty() || descriptionDraft.isNotEmpty() || recipientDraft.isNotEmpty()
@@ -87,11 +88,11 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                         error.status == 412 && (it.pending is SpaceCommand.EndMembership || it.pending is SpaceCommand.ChangeRole) -> it.copy(pending = null, confirmation = null, members = emptyList(), error = error.message)
                         error.status in 400..499 && error.status != 408 -> it.copy(pending = null, confirmation = null, error = error.message)
                         else -> it.copy(error = error.message)
-                    }
+                    }.copy(messageId = it.messageId + 1)
                 }
             }
-            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.") } }
-            catch (_error: Exception) { update(expected) { it.copy(error = "The Space service returned an unexpected response. Changes are not confirmed.") } }
+            catch (_error: IOException) { update(expected) { it.copy(error = "No connection. Changes are not confirmed.", messageId = it.messageId + 1) } }
+            catch (_error: Exception) { update(expected) { it.copy(error = "The Space service returned an unexpected response. Changes are not confirmed.", messageId = it.messageId + 1) } }
             finally { update(expected) { it.copy(busy = false) } }
         }
     }
@@ -134,7 +135,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val message = "Only the owner and admins can invite people to this Space now."
         update(expected) { it.copy(selectedSpace = null, spaces = it.spaces.filterNot { space -> space.id == spaceId },
             members = emptyList(), showingMembers = false, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false,
-            sent = emptyList(), sentCursor = null, recipientDraft = "", pending = null, confirmation = null, error = message, notice = null) }
+            sent = emptyList(), sentCursor = null, recipientDraft = "", pending = null, confirmation = null, error = message, notice = null, messageId = it.messageId + 1) }
         try {
             val page = repository.spaces(accountId)
             update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor) }
@@ -150,9 +151,9 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         } catch (error: CancellationException) { throw error }
         catch (error: IdentityFailure) {
             if (error.status == 401 || error.code == "ACCOUNT_CHANGED") throw error
-            update(expected) { it.copy(error = message) }
+            update(expected) { it.copy(error = message, messageId = it.messageId + 1) }
         }
-        catch (_error: Exception) { update(expected) { it.copy(error = message) } }
+        catch (_error: Exception) { update(expected) { it.copy(error = message, messageId = it.messageId + 1) } }
     }
 
     private suspend fun loadMembers(accountId: String, spaceId: String, expected: Long) {
@@ -277,13 +278,13 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val name = current.nameDraft.trim()
         val invalidType = setOf(Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.SURROGATE.toInt(), Character.PRIVATE_USE.toInt(), Character.UNASSIGNED.toInt())
         if (name.codePointCount(0, name.length) !in 1..80 || name.codePoints().anyMatch { Character.getType(it) in invalidType }) {
-            mutableState.update { it.copy(error = "Enter a name of 1 to 80 characters without control characters.") }
+            mutableState.update { it.copy(error = "Enter a name of 1 to 80 characters without control characters.", messageId = it.messageId + 1) }
             return
         }
         val group = current.creationType == "group"
         val description = if (group) current.descriptionDraft.trim() else ""
         if (description.codePointCount(0, description.length) > 280 || description.codePoints().anyMatch { it != '\n'.code && Character.getType(it) in invalidType }) {
-            mutableState.update { it.copy(error = "Keep the description to 280 characters without control characters.") }
+            mutableState.update { it.copy(error = "Keep the description to 280 characters without control characters.", messageId = it.messageId + 1) }
             return
         }
         mutableState.update { it.copy(pending = SpaceCommand.Create(accountId, name, UUID.randomUUID().toString(), current.creationType, if (group) current.visibilityDraft else "private", description)) }
@@ -298,9 +299,9 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
         val input = current.recipientDraft.trim()
         val recipient = try { UUID.fromString(input).toString().also { require(it.equals(input, ignoreCase = true)) } }
         catch (_error: IllegalArgumentException) {
-            mutableState.update { it.copy(error = "Enter the intended recipient's full account ID.") }; return
+            mutableState.update { it.copy(error = "Enter the intended recipient's full account ID.", messageId = it.messageId + 1) }; return
         }
-        if (recipient == accountId) { mutableState.update { it.copy(error = "Choose another account to invite.") }; return }
+        if (recipient == accountId) { mutableState.update { it.copy(error = "Choose another account to invite.", messageId = it.messageId + 1) }; return }
         mutableState.update { it.copy(pending = SpaceCommand.Invite(accountId, selected.id, recipient, UUID.randomUUID().toString())) }
         executePending()
     }
@@ -345,10 +346,10 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                 val notice = "${result.member.displayName} is now ${if (result.member.role == "admin") "an admin" else "a member"}."
                 update(expected) { it.copy(pending = null, confirmation = null, selectedSpace = null, members = emptyList(), showingMembers = true,
                     spaces = it.spaces.filterNot { space -> space.id == change.space.id }, sent = emptyList(), sentCursor = null,
-                    ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, notice = notice) }
+                    ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, notice = notice, messageId = it.messageId + 1) }
                 loadSpace(accountId, change.space.id, expected)
                 val page = repository.spaces(accountId)
-                update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor, notice = notice) }
+                update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor, notice = notice, messageId = it.messageId + 1) }
                 return@action
             }
             if (result is SpaceCommandResult.OwnershipSaved) {
@@ -362,10 +363,10 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                 }
                 update(expected) { it.copy(pending = null, confirmation = null, selectedSpace = null, members = emptyList(), showingMembers = true,
                     spaces = it.spaces.filterNot { space -> space.id == result.transfer.spaceId },
-                    sent = emptyList(), sentCursor = null, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, notice = notice) }
+                    sent = emptyList(), sentCursor = null, ownershipOffers = emptyList(), ownershipCursor = null, ownershipLoaded = false, notice = notice, messageId = it.messageId + 1) }
                 loadSpace(accountId, result.transfer.spaceId, expected)
                 val page = repository.spaces(accountId)
-                update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor, notice = notice) }
+                update(expected) { it.copy(spaces = page.items, spaceCursor = page.nextCursor, notice = notice, messageId = it.messageId + 1) }
                 return@action
             }
             update(expected) { current ->
@@ -399,7 +400,7 @@ class SpaceViewModel @Inject constructor(private val repository: SpaceRepository
                     } else {
                         current.copy(members = current.members.filterNot { it.accountId == result.outcome.accountId }, pending = null, confirmation = null, notice = "Member removed.")
                     }
-                }
+                }.copy(messageId = current.messageId + 1)
             }
         }
     }

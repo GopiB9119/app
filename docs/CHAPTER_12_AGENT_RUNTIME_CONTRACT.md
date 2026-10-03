@@ -6,12 +6,12 @@ Source-of-truth role: the [documentation map](README.md) names this contract as 
 
 ## 1. Scope and Authority
 
-This continues the [release](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) and [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) contracts. It develops C11-T12 under the architecture in [Chapter 5](../Chapter5.md) and the detailed source in [Chapter 12](../Chapter12.md).
+This continues the [release](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md) and [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) contracts. It develops C11-T12 under the architecture in [Chapter 5](Chapter5.md) and the detailed source in [Chapter 12](Chapter12.md).
 
 - The product Agent is a controlled application subsystem using LangGraph, maintained supporting packages and authorized domain services. A new Space gets a configuration and scoped context, not a new trained model or always-running LLM process.
 - Nine role names are capabilities/subgraphs where justified, not nine compulsory model calls per request or privileged services. User, Space, conversation, tool, memory, provider and operator authority remain distinct.
 - M1 remains manual ordinary family/task/one-time in-app reminders. Controlled Agent features are a later MVP milestone; prohibited health-record access, diagnosis/dosage decisions, external calls/messages, permission/member changes and financial effects do not become allowed through a generic tool or approval.
-- The source ends mid-example at [12.22](../Chapter12.md#L2456), with 'Recipients:' and a lone '-'. No final acceptance section exists. Added lifecycle/recovery/test definitions here are proposals, not recovered missing source.
+- The source ends mid-example at [12.22](Chapter12.md#L2456), with 'Recipients:' and a lone '-'. No final acceptance section exists. Added lifecycle/recovery/test definitions here are proposals, not recovered missing source.
 - Keep original sources and earlier drafts unchanged. Planning continuation does not approve unresolved policies, provider/models, spending, live contacts, installation, code, database/model execution or delegation outside the user's Astra-only development rule.
 - All runtime, provider, Agent, evaluation and product acceptance scenarios are NOT RUN. Document validation is not proof that a model, graph, checkpoint or tool actually works.
 
@@ -21,28 +21,28 @@ All 22 numbered top-level topics are retained with exact titles and anchors.
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C12-S01 | Purpose | [12.1](../Chapter12.md#L5) |
-| C12-S02 | Runtime Design Principles | [12.2](../Chapter12.md#L51) |
-| C12-S03 | Agent Types | [12.3](../Chapter12.md#L193) |
-| C12-S04 | Agent Lifecycle | [12.4](../Chapter12.md#L479) |
-| C12-S05 | LangGraph Architecture | [12.5](../Chapter12.md#L544) |
-| C12-S06 | Graph Nodes | [12.6](../Chapter12.md#L690) |
-| C12-S07 | Tool Registry | [12.7](../Chapter12.md#L887) |
-| C12-S08 | Tool Execution Security | [12.8](../Chapter12.md#L1013) |
-| C12-S09 | Context Assembly | [12.9](../Chapter12.md#L1100) |
-| C12-S10 | Memory Architecture | [12.10](../Chapter12.md#L1219) |
-| C12-S11 | Human Approval System | [12.11](../Chapter12.md#L1397) |
-| C12-S12 | Multi-Agent Coordination | [12.12](../Chapter12.md#L1512) |
-| C12-S13 | Planning and Execution Loop | [12.13](../Chapter12.md#L1614) |
-| C12-S14 | Guardrails | [12.14](../Chapter12.md#L1692) |
-| C12-S15 | Evidence and Verification | [12.15](../Chapter12.md#L1804) |
-| C12-S16 | Agent Evaluation Architecture | [12.16](../Chapter12.md#L1877) |
-| C12-S17 | Observability and Tracing | [12.17](../Chapter12.md#L2014) |
-| C12-S18 | Failure and Recovery | [12.18](../Chapter12.md#L2130) |
-| C12-S19 | Performance and Scaling | [12.19](../Chapter12.md#L2215) |
-| C12-S20 | Agent Runtime APIs | [12.20](../Chapter12.md#L2316) |
-| C12-S21 | Realtime Agent Events | [12.21](../Chapter12.md#L2401) |
-| C12-S22 | Example Workflow: Family Reminder | [12.22](../Chapter12.md#L2456) |
+| C12-S01 | Purpose | [12.1](Chapter12.md#L5) |
+| C12-S02 | Runtime Design Principles | [12.2](Chapter12.md#L51) |
+| C12-S03 | Agent Types | [12.3](Chapter12.md#L193) |
+| C12-S04 | Agent Lifecycle | [12.4](Chapter12.md#L479) |
+| C12-S05 | LangGraph Architecture | [12.5](Chapter12.md#L544) |
+| C12-S06 | Graph Nodes | [12.6](Chapter12.md#L690) |
+| C12-S07 | Tool Registry | [12.7](Chapter12.md#L887) |
+| C12-S08 | Tool Execution Security | [12.8](Chapter12.md#L1013) |
+| C12-S09 | Context Assembly | [12.9](Chapter12.md#L1100) |
+| C12-S10 | Memory Architecture | [12.10](Chapter12.md#L1219) |
+| C12-S11 | Human Approval System | [12.11](Chapter12.md#L1397) |
+| C12-S12 | Multi-Agent Coordination | [12.12](Chapter12.md#L1512) |
+| C12-S13 | Planning and Execution Loop | [12.13](Chapter12.md#L1614) |
+| C12-S14 | Guardrails | [12.14](Chapter12.md#L1692) |
+| C12-S15 | Evidence and Verification | [12.15](Chapter12.md#L1804) |
+| C12-S16 | Agent Evaluation Architecture | [12.16](Chapter12.md#L1877) |
+| C12-S17 | Observability and Tracing | [12.17](Chapter12.md#L2014) |
+| C12-S18 | Failure and Recovery | [12.18](Chapter12.md#L2130) |
+| C12-S19 | Performance and Scaling | [12.19](Chapter12.md#L2215) |
+| C12-S20 | Agent Runtime APIs | [12.20](Chapter12.md#L2316) |
+| C12-S21 | Realtime Agent Events | [12.21](Chapter12.md#L2401) |
+| C12-S22 | Example Workflow: Family Reminder | [12.22](Chapter12.md#L2456) |
 
 The three principle titles in section 12.2 are retained exactly:
 
@@ -359,7 +359,7 @@ Normalize output into typed data, effect/operation reference, confirmed outcome 
 
 ### C12-W05 Interrupt for Approval or User Input and Resume Safely
 
-Source node: C12-N05. Also retain the [Chapter 5 approval/checkpoint rules](../Chapter5.md#L882).
+Source node: C12-N05. Also retain the [Chapter 5 approval/checkpoint rules](Chapter5.md#L882).
 
 Persist an immutable action revision, exact material payload/recipient identities, scope/tool/policy/consent requirements, risk, permitted approver and expiry before sending a durable approval notice. The UI exposes sufficient authorized detail to make an informed decision; source preview `recipients_count:3` is not enough to confirm an otherwise hidden recipient list. Do not disclose fields the reviewer cannot access; if that person lacks the necessary authority, obtain the proper data-owner/reviewer decision rather than granting a blind admin approval.
 
@@ -676,6 +676,6 @@ After implementation and its synthetic test environment are explicitly authorize
 | Keep an Agent waiting until a future reminder time. | Delivery fails when model/process/budget is unavailable. | Commit a schedule through the domain service, verify creation and end the run; scheduler executes independently. |
 | Declare quality or safety from one demo or dataset score. | Rare privacy/retry/cancellation failures remain hidden. | Representative versioned trials, critical deterministic gates, real fault/replay evidence and explicit residual uncertainty. |
 
-Next: [Chapter 13](../Chapter13.md), detailing schedule intent, timezone/recurrence/exception semantics, occurrences, recipients, notification attempts, acknowledgment, cancellation, quiet hours and escalation. Carry [Chapter 20 delivery](../Chapter20.md), [Chapter 14 documents](../Chapter14.md), [Chapter 16 trust operations](../Chapter16.md) and [Chapter 19 encryption](../Chapter19.md) alongside any dependent tools and provider decisions.
+Next: [Chapter 13](Chapter13.md), detailing schedule intent, timezone/recurrence/exception semantics, occurrences, recipients, notification attempts, acknowledgment, cancellation, quiet hours and escalation. Carry [Chapter 20 delivery](Chapter20.md), [Chapter 14 documents](Chapter14.md), [Chapter 16 trust operations](Chapter16.md) and [Chapter 19 encryption](Chapter19.md) alongside any dependent tools and provider decisions.
 
 This completes the proposed Agent runtime handoff. The unfinished source example remains identified, source inventories are preserved and the graph/evaluation definitions are design artifacts only. No Agent run, LangGraph compilation, provider call, model benchmark or runnable end-to-end application is claimed.

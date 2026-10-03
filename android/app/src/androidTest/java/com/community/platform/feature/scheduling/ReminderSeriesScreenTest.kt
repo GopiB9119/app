@@ -320,6 +320,24 @@ class ReminderSeriesScreenTest {
         compose.onNode(inRow(seriesId, "Active")).assertIsDisplayed()
     }
 
+    @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
+        val third = active.copy(id = "7f4e0b5c-3d6a-4e8f-9a01-2c3d4e5f6a71", taskTitle = "Feed the cat", etag = "\"series-7\"")
+        var current by mutableStateOf(mine(active, paused, third))
+        val callbacks = actions(confirm = {
+            val intent = (current.confirmation as ReminderCommand.Series).intent
+            current = current.copy(confirmation = null, notice = "Repeating reminder paused.",
+                series = current.series.map { if (it.id == intent.series.id) it.copy(status = "paused", reason = "by_person", nextOccurrence = null) else it })
+        }).copy(proposeSeries = { series, operation ->
+            current = current.copy(confirmation = ReminderCommand.Series(SeriesCommandIntent(accountId, series, operation, "reviewed-${operation.wireValue}")))
+        })
+        compose.setContent { CommunityTheme { ReminderScreen(current, callbacks, {}) } }
+        reveal("series-pause-${third.id}")
+        compose.onNodeWithTag("series-pause-${third.id}").performClick()
+        compose.onNodeWithTag("reminder-confirm").performClick()
+        // The message is the list's first item, far above the series that was paused.
+        compose.onNodeWithText("Repeating reminder paused.").assertIsDisplayed()
+    }
+
     @Test fun snoozeNeedsAChoiceAndCancelSendsNothing() {
         val limited = notification.copy(snoozeBefore = Instant.now().plus(Duration.ofHours(2)).toString())
         var current by mutableStateOf(inbox().copy(inbox = listOf(limited)))

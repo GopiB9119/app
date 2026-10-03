@@ -6,9 +6,9 @@ Status: DRAFT FOR PRODUCT, SCHEDULING, DELIVERY AND SECURITY REVIEW. This is a d
 
 This continues the [release plan](CHAPTER_01_RELEASE_PLAN.md), [identity](CHAPTER_18_IDENTITY_CONTRACT.md), [Space](CHAPTER_03_SPACE_CONTRACT.md), [data](CHAPTER_06_DATA_CONTRACT.md), [API/realtime](CHAPTER_07_API_REALTIME_CONTRACT.md), [Android](CHAPTER_08_ANDROID_CONTRACT.md), [web](CHAPTER_09_WEB_CONTRACT.md), [operations](CHAPTER_10_BACKEND_OPERATIONS_CONTRACT.md), [security/privacy](CHAPTER_11_SECURITY_PRIVACY_CONTRACT.md) and [Agent runtime](CHAPTER_12_AGENT_RUNTIME_CONTRACT.md) drafts. It develops C12-T12 and the ordinary family-reminder milestone into explicit timing and delivery contracts.
 
-- [Chapter 13](../Chapter13.md) is the owning source; [Chapter 20](../Chapter20.md) supplies the adjacent delivery/provider boundary. The Agent understands and drafts permitted intent; deterministic backend services own time calculation, occurrences, dispatch, acknowledgment and escalation without an active model or app.
+- [Chapter 13](Chapter13.md) is the owning source; [Chapter 20](Chapter20.md) supplies the adjacent delivery/provider boundary. The Agent understands and drafts permitted intent; deterministic backend services own time calculation, occurrences, dispatch, acknowledgment and escalation without an active model or app.
 - M1 remains verified synthetic accounts, private family membership, an ordinary task and a confirmed one-time in-app reminder. Broader recurrence, external calendars, escalation, medicine records and provider channels retain their own release and safety gates. No source example adds health-record access, diagnosis/dosage decisions or external calls/messages to the MVP Agent.
-- The source ends at [13.19 Android Screens](../Chapter13.md#L1374), with the schedule-creation field 'Notes'. It has no finished web-screen, test or final acceptance section. Additions below are proposed engineering contracts, not recovered source text.
+- The source ends at [13.19 Android Screens](Chapter13.md#L1374), with the schedule-creation field 'Notes'. It has no finished web-screen, test or final acceptance section. Additions below are proposed engineering contracts, not recovered source text.
 - Preserve all original chapters and earlier drafts. Planning continuation does not approve open policy choices or authorize code, services, model/provider calls, real contacts/health data, credentials, device actions, provisioning, spending or deployment.
 - All scheduler/database/calendar/delivery/product tests are NOT RUN. Document and synthetic time-arithmetic checks are not runtime durability, provider capability, clinical validation or timing guarantees.
 
@@ -18,25 +18,25 @@ All nineteen numbered topics are retained with their exact titles and source anc
 
 | ID | Source topic | Source reference |
 | --- | --- | --- |
-| C13-S01 | Purpose | [13.1](../Chapter13.md#L3) |
-| C13-S02 | Core Architecture | [13.2](../Chapter13.md#L57) |
-| C13-S03 | Scheduling Principles | [13.3](../Chapter13.md#L113) |
-| C13-S04 | Scheduling Domain Model | [13.4](../Chapter13.md#L193) |
-| C13-S05 | Scheduling Database Tables | [13.5](../Chapter13.md#L322) |
-| C13-S06 | Scheduler Service | [13.6](../Chapter13.md#L374) |
-| C13-S07 | Notification Orchestrator | [13.7](../Chapter13.md#L431) |
-| C13-S08 | Notification Types | [13.8](../Chapter13.md#L501) |
-| C13-S09 | Notification Template System | [13.9](../Chapter13.md#L575) |
-| C13-S10 | Consent and Contact Preferences | [13.10](../Chapter13.md#L612) |
-| C13-S11 | Quiet Hours | [13.11](../Chapter13.md#L688) |
-| C13-S12 | Medicine Reminder Architecture | [13.12](../Chapter13.md#L712) |
-| C13-S13 | Escalation Architecture | [13.13](../Chapter13.md#L883) |
-| C13-S14 | External Communication Adapters | [13.14](../Chapter13.md#L994) |
-| C13-S15 | Calendar Integration | [13.15](../Chapter13.md#L1094) |
-| C13-S16 | Agent Integration | [13.16](../Chapter13.md#L1198) |
-| C13-S17 | Scheduling APIs | [13.17](../Chapter13.md#L1249) |
-| C13-S18 | Realtime Events | [13.18](../Chapter13.md#L1347) |
-| C13-S19 | Android Screens | [13.19](../Chapter13.md#L1374) |
+| C13-S01 | Purpose | [13.1](Chapter13.md#L3) |
+| C13-S02 | Core Architecture | [13.2](Chapter13.md#L57) |
+| C13-S03 | Scheduling Principles | [13.3](Chapter13.md#L113) |
+| C13-S04 | Scheduling Domain Model | [13.4](Chapter13.md#L193) |
+| C13-S05 | Scheduling Database Tables | [13.5](Chapter13.md#L322) |
+| C13-S06 | Scheduler Service | [13.6](Chapter13.md#L374) |
+| C13-S07 | Notification Orchestrator | [13.7](Chapter13.md#L431) |
+| C13-S08 | Notification Types | [13.8](Chapter13.md#L501) |
+| C13-S09 | Notification Template System | [13.9](Chapter13.md#L575) |
+| C13-S10 | Consent and Contact Preferences | [13.10](Chapter13.md#L612) |
+| C13-S11 | Quiet Hours | [13.11](Chapter13.md#L688) |
+| C13-S12 | Medicine Reminder Architecture | [13.12](Chapter13.md#L712) |
+| C13-S13 | Escalation Architecture | [13.13](Chapter13.md#L883) |
+| C13-S14 | External Communication Adapters | [13.14](Chapter13.md#L994) |
+| C13-S15 | Calendar Integration | [13.15](Chapter13.md#L1094) |
+| C13-S16 | Agent Integration | [13.16](Chapter13.md#L1198) |
+| C13-S17 | Scheduling APIs | [13.17](Chapter13.md#L1249) |
+| C13-S18 | Realtime Events | [13.18](Chapter13.md#L1347) |
+| C13-S19 | Android Screens | [13.19](Chapter13.md#L1374) |
 
 The three principle titles from section 13.3 retain their wording; the typographic apostrophe in the first title is normalized to ASCII.
 
@@ -603,7 +603,7 @@ These are responsibility packages, not twelve mandatory services, people or runn
 | C13-T11 | Independent QA, security and domain reviewers | C13-T02 through C13-T10 for released scope | Execute applicable C13-V01 through C13-V32 with exact artifact/library/tzdata/provider/simulator identities and faults; record failures/skips/limits. Document arithmetic or mocks cannot certify live provider timing, care safety or restore. |
 | C13-T12 | File, search, privacy and product leads | C13-T01, C13-T03, C13-T09; C13-T11 for implemented scheduling evidence | Chapter 14 handoff: immutable authorized file versions, quarantine/OCR/document lineage and permitted retrieval for attachments or care sources. Design may proceed now; OCR is not confirmed medical instruction and stored files do not expand Agent access. |
 
-Order the authorized first slice as policy and temporal contract, durable data/work identity, one-time deterministic in-app execution, cancellation/acknowledgment, shared client projection and fault evidence. Add recurring rules, bounded escalation, sensitive care scope and provider/calendar channels only with their own gates. [Chapter 20](../Chapter20.md#L2276) remains the notification/provider detail owner; this chapter defines the timing and effect boundaries it must honor.
+Order the authorized first slice as policy and temporal contract, durable data/work identity, one-time deterministic in-app execution, cancellation/acknowledgment, shared client projection and fault evidence. Add recurring rules, bounded escalation, sensitive care scope and provider/calendar channels only with their own gates. [Chapter 20](Chapter20.md#L2276) remains the notification/provider detail owner; this chapter defines the timing and effect boundaries it must honor.
 
 ## 15. Demonstration, Remaining Risks and Next Chapter
 
@@ -632,4 +632,4 @@ Record actual build/configuration, server/client/library versions, synthetic inp
 - Health/guardian authority, verified instructions, retention, sensitive derivatives and encryption require separate reviewed product/legal/security decisions. No continuous-monitoring, clinical adherence, emergency-service, universal exactly-once, immediate recall or compliance-certification claim follows from this document.
 - Do not release a dependent feature with a known critical authority/privacy/duplicate-effect/cancellation failure. An explicitly accepted residual risk cannot waive required permission, legal duties or convert NOT RUN evidence into a pass. Disable unresolved future capabilities without mislabeling the ordinary M1 as the complete product.
 
-Next is [Chapter 14](../Chapter14.md): upload/file/document processing, immutable generations, quarantine/scanning, OCR/chunks/embeddings, authorization-aware retrieval and citation/deletion lineage. Carry the [trust/operations](../Chapter16.md), [encryption](../Chapter19.md) and [notification delivery](../Chapter20.md) dependencies forward. Continue design and developer handoff; source preservation and planning continuation still do not authorize implementation or approve these policy choices.
+Next is [Chapter 14](Chapter14.md): upload/file/document processing, immutable generations, quarantine/scanning, OCR/chunks/embeddings, authorization-aware retrieval and citation/deletion lineage. Carry the [trust/operations](Chapter16.md), [encryption](Chapter19.md) and [notification delivery](Chapter20.md) dependencies forward. Continue design and developer handoff; source preservation and planning continuation still do not authorize implementation or approve these policy choices.
