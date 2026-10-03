@@ -24,6 +24,8 @@ The [Part D inventory](#part-d-inventory) maps those proposals to their existing
 
 Additional source: **Part E** = the [Production Architecture Audit and Autonomous Engineering System](%23%20Community%20Agent%20App%20%E2%80%94%20Production%20Archi.md), shared on 2026-10-03. It proposes repository intelligence, a durable engineering orchestrator, nine specialized roles and evidence-based completion. It asks for discovery and a plan before broad implementation. Its engineering platform, example schemas, optional technologies and release sequence are PROPOSED, not approval to replace the existing product agent, hierarchy or local-only boundaries. The [Part E audit](ENGINEERING_SYSTEM_AUDIT_2026-10-03.md) separates the two systems and records fresh bounded checks; the [inventory](#part-e-inventory) records the new proposals.
 
+Additional source: **Agent ideas** = the [agent feature ideas](AGENT_FEATURE_IDEAS_2026-10-03.md), written on 2026-10-03 at your request ("this is right way to build agent please ready more ideas chapter feature how agent"). It explains how the built agent works and proposes 22 features as P53–P62, with questions Q38–Q41. Your words say the current way of building the agent is right. They do not confirm a proposal or decision; DEC-012 and DEC-028 remain provisional.
+
 ## Change Control
 
 - Approved requirements live in [Article 2 of the Product Constitution](PRODUCT_CONSTITUTION.md#article-2-approved-requirements) and change only as its [Article 8](PRODUCT_CONSTITUTION.md#article-8-amendments) describes.
@@ -258,6 +260,7 @@ You described community rules on 2026-10-02 (below); you have not described mode
 - **TBD** How the existing unconnected agent code fits: a rule-based request parser, data models and tool definitions, with no database tables, routes or screens. (Code)
 - **PROPOSED** Agent answers reach the screen as typed blocks (text, list, event, person, confirmation, approval, error, progress) that each app draws with its own components; the agent never sends HTML or decides the layout. (Shared; Drafts: C12-D13)
 - **PROPOSED** An agent switch in each Space, and agent memory kept per Space rather than per person. (Part C) The switch is built (T152) under [DEC-028](DECISIONS.md#accepted-decisions), provisional. Memory stays personal under DEC-012 (C13).
+- **PROPOSED** 22 more agent features in the [agent feature ideas](AGENT_FEATURE_IDEAS_2026-10-03.md), as candidate answers to Q7: planning answers, reviewed multi-step plans, cited document answers, public community helpers, transparency and undo, Telugu and Hindi requests, evaluation first, and the rules a later model must follow (P53–P62; Q38–Q41). (Agent ideas)
 
 ## 21. Agent scopes
 
@@ -474,6 +477,16 @@ Waiting for your confirmation.
 | P50 | A repository-aware engineering system, separate from the user-facing product agent, with specialized architect, engineering, security, QA and integration roles. Nine roles need not be nine services. | Part E; scope/placement is Q37, not an approved product addition |
 | P51 | Deterministic repository discovery, code-aware indexing and requirements/evidence reconciliation, with versioned scan, task, dependency, execution and artifact records. Reuse the current stack and evidence before choosing additional storage or workflow tools. | Part E chapters 1-2; catalog and verification scripts cover only a subset |
 | P52 | Permission-controlled engineering execution, bounded retries/budgets, isolation before writes, independent review, recovery and false-completion evaluation. Agents propose transitions; enforced controls decide them. | Part E chapters 2-3; compare P19/P31. The proposed hierarchy conflicts with DEC-008 (C17); no release/provider approval |
+| P53 | Read-only agent answers from what the person can already see: what needs them today, calendar questions, checklist status, budget totals, and links to the right manual screen. | [Agent ideas](AGENT_FEATURE_IDEAS_2026-10-03.md) A1, A3–A5 and A17; no model. Covering every Space: Q41 |
+| P54 | Reviewed multi-step plans. One request proposes several exact actions, such as an event, checklist items and tasks. Each action has its own key and reported result. A partial plan is never reported as done. Fixed templates come first. | Agent ideas A2, A4 and A8; Q38 |
+| P55 | The agent records a budget expense after approval and never makes a payment. | Agent ideas A5. DEC-012 and P8 refuse financial actions today: Q39 |
+| P56 | For a task the person manages, the agent prepares a reminder request for its assignee. Only the assignee's acceptance creates a reminder. | Agent ideas A6; reuses recipient-approved reminder requests. DEC-012 rule 4 refuses this today: Q16 |
+| P57 | Cited answers from Space documents without a model: matching passages with the document, version and lines, or "not found". | Agent ideas A7; R10 and R11. T15 does not connect the agent to search until D4 is decided |
+| P58 | Public community helpers: quote a page's current rules, save template-based drafts, find pages with structured filters and explain each result, and help moderators without deciding for them. | Agent ideas A9–A12; compare P36 and P38. Moderation help: Q27 |
+| P59 | Agent transparency and recovery: show a "Why?" view with sources, approvals, results and memories used; mark records made through the agent; allow undo of the agent's own change; and let each Space choose allowed agent abilities. | Agent ideas A13–A15; R7, R12. Undo: Q40. Per-Space abilities extend DEC-028 |
+| P60 | Telugu and Hindi requests for the same agent abilities, with the same tests in each language. | Agent ideas A18; compare P20. Today's request phrases are English only |
+| P61 | Evaluate before adding abilities: untrusted-text tests, a versioned golden set that a model must match before replacing a rule, and privacy-safe counts of where people give up. | Agent ideas A16, A19 and A20; compare P19 and C12-W12 |
+| P62 | After a model is approved, it only proposes the typed intent that code validates and never chooses tools. A local model comes first. Summaries always cite sources and never use couple chats automatically. | Agent ideas A21 and A22; Q17, Q11 |
 
 ### Part A inventory
 
@@ -608,6 +621,10 @@ The [engineering-system audit](ENGINEERING_SYSTEM_AUDIT_2026-10-03.md) compares 
 | Q35 | Medication's first build (Part C): reminders at dose times for the person only, also sharing chosen fields with people they choose, or nothing until the reviewer of Q12 is named? Asked on 2026-10-02 (recommended: the person's own reminders first); you were not available. | 14 |
 | Q36 | Event budgets (Part C): estimates, expenses and totals in exact money without payments now, estimates only, or later? Asked on 2026-10-02 (recommended: now, without payments); you were not available. | 15 |
 | Q37 | Is Part E a working method using existing repository tools, a separate local-only engineering tool, or an in-product capability? The initial audit does not approve a new orchestrator or repository-writing runtime. | Part E inventory; P50-P52 |
+| Q38 | Can one approval cover a reviewed plan of several actions, with every action shown and each carried out separately? Or does each action need its own approval? | 20, 22; P54 |
+| Q39 | May the agent record a budget expense after approval? Or is recording money, without paying, a "financial action" the agent must refuse (P8, DEC-012)? | 20; P55 |
+| Q40 | May the agent undo its own change for a short time, such as reopening a task it completed or cancelling a reminder it scheduled? It still never deletes anything. | 20, 22; P59 |
+| Q41 | Should the agent answer across all of a person's Spaces, such as one daily overview, or stay in one Space at a time as it does today? Section 21 leaves this TBD. | 21; P53 |
 
 ## 40. Conflicts with the existing repository
 

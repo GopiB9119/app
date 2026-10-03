@@ -4,6 +4,22 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ## 2026-10-03
 
+### Agent Build Plan (T180–T193)
+
+- **Agent build plan** written at the owner's request ("So, can you make a plan for building an agent?"). It has eight phases, from proving today's agent to adding a model. Each phase finishes with backend, web and Android evidence before the next begins ([plan](docs/AGENT_FEATURE_IDEAS_2026-10-03.md#5-build-plan-proposed), [tasks](docs/TASKS.md#agent-build-plan)).
+- T180, the evaluation set for today's agent, and T181, outcome counts on `/metrics`, are Ready because they change no product behaviour. T182–T193 are Blocked on the decisions they name, and each decision has a written recommendation. Conversation with a model remains T16 (Q17). No code, requirement or decision changed.
+
+### Agent Feature Ideas (Proposals Only)
+
+- **Agent feature ideas chapter** written at the owner's request ("this is right way to build agent please ready more ideas chapter feature how agent"). It explains how the built in-app agent works step by step, what is already right, and what is missing. It proposes 22 features for planning, documents, public communities, trust and recovery, Telugu and Hindi, evaluation, and later model use ([document](docs/AGENT_FEATURE_IDEAS_2026-10-03.md)).
+- Recorded as PROPOSED P53–P62, with new questions Q38–Q41, in the [Product Understanding](docs/PRODUCT_UNDERSTANDING.md#38-proposed-requirements). They are candidate answers to Q7. No requirement, decision, task, code or test changed. DEC-012 and DEC-028 remain provisional, and no model or provider is approved (Q17).
+
+### Android Community And Safety Message Accessibility (T117)
+
+- Blocked brings "Appeal sent." into view once at the top of its list. A followed-pages Load more failure stays after the retained pages with a visible Retry; the taller footer reveals itself after layout. Community errors/notices and owned/followed-list failures have polite live-region semantics. Existing strings, tokens, permissions and requests are unchanged.
+- Three corrected controls fail on the original app using the same final test APK as the fix. On 422 frozen inputs, **164/164 JVM tests**, lint with 0 errors, debug/test packaging and **41/41 offline device cases** pass, including actual 320 dp/200% text. Both full affected screen-test classes and seven prior T117 regressions passed without retries, failures or skips; font restored and owned emulator shut down.
+- **T117 completed**. The mixed-source build failure, startup ANRs, dialog-fixture correction, Compose opt-in failure and two interrupted device attempts remain in the [checkpoint](docs/BUILD_STATUS.md#android-community-and-safety-message-accessibility). Semantics assertions are not a full TalkBack audit; T169 integrated qualification and T168 performance work remain open.
+
 ### Event Budget Contributions (T173)
 
 - People record their own contribution to an event budget, promised or given, with an optional note, and only they mark it given or withdraw it ([DEC-041](docs/DECISIONS.md#accepted-decisions), provisional). Everyone sees the totals; who gave what is seen only by that person, the organizer and the Space owner. Contributions are kept apart from the plan and expenses and are never a payment.

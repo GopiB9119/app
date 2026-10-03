@@ -72,7 +72,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | community.page-onboarding | P/P/P | Explicit page creation (handle/name/topic/description) with exact retry; publication review remains |
 | community.page-roles | P/P/P | One owner and up to 10 moderators invited by account ID, who pin posts and remove comments and are never shown publicly; handing a page over to a moderator (T84); editors/admins and acting-page attribution remain |
 | community.page-membership | U/U/U | Admission separate from following |
-| community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following; the list of pages you follow on web and Android (T72) |
+| community.following | P/P/P | Idempotent follow/unfollow with exact counts; blocking a page ends following; the list of pages you follow on web and Android (T72). Android pagination failure stays beside the action with visible Retry and polite semantics, checked at 320 dp/200% text ([T117](BUILD_STATUS.md#android-community-and-safety-message-accessibility)) |
 | community.posts-drafts | P/P/P | Private drafts, explicit publish, owner edits (edited mark) on web and Android ([T31](TASKS.md#approved-requirements-not-built-yet)), tombstone delete, up to 3 posts pinned to the top of the page (T83); revision history remains |
 | community.publication-review | U/U/U | Exact revision/media clearance, withdraw and remoderation |
 | community.media-posts | U/U/U | Safe ready media with compatible audience |
@@ -261,7 +261,7 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | safety.evidence | U/U/U | Minimal immutable lawful evidence and access audit |
 | safety.reviewer-queues | P/P/P | One oldest-first queue of reported public content, grouped per item; conflict of interest refused; assignment and expiry remain |
 | safety.restrictions | U/U/U | Exact scoped reversible/expiring enforcement where applicable |
-| safety.appeals | P/P/P | One appeal per hiding decision, reviewed by a different moderator, who keeps it or restores the content (T69) |
+| safety.appeals | P/P/P | One appeal per hiding decision, reviewed by a different moderator, who keeps it or restores the content (T69). Android Blocked brings the acknowledgement into view once with polite semantics, checked at 320 dp/200% text ([T117](BUILD_STATUS.md#android-community-and-safety-message-accessibility)) |
 | safety.privileged-access | U/U/U | Workforce identity, step-up, purpose and time bounds |
 | safety.incidents | U/U/U | Runbooks, containment, evidence and recovery ownership |
 | safety.retention-legal-holds | U/U/U | Reviewed retention and protected exceptions, not indefinite storage |
@@ -309,7 +309,7 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | platform.backup-restore | P/U/U | Recorded isolated local restore and staged local key rotation (T11); production/PITR/key custody not qualified |
 | platform.deployment | P/P/P | Local builds/Compose; no production deployment |
 | platform.design-system | P/P/P | Existing operational styles and Compose theme; wider components remain |
-| platform.accessibility | U/P/P | Some measured narrow/large-text checks; full assistive technology review remains |
+| platform.accessibility | U/P/P | Measured narrow/large-text checks; T117 message visibility/live-region and repeated-error regressions pass across Community/Safety, Events, Checklist, Calendar and Space ([41 device cases](BUILD_STATUS.md#android-community-and-safety-message-accessibility)); full assistive technology review remains |
 | platform.localization | U/P/P | Android in English, Telugu and Hindi; the web shell and sign-in screens in all three with a remembered choice, other web screens still English ([DEC-023](DECISIONS.md#accepted-decisions), T70, T98); machine-translated drafts await review; RTL remains |
 | platform.client-offline-state | U/P/P | Visible failure and in-memory intents; no durable process-death outbox |
 

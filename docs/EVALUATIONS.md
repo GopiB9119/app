@@ -12,6 +12,16 @@ What has been tested, how, and what the results prove. Checks for each build bat
 - Tests and their results are level 9 of the [authority hierarchy](PRODUCT_CONSTITUTION.md#article-4-authority-hierarchy): evidence of current behaviour, not authority over a newer confirmed requirement ([Article 6](PRODUCT_CONSTITUTION.md#article-6-code-and-tests-are-evidence)).
 - Never delete, skip or weaken a test just to make a change pass. Change a test only when a confirmed decision changes what it checks ([Article 7](PRODUCT_CONSTITUTION.md#article-7-protecting-existing-behaviour)).
 
+## Android Community And Safety Accessibility: 2026-10-03
+
+T117/R13: full affected Community/Moderation test classes and seven existing Events/Checklist/Calendar/Space accessibility regressions, on the intact T82 baseline plus four owned source/test overlays ([422-input manifest](../.local/qualification-community-notices-stable-20261003/qualified-manifest.json)). Later T174 budget-split and planning work is not included.
+
+- **Failing controls:** all three new acceptance cases fail on the original app with the same final test APK used for the fixed app: missing polite live region, off-screen followed error, off-screen appeal acknowledgement. [Result](../.local/qualification-community-notices-stable-20261003/control-device-result.json), [APK comparison](../.local/qualification-community-notices-stable-20261003/apk-comparison.json).
+- **Native regression/build:** **164/164 JVM cases**, six Community/Moderation classes, no failures/errors/skips and empty stderr. Offline lint and debug/test APK builds pass; 0 lint errors, 27 warnings, 1 informational finding. All 422 captured hashes unchanged. [JVM](../.local/qualification-community-notices-stable-20261003/community-jvm-result.json), [build](../.local/qualification-community-notices-stable-20261003/fixed-build-optin-result.json).
+- **Final device, 18:51:40-19:04:51 +05:30:** **41/41 pass**: Community 22, Moderation 12 and seven targeted prior T117 cases. No failures/skips/retries; actual 320 dp/200% text and measured text layout in the new cases, restored font scale, owned offline read-only API 36 emulator shut down. [Result](../.local/qualification-community-notices-stable-20261003/fixed-device-final-result.json), [log](../.local/qualification-community-notices-stable-20261003/fixed-device-final.log).
+
+The [checkpoint](BUILD_STATUS.md#android-community-and-safety-message-accessibility) retains the incomplete moving-source build, initial startup ANRs, corrected dialog-fixture error, required Compose API opt-in, and two interrupted device attempts. None is relabelled as a pass. This closes T117's recorded defects, not a full TalkBack audit, T169 integrated-source qualification, T168 performance work or production release approval.
+
 ## Android Authenticated Request Concurrency: 2026-10-03
 
 T82/R13 completion: authenticated feature requests release the session mutex before network work, with conditional cleanup for exactly the captured credentials. Existing feature-level read/command ordering guards remain. Credential-producing transitions and startup account restoration retain their earlier serialization; permissions and retry policy are unchanged.
