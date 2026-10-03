@@ -35,6 +35,7 @@ import com.community.platform.feature.community.FeedTab
 import com.community.platform.feature.community.ModerationViewModel
 import com.community.platform.feature.discovery.SearchRoute
 import com.community.platform.feature.discovery.SearchViewModel
+import com.community.platform.feature.events.BudgetViewModel
 import com.community.platform.feature.events.EventsRoute
 import com.community.platform.feature.events.EventsViewModel
 import com.community.platform.feature.files.DocumentLineRange
@@ -43,6 +44,8 @@ import com.community.platform.feature.files.DocumentViewModel
 import com.community.platform.feature.platform.HomeLinks
 import com.community.platform.feature.platform.HomeRoute
 import com.community.platform.feature.platform.HomeViewModel
+import com.community.platform.feature.privacy.PrivacyRoute
+import com.community.platform.feature.privacy.PrivacyViewModel
 import com.community.platform.feature.platform.MainBar
 import com.community.platform.feature.platform.MainNavigationBar
 import com.community.platform.feature.platform.MainSection
@@ -139,6 +142,10 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
     // Opens the community screen at one place: "blocked" (under Profile), "discover" or "post:<id>".
     var communityEntry by rememberSaveable { mutableStateOf<String?>(null) }
     val accountId = account.profile?.user?.id
+    // DEC-034: the Privacy page under Profile; activity-scoped like the others so a rotation keeps it.
+    val privacy: PrivacyViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    // DEC-039: an event's budget, bound while one event is open on the events screen.
+    val budget: BudgetViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val spacesState = spaces.state.collectAsStateWithLifecycle()
     val messagingState = messaging.state.collectAsStateWithLifecycle()
     val communityState = community.state.collectAsStateWithLifecycle()
@@ -175,14 +182,17 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             // Blocked opens on its own, so back returns to Profile; Discover and a post keep the feed to go back to.
             when {
                 entry == "blocked" -> community.open(Destination.Blocked, remember = false)
+                entry == "interests" -> community.open(Destination.Interests, remember = false)
                 entry == "discover" -> community.open(Destination.Discover)
                 entry.startsWith("post:") -> community.open(Destination.Post(entry.removePrefix("post:")))
             }
             communityEntry = null
         }
         events.bind(if (screen == "events") accountId else null, eventsSpaceId, account.profile?.user?.timezone ?: "UTC")
+        if (screen != "events") budget.bind(null, null)
         care.bind(if (screen == "care") accountId else null, account.profile?.user?.timezone ?: "UTC")
         agent.bind(if (screen == "agent") accountId else null)
+        privacy.bind(if (screen == "privacy") accountId else null)
         home.bind(if (screen == "home") accountId else null, account.profile?.user?.timezone ?: "UTC")
     }
     val go: (MainSection) -> Unit = { section ->
@@ -230,8 +240,10 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             CareRoute(care, accountId, onBack = { screen = "home" }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "agent" && accountId != null) {
             AgentRoute(agent, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
+        } else if (screen == "privacy" && accountId != null) {
+            PrivacyRoute(privacy, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "events" && accountId != null && eventsSpaceId != null) {
-            EventsRoute(events, accountId, eventsSpaceName, onBack = { screen = eventsReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() })
+            EventsRoute(events, accountId, eventsSpaceName, onBack = { screen = eventsReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() }, budget = budget)
         } else if (screen == "community" && accountId != null) {
             CommunityRoute(community, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() }, moderation = moderation)
         } else if (screen == "messages" && accountId != null) {
@@ -260,7 +272,9 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             TaskRoute(tasks, accountId, onBack = { screen = taskReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() }, onRemind = { record -> reminderTaskId = record.task.id; reminderSpaceId = record.task.spaceId; reminderReturnScreen = "tasks"; screen = "reminders" }, onChecklist = { record -> checklistTaskId = record.task.id; checklistSpaceId = record.task.spaceId; screen = "checklist" })
         } else {
             IdentityRoute(identity, onOpenTasks = { taskEntrySpaceId = null; taskReturnScreen = "account"; screen = "tasks" }, onOpenInbox = { reminderTaskId = null; reminderSpaceId = null; reminderReturnScreen = "account"; screen = "reminders" },
-                onOpenAgent = { screen = "agent" }, onOpenBlocked = { communityEntry = "blocked"; screen = "community" })
+                onOpenAgent = { screen = "agent" }, onOpenBlocked = { communityEntry = "blocked"; screen = "community" },
+                onOpenInterests = { communityEntry = "interests"; screen = "community" },
+                onOpenPrivacy = { screen = "privacy" })
         }
     }
 }

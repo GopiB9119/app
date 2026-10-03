@@ -55,7 +55,10 @@ fun mainBar(screen: String, signedIn: Boolean, accountBusy: Boolean, spaces: Spa
     screen == "spaces" -> if (spaces.selectedSpace == null && !spaces.creating) MainBar(MainSection.SPACES, !spaces.navigationLocked) else null
     screen == "messages" -> if (messaging.chat == null) MainBar(MainSection.MESSAGES, true) else null
     // The blocked list belongs to Profile, like account, sessions and privacy (DEC-014).
-    screen == "community" -> MainBar(if (community.destination == Destination.Blocked) MainSection.PROFILE else MainSection.DISCOVER, !community.working)
+    // Your interests opened from Profile belong to Profile; opened from Discover's suggestions they stay in Discover.
+    // "Muted and hidden" opens from the blocked list or your interests, and belongs where they were opened.
+    screen == "community" -> MainBar(if (community.destination == Destination.Blocked || (community.destination == Destination.Interests && community.history.isEmpty()) ||
+        (community.destination == Destination.FeedControls && community.history.firstOrNull().let { it == Destination.Blocked || it == Destination.Interests })) MainSection.PROFILE else MainSection.DISCOVER, !community.working)
     else -> null
 }
 

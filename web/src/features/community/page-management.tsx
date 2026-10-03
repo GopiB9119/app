@@ -178,7 +178,7 @@ export function PageManagement({ account, page, onChanged }: { account: Account;
             onClick={() => run(() => withdrawModerator(account.id, page.id, confirm.row))}>{t("community.manage.withdraw")}</button>}
           {confirm.kind === "remove" && <button className="primary-button" disabled={busy}
             onClick={() => run(() => removeModerator(account.id, page.id, confirm.row))}>{t("community.manage.remove")}</button>}
-          {confirm.kind === "handover" && page.etag && <button className="primary-button" disabled={busy} onClick={() => void send<OfferIntent>(
+          {confirm.kind === "handover" && page.etag && !offer && <button className="primary-button" disabled={busy} onClick={() => void send<OfferIntent>(
             { accountId: account.id, pageId: page.id, key: crypto.randomUUID(), etag: page.etag!, body: { to_account_id: confirm.row.account_id } },
             setOffer, offerHandover, t("community.manage.offerSent"),
           )}>{t("community.manage.offer")}</button>}

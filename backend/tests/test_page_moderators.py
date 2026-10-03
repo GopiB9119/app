@@ -458,3 +458,57 @@ def test_an_answer_to_a_handover_locks_the_page_before_the_offer(client, app):
         answered = pending.result(timeout=10)
     assert free is not None, "The answer held the offer while it waited for the page."
     assert answered.status_code == 200, answered.text
+
+
+def test_a_moderator_removed_while_removing_a_comment_does_not_remove_it(client, app):
+    # Review 2026-10-03: the role was read without a lock, so a removal committed meanwhile went unseen.
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import text
+
+    from tests.test_messaging import wait_until_blocked
+
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    reader = account(client, app, "reader@example.test")
+    page = create_page(client, owner).json()["data"]
+    post = published(client, owner, page["id"])
+    made = comment(client, reader, post["id"])
+    assert made.status_code == 201, made.text
+    row = moderating(client, owner, page, helper)
+    with ThreadPoolExecutor(max_workers=1) as pool, app.state.engine.connect() as remover:
+        removing = remover.begin()
+        remover.execute(text("UPDATE page_moderators SET status = 'removed', version = version + 1 WHERE id = :id"), {"id": row["id"]})
+        pending = pool.submit(lambda: client.post(f"/v1/comments/{made.json()['data']['id']}/delete", headers=auth(helper), json={}))
+        wait_until_blocked(app, pending)
+        removing.commit()
+        answered = pending.result(timeout=10)
+    assert answered.status_code == 403 and answered.json()["error"]["code"] == "COMMENT_NOT_YOURS", answered.text
+    assert client.get(f"/v1/posts/{post['id']}/comments").json()["data"][0]["status"] == "visible"
+
+
+def test_offering_a_handover_locks_the_account_before_the_page(client, app):
+    # Review 2026-10-03: other page changes lock the account, then the page; offering locked them the other way round.
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import text
+
+    from tests.test_messaging import wait_until_blocked
+
+    owner = account(client, app)
+    helper = account(client, app, "helper@example.test")
+    page = create_page(client, owner).json()["data"]
+    moderating(client, owner, page, helper)
+    current = client.get(f"/v1/pages/{page['id']}", headers=auth(owner)).json()["data"]
+    with ThreadPoolExecutor(max_workers=1) as pool, app.state.engine.connect() as holder, app.state.engine.connect() as probe:
+        held = holder.begin()
+        holder.execute(text("SELECT 1 FROM users WHERE id = :id FOR UPDATE"), {"id": owner["user"]["id"]})
+        pending = pool.submit(lambda: offer_handover(client, owner, page, helper["user"]["id"], etag=current["etag"]))
+        wait_until_blocked(app, pending)
+        probing = probe.begin()
+        free = probe.execute(text("SELECT 1 FROM public_pages WHERE id = :id FOR UPDATE SKIP LOCKED"), {"id": page["id"]}).first()
+        probing.rollback()
+        held.commit()
+        offered = pending.result(timeout=10)
+    assert free is not None, "The offer held the page while it waited for the account."
+    assert offered.status_code == 201, offered.text

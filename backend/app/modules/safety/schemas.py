@@ -1,14 +1,14 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 from app.modules.community.schemas import ReportReason, clean_text
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
 
 TargetType = Literal["page", "post", "comment"]
-DecisionAction = Literal["no_action", "hide", "restore"]
+DecisionAction = Literal["no_action", "hide", "limit", "restore"]
 AppealStatus = Literal["open", "upheld", "overturned"]
 
 
@@ -24,8 +24,14 @@ class OptionalNote(Input):
 class CreateDecision(OptionalNote):
     target_type: TargetType
     target_id: UUID
-    action: Literal["no_action", "hide"]
+    action: Literal["no_action", "hide", "limit"]
     reason: ReportReason
+
+    @model_validator(mode="after")
+    def only_pages_are_limited(self):
+        if self.action == "limit" and self.target_type != "page":
+            raise ValueError("Only a page can be limited.")
+        return self
 
 
 class CreateAppeal(OptionalNote):

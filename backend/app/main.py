@@ -27,6 +27,7 @@ from app.modules.community.service import CommunityService
 from app.modules.discovery.api import router as search_router
 from app.modules.discovery.service import PrivateSearchService
 from app.modules.events.api import router as events_router
+from app.modules.events.budgets import BudgetService
 from app.modules.events.service import EventService
 from app.modules.files.api import router as document_router
 from app.modules.files.service import DocumentService
@@ -194,6 +195,7 @@ def create_app(settings=None, clock=utcnow):
     application.state.community = CommunityService(application.state.identity)
     application.state.page_lifecycle = PageLifecycleService(application.state.identity)
     application.state.events = EventService(application.state.spaces)
+    application.state.budgets = BudgetService(application.state.events)
     application.state.documents = DocumentService(application.state.spaces)
     application.state.search = PrivateSearchService(application.state.spaces)
     application.state.care = CareService(application.state.identity)

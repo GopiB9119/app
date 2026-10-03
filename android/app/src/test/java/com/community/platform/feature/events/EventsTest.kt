@@ -1,5 +1,6 @@
 package com.community.platform.feature.events
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -10,12 +11,16 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Request
@@ -32,6 +37,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EventsTest {
@@ -98,7 +105,16 @@ class EventsTest {
     private var model: EventsViewModel? = null
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null, null, "UTC"); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { finishTestWork() } finally { Dispatchers.resetMain() }
+    }
+
+    private suspend fun finishTestWork() {
+        model?.let { current ->
+            current.bind(null, null, "UTC")
+            withTimeout(5000) { requireNotNull(current.viewModelScope.coroutineContext[Job]).cancelAndJoin() }
+        }
+    }
 
     private suspend fun idle(current: EventsViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
     private suspend fun ready(): EventsViewModel {
@@ -120,6 +136,38 @@ class EventsTest {
         assertThrows(IdentityFailure::class.java) { repository.event(event, detail = true) }
         assertEquals(event, repository.event(event))
         assertEquals(detail, repository.event(detail, spaceId, detail = true))
+    }
+
+    // DEC-032 (T154): capacity and waitlist facts, and what a form sends.
+    @Test fun capacityAndWaitlistFactsAreChecked() {
+        val full = event.copy(capacity = 2, going = 2, waitlisted = 2, myResponse = "going", myWaitlistPosition = 2)
+        assertEquals(full, repository.event(full))
+        val waiting = AttendeeDto("Ravi", "going", "2026-09-19T10:07:00Z", false, false, waitlistPosition = 1)
+        assertEquals(full.copy(attendees = listOf(waiting)), repository.event(full.copy(attendees = listOf(waiting))))
+        for (value in listOf(
+            full.copy(capacity = null), full.copy(going = 3), full.copy(going = 1), full.copy(myResponse = "maybe"),
+            full.copy(myWaitlistPosition = 3), full.copy(myWaitlistPosition = 0), full.copy(capacity = 501, going = 2),
+            full.copy(attendees = listOf(waiting.copy(response = "maybe"))), full.copy(attendees = listOf(waiting.copy(waitlistPosition = 3))),
+        )) assertThrows(IdentityFailure::class.java) { repository.event(value) }
+    }
+
+    @Test fun capacityIsSentOnlyWhenChosenOrRemoved() = runBlocking {
+        assertEquals(CapacityChoice.Leave, capacityChoice(" ", null))
+        assertEquals(CapacityChoice.Unlimited, capacityChoice("", 4))
+        assertEquals(CapacityChoice.Leave, capacityChoice("4", 4))
+        assertEquals(CapacityChoice.Limit(12), capacityChoice(" 12 ", null))
+        for (text in listOf("0", "501", "2.5", "-1", "ten", "1000")) assertNull(text, capacityChoice(text, null))
+        val gson = Gson().newBuilder().serializeNulls().create()
+        val base = eventBody("Dinner", "", "", "Asia/Kolkata", "2026-09-25", "18:30", "")
+        assertFalse(JsonParser.parseString(gson.toJson(base)).asJsonObject.has("capacity"))
+        assertTrue(JsonParser.parseString(gson.toJson(base.copy(capacity = CapacityChoice.Unlimited))).asJsonObject.get("capacity").isJsonNull)
+        assertEquals(7, JsonParser.parseString(gson.toJson(base.copy(capacity = CapacityChoice.Limit(7)))).asJsonObject.get("capacity").asInt)
+        val current = ready()
+        current.startCreate()
+        current.draft { it.copy(title = "Dinner", date = "2026-09-25", start = "18:30", capacity = "0") }
+        current.save(); idle(current)
+        assertEquals(EventProblem.CAPACITY, current.state.value.problem)
+        assertTrue(api.creates.isEmpty())
     }
 
     @Test fun formProblemsAreFoundBeforeSending() = runBlocking {
@@ -312,6 +360,113 @@ class EventsTest {
         current.bind(fixture.accountId, spaceId, "UTC")
         withTimeout(5000) { entered.await() }
         current.bind(null, null, "UTC"); release.complete(Unit)
+        assertEquals(EventsState(), current.state.value)
+    }
+
+    /** Keeps a list's original answer while a later command changes the server's state. */
+    inner class HeldServer : EventsApi by api {
+        var holdList = 0
+        val listReached = CompletableDeferred<Unit>(); val listRelease = CompletableDeferred<Unit>()
+        val reads = AtomicInteger()
+        val cursors: MutableList<String?> = Collections.synchronizedList(mutableListOf())
+        @Volatile var refuseRead = false
+        @Volatile var holdRespond = false
+        val respondReached = CompletableDeferred<Unit>(); val respondRelease = CompletableDeferred<Unit>()
+        override suspend fun list(authorization: String, spaceId: String, period: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<EventDto>>> {
+            val number = reads.incrementAndGet(); cursors += cursor
+            val answer = api.list(authorization, spaceId, period, cursor, limit)
+            if (number == holdList) { listReached.complete(Unit); listRelease.await() }
+            return answer
+        }
+        override suspend fun read(authorization: String, eventId: String): Response<EnvelopeDto<EventDto>> =
+            if (refuseRead) failed(403) else api.read(authorization, eventId)
+        override suspend fun respond(authorization: String, eventId: String, body: AttendanceDto): Response<EnvelopeDto<EventDto>> {
+            if (holdRespond) { respondReached.complete(Unit); respondRelease.await() }
+            val answer = api.respond(authorization, eventId, body)
+            val confirmed = answer.body()!!.data!!
+            api.upcoming = api.upcoming.map { if (it.id == eventId) it.copy(myResponse = confirmed.myResponse, going = confirmed.going, maybe = confirmed.maybe) else it }
+            return answer
+        }
+    }
+
+    private fun held(server: HeldServer): EventsViewModel = EventsViewModel(EventsRepository(server, fixture.accounts)).also { model = it }
+    private suspend fun settled(current: EventsViewModel) = withTimeout(5000) { current.state.first { !it.working } }
+
+    @Test fun aResponseWhileTheListLoadsIsNotUndoneByTheListsOlderAnswer() = runBlocking {
+        val server = HeldServer()
+        val current = held(server)
+        current.bind(fixture.accountId, spaceId, "Asia/Kolkata"); idle(current)
+        server.holdList = 2
+        current.reload()
+        withTimeout(5000) { server.listReached.await() }
+        current.open(event); settled(current)
+        current.respond("going"); settled(current)
+        server.listRelease.complete(Unit)
+        val state = idle(current)
+        assertEquals("going", state.selected?.myResponse)
+        assertEquals("going", state.events.single().myResponse)
+    }
+
+    @Test fun aRefusedChangeWhileTheListLoadsKeepsItsMessageAndTheListStillLoads(): Unit = runBlocking {
+        val server = HeldServer()
+        val current = held(server)
+        current.bind(fixture.accountId, spaceId, "Asia/Kolkata"); idle(current)
+        server.holdList = 2; server.refuseRead = true
+        current.reload()
+        withTimeout(5000) { server.listReached.await() }
+        current.open(event); settled(current)
+        val state = idle(current)
+        assertEquals("Synthetic SYNTHETIC", state.error)
+        assertEquals(3, server.reads.get())
+        server.listRelease.complete(Unit)
+    }
+
+    @Test fun showMoreStoppedByAChangeIsSentAgainForTheSamePage(): Unit = runBlocking {
+        api.nextCursor = "synthetic-next"
+        val server = HeldServer()
+        val current = held(server)
+        current.bind(fixture.accountId, spaceId, "Asia/Kolkata"); idle(current)
+        val next = event.copy(id = "6a3c6e31-8f8e-4d71-8d84-3f7c6c5e4d05", title = "Evening walk")
+        api.upcoming = listOf(next); api.nextCursor = null
+        server.holdList = 2
+        current.reload(more = true)
+        withTimeout(5000) { server.listReached.await() }
+        current.open(event); settled(current)
+        val state = idle(current)
+        server.listRelease.complete(Unit)
+        assertEquals(listOf(null, "synthetic-next", "synthetic-next"), server.cursors.toList())
+        assertEquals(listOf(event, next), state.events)
+        assertNull(state.nextCursor)
+        assertNull(state.error)
+    }
+
+    @Test fun aRefreshWhileAResponseIsUnansweredIsNotSent() = runBlocking {
+        api.nextCursor = "synthetic-next"
+        val server = HeldServer()
+        val current = held(server)
+        current.bind(fixture.accountId, spaceId, "Asia/Kolkata"); idle(current)
+        current.open(event); idle(current)
+        val loaded = server.reads.get()
+        server.holdRespond = true
+        current.respond("going")
+        withTimeout(5000) { server.respondReached.await() }
+        current.reload(); current.reload(more = true)
+        server.respondRelease.complete(Unit); idle(current)
+        // A queued read could start just after the command's working flag clears.
+        assertNull(withTimeoutOrNull(2000) { while (server.reads.get() == loaded) delay(10) })
+        assertEquals("going", current.state.value.selected?.myResponse)
+    }
+
+    @Test fun cleanupWaitsForAnUnansweredListToStop() = runBlocking {
+        val server = HeldServer().apply { holdList = 1 }
+        val current = held(server)
+        current.bind(fixture.accountId, spaceId, "Asia/Kolkata")
+        withTimeout(5000) { server.listReached.await() }
+        finishTestWork()
+        val scope = requireNotNull(current.viewModelScope.coroutineContext[Job])
+        assertTrue(scope.isCompleted)
+        assertFalse(scope.children.any())
+        assertFalse(server.listRelease.isCompleted)
         assertEquals(EventsState(), current.state.value)
     }
 

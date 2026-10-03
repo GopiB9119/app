@@ -16,6 +16,9 @@ from tests.test_agents import approve, ask, rename
 from tests.test_care import create_instruction
 from tests.test_community import comment, create_page, published
 from tests.test_documents import add as add_document
+from tests.test_event_budgets import planned, spend
+from tests.test_event_contributions import give
+from tests.test_event_budget_splits import ids, split
 from tests.test_events import create as create_event, respond
 from tests.test_exports import request_export
 from tests.test_identity import PASSWORD, account, auth
@@ -34,6 +37,8 @@ GONE = (
     "alex@example.test", NAME, "Alex chat 4471", "Alex direct 4471", "Alex comment 4471", "Alex post 4471",
     "Alex Walks 4471", "Alex report 4471", "Synthetic Medicine A", "plumber comes on Fridays", "Alex solo 4471",
     "Alex private task 4471", "Alex diary 4471", "Alex group 4471", "Alex group story 4471",
+    "Alex expense 4471", "Alex category 4471", "Alex solo expense 4471",
+    "Alex gift 4471", "Alex promise 4471", "Alex solo gift 4471",
 )
 
 
@@ -82,7 +87,22 @@ def lived_in_account(client, app):
     event = create_event(client, sam, shared, title="Sam picnic 5582")
     assert event.status_code == 201, event.text
     assert respond(client, alex, event.json()["data"]["id"], "going").status_code == 200
+    # Event budgets (DEC-039): Alex's expense in Sam's event keeps its amount for Sam, without the note or the name.
+    planned(client, sam, event.json()["data"]["id"], categories=[{"name": "Sam venue 5582", "estimate_minor": 10_000}])
+    assert spend(client, alex, event.json()["data"]["id"], 1_234, note="Alex expense 4471").status_code == 201
+    assert spend(client, sam, event.json()["data"]["id"], 4_321, note="Sam expense 5582").status_code == 201
+    # Contributions (DEC-041): what Alex gave stays in Sam's totals without the note or the name; the promise goes.
+    assert give(client, alex, event.json()["data"]["id"], 2_000, "given", "Alex gift 4471").status_code == 201
+    assert give(client, alex, event.json()["data"]["id"], 3_000, "promised", "Alex promise 4471").status_code == 201
+    assert give(client, sam, event.json()["data"]["id"], 1_000, "promised", "Sam gift 5582").status_code == 201
+    # Splits (DEC-042): Alex's share stays, without the name, so Sam's share does not move.
+    reviewed = client.get(f"/v1/events/{event.json()['data']['id']}/budget", headers=auth(sam)).json()["data"]
+    assert split(client, sam, event.json()["data"]["id"], reviewed["etag"], people=ids(sam, alex)).status_code == 200
     solo = create_space(client, alex, name="Alex solo 4471").json()["data"]["id"]
+    solo_event = create_event(client, alex, solo, title="Alex dinner").json()["data"]["id"]
+    planned(client, alex, solo_event, categories=[{"name": "Alex category 4471", "estimate_minor": 500}])
+    assert spend(client, alex, solo_event, 50, note="Alex solo expense 4471").status_code == 201
+    assert give(client, alex, solo_event, 70, "given", "Alex solo gift 4471").status_code == 201
     private = create_task(client, alex, solo, title="Alex private task 4471")
     assert private.status_code == 201, private.text
     assert add_document(client, alex, solo, name="diary.md", content="Alex diary 4471\n").status_code == 201
@@ -209,7 +229,8 @@ def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
     after = stored_text(app)
     assert [value for value in GONE if value in after] == []
     assert password_hash not in after
-    for kept in ("Sam stays 5582", "Kept chore 5582", "Sam picnic 5582", "Sam post 5582", "Shared family", "Sam asks 5582"):
+    for kept in ("Sam stays 5582", "Kept chore 5582", "Sam picnic 5582", "Sam post 5582", "Shared family", "Sam asks 5582",
+                 "Sam venue 5582", "Sam expense 5582", "Sam gift 5582"):
         assert kept in after, kept
     with app.state.sessions() as database:
         user = database.get(User, alex["user"]["id"])
@@ -226,6 +247,16 @@ def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
     assert client.get(f"/v1/conversations/{ids['direct']['id']}", headers=auth(sam)).json()["data"]["can_send"] is False
     task = client.get(f"/v1/tasks/{ids['kept']['id']}", headers=auth(sam)).json()["data"]
     assert task["title"] == "Kept chore 5582" and task["assignee"] is None
+    spent = client.get(f"/v1/events/{ids['event']['id']}/budget", headers=auth(sam)).json()["data"]
+    assert sorted((item["amount_minor"], item["note"], item["recorded_by_name"]) for item in spent["expenses"]) == [
+        (1_234, "", None), (4_321, "Sam expense 5582", "Alex Morgan"),
+    ]
+    assert spent["recorded_minor"] == 5_555
+    assert sorted((item["amount_minor"], item["state"], item["note"], item["contributor_name"]) for item in spent["contributions"]) == [
+        (1_000, "promised", "Sam gift 5582", "Alex Morgan"), (2_000, "given", None, None),
+    ]
+    assert (spent["given_minor"], spent["promised_minor"], spent["contribution_count"]) == (2_000, 1_000, 2)
+    assert [(item["name"], item["share_minor"]) for item in spent["split"]["shares"]] == [("Alex Morgan", 5_000), (None, 5_000)]
     roster = client.get(f"/v1/spaces/{ids['shared']}/members", headers=auth(sam)).json()["data"]
     assert [member["account_id"] for member in roster] == [sam["user"]["id"]]
     post = client.get(f"/v1/posts/{ids['sam_post']['id']}", headers=auth(sam)).json()["data"]

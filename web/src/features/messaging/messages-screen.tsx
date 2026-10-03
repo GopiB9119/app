@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ClipboardList, LoaderCircle, LockKeyhole, MessageSquare, RefreshCw, Send, Trash2, UserRound, UsersRound } from "lucide-react";
+import { ArrowLeft, ClipboardList, CornerUpLeft, LoaderCircle, LockKeyhole, MessageSquare, Pencil, RefreshCw, Send, SmilePlus, Trash2, UserRound, UsersRound, X } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
@@ -12,13 +12,14 @@ import { useLanguage, useText } from "@/features/i18n/i18n";
 import { subscribeLive, useLiveConnected } from "@/features/realtime/live";
 import { readMembers, spacesSchema } from "@/features/spaces/client";
 import {
-  MAX_MESSAGE_CHARACTERS, bodyProblem, conversationPage, deleteMessage, markRead, mergeMessages, messagePage,
-  normalizeBody, openConversation, readConversation, sendMessage,
+  MAX_MESSAGE_CHARACTERS, REACTIONS, bodyProblem, conversationPage, deleteMessage, editMessage, editable, markRead, mergeMessages,
+  messagePage, normalizeBody, openConversation, reactToMessage, readConversation, sendMessage,
 } from "./client";
-import type { Conversation, Message, SendIntent } from "./client";
+import type { Conversation, Message, Reaction, Reply, SendIntent } from "./client";
 import styles from "./messages.module.css";
 
 type Pending = SendIntent & { state: "sending" | "unknown" | "failed"; error?: string };
+const EMOJI: Record<Reaction, string> = { like: "\u{1F44D}", love: "\u2764\uFE0F", laugh: "\u{1F602}", wow: "\u{1F62E}", sad: "\u{1F622}", thanks: "\u{1F64F}" };
 const POLL_MILLISECONDS = 5000;
 // While the live connection is up it announces changes, so the timers only catch a lost hint.
 const LIVE_POLL_MILLISECONDS = 30000;
@@ -226,6 +227,10 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   const setPending = useCallback((change: (current: Pending[]) => Pending[]) => updatePending(user.id, initial.id, change), [user.id, initial.id]);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [picking, setPicking] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
   const markedThrough = useRef(Number(initial.read_position));
   const itemsRef = useRef<Message[]>([]);
   const endRef = useRef<HTMLLIElement | null>(null);
@@ -359,9 +364,43 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (bodyProblem(draft) || !conversation.can_send || denied) return;
-    const intent = { accountId: user.id, conversationId, key: crypto.randomUUID(), body: normalizeBody(draft) };
+    const intent: SendIntent = { accountId: user.id, conversationId, key: crypto.randomUUID(), body: normalizeBody(draft) };
+    if (replyingTo) intent.replyTo = replyingTo.id;
     setDraft("");
+    setReplyingTo(null);
     void deliver(intent);
+  }
+
+  // Edits and reactions name the change itself, so trying again is safe; their known refusals get their own words.
+  function actionFailed(problem: unknown) {
+    const code = problem instanceof ApiError ? problem.code : "";
+    const known = code === "EDIT_WINDOW_CLOSED" ? "chat.editClosed" : code === "EDIT_LIMIT_REACHED" ? "chat.editLimit"
+      : code === "MESSAGE_DELETED" ? "chat.messageGone" : code === "REPLY_UNAVAILABLE" ? "chat.replyUnavailable" : null;
+    if (known) { setError(t(known)); runPoll.current(false, true); } else fail(problem);
+  }
+
+  async function react(message: Message, reaction: Reaction, on: boolean) {
+    setActing(message.id);
+    setPicking(null);
+    try { absorb([await reactToMessage(user.id, conversationId, message.id, reaction, on)]); setError(""); }
+    catch (problem) { actionFailed(problem); }
+    finally { setActing(null); }
+  }
+
+  async function saveEdit(message: Message, text: string) {
+    if (bodyProblem(text)) return;
+    setActing(message.id);
+    try { absorb([await editMessage(user.id, conversationId, message.id, normalizeBody(text))]); setEditing(null); setError(""); }
+    catch (problem) { actionFailed(problem); }
+    finally { setActing(null); }
+  }
+
+  function quote(reply: Reply) {
+    return <p className={styles.quote}>
+      <CornerUpLeft size={14} aria-hidden />
+      {reply.status === "sent" ? <span><strong>{reply.sender_name}</strong> {reply.excerpt}</span>
+        : <span>{reply.status === "deleted" ? t("chat.quoteDeleted") : t("chat.quoteHidden")}</span>}
+    </p>;
   }
 
   async function loadEarlier() {
@@ -405,10 +444,44 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
       <ol className={styles.messages} aria-live="polite" aria-relevant="additions">
         {items.map(message => <li key={message.id} className={message.mine ? styles.mine : undefined}>
           <div className={styles.bubble}>
-            <span className={styles.meta}><strong>{message.mine ? t("chat.you") : message.sender_name}</strong> <time dateTime={message.created_at}>{time.format(new Date(message.created_at))}</time></span>
-            {message.status === "sent" && <p className={styles.body}>{message.body}</p>}
+            <span className={styles.meta}><strong>{message.mine ? t("chat.you") : message.sender_name}</strong> <time dateTime={message.created_at}>{time.format(new Date(message.created_at))}</time>{message.edited_at && message.status !== "deleted" && <> · <span>{t("chat.edited")}</span></>}</span>
+            {message.reply_to && quote(message.reply_to)}
+            {message.status === "sent" && editing?.id !== message.id && <p className={styles.body}>{message.body}</p>}
+            {editing?.id === message.id && <form className={styles.editor} onSubmit={event => { event.preventDefault(); void saveEdit(message, editing.draft); }}>
+              <label>
+                <span>{t("chat.editLabel")}</span>
+                <textarea rows={3} value={editing.draft} maxLength={MAX_MESSAGE_CHARACTERS * 2} aria-describedby={`edit-hint-${message.id}`}
+                  onChange={event => setEditing({ id: message.id, draft: event.target.value })} />
+              </label>
+              <span id={`edit-hint-${message.id}`} className={styles.count}>{t("chat.editHint")}</span>
+              <div className={styles.confirm}>
+                <button className="secondary-button" type="submit" disabled={acting !== null || Boolean(bodyProblem(editing.draft))}>{t("chat.saveEdit")}</button>
+                <button className="text-button" type="button" onClick={() => setEditing(null)}>{t("chat.cancelEdit")}</button>
+              </div>
+            </form>}
             {message.status === "deleted" && <p className={styles.removed}>{t("chat.deleted")}</p>}
             {message.status === "unavailable" && <p className={styles.removed}>{t("chat.hidden")}</p>}
+            {message.reactions.length > 0 && <div className={styles.reactions} role="group" aria-label={t("chat.reactions")}>
+              {message.reactions.map(item => <button key={item.reaction} type="button" className={styles.reaction} aria-pressed={item.mine}
+                disabled={acting !== null || !conversation.can_send || message.status === "deleted"}
+                aria-label={t(item.mine ? "chat.reactionMine" : "chat.reactionCount", { reaction: t(`chat.reaction.${item.reaction}`), count: item.count })}
+                onClick={() => react(message, item.reaction, !item.mine)}><span aria-hidden>{EMOJI[item.reaction]}</span> {item.count}</button>)}
+            </div>}
+            {message.status === "sent" && conversation.can_send && editing?.id !== message.id && confirmDelete !== message.id && <div className={styles.actions}>
+              <button type="button" className="icon-button" aria-label={t("chat.replyTo", { name: message.mine ? t("chat.you") : message.sender_name })} title={t("chat.reply")}
+                onClick={() => setReplyingTo(message)}><CornerUpLeft size={16} aria-hidden /></button>
+              <button type="button" className="icon-button" aria-label={t("chat.react")} title={t("chat.react")} aria-expanded={picking === message.id}
+                disabled={acting !== null} onClick={() => setPicking(picking === message.id ? null : message.id)}><SmilePlus size={16} aria-hidden /></button>
+              {editable(message) && <button type="button" className="icon-button" aria-label={t("chat.editMessage")} title={t("chat.editMessage")}
+                disabled={acting !== null} onClick={() => setEditing({ id: message.id, draft: message.body ?? "" })}><Pencil size={16} aria-hidden /></button>}
+            </div>}
+            {picking === message.id && <div className={styles.reactions} role="group" aria-label={t("chat.chooseReaction")}>
+              {REACTIONS.map(reaction => {
+                const mine = message.reactions.some(item => item.reaction === reaction && item.mine);
+                return <button key={reaction} type="button" className={styles.reaction} aria-pressed={mine} aria-label={t(`chat.reaction.${reaction}`)}
+                  disabled={acting !== null} onClick={() => react(message, reaction, !mine)}><span aria-hidden>{EMOJI[reaction]}</span></button>;
+              })}
+            </div>}
             {message.mine && message.status === "sent" && confirmDelete !== message.id && (
               <button className={`icon-button ${styles.deleteButton}`} aria-label={t("chat.deleteMessage")} title={t("chat.deleteTitle")} disabled={deleting !== null} onClick={() => setConfirmDelete(message.id)}><Trash2 size={16} aria-hidden /></button>
             )}
@@ -421,6 +494,10 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
         </li>)}
         {pending.map(item => <li key={item.key} className={styles.mine}>
           <div className={`${styles.bubble} ${styles.pendingBubble}`}>
+            {item.replyTo && (() => {
+              const original = items.find(entry => entry.id === item.replyTo);
+              return original?.status === "sent" ? quote({ message_id: original.id, status: "sent", position: original.position, sender_name: original.mine ? t("chat.you") : original.sender_name, excerpt: original.body }) : null;
+            })()}
             <p className={styles.body}>{item.body}</p>
             {item.state === "sending" && <span className={styles.meta}><LoaderCircle size={14} className="spin" aria-hidden />{t("chat.sending")}</span>}
             {item.state === "unknown" && <div className={styles.confirm} role="alert">
@@ -430,7 +507,7 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
             </div>}
             {item.state === "failed" && <div className={styles.confirm} role="alert">
               <span>{t("chat.failed", { error: item.error ?? t("chat.unconfirmedFallback") })}</span>
-              <button className="text-button" onClick={() => { setDraft(item.body); setPending(current => current.filter(entry => entry.key !== item.key)); }}>{t("chat.edit")}</button>
+              <button className="text-button" onClick={() => { setDraft(item.body); setReplyingTo(items.find(entry => entry.id === item.replyTo && entry.status === "sent") ?? null); setPending(current => current.filter(entry => entry.key !== item.key)); }}>{t("chat.edit")}</button>
             </div>}
           </div>
         </li>)}
@@ -438,6 +515,10 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
       </ol>
       {conversation.can_send
         ? <form className={styles.composer} onSubmit={submit}>
+            {replyingTo && <div className={styles.replying} role="status">
+              <span>{t("chat.replyingTo", { name: replyingTo.mine ? t("chat.you") : replyingTo.sender_name })}: {replyingTo.body}</span>
+              <button type="button" className="icon-button" aria-label={t("chat.cancelReply")} title={t("chat.cancelReply")} onClick={() => setReplyingTo(null)}><X size={16} aria-hidden /></button>
+            </div>}
             <label>
               <span id="composer-label">{t("chat.message")}</span>
               <textarea aria-labelledby="composer-label" rows={3} value={draft} maxLength={MAX_MESSAGE_CHARACTERS * 2}

@@ -44,6 +44,40 @@ export function adjacentMonth(month: string, offset: number) {
   return date.toISOString().slice(0, 7);
 }
 
+export type CalendarView = "month" | "week" | "day";
+export type CalendarSource = "task" | "reminder" | "event";
+export const calendarSources: readonly CalendarSource[] = ["task", "reminder", "event"];
+
+/** Planned repeats are reminders, so one choice shows or hides both. */
+export function calendarSource(entry: CalendarEntry): CalendarSource {
+  return entry.kind === "planned" ? "reminder" : entry.kind;
+}
+
+const firstDate = "1900-01-01";
+const lastDate = "2100-12-31";
+
+function validDate(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < firstDate || date > lastDate) return false;
+  const parsed = new Date(`${date}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+}
+
+export function shiftDate(date: string, days: number) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+/** The dates a view covers around `date`: its month, its Sunday-to-Saturday week, or the day itself, within 1900 to 2100. */
+export function viewRange(view: CalendarView, date: string) {
+  if (!validDate(date)) throw new ApiError(422, "CALENDAR_RANGE_INVALID", "Select a date between 1900 and 2100.");
+  if (view === "month") return calendarRange(date.slice(0, 7));
+  if (view === "day") return { start: date, end: date };
+  const start = shiftDate(date, -new Date(`${date}T12:00:00Z`).getUTCDay());
+  const end = shiftDate(start, 6);
+  return { start: start < firstDate ? firstDate : start, end: end > lastDate ? lastDate : end };
+}
+
 export function compareCalendarEntries(first: CalendarEntry, second: CalendarEntry) {
   return first.date.localeCompare(second.date) || Number(first.kind !== "task") - Number(second.kind !== "task")
     || (first.scheduled_at && second.scheduled_at ? Date.parse(first.scheduled_at) - Date.parse(second.scheduled_at) : 0)
@@ -105,7 +139,15 @@ export function calendarFile(entries: CalendarEntry[], now = new Date()) {
 }
 
 export async function calendarPage(accountId: string, spaceId: string, month: string, timezone: string, cursor: string | null, signal?: AbortSignal) {
-  const range = calendarRange(month);
+  return calendarRangePage(accountId, spaceId, calendarRange(month), timezone, cursor, signal);
+}
+
+/** One page of entries from `range.start` to `range.end` (both included, at most 31 days). */
+export async function calendarRangePage(accountId: string, spaceId: string, range: { start: string; end: string }, timezone: string, cursor: string | null, signal?: AbortSignal) {
+  const days = (Date.parse(`${range.end}T12:00:00Z`) - Date.parse(`${range.start}T12:00:00Z`)) / 86_400_000;
+  if (!validDate(range.start) || !validDate(range.end) || !(days >= 0 && days < 31)) {
+    throw new ApiError(422, "CALENDAR_RANGE_INVALID", "Choose up to 31 days between 1900 and 2100.");
+  }
   const query = new URLSearchParams({ space_id: spaceId, start_date: range.start, end_date: range.end, timezone, limit: "50" });
   if (cursor) query.set("cursor", cursor);
   const result = await api(`calendar?${query}`, z.array(calendarEntrySchema).max(100), { accountId, signal });

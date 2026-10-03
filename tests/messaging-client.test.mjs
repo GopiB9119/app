@@ -67,11 +67,13 @@ function message(overrides = {}) {
   };
 }
 
-test('Messaging BFF exposes exactly the seven authenticated operations', async () => {
+test('Messaging BFF exposes exactly the nine authenticated operations', async () => {
   for (const [method, route] of [
     ['POST', `spaces/${spaceId}/conversations`], ['GET', 'conversations'], ['GET', `conversations/${conversationId}`],
     ['GET', `conversations/${conversationId}/messages`], ['POST', `conversations/${conversationId}/messages`],
     ['POST', `conversations/${conversationId}/read`], ['POST', `conversations/${conversationId}/messages/${messageId}/delete`],
+    // Edits and reactions (T162).
+    ['POST', `conversations/${conversationId}/messages/${messageId}/edit`], ['POST', `conversations/${conversationId}/messages/${messageId}/reactions`],
   ]) {
     const proxy = bff();
     const response = await proxy.request(method, route);
@@ -85,6 +87,8 @@ test('Messaging BFF exposes exactly the seven authenticated operations', async (
     ['GET', `conversations/${conversationId}/read`], ['GET', `conversations/${conversationId}/messages/${messageId}/delete`],
     ['POST', 'conversations'], ['PATCH', `conversations/${conversationId}`], ['POST', `conversations/${conversationId}/messages/${messageId}`],
     ['GET', `spaces/${spaceId}/conversations`], ['POST', `conversations/not-a-uuid/messages`],
+    ['GET', `conversations/${conversationId}/messages/${messageId}/reactions`], ['PATCH', `conversations/${conversationId}/messages/${messageId}/edit`],
+    ['POST', `conversations/${conversationId}/messages/${messageId}/react`],
   ]) {
     const proxy = bff();
     assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);

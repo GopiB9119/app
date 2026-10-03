@@ -30,6 +30,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
+import java.time.LocalDate
 import java.time.YearMonth
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -98,6 +99,37 @@ class TaskRepositoryTest {
         }
     }
 
+    // DEC-031 (T163): a week or a day asks for exactly its own dates and refuses entries outside them.
+    @Test fun calendarWeekAndDayAskForTheirOwnDatesAndRefuseEntriesOutsideThem(): Unit = runBlocking {
+        val asked = mutableListOf<Pair<String, String>>()
+        var date = "2026-10-14"
+        val api = object : CalendarApi {
+            override suspend fun entries(authorization: String, spaceId: String, startDate: String, endDate: String, timezone: String, limit: Int, cursor: String?): Response<EnvelopeDto<List<CalendarEntryDto>>> {
+                asked += startDate to endDate
+                return Response.success(EnvelopeDto(data = listOf(CalendarEntryDto(taskId, "task", taskId, spaceId, "Due task", date, null, null, "open", false)), error = null, pagination = PaginationDto(null, false)))
+            }
+        }
+        val calendar = CalendarRepository(api, identity)
+        val (start, end) = calendarRange(CalendarView.WEEK, YearMonth.of(2026, 10), LocalDate.of(2026, 10, 14))
+        assertEquals(LocalDate.of(2026, 10, 11) to LocalDate.of(2026, 10, 17), start to end)
+        assertEquals("2026-10-14", calendar.entries(accountId, spaceId, start, end, "UTC").items.single().date)
+        assertEquals(listOf("2026-10-11" to "2026-10-17"), asked)
+        for (outside in listOf("2026-10-10", "2026-10-18")) {
+            date = outside
+            assertThrows(IdentityFailure::class.java) { runBlocking { calendar.entries(accountId, spaceId, start, end, "UTC") } }
+        }
+        asked.clear()
+        for ((first, last) in listOf(LocalDate.of(2026, 10, 1) to LocalDate.of(2026, 11, 1), LocalDate.of(2026, 10, 17) to LocalDate.of(2026, 10, 11), LocalDate.of(1899, 12, 31) to LocalDate.of(1900, 1, 6))) {
+            assertThrows(IllegalArgumentException::class.java) { runBlocking { calendar.entries(accountId, spaceId, first, last, "UTC") } }
+        }
+        assertTrue("Nothing is sent for a range the server would refuse.", asked.isEmpty())
+        assertEquals(LocalDate.of(1900, 1, 1) to LocalDate.of(1900, 1, 6), calendarRange(CalendarView.WEEK, YearMonth.of(1900, 1), LocalDate.of(1900, 1, 3)))
+        assertEquals(LocalDate.of(2100, 12, 26) to LocalDate.of(2100, 12, 31), calendarRange(CalendarView.WEEK, YearMonth.of(2100, 12), LocalDate.of(2100, 12, 31)))
+        assertEquals(LocalDate.of(2027, 12, 26) to LocalDate.of(2028, 1, 1), calendarRange(CalendarView.WEEK, YearMonth.of(2027, 12), LocalDate.of(2027, 12, 30)))
+        assertEquals(LocalDate.of(2028, 2, 29) to LocalDate.of(2028, 2, 29), calendarRange(CalendarView.DAY, YearMonth.of(2028, 2), LocalDate.of(2028, 2, 29)))
+        assertEquals(LocalDate.of(2028, 2, 1) to LocalDate.of(2028, 2, 29), calendarRange(CalendarView.MONTH, YearMonth.of(2028, 2), LocalDate.of(2026, 10, 14)))
+    }
+
     @Test fun calendarRetrofitEncodesScopeWithoutMutationOrForeignAccountAccess() = runBlocking {
         var captured: Request? = null
         val client = IdentityModule.http().newBuilder().addInterceptor { chain ->
@@ -123,6 +155,35 @@ class TaskRepositoryTest {
         assertEquals("\"original-etag\"", page.items.single().etag)
         assertEquals(10, fake.limit)
         assertEquals("Bearer $token", fake.authorization)
+    }
+
+    // T153: an admin (DEC-018) saw no tasks or calendar at all, because the Space list refused the role.
+    @Test fun anAdminsSpacesAreAccepted(): Unit = runBlocking {
+        fake.spaceRole = "admin"
+        assertEquals("admin", repository.spaces(accountId).items.single().role)
+        fake.spaceRole = "guest"
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.spaces(accountId) } }
+    }
+
+    // DEC-029: priority is checked and sent; list filters reach the service unchanged.
+    @Test fun priorityIsCheckedAndSentAndFiltersAreForwarded(): Unit = runBlocking {
+        fake.task = task.copy(priority = "high")
+        assertEquals("high", repository.tasks(accountId, spaceId, null, "open", TaskFilters("none", "2026-10-02", "2026-10-08")).items.single().task.priorityLevel)
+        assertEquals(listOf("open", "none", "2026-10-02", "2026-10-08"), fake.filters)
+        repository.tasks(accountId, spaceId)
+        assertEquals(listOf<String?>(null, null, null, null), fake.filters)
+        fake.task = task
+        assertEquals("normal", repository.tasks(accountId, spaceId).items.single().task.priorityLevel)
+        fake.task = task.copy(priority = "urgent")
+        assertThrows(IdentityFailure::class.java) { runBlocking { repository.tasks(accountId, spaceId) } }
+        fake.task = task
+        repository.execute(CreateTaskCommand(accountId, spaceId, UUID.randomUUID().toString(), TaskFields("Groceries", "", null, null, "low")))
+        assertEquals("low", fake.creations.last().priority)
+        val edit = EditTaskCommand(accountId, spaceId, UUID.randomUUID().toString(), taskId, "\"version\"", TaskFields("Groceries", "", null, null, "high"), false)
+        repository.execute(edit)
+        assertFalse(fake.patch!!.containsKey("priority"))
+        repository.execute(edit.copy(changePriority = true))
+        assertEquals("high", fake.patch!!["priority"])
     }
 
     @Test fun aForeignAccountCannotIssueATaskRequest() = runBlocking {
@@ -281,6 +342,8 @@ class TaskRepositoryTest {
         var pagination: PaginationDto? = PaginationDto(null, false)
         var patch: Map<String, Any?>? = null
         var assigneeList = emptyList<TaskAssigneeDto>()
+        var spaceRole = "owner"
+        var filters: List<String?> = emptyList()
         val keys = mutableListOf<String>()
         val etags = mutableListOf<String>()
         val creations = mutableListOf<CreateTaskDto>()
@@ -289,9 +352,9 @@ class TaskRepositoryTest {
             if (failure != 0) return Response.error(failure, """{"error":{"code":"SYNTHETIC","message":"Synthetic failure"}}""".toResponseBody("application/json".toMediaType()))
             return Response.success(EnvelopeDto(value, null, if (page) pagination else null), headersOf("ETag", "\"original-etag\""))
         }
-        override suspend fun spaces(authorization: String, limit: Int, cursor: String?) = response(listOf(FamilySpaceDto(task.spaceId, "Family", "owner")), true)
-        override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
-            this.authorization = authorization; this.limit = limit
+        override suspend fun spaces(authorization: String, limit: Int, cursor: String?) = response(listOf(FamilySpaceDto(task.spaceId, "Family", spaceRole)), true)
+        override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?, assignee: String?, dueFrom: String?, dueTo: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
+            this.authorization = authorization; this.limit = limit; filters = listOf(status, assignee, dueFrom, dueTo)
             return response(listOf(task), true)
         }
         override suspend fun assignees(authorization: String, spaceId: String, taskId: String?) = response(assigneeList)

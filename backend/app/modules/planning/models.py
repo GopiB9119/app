@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +35,7 @@ class Task(Base):
         CheckConstraint("length(btrim(title)) BETWEEN 1 AND 200", name="ck_task_title"),
         CheckConstraint("length(description) <= 5000", name="ck_task_description"),
         CheckConstraint("status IN ('open', 'in_progress', 'completed', 'cancelled')", name="ck_task_status"),
+        CheckConstraint("priority IN ('high', 'normal', 'low')", name="ck_task_priority"),
         CheckConstraint("version > 0", name="ck_task_version"),
         CheckConstraint(
             "(assignee_account_id IS NULL AND assignee_admission_id IS NULL) OR "
@@ -57,6 +59,8 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="open")
+    # DEC-029: every task has a priority; existing tasks are normal.
+    priority: Mapped[str] = mapped_column(String(8), default="normal", server_default=text("'normal'"))
     due_date: Mapped[date | None] = mapped_column(Date)
     assignee_account_id: Mapped[str | None] = mapped_column(String(36))
     assignee_admission_id: Mapped[str | None] = mapped_column(String(36))

@@ -33,6 +33,7 @@ from app.modules.spaces.models import Space
 from app.modules.spaces.schemas import Pagination
 
 LIFETIME = timedelta(minutes=15)
+AGENT_OFF_ANSWER = "The owner turned the agent off in this Space. Nothing was changed."
 DAILY_RUNS = 100
 MAX_NOTES = 50
 LISTED = 10
@@ -206,6 +207,21 @@ class AgentService:
             self.mark_plan(run, approve="skipped", act="skipped")
         self.finish(database, run, "expired", "This request expired before you answered. Ask me again.", stop_reason="expired")
 
+    @staticmethod
+    def agent_off(database, space_id):
+        return database.scalar(select(Space.agent_enabled).where(Space.id == space_id)) is False
+
+    def stop_if_off(self, database, run):
+        # DEC-028: a request still waiting when the owner turned the agent off stops the next time it is touched.
+        if run.status not in WAITING or not self.agent_off(database, run.space_id):
+            return
+        approval = database.scalar(select(AgentApproval).where(AgentApproval.run_id == run.id).with_for_update())
+        if approval is not None and approval.status == "pending":
+            approval.status, approval.reason, approval.decided_at = "cancelled", "agent_off", self.clock()
+            approval.version += 1
+            self.mark_plan(run, approve="skipped", act="skipped")
+        self.finish(database, run, "cancelled", AGENT_OFF_ANSWER, stop_reason="agent_off")
+
     # Reading what the person can already see
 
     def members(self, database, space_id):
@@ -244,7 +260,10 @@ class AgentService:
                 if existing.admission_id != member.admission_id:
                     raise DomainError(404, "NOT_FOUND", "Request not found.")
                 self.expire(database, existing)
+                self.stop_if_off(database, existing)
                 return self.view(database, existing)
+            if self.agent_off(database, space_id):
+                raise DomainError(409, "AGENT_OFF", "The owner turned the agent off in this Space.")
             now = self.clock()
             recent = database.scalar(select(func.count()).select_from(AgentRun).where(
                 AgentRun.account_id == user.id, AgentRun.created_at > now - timedelta(hours=24),
@@ -469,8 +488,9 @@ class AgentService:
             if run.state.get("answers", {}).get(question_id) == answer:
                 return self.view(database, run)
             self.expire(database, run)
+            self.stop_if_off(database, run)
             if run.status != "waiting_for_user" or run.question_id != question_id:
-                if run.status == "expired":
+                if run.status == "expired" or run.stop_reason == "agent_off":
                     return self.view(database, run)
                 raise DomainError(409, "QUESTION_CLOSED", "This question was already answered. Reload the request.")
             self.remember_state(run, answers={**run.state.get("answers", {}), question_id: answer})
@@ -548,7 +568,8 @@ class AgentService:
                     return self.view(database, run)
                 raise DomainError(409, "APPROVAL_DECIDED", "This action was already decided.")
             self.expire(database, run)
-            if approval.status == "expired":
+            self.stop_if_off(database, run)
+            if approval.status != "pending":
                 return self.view(database, run)
             self.check_version(approval, expected)
             now = self.clock()
@@ -629,7 +650,8 @@ class AgentService:
             if approval.status != "pending":
                 raise DomainError(409, "APPROVAL_DECIDED", "This action was already decided.")
             self.expire(database, run)
-            if approval.status == "expired":
+            self.stop_if_off(database, run)
+            if approval.status != "pending":
                 return self.view(database, run)
             self.check_version(approval, expected)
             approval.status, approval.reason, approval.decided_at = "rejected", "rejected", self.clock()
@@ -643,6 +665,7 @@ class AgentService:
         with self.sessions.begin() as database:
             _user, run = self.owned_run(database, token, str(run_id), lock=True)
             self.expire(database, run)
+            self.stop_if_off(database, run)
             if run.status in TERMINAL:
                 return self.view(database, run)
             approval = database.scalar(select(AgentApproval).where(AgentApproval.run_id == run.id).with_for_update())
@@ -659,6 +682,7 @@ class AgentService:
         with self.sessions.begin() as database:
             _user, run = self.owned_run(database, token, str(run_id), lock=True)
             self.expire(database, run)
+            self.stop_if_off(database, run)
             return self.view(database, run)
 
     def list_runs(self, token, space_id, limit, cursor=None):
@@ -690,6 +714,7 @@ class AgentService:
             page = rows[:limit]
             for run in page:
                 self.expire(database, run)
+                self.stop_if_off(database, run)
             next_cursor = None
             if len(rows) > limit:
                 next_cursor = self.security.seal(AgentRunCursor(

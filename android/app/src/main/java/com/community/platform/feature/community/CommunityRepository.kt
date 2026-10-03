@@ -18,7 +18,19 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
-val TOPICS = listOf("community", "education", "health", "local", "family", "events", "hobbies", "support", "news", "other")
+/** The vocabulary's 20 topics (T126), used until GET /v1/taxonomy has loaded. */
+val TOPICS = listOf(
+    "technology", "education", "business", "science", "health", "family", "sports", "entertainment", "culture", "food",
+    "travel", "lifestyle", "environment", "news", "local", "events", "hobbies", "support", "community", "other",
+)
+
+/** Topic codes the app accepts on a page: the bundled list, plus every topic the vocabulary has listed since it loaded. */
+object KnownTopics {
+    @Volatile var codes: Set<String> = TOPICS.toSet()
+        private set
+    fun add(more: Collection<String>) { codes = codes + more }
+    operator fun contains(code: String) = code in codes
+}
 val REPORT_REASONS = listOf("spam", "harassment", "hate", "violence", "sexual", "misinformation", "self_harm", "privacy", "other")
 val HANDLE_PATTERN = Regex("[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]")
 
@@ -46,8 +58,12 @@ data class PageDto(
     @SerializedName("updated_at") val updatedAt: String, val following: Boolean, val blocked: Boolean,
     @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val rules: String? = null,
     val moderation: ModerationMarkDto? = null, val status: String? = null, @SerializedName("purge_after") val purgeAfter: String? = null,
+    val classification: ClassificationDto? = null,
+    val limited: Boolean = false, val limit: PageLimitDto? = null,
 ) {
     val readOnly: Boolean get() = status == "read_only"
+    /** A platform moderator limited or hid the page (DEC-040): nothing new can be published or commented. */
+    val paused: Boolean get() = limited || moderation?.hidden == true
     val deleted: Boolean get() = status == "deleted"
     /** Nothing new can be posted, commented, liked, followed or pinned unless the page is active. */
     val writable: Boolean get() = status == null || status == "active"
@@ -85,9 +101,18 @@ data class PostDto(
     @SerializedName("can_manage") val canManage: Boolean, val etag: String?, val pinned: Boolean = false,
     val moderation: ModerationMarkDto? = null,
     @SerializedName("page_status") val pageStatus: String? = null,
+    /** The post's own topic and interest codes, in order. Null only before validation, from a server that does not send them. */
+    val topics: List<String>? = emptyList(), val interests: List<String>? = emptyList(),
+    @SerializedName("page_limited") val pageLimited: Boolean = false,
 ) {
     val pageWritable: Boolean get() = pageStatus == null || pageStatus == "active"
+    /** Nobody comments on a post of a limited page (DEC-040); likes and saves stay. */
+    val commentsOpen: Boolean get() = pageWritable && !pageLimited
 }
+
+/** A post has at most three topics and five interests (DEC-036). */
+const val POST_TOPICS_LIMIT = 3
+const val POST_INTERESTS_LIMIT = 5
 
 data class CommentDto(
     val id: String, @SerializedName("post_id") val postId: String, @SerializedName("parent_id") val parentId: String?,
@@ -108,7 +133,7 @@ data class ReportDto(
 
 data class OutcomeDto(val id: String, val status: String)
 data class CreatePageDto(val handle: String, val name: String, val description: String, val topic: String)
-data class CreatePostDto(val title: String?, val body: String)
+data class CreatePostDto(val title: String?, val body: String, val topics: List<String> = emptyList(), val interests: List<String> = emptyList())
 data class CreateCommentDto(val body: String, @SerializedName("parent_id") val parentId: String? = null)
 data class CreateReportDto(@SerializedName("target_type") val targetType: String, @SerializedName("target_id") val targetId: String, val reason: String, val details: String)
 data class CreateBlockDto(@SerializedName("target_type") val targetType: String, @SerializedName("target_id") val targetId: String)
@@ -144,6 +169,8 @@ interface CommunityApi {
     @POST("v1/pages/{id}/posts") suspend fun createPost(@Header("Authorization") authorization: String, @Path("id") pageId: String, @Header("Idempotency-Key") key: String, @Body body: CreatePostDto): Response<EnvelopeDto<PostDto>>
     @GET("v1/posts/{id}") suspend fun post(@Header("Authorization") authorization: String, @Path("id") postId: String): Response<EnvelopeDto<PostDto>>
     @PATCH("v1/posts/{id}") suspend fun updatePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String?>): Response<EnvelopeDto<PostDto>>
+    /** The same edit, also carrying the post's topic or interest list when either changed. */
+    @PATCH("v1/posts/{id}") suspend fun updatePostTerms(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, @JvmSuppressWildcards Any?>): Response<EnvelopeDto<PostDto>>
     @POST("v1/posts/{id}/publish") suspend fun publish(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
     @POST("v1/posts/{id}/delete") suspend fun deletePost(@Header("Authorization") authorization: String, @Path("id") postId: String, @Header("If-Match") etag: String, @Body body: Map<String, String>): Response<EnvelopeDto<OutcomeDto>>
     @POST("v1/posts/{id}/{action}") suspend fun react(@Header("Authorization") authorization: String, @Path("id") postId: String, @Path("action") action: String, @Body body: Map<String, String>): Response<EnvelopeDto<PostDto>>
@@ -167,7 +194,7 @@ interface CommunityApi {
 }
 
 @Singleton
-class CommunityRepository @Inject constructor(private val api: CommunityApi, private val accounts: AccountRepository) {
+class CommunityRepository @Inject constructor(private val api: CommunityApi, internal val accounts: AccountRepository) {
     private fun invalid(message: String = "The service returned an unexpected community response."): Nothing = throw IdentityFailure("INVALID_RESPONSE", message)
 
     private fun <Value> validate(block: () -> Value): Value =
@@ -181,11 +208,18 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
 
     fun page(value: PageDto): PageDto = validate {
         identifier(value.id)
-        require(value.handle.matches(Regex("[a-z0-9][a-z0-9-]{1,28}[a-z0-9]")) && value.topic in TOPICS && value.followerCount >= 0)
+        require(value.handle.matches(Regex("[a-z0-9][a-z0-9-]{1,28}[a-z0-9]")) && value.topic in KnownTopics && value.followerCount >= 0)
+        value.classification?.let { classification ->
+            ClassificationPart.entries.forEach { part ->
+                val codes = classification.codes(part)
+                require(codes.size <= part.limit && codes.distinct().size == codes.size && codes.all(::isCode))
+            }
+        }
         text(value.name, 80); text(value.description, 500, empty = true); value.rules?.let { text(it, PAGE_RULES_LIMIT, empty = true) }
         require(value.canManage == (value.etag != null) && !(value.following && value.blocked))
         Instant.parse(value.createdAt); Instant.parse(value.updatedAt)
         value.moderation?.let { require(it.hidden && it.reason in REPORT_REASONS) }
+        value.limit?.let { require(value.limited && value.canManage && it.reason in REPORT_REASONS) }
         // Only the owner sees a deleted page, with the time it will be erased.
         require((value.status == null || value.status in PAGE_STATES) && (!value.deleted || value.canManage) && (value.purgeAfter == null || value.deleted))
         value.purgeAfter?.let(Instant::parse)
@@ -232,8 +266,13 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         require(value.likeCount >= 0 && value.commentCount >= 0)
         Instant.parse(value.createdAt); value.publishedAt?.let(Instant::parse); value.editedAt?.let(Instant::parse)
         value.moderation?.let { require(it.hidden && it.reason in REPORT_REASONS) }
-        value
+        val topics = value.topics.orEmpty()
+        val interests = value.interests.orEmpty()
+        require(postTerms(topics, POST_TOPICS_LIMIT) && postTerms(interests, POST_INTERESTS_LIMIT))
+        value.copy(topics = topics, interests = interests)
     }
+
+    private fun postTerms(codes: List<String>, limit: Int) = codes.size <= limit && codes.distinct().size == codes.size && codes.all(::isCode)
 
     fun comment(value: CommentDto, postId: String): CommentDto = validate {
         identifier(value.id); value.parentId?.let(::identifier)
@@ -272,7 +311,8 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     suspend fun discover(accountId: String, query: String, topic: String?, cursor: String?) = accounts.authorized(accountId) { authorization ->
         val text = query.trim().replace(Regex("\\s+"), " ").take(80)
         paged(api.discover(authorization, text.ifEmpty { null }, topic, cursor), cursor, PageDto::id) { item ->
-            page(item).also { if (it.blocked || (topic != null && it.topic != topic)) invalid() }
+            // A topic matches a page's main topic or one of its other topics.
+            page(item).also { if (it.blocked || (topic != null && it.topic != topic && topic !in it.classification?.otherTopics.orEmpty())) invalid() }
         }
     }
     suspend fun myPages(accountId: String): List<PageDto> = accounts.authorized(accountId) {
@@ -316,7 +356,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
     /** Sends only the changed fields, against the version tag of the page as the editor opened it. */
     suspend fun updatePage(accountId: String, opened: PageDto, changes: Map<String, String>): PageDto = accounts.authorized(accountId) {
         if (!opened.canManage || opened.etag == null || changes.isEmpty()) invalid()
-        require(changes.isNotEmpty() && setOf("name", "description", "topic", "rules").containsAll(changes.keys) && (changes["topic"] ?: TOPICS.first()) in TOPICS)
+        require(changes.isNotEmpty() && setOf("name", "description", "topic", "rules").containsAll(changes.keys) && (changes["topic"] ?: TOPICS.first()) in KnownTopics)
         page(accounts.result(api.updatePage(it, opened.id, opened.etag ?: invalid(), changes))).also { result ->
             if (result.id != opened.id || result.handle != opened.handle || !result.canManage) invalid("The page change could not be confirmed.")
         }
@@ -334,7 +374,7 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
                 if (!it.canManage || it.handle != intent.body.handle) invalid("The new page could not be confirmed.")
             }
             is CreateIntent.Post -> post(accounts.result(api.createPost(authorization, intent.pageId, intent.key, intent.body))).also {
-                if (it.pageId != intent.pageId || it.status != "draft" || !it.canManage) invalid("The draft could not be confirmed.")
+                if (it.pageId != intent.pageId || it.status != "draft" || !it.canManage || it.topics != intent.body.topics || it.interests != intent.body.interests) invalid("The draft could not be confirmed.")
             }
             is CreateIntent.Comment -> comment(accounts.result(api.comment(authorization, intent.postId, intent.key, intent.body)), intent.postId).also {
                 if (!it.mine || it.status != "visible" || it.parentId != intent.body.parentId) invalid("The comment could not be confirmed.")
@@ -359,14 +399,23 @@ class CommunityRepository @Inject constructor(private val api: CommunityApi, pri
         }
     }
     /** Sends only the fields that differ from [opened], the post as the editor opened it, against that version's tag. A removed title is sent as null. */
-    suspend fun updatePost(accountId: String, opened: PostDto, title: String?, body: String): PostDto = accounts.authorized(accountId) {
+    /** [topics] and [interests] are sent only when they differ from the opened post's, so an unchanged retired term is never sent again; an empty list removes them all. */
+    suspend fun updatePost(accountId: String, opened: PostDto, title: String?, body: String, topics: List<String>? = null, interests: List<String>? = null): PostDto = accounts.authorized(accountId) {
         val changes = buildMap<String, String?> {
             if (title != opened.title) put("title", title)
             if (body != opened.body) put("body", body)
         }
-        if (changes.isEmpty()) invalid()
-        post(accounts.result(api.updatePost(it, opened.id, opened.etag ?: invalid(), changes))).also { result ->
-            if (result.id != opened.id || result.status != opened.status || !result.canManage) invalid("The edit could not be confirmed.")
+        val lists = buildMap<String, List<String>> {
+            if (topics != null && topics != opened.topics.orEmpty()) put("topics", topics)
+            if (interests != null && interests != opened.interests.orEmpty()) put("interests", interests)
+        }
+        if (changes.isEmpty() && lists.isEmpty()) invalid()
+        validate { require(postTerms(lists["topics"].orEmpty(), POST_TOPICS_LIMIT) && postTerms(lists["interests"].orEmpty(), POST_INTERESTS_LIMIT)) }
+        val etag = opened.etag ?: invalid()
+        val response = if (lists.isEmpty()) api.updatePost(it, opened.id, etag, changes) else api.updatePostTerms(it, opened.id, etag, changes + lists)
+        post(accounts.result(response)).also { result ->
+            if (result.id != opened.id || result.status != opened.status || !result.canManage ||
+                lists["topics"]?.let { sent -> result.topics != sent } == true || lists["interests"]?.let { sent -> result.interests != sent } == true) invalid("The edit could not be confirmed.")
         }
     }
     suspend fun endComment(accountId: String, comment: CommentDto): CommentDto = accounts.authorized(accountId) {

@@ -1,24 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ZodError } from "zod";
-import { Ban, Bell, CalendarDays, Check, ClipboardList, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
+import { Ban, Bell, CalendarDays, Check, ClipboardList, Flag, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { spacesSchema } from "@/features/spaces/client";
-import { assigneesSchema, readTask, sendTask, statusLabels, taskBody, taskDraft, taskPage } from "./client";
-import type { FamilyTask, TaskDraft, TaskIntent, TaskItem, TaskStatus } from "./client";
+import { dueRange, localDate, readTask, sendTask, statusLabels, taskAssignees, taskBody, taskDraft, taskPage } from "./client";
+import type { DueChoice, FamilyTask, TaskDraft, TaskIntent, TaskItem, TaskPriority, TaskStatus } from "./client";
 import styles from "./tasks.module.css";
 import { TaskChecklist } from "./checklist";
 
 const statusTexts = { open: "tasks.statusOpen", in_progress: "tasks.statusInProgress", completed: "tasks.statusCompleted", cancelled: "tasks.statusCancelled" } as const;
 const actionTexts = { open: "tasks.reopen", in_progress: "tasks.start", completed: "tasks.complete", cancelled: "tasks.cancel" } as const;
 const changedTexts = { open: "tasks.changedOpen", in_progress: "tasks.changedInProgress", completed: "tasks.changedCompleted", cancelled: "tasks.changedCancelled" } as const;
+const priorityTexts = { high: "tasks.priorityHigh", normal: "tasks.priorityNormal", low: "tasks.priorityLow" } as const;
+const dueTexts = { "": "tasks.anyDate", before: "tasks.beforeToday", today: "tasks.today", week: "tasks.nextWeek" } as const;
 
 function isAccessError(error: Error | null) {
   return error instanceof ApiError && ([401, 403, 404].includes(error.status) || error.code === "ACCOUNT_CHANGED");
@@ -76,6 +78,11 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
   const { language } = useLanguage();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<TaskStatus | "">("");
+  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [dueFilter, setDueFilter] = useState<DueChoice>("");
+  // Counted in the person's own timezone; a new day needs a reload of the screen.
+  const today = useMemo(() => localDate(user.timezone), [user.timezone]);
+  const filters = { assignee: assigneeFilter === "me" ? user.id : assigneeFilter || undefined, ...dueRange(dueFilter, today) };
   const [editing, setEditing] = useState<TaskItem | null>(null);
   const [checklistTaskId, setChecklistTaskId] = useState<string | null>(null);
   const [review, setReview] = useState<{ task: TaskItem; target: TaskStatus; intent: TaskIntent } | null>(null);
@@ -85,9 +92,13 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
   const [notice, setNotice] = useState("");
   const [accessError, setAccessError] = useState<Error | null>(null);
   const tasks = useInfiniteQuery({
-    queryKey: ["tasks", user.id, spaceId, filter], initialPageParam: null as string | null,
-    queryFn: ({ pageParam, signal }) => taskPage(user.id, spaceId, filter, pageParam, signal),
+    queryKey: ["tasks", user.id, spaceId, filter, filters], initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => taskPage(user.id, spaceId, filter, pageParam, signal, filters),
     getNextPageParam: page => page.pagination.next_cursor ?? undefined,
+  });
+  const members = useQuery({
+    queryKey: ["taskAssignees", user.id, spaceId, "new"],
+    queryFn: ({ signal }) => taskAssignees(user.id, spaceId, undefined, signal),
   });
   const changeStatus = useMutation({
     mutationFn: (intent: TaskIntent) => sendTask(intent, user.id),
@@ -127,14 +138,21 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
     <div className={styles.workspace}>
       <section className={styles.taskSection} aria-labelledby="tasks-title">
         <div className={styles.sectionHeading}><h2 id="tasks-title">{t("tasks.title")}</h2><button className="icon-button" title={t("tasks.refresh")} aria-label={t("tasks.refresh")} disabled={tasks.isFetching || locked} onClick={() => tasks.refetch()}><RefreshCw size={18} className={tasks.isFetching ? "spin" : ""} aria-hidden /></button></div>
-        <label className={styles.filter}><span id="task-filter-label">{t("tasks.status")}</span><select aria-labelledby="task-filter-label" value={filter} disabled={locked} onChange={event => { setFilter(event.target.value as TaskStatus | ""); setNotice(""); changeStatus.reset(); }}><option value="">{t("tasks.allStatuses")}</option>{Object.keys(statusLabels).map(value => <option key={value} value={value}>{t(statusTexts[value as TaskStatus])}</option>)}</select></label>
+        <div className={styles.filters}>
+          <label className={styles.filter}><span id="task-filter-label">{t("tasks.status")}</span><select aria-labelledby="task-filter-label" value={filter} disabled={locked} onChange={event => { setFilter(event.target.value as TaskStatus | ""); setNotice(""); changeStatus.reset(); }}><option value="">{t("tasks.allStatuses")}</option>{Object.keys(statusLabels).map(value => <option key={value} value={value}>{t(statusTexts[value as TaskStatus])}</option>)}</select></label>
+          <label className={styles.filter}><span id="task-assignee-filter-label">{t("tasks.assignedTo")}</span><select aria-labelledby="task-assignee-filter-label" name="task_assignee_filter" value={assigneeFilter} disabled={locked} onChange={event => { setAssigneeFilter(event.target.value); setNotice(""); changeStatus.reset(); }}>
+            <option value="">{t("tasks.anyone")}</option><option value="me">{t("tasks.me")}</option><option value="none">{t("tasks.nobody")}</option>
+            {members.data?.data.filter(member => member.account_id !== user.id).map(member => <option key={member.account_id} value={member.account_id}>{member.display_name}</option>)}
+          </select></label>
+          <label className={styles.filter}><span id="task-due-filter-label">{t("tasks.dueFilter")}</span><select aria-labelledby="task-due-filter-label" name="task_due_filter" value={dueFilter} disabled={locked} onChange={event => { setDueFilter(event.target.value as DueChoice); setNotice(""); changeStatus.reset(); }}>{(Object.keys(dueTexts) as DueChoice[]).map(value => <option key={value} value={value}>{t(dueTexts[value])}</option>)}</select></label>
+        </div>
         {tasks.isPending && <p role="status" aria-busy="true">{t("tasks.loadingList")}</p>}
         {tasks.isError && <div className="message error" role="alert">{tasks.error.message}<button className="text-button" onClick={() => tasks.refetch()}><RefreshCw size={16} aria-hidden />{t("tasks.retry")}</button></div>}
         {changeStatus.isError && !review && <p className="message error" role="alert">{changeStatus.error.message}</p>}
         {!tasks.isPending && !tasks.isError && rows.length === 0 && <div className={styles.empty}><ClipboardList size={30} strokeWidth={1.5} aria-hidden /><h3>{t("tasks.noTasks")}</h3></div>}
         {!tasks.isError && <ul className={styles.taskList}>{rows.map(task => <li key={task.id}>
           <div className={styles.taskRow}><h3>{task.title}</h3><span className={styles.taskStatus} data-status={task.status}>{t(statusTexts[task.status])}</span></div>
-          <div className={styles.taskMetadata}><span><UserRound size={15} aria-hidden />{task.assignee?.display_name ?? t(task.assignee_unavailable ? "tasks.assigneeUnavailable" : "tasks.unassigned")}</span><span><CalendarDays size={15} aria-hidden />{task.due_date ? formatDateOnly(task.due_date, language) : t("tasks.noDueDate")}</span></div>
+          <div className={styles.taskMetadata}>{task.priority !== "normal" && <span className={styles.priority} data-priority={task.priority}><Flag size={15} aria-hidden />{t(task.priority === "high" ? "tasks.highPriority" : "tasks.lowPriority")}</span>}<span><UserRound size={15} aria-hidden />{task.assignee?.display_name ?? t(task.assignee_unavailable ? "tasks.assigneeUnavailable" : "tasks.unassigned")}</span><span><CalendarDays size={15} aria-hidden />{task.due_date ? formatDateOnly(task.due_date, language) : t("tasks.noDueDate")}</span></div>
           {task.description && <details className={styles.notes}><summary>{t("tasks.notes")}</summary><p>{task.description}</p></details>}
           {task.completed_at && <p className={styles.completedAt}>{t("tasks.completedAt", { date: new Intl.DateTimeFormat(language === "en" ? "en" : `${language}-IN`, { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone }).format(new Date(task.completed_at)) })}</p>}
           <div className={styles.taskActions}>
@@ -178,11 +196,7 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
   const [reloading, setReloading] = useState(false);
   const assignees = useQuery({
     queryKey: ["taskAssignees", user.id, spaceId, basis?.id ?? "new"],
-    queryFn: ({ signal }) => {
-      const query = new URLSearchParams({ space_id: spaceId });
-      if (basis) query.set("task_id", basis.id);
-      return api(`tasks/assignees?${query}`, assigneesSchema, { accountId: user.id, signal });
-    },
+    queryFn: ({ signal }) => taskAssignees(user.id, spaceId, basis?.id, signal),
   });
   const mutation = useMutation({
     mutationFn: (command: TaskIntent) => sendTask(command, user.id),
@@ -253,6 +267,9 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
       <label>{t("tasks.titleLabel")}<input name="task_title" autoComplete="off" required maxLength={400} value={draft.title} onChange={event => field("title", event.target.value)} /></label>
       <label><span id={`${formId}-notes`}>{t("tasks.notes")}</span><textarea aria-labelledby={`${formId}-notes`} name="task_description" rows={4} maxLength={10000} value={draft.description} onChange={event => field("description", event.target.value)} /></label>
       <label>{t("tasks.dueDate")}<input name="task_due_date" type="date" value={draft.due_date} onChange={event => field("due_date", event.target.value)} /></label>
+      <label><span id={`${formId}-priority`}>{t("tasks.priority")}</span><select aria-labelledby={`${formId}-priority`} name="task_priority" value={draft.priority ?? "normal"} onChange={event => field("priority", event.target.value as TaskPriority)}>
+        {(["high", "normal", "low"] as const).map(value => <option key={value} value={value}>{t(priorityTexts[value])}</option>)}
+      </select></label>
       <label><span id={`${formId}-assignee`}>{t("tasks.assignee")}</span><select aria-labelledby={`${formId}-assignee`} name="task_assignee" value={draft.assignee_account_id} disabled={assignees.isPending || assignees.isError} onChange={event => field("assignee_account_id", event.target.value)}>
         <option value="">{t("tasks.unassigned")}</option>
         {draft.assignee_account_id === "unavailable" && <option value="unavailable" disabled>{t("tasks.unavailableMember")}</option>}

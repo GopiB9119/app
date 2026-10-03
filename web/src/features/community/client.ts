@@ -3,9 +3,10 @@ import { ApiError, api } from "@/features/identity/client";
 
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
+export const termCodeSchema = z.string().max(64).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 export const TOPICS = ["community", "education", "health", "local", "family", "events", "hobbies", "support", "news", "other"] as const;
 export const REPORT_REASONS = ["spam", "harassment", "hate", "violence", "sexual", "misinformation", "self_harm", "privacy", "other"] as const;
-export type Topic = typeof TOPICS[number];
+export type Topic = string;
 export type ReportReason = typeof REPORT_REASONS[number];
 export const topicLabels: Record<Topic, string> = {
   community: "Community", education: "Education", health: "Health", local: "Local", family: "Family",
@@ -23,30 +24,146 @@ const etag = z.string().min(3).max(200);
 // The server counts characters (code points), not UTF-16 units, so an emoji counts once.
 const chars = (min: number, max: number) => z.string().refine(value => { const length = [...value].length; return length >= min && length <= max; });
 
+const termCodes = (maximum: number) => z.array(termCodeSchema).max(maximum).refine(values => new Set(values).size === values.length);
+export const CLASSIFICATION_LIMITS = { other_topics: 2, interests: 10, languages: 5, places: 3, community_types: 2, audiences: 3, activities: 4, content_kinds: 4 } as const;
+export const classificationSchema = z.object({
+  other_topics: termCodes(CLASSIFICATION_LIMITS.other_topics).default([]),
+  interests: termCodes(CLASSIFICATION_LIMITS.interests).default([]),
+  languages: termCodes(CLASSIFICATION_LIMITS.languages).default([]),
+  places: termCodes(CLASSIFICATION_LIMITS.places).default([]),
+  community_types: termCodes(CLASSIFICATION_LIMITS.community_types).default([]),
+  audiences: termCodes(CLASSIFICATION_LIMITS.audiences).default([]),
+  activities: termCodes(CLASSIFICATION_LIMITS.activities).default([]),
+  content_kinds: termCodes(CLASSIFICATION_LIMITS.content_kinds).default([]),
+});
+export type Classification = z.infer<typeof classificationSchema>;
+export const emptyClassification = (): Classification => classificationSchema.parse({});
+
+export const TAXONOMY_DIMENSIONS = ["topic", "interest", "language", "place", "community_type", "audience", "activity", "content_kind"] as const;
+export type TaxonomyDimension = typeof TAXONOMY_DIMENSIONS[number];
+export const termSchema = z.object({
+  dimension: z.enum(TAXONOMY_DIMENSIONS), code: termCodeSchema, parent: termCodeSchema.nullable(),
+  sensitive: z.boolean(), status: z.enum(["active", "retired"]),
+  names: z.object({ en: z.string().min(1), te: z.string().nullable(), hi: z.string().nullable() }),
+});
+export type TaxonomyTerm = z.infer<typeof termSchema>;
+export const taxonomySchema = z.array(termSchema).max(10000).refine(terms => new Set(terms.map(term => `${term.dimension}:${term.code}`)).size === terms.length);
+export const TAXONOMY_CACHE_TIME = 5 * 60 * 1000;
+let taxonomyCache: { terms: TaxonomyTerm[]; expires: number } | undefined;
+
+export async function readTaxonomy(signal?: AbortSignal, refresh = false) {
+  if (!refresh && taxonomyCache && taxonomyCache.expires > Date.now()) return taxonomyCache.terms;
+  const terms = (await api("taxonomy", taxonomySchema, { signal })).data;
+  taxonomyCache = { terms, expires: Date.now() + TAXONOMY_CACHE_TIME };
+  return terms;
+}
+
+export function termName(term: TaxonomyTerm, language: "en" | "te" | "hi") {
+  return term.names[language]?.trim() || term.names.en;
+}
+
+export function termLabel(terms: TaxonomyTerm[], dimension: TaxonomyDimension, code: string, language: "en" | "te" | "hi") {
+  const term = terms.find(item => item.dimension === dimension && item.code === code);
+  return term ? termName(term, language) : code;
+}
+
+export const INTEREST_LIMITS = { topics: 10, interests: 30, languages: 5, places: 5 } as const;
+export const interestsInputSchema = z.object({
+  topics: termCodes(INTEREST_LIMITS.topics), interests: termCodes(INTEREST_LIMITS.interests),
+  languages: termCodes(INTEREST_LIMITS.languages), places: termCodes(INTEREST_LIMITS.places),
+}).strict();
+export const interestsSchema = interestsInputSchema.extend({ etag });
+export type InterestChoices = z.infer<typeof interestsInputSchema>;
+export type Interests = z.infer<typeof interestsSchema>;
+
+export async function readInterests(accountId: string, signal?: AbortSignal) {
+  return (await api("me/interests", interestsSchema, { accountId, signal })).data;
+}
+
+export async function saveInterests(accountId: string, reviewed: Pick<Interests, "etag">, choices: InterestChoices) {
+  const parsed = interestsInputSchema.safeParse(choices);
+  if (!parsed.success) throw new ApiError(422, "VALIDATION_ERROR", "Choose valid interests within the limits.");
+  if (!etag.safeParse(reviewed.etag).success) invalid("Reload your interests before saving.");
+  const result = (await api("me/interests", interestsSchema, {
+    method: "PUT", accountId, body: parsed.data, headers: { "If-Match": reviewed.etag },
+  })).data;
+  for (const field of Object.keys(INTEREST_LIMITS) as (keyof InterestChoices)[]) {
+    if (result[field].length !== parsed.data[field].length || result[field].some(code => !parsed.data[field].includes(code))) {
+      invalid("The interests could not be confirmed.");
+    }
+  }
+  return result;
+}
+
 export const pageSchema = z.object({
   id: uuid, handle: z.string().regex(/^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/), name: chars(1, 80),
-  description: chars(0, 500), rules: chars(0, 2000).default(""), topic: z.enum(TOPICS),
+  description: chars(0, 500), rules: chars(0, 2000).default(""), topic: termCodeSchema,
+  classification: classificationSchema.default(emptyClassification),
   status: z.enum(PAGE_STATUSES).default("active"),
   follower_count: z.number().int().nonnegative(),
   created_at: timestamp, updated_at: timestamp, following: z.boolean(), blocked: z.boolean(), can_manage: z.boolean(),
   etag: etag.nullable(),
   purge_after: timestamp.nullable().default(null),
   moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
+  limited: z.boolean().default(false),
+  limit: z.object({ reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => value.can_manage === (value.etag !== null) && !(value.following && value.blocked));
 export type PublicPage = z.infer<typeof pageSchema>;
 
+export const pageInsightsSchema = z.object({
+  page_id: uuid, follower_count: z.number().int().nonnegative(), as_of: timestamp,
+  periods: z.array(z.object({
+    start: timestamp, end: timestamp,
+    new_followers: z.number().int().nonnegative(), posts: z.number().int().nonnegative(),
+    comments: z.number().int().nonnegative(), likes: z.number().int().nonnegative(),
+  }).strict()).length(8),
+}).strict().refine(value => value.periods.every((period, index) => {
+  const end = Date.parse(period.end);
+  const newerStart = index === 0 ? Date.parse(value.as_of) : Date.parse(value.periods[index - 1].start);
+  return end === newerStart && end - Date.parse(period.start) === 7 * 24 * 60 * 60 * 1000;
+}));
+export type PageInsights = z.infer<typeof pageInsightsSchema>;
+
+export const suggestionsSchema = z.object({
+  ranking: z.literal("interests-1"),
+  items: z.array(z.object({
+    page: pageSchema,
+    reasons: z.array(z.object({ dimension: z.enum(["topic", "interest", "language", "place"]), code: termCodeSchema })).min(1).max(50)
+      .refine(reasons => new Set(reasons.map(reason => `${reason.dimension}:${reason.code}`)).size === reasons.length),
+  })).max(20),
+});
+export type SuggestedPage = z.infer<typeof suggestionsSchema>["items"][number];
+
+export async function suggestedPages(accountId: string, limit = 6, signal?: AbortSignal) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new ApiError(422, "VALIDATION_ERROR", "Choose between 1 and 20 pages.");
+  const result = (await api(`me/suggested-pages?${new URLSearchParams({ limit: String(limit) })}`, suggestionsSchema, { accountId, signal })).data;
+  if (result.items.length > limit || new Set(result.items.map(item => item.page.id)).size !== result.items.length
+    || result.items.some(item => item.page.blocked || item.page.status !== "active")) invalid();
+  return result;
+}
+
+export const POST_TERM_LIMITS = { topics: 3, interests: 5 } as const;
 export const postSchema = z.object({
   id: uuid, page_id: uuid, page_handle: z.string().min(3).max(30), page_name: chars(1, 80),
   title: chars(1, 120).nullable(), body: chars(1, 5000), status: z.enum(["draft", "published"]),
+  topics: termCodes(POST_TERM_LIMITS.topics).default([]), interests: termCodes(POST_TERM_LIMITS.interests).default([]),
   like_count: z.number().int().nonnegative(), comment_count: z.number().int().nonnegative(),
   created_at: timestamp, published_at: timestamp.nullable(), edited_at: timestamp.nullable(),
   liked: z.boolean(), saved: z.boolean(), pinned: z.boolean().default(false), can_manage: z.boolean(), etag: etag.nullable(),
   page_status: z.enum(PAGE_STATUSES).default("active"),
+  page_limited: z.boolean().default(false),
   moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
 }).refine(value => (value.status === "published") === (value.published_at !== null)
   && value.can_manage === (value.etag !== null) && (value.status === "published" || value.can_manage)
   && (value.edited_at === null || value.status === "published") && (!value.pinned || value.status === "published"));
 export type PublicPost = z.infer<typeof postSchema>;
+
+export const interestPostsSchema = z.array(z.object({
+  post: postSchema.refine(post => post.status === "published"),
+  reasons: z.array(z.object({ dimension: z.enum(["topic", "interest"]), code: termCodeSchema }).strict()).min(1)
+    .refine(reasons => new Set(reasons.map(reason => `${reason.dimension}:${reason.code}`)).size === reasons.length),
+}).strict()).max(20).refine(items => new Set(items.map(item => item.post.id)).size === items.length);
+export type InterestPost = z.infer<typeof interestPostsSchema>[number];
 
 export const commentSchema = z.object({
   id: uuid, post_id: uuid, parent_id: uuid.nullable(), author_name: chars(1, 80),
@@ -67,11 +184,69 @@ export type Block = z.infer<typeof blockSchema>;
 export type ReportTarget = { type: "page" | "post" | "comment"; id: string; label: string };
 export type CreateIntent<Body> = { accountId: string; key: string; body: Body };
 
+export const feedControlInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("mute_page"), page_id: uuid }).strict(),
+  z.object({ kind: z.literal("hide_suggestion"), page_id: uuid }).strict(),
+  z.object({ kind: z.literal("hide_post"), post_id: uuid }).strict(),
+  z.object({ kind: z.literal("mute_term"), dimension: z.enum(["topic", "interest"]), code: termCodeSchema }).strict(),
+]);
+export type FeedControlInput = z.infer<typeof feedControlInputSchema>;
+export const feedControlSchema = z.object({
+  id: uuid, kind: z.enum(["mute_page", "mute_term", "hide_post", "hide_suggestion"]),
+  page_id: uuid.nullable(), page_handle: z.string().min(3).max(30).nullable(), page_name: chars(1, 80).nullable(),
+  post_id: uuid.nullable(), post_title: chars(1, 120).nullable(), post_available: z.boolean().nullable(),
+  dimension: z.enum(["topic", "interest"]).nullable(), code: termCodeSchema.nullable(), created_at: timestamp,
+}).refine(value => {
+  if ((value.page_handle === null) !== (value.page_name === null)) return false;
+  if (value.page_id === null && value.page_name !== null) return false;
+  if (value.kind === "mute_term") return value.dimension !== null && value.code !== null
+    && value.page_id === null && value.page_name === null && value.post_id === null
+    && value.post_title === null && value.post_available === null;
+  if (value.dimension !== null || value.code !== null) return false;
+  if (value.kind === "hide_post") return value.post_available === true
+    ? value.post_id !== null && value.page_id !== null && value.page_name !== null
+    : value.post_available === false && value.post_title === null;
+  return value.post_id === null && value.post_title === null && value.post_available === null;
+});
+export type FeedControl = z.infer<typeof feedControlSchema>;
+export const feedControlsSchema = z.array(feedControlSchema).max(1800)
+  .refine(items => new Set(items.map(item => item.id)).size === items.length);
+
+export async function feedControls(accountId: string, signal?: AbortSignal) {
+  return (await api("me/feed-controls", feedControlsSchema, { accountId, signal })).data;
+}
+
+export async function addFeedControl(accountId: string, input: FeedControlInput) {
+  const parsed = feedControlInputSchema.safeParse(input);
+  if (!parsed.success) throw new ApiError(422, "VALIDATION_ERROR", "Choose a valid feed control.");
+  const result = (await api("me/feed-controls", feedControlSchema, { method: "POST", accountId, body: parsed.data })).data;
+  const target = parsed.data;
+  if (result.kind !== target.kind
+    || ("page_id" in target && result.page_id !== target.page_id)
+    || ("post_id" in target && result.post_id !== target.post_id)
+    || ("dimension" in target && (result.dimension !== target.dimension || result.code !== target.code))) invalid();
+  return result;
+}
+
+export async function removeFeedControl(accountId: string, id: string) {
+  if (!uuid.safeParse(id).success) throw new ApiError(422, "VALIDATION_ERROR", "Choose a valid feed control.");
+  try {
+    const result = (await api(`me/feed-controls/${id}/remove`, z.object({ id: uuid, status: z.literal("removed") }), {
+      method: "POST", accountId, body: {},
+    })).data;
+    if (result.id !== id) invalid();
+    return result;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return { id, status: "removed" as const };
+    throw error;
+  }
+}
+
 const moderationTarget = z.enum(["page", "post", "comment"]);
-const moderationAction = z.enum(["no_action", "hide", "restore"]);
+const moderationAction = z.enum(["no_action", "hide", "limit", "restore"]);
 const appealStatus = z.enum(["open", "upheld", "overturned"]);
 export const moderationTargetLabels = { page: "Page", post: "Post", comment: "Comment" } as const;
-export const moderationActionLabels = { no_action: "No action", hide: "Hidden", restore: "Restored" } as const;
+export const moderationActionLabels = { no_action: "No action", hide: "Hidden", limit: "Limited", restore: "Restored" } as const;
 export const contentPreviewSchema = z.object({
   name: z.string().nullish(), handle: z.string().nullish(), description: z.string().nullish(),
   title: z.string().nullish(), body: z.string().nullish(), status: z.string(),
@@ -90,7 +265,7 @@ export const moderationDecisionSchema = z.object({
   note: chars(0, 1000), decided_by: uuid, decided_at: timestamp, appeal_of: uuid.nullable(),
 });
 export type ModerationDecisionBody = {
-  target_type: z.infer<typeof moderationTarget>; target_id: string; action: "no_action" | "hide"; reason: ReportReason; note: string;
+  target_type: z.infer<typeof moderationTarget>; target_id: string; action: "no_action" | "hide" | "limit"; reason: ReportReason; note: string;
 };
 export const moderationAppealSchema = z.object({
   id: uuid, decision_id: uuid, note: chars(1, 1000), status: appealStatus, created_at: timestamp, resolved_at: timestamp.nullable(),
@@ -127,6 +302,9 @@ export async function moderationQueue(accountId: string, cursor?: string | null,
 }
 
 export async function recordModerationDecision(intent: CreateIntent<ModerationDecisionBody>) {
+  if (intent.body.action === "limit" && intent.body.target_type !== "page") {
+    throw new ApiError(422, "VALIDATION_ERROR", "Only pages can be limited.");
+  }
   const result = (await api("moderation/decisions", moderationDecisionSchema, {
     method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
   })).data;
@@ -232,6 +410,13 @@ export async function readPage(reference: string, accountId?: string, signal?: A
   return checkPage((await api(`pages/${encodeURIComponent(reference)}`, pageSchema, { accountId, signal })).data, reference);
 }
 
+export async function pageInsights(accountId: string, pageId: string, signal?: AbortSignal) {
+  if (!uuid.safeParse(pageId).success) throw new ApiError(422, "VALIDATION_ERROR", "Choose a valid page.");
+  const result = (await api(`pages/${pageId}/insights`, pageInsightsSchema, { accountId, signal })).data;
+  if (result.page_id !== pageId) invalid("The insights do not match your page.");
+  return result;
+}
+
 export async function pagePosts(reference: string, accountId?: string, cursor?: string | null, signal?: AbortSignal) {
   const query = new URLSearchParams({ limit: "20" });
   if (cursor) query.set("cursor", cursor);
@@ -246,13 +431,15 @@ export async function myPages(accountId: string, signal?: AbortSignal) {
   return result;
 }
 
-export async function createPage(intent: CreateIntent<{ handle: string; name: string; description: string; topic: Topic }>) {
+export async function createPage(intent: CreateIntent<{ handle: string; name: string; description: string; topic: Topic; classification?: Partial<Classification> }>) {
   const result = checkPage((await api("pages", pageSchema, { method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key } })).data);
   if (!result.can_manage || result.handle !== intent.body.handle) invalid("The new page could not be confirmed.");
   return result;
 }
 
-export async function updatePage(accountId: string, page: PublicPage, changes: Partial<Pick<PublicPage, "name" | "description" | "topic" | "rules">>) {
+export type PageChanges = Partial<Pick<PublicPage, "name" | "description" | "topic" | "rules">> & { classification?: Partial<Classification> };
+
+export async function updatePage(accountId: string, page: PublicPage, changes: PageChanges) {
   if (!page.etag) invalid();
   return checkPage((await api(`pages/${page.id}`, pageSchema, { method: "PATCH", accountId, body: changes, headers: { "If-Match": page.etag } })).data, page.id);
 }
@@ -271,7 +458,7 @@ export async function followingPages(accountId: string, cursor?: string | null, 
   return page;
 }
 
-export async function createPost(intent: CreateIntent<{ title: string | null; body: string }> & { pageId: string }) {
+export async function createPost(intent: CreateIntent<{ title: string | null; body: string; topics?: string[]; interests?: string[] }> & { pageId: string }) {
   const result = checkPost((await api(`pages/${intent.pageId}/posts`, postSchema, { method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key } })).data);
   if (result.page_id !== intent.pageId || !result.can_manage) invalid("The draft could not be confirmed.");
   return result;
@@ -283,7 +470,7 @@ export async function drafts(accountId: string, pageId: string, signal?: AbortSi
   return result;
 }
 
-export async function updatePost(accountId: string, post: PublicPost, changes: { title?: string | null; body?: string }) {
+export async function updatePost(accountId: string, post: PublicPost, changes: { title?: string | null; body?: string; topics?: string[]; interests?: string[] }) {
   if (!post.etag) invalid();
   return checkPost((await api(`posts/${post.id}`, postSchema, { method: "PATCH", accountId, body: changes, headers: { "If-Match": post.etag } })).data, post.id);
 }
@@ -347,14 +534,32 @@ export async function savedPosts(accountId: string, cursor?: string | null, sign
   return page;
 }
 
-export async function discoverPages(accountId: string | undefined, search: string, topic: Topic | "", cursor?: string | null, signal?: AbortSignal) {
+export async function interestPosts(accountId: string, cursor?: string | null, signal?: AbortSignal) {
+  const query = new URLSearchParams({ limit: "20" });
+  if (cursor) query.set("cursor", cursor);
+  const result = await api(`me/interest-posts?${query}`, interestPostsSchema, { accountId, signal });
+  if (!result.pagination || (cursor && result.pagination.next_cursor === cursor)
+    || (result.pagination.has_more && result.data.length === 0)) invalid("The list is incomplete.");
+  return { items: result.data, next: result.pagination.next_cursor };
+}
+
+export type DiscoverFilters = Partial<Record<TaxonomyDimension, string>>;
+
+export async function discoverPages(accountId: string | undefined, search: string, topicOrFilters: Topic | DiscoverFilters, cursor?: string | null, signal?: AbortSignal) {
   const query = new URLSearchParams({ limit: "20" });
   const text = search.trim().replace(/\s+/g, " ");
   if (text) query.set("q", text.slice(0, 80));
-  if (topic) query.set("topic", topic);
+  const filters = typeof topicOrFilters === "string" ? { topic: topicOrFilters } : topicOrFilters;
+  for (const dimension of TAXONOMY_DIMENSIONS) {
+    const code = filters[dimension];
+    if (code) {
+      if (!termCodeSchema.safeParse(code).success) throw new ApiError(422, "VALIDATION_ERROR", "Choose a valid filter.");
+      query.set(dimension, code);
+    }
+  }
   if (cursor) query.set("cursor", cursor);
   const page = paged(await api(`discover/pages?${query}`, z.array(pageSchema).max(50), { accountId, signal }), cursor);
-  if (page.items.some(item => item.blocked || (topic && item.topic !== topic))) invalid();
+  if (page.items.some(item => item.blocked || (filters.topic && item.topic !== filters.topic && !item.classification.other_topics.includes(filters.topic)))) invalid();
   return page;
 }
 

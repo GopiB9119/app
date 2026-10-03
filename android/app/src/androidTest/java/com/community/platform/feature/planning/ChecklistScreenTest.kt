@@ -555,7 +555,7 @@ class ChecklistScreenTest {
         }
     }
 
-    // At normal text size: run straight after the large-text test above, the font rule's change to 200% does not arrive (T125).
+    @DeviceFontScale(2f)
     @Test fun theSameErrorAfterAnotherActionFurtherDownComesIntoView() {
         assertNarrowScreen()
         val items = (1..20).map { milk.copy(id = "synthetic-item-$it", title = "Buy item $it") }

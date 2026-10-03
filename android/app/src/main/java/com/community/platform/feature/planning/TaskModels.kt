@@ -22,7 +22,13 @@ data class FamilyTaskDto(
     val version: String,
     val permissions: TaskPermissionsDto,
     val etag: String? = null,
+    // DEC-029: null from an older service means normal.
+    val priority: String? = null,
 )
+val FamilyTaskDto.priorityLevel: String get() = priority ?: "normal"
+val TASK_PRIORITIES = listOf("high", "normal", "low")
+/** List filters: `assignee` is an account ID or "none"; dates are YYYY-MM-DD, both days included. */
+data class TaskFilters(val assignee: String? = null, val dueFrom: String? = null, val dueTo: String? = null)
 data class TaskRecord(val task: FamilyTaskDto, val etag: String)
 data class TaskPage<Value>(val items: List<Value>, val nextCursor: String?)
 data class CalendarEntryDto(
@@ -39,13 +45,14 @@ data class CalendarEntryDto(
     @SerializedName("source_changed") val sourceChanged: Boolean,
     @SerializedName("series_id") val seriesId: String? = null,
 )
-data class TaskFields(val title: String, val description: String, val dueDate: String?, val assigneeId: String?)
+data class TaskFields(val title: String, val description: String, val dueDate: String?, val assigneeId: String?, val priority: String = "normal")
 data class CreateTaskDto(
     @SerializedName("space_id") val spaceId: String,
     val title: String,
     val description: String,
     @SerializedName("due_date") val dueDate: String?,
     @SerializedName("assignee_account_id") val assigneeAccountId: String?,
+    val priority: String = "normal",
 )
 data class TaskStatusDto(val status: String)
 
@@ -63,13 +70,14 @@ data class CreateTaskCommand(
 data class EditTaskCommand(
     override val accountId: String, override val spaceId: String,
     override val requestKey: String, val taskId: String, val etag: String,
-    val fields: TaskFields, val changeAssignee: Boolean,
+    val fields: TaskFields, val changeAssignee: Boolean, val changePriority: Boolean = false,
 ) : TaskCommand {
     fun payload(): Map<String, Any?> = buildMap {
         put("title", fields.title)
         put("description", fields.description)
         put("due_date", fields.dueDate)
         if (changeAssignee) put("assignee_account_id", fields.assigneeId)
+        if (changePriority) put("priority", fields.priority)
     }
 }
 

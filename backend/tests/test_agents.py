@@ -265,6 +265,33 @@ def test_listing_tasks_reads_only_visible_tasks_and_the_api_requires_a_session(c
         assert database.scalar(select(func.count()).select_from(AgentRun)) == 1
 
 
+def test_the_agent_in_one_space_never_reads_or_writes_another_space(client, app):
+    # Launch-blocking isolation case from the owner's PRD (Part C, section 21.2; AG-01, AG-02).
+    person, solo_space = solo(client, app)
+    owner = account(client, app, "agent-family-owner@example.test")
+    family = create_space(client, owner).json()["data"]["id"]
+    admit(client, owner, family, person)
+    outsider = account(client, app, "agent-outsider@example.test")
+    elsewhere = create_space(client, outsider).json()["data"]["id"]
+    create_task(client, person, solo_space, title="Private diary entry", due_date="2026-09-19")
+    create_task(client, owner, family, title="Family groceries", due_date="2026-09-19")
+    create_task(client, outsider, elsewhere, title="Outsider secret", due_date="2026-09-19")
+
+    in_family = ask(client, person, family, "what's due today")
+    assert "Family groceries" in in_family["answer"]
+    assert "Private diary entry" not in in_family["answer"] and "Outsider secret" not in in_family["answer"]
+    in_solo = ask(client, person, solo_space, "what's due today")
+    assert "Private diary entry" in in_solo["answer"] and "Family groceries" not in in_solo["answer"]
+
+    refused = client.post("/v1/agent-runs", headers={**auth(person), "Idempotency-Key": str(uuid4())},
+                          json={"space_id": elsewhere, "message": "what's due today"})
+    assert refused.status_code == 404
+    created = ask(client, person, family, "add a task to book the hall")
+    assert approve(client, person, created).json()["data"]["status"] == "completed"
+    with app.state.sessions() as database:
+        assert database.scalar(select(Task.space_id).where(func.lower(Task.title) == "book the hall")) == family
+
+
 def notes(app, person, count):
     with app.state.sessions.begin() as database:
         for index in range(count):

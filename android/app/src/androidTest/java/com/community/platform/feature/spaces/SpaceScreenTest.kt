@@ -1,10 +1,12 @@
 package com.community.platform.feature.spaces
 
-import android.content.ComponentCallbacks
-import android.content.res.Configuration
+import android.app.Activity
+import android.app.Application
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -47,8 +49,7 @@ import com.community.platform.CommunityTheme
 import com.community.platform.feature.assertNarrowScreen
 import com.community.platform.feature.assertNotInList
 import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -715,39 +716,55 @@ internal class EmulatorFontScaleRule : TestRule {
             check(InstrumentationRegistry.getArguments().getString("community_disposable_ui_fixture") == "true") {
                 "Explicit disposable UI fixture authorization is required."
             }
-            val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
-            val original = Settings.System.getString(context.contentResolver, Settings.System.FONT_SCALE)
+            val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+            val original = Settings.System.getString(application.contentResolver, Settings.System.FONT_SCALE)
+            val measured = CopyOnWriteArrayList<Float>()
+            val screens = object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityResumed(activity: Activity) { measured += activity.resources.configuration.fontScale }
+                override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
+                override fun onActivityStarted(activity: Activity) = Unit
+                override fun onActivityPaused(activity: Activity) = Unit
+                override fun onActivityStopped(activity: Activity) = Unit
+                override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
+                override fun onActivityDestroyed(activity: Activity) = Unit
+            }
             try {
-                setScale(requested.value.toString())
-                base.evaluate()
+                store(requested.value.toString())
+                application.registerActivityLifecycleCallbacks(screens)
+                try {
+                    base.evaluate()
+                } finally {
+                    application.unregisterActivityLifecycleCallbacks(screens)
+                }
+                // A screen takes the scale the process has, so the rule waits for the process, then measures each screen.
+                check(measured.isNotEmpty()) { "No screen opened, so the font scale was not measured." }
+                check(measured.all { abs(it - requested.value) < 0.01f }) { "Screens ran at font scales $measured, expected ${requested.value}." }
             } finally {
-                setScale(original)
+                store(original)
             }
         }
     }
 
-    private fun setScale(value: String?) {
+    private fun shell(command: String): String {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext.applicationContext
+        return ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+    }
+
+    private fun store(value: String?) {
+        val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val expected = value?.toFloat() ?: 1f
-        val changed = CountDownLatch(1)
-        val callback = object : ComponentCallbacks {
-            override fun onConfigurationChanged(configuration: Configuration) {
-                if (abs(configuration.fontScale - expected) < 0.01f) changed.countDown()
+        val command = if (value == null) "settings delete system font_scale" else "settings put system font_scale $expected"
+        // T125: a change written while no screen is open sometimes never reaches the process; writing it again does.
+        repeat(3) { attempt ->
+            if (attempt > 0) shell("settings put system font_scale ${if (abs(expected - 1.15f) < 0.01f) 1.3f else 1.15f}")
+            shell(command)
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (abs(application.resources.configuration.fontScale - expected) < 0.01f) return
+                SystemClock.sleep(100)
             }
-            override fun onLowMemory() = Unit
         }
-        context.registerComponentCallbacks(callback)
-        try {
-            val command = if (value == null) "settings delete system font_scale" else "settings put system font_scale $expected"
-            ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
-            check(abs(Settings.System.getFloat(context.contentResolver, Settings.System.FONT_SCALE, 1f) - expected) < 0.01f)
-            if (abs(context.resources.configuration.fontScale - expected) >= 0.01f) {
-                check(changed.await(15, TimeUnit.SECONDS)) { "Font configuration change was not delivered." }
-            }
-            check(abs(context.resources.configuration.fontScale - expected) < 0.01f)
-        } finally {
-            context.unregisterComponentCallbacks(callback)
-        }
+        val stored = Settings.System.getString(application.contentResolver, Settings.System.FONT_SCALE)
+        error("Font configuration change to $expected was not delivered after 3 tries; the setting reads $stored.")
     }
 }

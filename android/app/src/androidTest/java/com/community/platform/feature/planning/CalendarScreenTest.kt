@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -169,6 +170,34 @@ class CalendarScreenTest {
         compose.runOnIdle { assertEquals(listOf(other.id), spaces); assertEquals(3, months.size) }
     }
 
+    // DEC-031 (T163): a week or a day steps by its own length; hiding a source hides only what is shown.
+    @Test fun viewsStepByTheirOwnLengthAndHidingASourceOnlyChangesWhatIsShown() {
+        var current by mutableStateOf(state().copy(loaded = true, entries = listOf(due, reminder, planned)))
+        val views = mutableListOf<CalendarView>()
+        val days = mutableListOf<LocalDate>()
+        val sources = mutableListOf<String>()
+        compose.setContent { CommunityTheme { CalendarScreen(current, actions().copy(selectView = { views += it }, selectDay = { days += it }, toggleSource = { sources += it }), {}, {}) } }
+        compose.onNodeWithTag("calendar-view-week").performClick()
+        compose.runOnIdle { assertEquals(listOf(CalendarView.WEEK), views); current = current.copy(view = CalendarView.WEEK, day = LocalDate.of(2026, 10, 6)) }
+        val medium = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+        compose.onNodeWithText("${LocalDate.of(2026, 10, 4).format(medium)} to ${LocalDate.of(2026, 10, 10).format(medium)}").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Previous week").performClick()
+        compose.onNodeWithContentDescription("Next week").performClick()
+        compose.onNodeWithContentDescription("Choose day").assertIsEnabled()
+        compose.runOnIdle { assertEquals(listOf(LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 13)), days); current = current.copy(view = CalendarView.DAY) }
+        compose.onNodeWithText(LocalDate.of(2026, 10, 6).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL))).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Previous day").performClick()
+        compose.runOnIdle { assertEquals(LocalDate.of(2026, 10, 5), days.last()); current = current.copy(view = CalendarView.MONTH, hidden = setOf("reminder")) }
+        reveal("Hidden by your choices: 2")
+        compose.onNodeWithText("Call the plumber").assertDoesNotExist()
+        compose.onNodeWithText("Water the plants").assertDoesNotExist()
+        reveal("Shared in this Space")
+        compose.onNodeWithText("Only you").assertDoesNotExist()
+        compose.onNodeWithTag("calendar-workspace").performScrollToIndex(0)
+        compose.onNodeWithTag("calendar-show-reminder").performClick()
+        compose.runOnIdle { assertEquals(listOf("reminder"), sources); assertEquals(listOf(CalendarView.WEEK), views) }
+    }
+
     @Test fun theMessageAfterAnActionFurtherDownComesIntoView() {
         val entries = (1..6).map { due.copy(id = "c2302436-0dd7-4d99-a7c3-ead390fd08f$it", title = "Errand $it") }
         val offline = "No connection. The calendar is unavailable."
@@ -194,9 +223,10 @@ class CalendarScreenTest {
         val long = due.copy(title = "Buy groceries for the whole family and the weekend picnic")
         compose.setContent { CommunityTheme { CalendarScreen(state().copy(loaded = true, entries = listOf(long, reminder), nextCursor = "synthetic-next"), actions(), {}, {}) } }
         for (matcher in listOf(hasText("Morgan family"), hasContentDescription("Display timezone"), hasContentDescription("Previous month"),
-            hasContentDescription("Choose month"), hasText("Today"), hasContentDescription("Next month"))) {
+            hasContentDescription("Choose month"), hasText("Today"), hasContentDescription("Next month"), hasText("Week"), hasText("Day"), hasText("Reminders"), hasText("Events"))) {
             compose.assertReachable("calendar-workspace", matcher)
         }
+        compose.assertTextNotClipped(hasText("Reminders"))
         compose.assertReachable("calendar-workspace", hasText(monthTitle))
         compose.assertTextNotClipped(hasText(monthTitle))
         compose.assertTextNotClipped(hasText("Today"))

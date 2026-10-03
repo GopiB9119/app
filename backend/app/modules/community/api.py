@@ -1,10 +1,9 @@
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.security import HTTPBearer
 
-from app.modules.community.models import TOPICS
 from app.modules.community.schemas import (
     BlockOutcome,
     BlockView,
@@ -17,17 +16,26 @@ from app.modules.community.schemas import (
     CreateReport,
     DeletePage,
     EmptyAction,
+    FeedControlInput,
+    FeedControlOutcome,
+    FeedControlView,
     HandoverView,
+    InterestPostList,
+    InterestsInput,
+    InterestsView,
     InviteModerator,
     ModeratorRoleView,
     ModeratorView,
     OfferHandover,
+    PageInsights,
     PageList,
     PageView,
     PostList,
     PostOutcome,
     PostView,
     ReportView,
+    Suggestions,
+    TermView,
     UpdatePage,
     UpdatePost,
 )
@@ -81,6 +89,47 @@ def unfollow(request: Request, page_id: UUID, body: EmptyAction):
 @router.get("/me/following", response_model=PageList)
 def following(request: Request, limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)):
     return listed(request, *service(request).following(token(request), limit, cursor))
+
+
+@router.get("/me/interests", response_model=Envelope[InterestsView])
+def interests(request: Request):
+    return envelope(request, service(request).interests(token(request)))
+
+
+@router.put("/me/interests", response_model=Envelope[InterestsView])
+def set_interests(request: Request, body: InterestsInput, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, service(request).set_interests(token(request), body, if_match))
+
+
+@router.get("/me/suggested-pages", response_model=Envelope[Suggestions])
+def suggested_pages(request: Request, limit: int = Query(default=20, ge=1, le=20)):
+    """Active public pages matching the signed-in person's chosen interests, ranked by the fixed rules named in `ranking`."""
+    return envelope(request, service(request).suggested_pages(token(request), limit))
+
+
+@router.get("/me/interest-posts", response_model=InterestPostList)
+def interest_posts(request: Request, limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)):
+    """Published posts about the signed-in person's chosen topics and interests, newest first, each with what it matched.
+    A post without its own topics or interests is about its page's. Empty when the person chose no topic or interest."""
+    return listed(request, *service(request).interest_posts(token(request), limit, cursor))
+
+
+@router.get("/me/feed-controls", response_model=Envelope[list[FeedControlView]])
+def feed_controls(request: Request):
+    """The pages and topics the signed-in person muted and what they marked Not interested, newest first. Private."""
+    return envelope(request, service(request).feed_controls(token(request)))
+
+
+@router.post("/me/feed-controls", response_model=Envelope[FeedControlView], status_code=201)
+def add_feed_control(request: Request, body: FeedControlInput):
+    """Muted pages leave Following, Latest, From your interests and suggestions; muted topics and interests take the
+    posts and pages about them out of those lists too. Search is not affected. Repeating a control returns it."""
+    return envelope(request, service(request).add_feed_control(token(request), body))
+
+
+@router.post("/me/feed-controls/{control_id}/remove", response_model=Envelope[FeedControlOutcome])
+def remove_feed_control(request: Request, control_id: UUID, body: EmptyAction):
+    return envelope(request, service(request).remove_feed_control(token(request), str(control_id)))
 
 
 @router.post("/pages/{page_ref}/posts", response_model=Envelope[PostView], status_code=201)
@@ -252,6 +301,12 @@ def cancel_handover(request: Request, page_id: UUID, offer_id: UUID, if_match: s
     return envelope(request, service(request).respond_handover(token(request), str(page_id), str(offer_id), "cancel", if_match))
 
 
+@router.get("/pages/{page_id}/insights", response_model=Envelope[PageInsights])
+def page_insights(request: Request, page_id: UUID):
+    """Weekly totals for the page's owner: new followers, posts, and others' comments and likes. Never who."""
+    return envelope(request, service(request).page_insights(token(request), str(page_id)))
+
+
 @router.post("/pages/{page_id}/archive", response_model=Envelope[PageView])
 def archive_page(request: Request, page_id: UUID, body: EmptyAction, if_match: str | None = Header(default=None, max_length=200)):
     return envelope(request, service(request).archive_page(token(request), str(page_id), if_match))
@@ -292,12 +347,34 @@ def comments(request: Request, post_id: UUID, limit: int = Query(default=50, ge=
     return listed(request, *service(request).comments(token(request), str(post_id), limit, cursor))
 
 
+def term_filter(description):
+    return Query(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$", description=description)
+
+
 @public_router.get("/discover/pages", response_model=PageList, openapi_extra=optional_session)
 def discover_pages(
-    request: Request, q: str | None = Query(default=None, max_length=80), topic: Literal[TOPICS] | None = Query(default=None),
+    request: Request, q: str | None = Query(default=None, max_length=80),
+    topic: str | None = term_filter("Any of a page's topics."),
+    interest: str | None = term_filter("An interest code."),
+    language: str | None = term_filter("A language code."),
+    place: str | None = term_filter("A place code; also finds pages of the places inside it."),
+    community_type: str | None = term_filter("A community type code."),
+    audience: str | None = term_filter("An audience code."),
+    activity: str | None = term_filter("An activity code."),
+    content_kind: str | None = term_filter("A content kind code."),
     limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048),
 ):
-    return listed(request, *service(request).discover_pages(token(request), q, topic, limit, cursor))
+    filters = {
+        "topic": topic, "interest": interest, "language": language, "place": place, "community_type": community_type,
+        "audience": audience, "activity": activity, "content_kind": content_kind,
+    }
+    return listed(request, *service(request).discover_pages(token(request), q, filters, limit, cursor))
+
+
+@public_router.get("/taxonomy", response_model=Envelope[list[TermView]])
+def taxonomy(request: Request):
+    """The shared vocabulary: every topic, interest, language, place, community type, audience, activity and content kind."""
+    return envelope(request, service(request).taxonomy())
 
 
 @public_router.get("/discover/posts", response_model=PostList, openapi_extra=optional_session)

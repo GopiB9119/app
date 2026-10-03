@@ -4,6 +4,22 @@ import com.google.gson.annotations.SerializedName
 
 const val MAX_MESSAGE_CHARACTERS = 2000
 
+/** The six reactions in their fixed order (DEC-033). */
+val REACTIONS = listOf("like", "love", "laugh", "wow", "sad", "thanks")
+const val REPLY_EXCERPT_CHARACTERS = 120
+const val EDIT_WINDOW_MILLISECONDS = 15L * 60 * 1000
+
+/** The message a reply answers, as this person may see it. */
+data class ReplyDto(
+    @SerializedName("message_id") val messageId: String,
+    val status: String,
+    val position: String?,
+    @SerializedName("sender_name") val senderName: String?,
+    val excerpt: String?,
+)
+
+data class ReactionDto(val reaction: String, val count: Int, val mine: Boolean)
+
 data class ParticipantDto(
     @SerializedName("account_id") val accountId: String,
     @SerializedName("display_name") val displayName: String,
@@ -37,17 +53,29 @@ data class MessageDto(
     val body: String?,
     @SerializedName("created_at") val createdAt: String,
     @SerializedName("deleted_at") val deletedAt: String?,
-)
+    // Servers from before replies, reactions and edits leave these out; Gson then leaves them null or 0.
+    @SerializedName("edited_at") val editedAt: String? = null,
+    @SerializedName("reply_to") val replyTo: ReplyDto? = null,
+    val reactions: List<ReactionDto>? = null,
+    val revision: Int = 1,
+) {
+    val reactionList: List<ReactionDto> get() = reactions.orEmpty()
+    /** A missing revision counts as the first. */
+    val version: Int get() = if (revision < 1) 1 else revision
+}
 
 data class OpenConversationDto(val kind: String, @SerializedName("participant_account_id") val participantAccountId: String? = null)
-data class SendMessageDto(val body: String)
+/** Gson leaves out a null [replyTo], so a message that answers none sends exactly what it always did. */
+data class SendMessageDto(val body: String, @SerializedName("reply_to_message_id") val replyTo: String? = null)
+data class EditMessageDto(val body: String)
+data class ReactDto(val reaction: String, val on: Boolean)
 data class MarkReadDto(@SerializedName("through_position") val throughPosition: String)
 
 data class ConversationPage(val items: List<ConversationDto>, val nextCursor: String?, val unreadCount: Int)
 data class MessagePage(val items: List<MessageDto>, val nextCursor: String?)
 
-/** One send attempt identity. A retry reuses this exact key and body so the server returns the original message. */
-data class SendIntent(val accountId: String, val conversationId: String, val key: String, val body: String)
+/** One send attempt identity. A retry reuses this exact key, body and answered message so the server returns the original. */
+data class SendIntent(val accountId: String, val conversationId: String, val key: String, val body: String, val replyTo: String? = null)
 
 enum class MessageProblem { EMPTY, TOO_LONG, CONTROL }
 
@@ -70,10 +98,21 @@ fun messageProblem(value: String): MessageProblem? {
     return if (blocked) MessageProblem.CONTROL else null
 }
 
-/** A deletion is final, so a copy read before it never brings the message back, whichever answer arrives last (T82). */
+/**
+ * A deletion is final, so a copy read before it never brings the message back, whichever answer arrives last (T82).
+ * Every edit or reaction raises the revision, so an older copy cannot undo one either (DEC-033).
+ */
 fun mergeMessages(current: List<MessageDto>, incoming: List<MessageDto>): List<MessageDto> {
     val byId = LinkedHashMap<String, MessageDto>()
     current.forEach { byId[it.id] = it }
-    incoming.forEach { message -> if (byId[message.id]?.deletedAt == null || message.deletedAt != null) byId[message.id] = message }
+    incoming.forEach { message ->
+        val known = byId[message.id]
+        if (known == null || message.deletedAt != null || (known.deletedAt == null && message.version >= known.version)) byId[message.id] = message
+    }
     return byId.values.sortedBy { it.position.toLong() }
 }
+
+/** Whether the author may still edit [message] by the device clock; the server decides. */
+fun editable(message: MessageDto, now: Long = System.currentTimeMillis()): Boolean =
+    message.mine && message.status == "sent" &&
+        runCatching { now - java.time.Instant.parse(message.createdAt).toEpochMilli() < EDIT_WINDOW_MILLISECONDS }.getOrDefault(false)

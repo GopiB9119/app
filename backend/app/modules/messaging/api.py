@@ -8,11 +8,13 @@ from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.messaging.schemas import (
     ConversationPage,
     ConversationView,
+    EditMessage,
     MarkRead,
     MessageAction,
     MessagePage,
     MessageView,
     OpenConversation,
+    ReactToMessage,
     SendMessage,
 )
 
@@ -62,6 +64,24 @@ def send_message(request: Request, conversation_id: UUID, body: SendMessage, ide
 @router.post("/conversations/{conversation_id}/messages/{message_id}/delete", response_model=Envelope[MessageView])
 def delete_message(request: Request, conversation_id: UUID, message_id: UUID, body: MessageAction):
     return envelope(request, request.app.state.messaging.delete(token(request), str(conversation_id), str(message_id)))
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/edit", response_model=Envelope[MessageView],
+    description="The author changes the text of their message, for 15 minutes after sending and at most 10 times. "
+                "The same text again changes nothing. The earlier text is not kept.",
+)
+def edit_message(request: Request, conversation_id: UUID, message_id: UUID, body: EditMessage):
+    return envelope(request, request.app.state.messaging.edit(token(request), str(conversation_id), str(message_id), body))
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/reactions", response_model=Envelope[MessageView],
+    description="Adds (`on: true`) or takes back (`on: false`) one of the caller's own reactions. Doing what is already "
+                "done changes nothing, so a retry is safe.",
+)
+def react_to_message(request: Request, conversation_id: UUID, message_id: UUID, body: ReactToMessage):
+    return envelope(request, request.app.state.messaging.react(token(request), str(conversation_id), str(message_id), body))
 
 
 @router.post("/conversations/{conversation_id}/read", response_model=Envelope[ConversationView])

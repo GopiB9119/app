@@ -30,8 +30,8 @@ const rules = 'Be kind. మర్యాదగా रहें.';
 const serverMessage = 'Synthetic refusal. తెలుగు हिन्दी stays unchanged.';
 const { en, te, hi } = loadMessages().messages;
 const texts = { en, te, hi };
-const modes = ['feed', 'discover', 'page', 'post', 'pages', 'safety', 'moderation'];
-const paths = { feed: '/app/home', discover: '/app/discover', page: '/pages/garden-club', post: `/posts/${postId}`, pages: '/app/pages', safety: '/app/safety', moderation: '/app/moderation' };
+const modes = ['feed', 'discover', 'page', 'post', 'pages', 'safety', 'moderation', 'interests'];
+const paths = { feed: '/app/home', discover: '/app/discover', page: '/pages/garden-club', post: `/posts/${postId}`, pages: '/app/pages', safety: '/app/safety', moderation: '/app/moderation', interests: '/app/settings/interests' };
 const androidTelugu = readFileSync(path.join(root, 'android/app/src/main/res/values-te/strings.xml'), 'utf8');
 const message = (language, id, values = {}) => texts[language][`community.${id}`].replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (placeholder, name) => Object.hasOwn(values, name) ? String(values[name]) : placeholder);
 let browser;
@@ -52,12 +52,13 @@ before(async () => {
         import { MyPagesScreen } from './src/features/community/pages-screen';
         import { SafetyScreen } from './src/features/community/safety-screen';
         import { ModerationScreen } from './src/features/community/moderation-screen';
+        import { InterestsScreen } from './src/features/community/interests-screen';
         import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
         window.renderCommunityI18nFixture = () => {
           const { mode, language } = window.communityI18nFixture;
           const screens = { feed: <HomeScreen />, discover: <DiscoverScreen />, page: <PublicPageScreen reference="garden-club" />,
-            post: <PostScreen postId="${postId}" />, pages: <MyPagesScreen />, safety: <SafetyScreen />, moderation: <ModerationScreen /> };
+            post: <PostScreen postId="${postId}" />, pages: <MyPagesScreen />, safety: <SafetyScreen />, moderation: <ModerationScreen />, interests: <InterestsScreen /> };
           root.render(<Providers language={language}>{screens[mode]}</Providers>);
         };
         window.unmountCommunityI18nFixture = () => root.unmount();`,
@@ -109,7 +110,7 @@ async function fixture(context, options = {}) {
   await page.exposeFunction('recordCommunityI18nUnexpected', call => { unexpected.push(call); });
   await page.goto(origin + paths[mode]);
   await page.addStyleTag({ content: css });
-  await page.evaluate(({ mode, language, routePath, accountId, pageId, postId, commentId, decisionId, appealId, blockId, created, pageName, personName, postTitle, postBody, commentBody, rules, serverMessage, options }) => {
+  await page.evaluate(({ mode, language, routePath, accountId, pageId, postId, commentId, decisionId, appealId, blockId, created, pageName, personName, postTitle, postBody, commentBody, rules, serverMessage, options, topicNames }) => {
     const owner = options.owner ?? (mode === 'page' || mode === 'pages');
     const publicPage = {
       id: pageId, handle: 'garden-club', name: pageName, description: postBody, rules, topic: 'hobbies', status: 'active',
@@ -138,6 +139,7 @@ async function fixture(context, options = {}) {
       }] : [],
       failReport: options.failReport ?? false, offlineReport: options.offlineReport ?? false,
       offlineFeed: options.offlineFeed ?? false, releaseFeed: null,
+      interests: { topics: ['hobbies'], interests: [], languages: [], places: [], etag: '"interests-1"' },
     };
     Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => `00000000-0000-4000-8000-${(++state.sequence).toString(16).padStart(12, '0')}` });
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-community-i18n', ...extra }));
@@ -160,6 +162,13 @@ async function fixture(context, options = {}) {
       await window.recordCommunityI18nCall(call);
       if (url.pathname === '/api/me' && method === 'GET') return reply({ id: accountId, display_name: personName, email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       if (url.pathname === '/api/notifications' && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
+      if (url.pathname === '/api/taxonomy' && method === 'GET') return reply(Object.entries(topicNames).map(([code, names]) => ({ dimension: 'topic', code, names, parent: null, sensitive: false, status: 'active' })));
+      if (url.pathname === '/api/me/interests' && method === 'GET') return reply(state.interests);
+      if (url.pathname === '/api/me/interests' && method === 'PUT') { state.interests = { ...body, etag: '"interests-2"' }; return reply(state.interests); }
+      if (url.pathname === '/api/me/suggested-pages' && method === 'GET') return reply({ ranking: 'interests-1', items: [] });
+      if (url.pathname === '/api/me/interest-posts' && method === 'GET') return paged(options.interestPosts ? [{
+        post: { ...state.post, topics: ['hobbies'], interests: [] }, reasons: [{ dimension: 'topic', code: 'hobbies' }],
+      }] : []);
       if (url.pathname === '/api/feed' && method === 'GET') {
         if (state.offlineFeed) throw new TypeError('Synthetic offline feed.');
         if (options.holdFeed) await new Promise(resolve => { state.releaseFeed = resolve; });
@@ -217,7 +226,9 @@ async function fixture(context, options = {}) {
       await window.recordCommunityI18nUnexpected(call);
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}${url.search}`);
     };
-  }, { mode, language, routePath: paths[mode], accountId, pageId, postId, commentId, decisionId, appealId, blockId, created, pageName, personName, postTitle, postBody, commentBody, rules, serverMessage, options });
+  }, { mode, language, routePath: paths[mode], accountId, pageId, postId, commentId, decisionId, appealId, blockId, created, pageName, personName, postTitle, postBody, commentBody, rules, serverMessage, options,
+    topicNames: Object.fromEntries(['community', 'hobbies', 'education'].map(code => [code, Object.fromEntries(['en', 'te', 'hi'].map(language => [language, texts[language][`community.topic.${code}`]]))])),
+  });
   await page.addScriptTag({ content: javascript });
   await page.evaluate(() => window.renderCommunityI18nFixture());
   await page.locator('main h1').waitFor();
@@ -287,6 +298,8 @@ async function checkScreen(result, mode, language) {
     assert.equal(await main.getByRole('link', { name: text('createAPage'), exact: true }).count(), 1);
     assert.equal(await main.getByText(text('followers.one'), { exact: true }).count(), 1);
     assert.equal(await main.getByRole('combobox', { name: text('topic'), exact: true }).locator('option[value="hobbies"]').textContent(), text('topic.hobbies'));
+    await main.getByRole('heading', { name: text('interests.suggested'), exact: true }).waitFor();
+    assert.equal(await main.getByRole('link', { name: text('interests.choose'), exact: true }).getAttribute('href'), '/app/settings/interests');
     await main.getByRole('button', { name: text('posts'), exact: true }).click();
     await main.getByText(postBody, { exact: true }).waitFor();
   } else if (mode === 'page') {
@@ -317,6 +330,13 @@ async function checkScreen(result, mode, language) {
     assert.equal(await main.getByRole('button', { name: text('appeal'), exact: true }).count(), 1);
     assert.equal(await main.getByRole('link', { name: text('moderationQueue'), exact: true }).count(), 1);
     await main.getByText(text('reason.privacy'), { exact: true }).waitFor();
+  } else if (mode === 'interests') {
+    await main.getByRole('heading', { name: text('interests.title'), exact: true }).waitFor();
+    await main.getByText(text('interests.privacy'), { exact: true }).waitFor();
+    await main.getByRole('checkbox', { name: text('topic.hobbies'), exact: true }).waitFor();
+    assert.equal(await main.getByRole('checkbox', { name: text('topic.hobbies'), exact: true }).isChecked(), true);
+    for (const field of ['topics', 'interests', 'languages', 'places']) assert.equal(await main.getByRole('group', { name: text(`taxonomy.${field}`), exact: true }).count(), 1);
+    assert.equal(await main.getByRole('button', { name: text('interests.save'), exact: true }).count(), 1);
   } else {
     await main.getByRole('heading', { name: text('moderation'), exact: true }).waitFor();
     await main.getByText(postBody, { exact: true }).waitFor();
@@ -329,7 +349,7 @@ async function checkScreen(result, mode, language) {
     assert.ok((await main.getByText(postBody, { exact: true }).count()) > 0, 'Mixed-script user content must not be translated.');
     assert.equal(await main.locator('b').count(), 0, 'User markup stays literal.');
   }
-  if (mode !== 'pages') await assertDates(page, language);
+  if (mode !== 'pages' && mode !== 'interests') await assertDates(page, language);
 }
 
 async function checkEmptyState(result, mode, language) {
@@ -378,6 +398,36 @@ for (const language of ['te', 'hi']) for (const mode of modes) {
     } finally { await context.close(); }
   });
 }
+
+test('T129 interest posts switch reasons and own-term names across all three languages and fit doubled text', async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: 'en-US', timezoneId: 'UTC' });
+  try {
+    const result = await fixture(context, { mode: 'discover', language: 'en', interestPosts: true });
+    const { page } = result;
+    for (const language of ['en', 'te', 'hi']) {
+      await page.locator('.language-picker select').selectOption(language);
+      const section = page.getByRole('region', { name: message(language, 'interestPosts.title'), exact: true });
+      const name = message(language, 'topic.hobbies');
+      await section.getByText(message(language, 'interestPosts.because', { names: name }), { exact: true }).waitFor();
+      assert.deepEqual(await section.getByRole('list', { name: message(language, 'postTerms'), exact: true }).getByRole('listitem').allTextContents(), [name]);
+      assert.equal(await section.getByText(postBody, { exact: true }).textContent(), postBody);
+      await assertDates(page, language);
+      await assertFits(page, `${language} interest posts desktop`);
+    }
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.evaluate(() => document.fonts.ready);
+    const reason = page.getByText(message('hi', 'interestPosts.because', { names: message('hi', 'topic.hobbies') }), { exact: true });
+    const before = await reason.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body, body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await reason.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), before * 2);
+    await assertFits(page, 'Hindi interest posts 320 px / measured 200% text');
+    await page.screenshot({ path: path.join(evidence, 't129-interest-posts-hi-320-200.png'), fullPage: true });
+    assertClean(result);
+  } finally { await context.close(); }
+});
 
 test('English dates keep the browser default locale, then visible community text and dates switch without reloading', async () => {
   const context = await browser.newContext({ locale: 'en-GB', timezoneId: 'Asia/Kolkata' });

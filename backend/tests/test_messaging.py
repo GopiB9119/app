@@ -389,6 +389,7 @@ def test_swapped_ciphertext_and_send_rate_are_rejected(client, app):
         assert send(client, owner, chat["id"], f"Burst {index}").status_code == 201
     limited = send(client, owner, chat["id"], "Too fast")
     assert limited.status_code == 429 and limited.json()["error"]["code"] == "MESSAGE_RATE_LIMITED"
+    assert limited.headers["Retry-After"] == "60"
     advance(app, minutes=2)
     assert send(client, owner, chat["id"], "After waiting").status_code == 201
 

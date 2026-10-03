@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 from app.modules.spaces.schemas import (
+    ChangeAgentPolicy,
     ChangeInvitePolicy,
     ChangeMemberRole,
     ChangeSpaceVisibility,
@@ -186,6 +187,15 @@ def change_visibility(request: Request, space_id: UUID, body: ChangeSpaceVisibil
 def change_invite_policy(request: Request, space_id: UUID, body: ChangeInvitePolicy,
                          idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
     return envelope(request, request.app.state.spaces.change_invite_policy(
+        token(request), str(space_id), body, str(idempotency_key), if_match,
+    ))
+
+
+@router.post("/{space_id}/agent-policy", response_model=Envelope[SpaceSettingsView],
+             responses={412: {"model": ErrorEnvelope}, 428: {"model": ErrorEnvelope}})
+def change_agent_policy(request: Request, space_id: UUID, body: ChangeAgentPolicy,
+                        idempotency_key: UUID = Header(), if_match: str | None = Header(default=None, max_length=140)):
+    return envelope(request, request.app.state.spaces.change_agent_policy(
         token(request), str(space_id), body, str(idempotency_key), if_match,
     ))
 

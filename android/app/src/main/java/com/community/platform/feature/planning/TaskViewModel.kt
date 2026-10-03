@@ -23,8 +23,16 @@ data class TaskEditor(
 ) {
     val dirty: Boolean get() = original?.let {
         fields.title != it.task.title || fields.description != it.task.description ||
-            fields.dueDate != it.task.dueDate || changeAssignee
-    } ?: (fields.title.isNotBlank() || fields.description.isNotBlank() || fields.dueDate != null || fields.assigneeId != null)
+            fields.dueDate != it.task.dueDate || changeAssignee || fields.priority != it.task.priorityLevel
+    } ?: (fields.title.isNotBlank() || fields.description.isNotBlank() || fields.dueDate != null || fields.assigneeId != null || fields.priority != "normal")
+}
+
+/** DEC-029 date choices, counted from the phone's own day; null is any date. */
+fun dueRange(choice: String?, today: LocalDate): Pair<LocalDate?, LocalDate?>? = when (choice) {
+    "before" -> null to today.minusDays(1)
+    "today" -> today to today
+    "week" -> today to today.plusDays(6)
+    else -> null
 }
 
 data class TaskStatusConfirmation(val record: TaskRecord, val status: String)
@@ -38,6 +46,10 @@ data class TaskWorkspaceState(
     val tasks: List<TaskRecord> = emptyList(),
     val nextCursor: String? = null,
     val statusFilter: String? = null,
+    /** null is anyone; "me" or "none". */
+    val assigneeFilter: String? = null,
+    /** null is any date; "before", "today" or "week". */
+    val dueFilter: String? = null,
     val detail: TaskRecord? = null,
     val editor: TaskEditor? = null,
     val assignees: List<TaskAssigneeDto> = emptyList(),
@@ -59,6 +71,7 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
     private var generation = 0L
     private var work: Job? = null
     private var entrySpaceId: String? = null
+    internal var today: () -> LocalDate = { LocalDate.now() }
 
     fun bind(accountId: String?, initialSpaceId: String? = null) {
         val requestedSpaceId = if (accountId == null) null else initialSpaceId
@@ -146,8 +159,42 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
         action { accountId, expected -> loadTasks(accountId, selected.id, expected) }
     }
 
+    fun filterAssignee(choice: String?) {
+        if (choice != null && choice !in setOf("me", "none")) return
+        val current = mutableState.value
+        val selected = current.selectedSpace ?: return
+        if (current.navigationLocked || current.assigneeFilter == choice) return
+        mutableState.update { it.copy(assigneeFilter = choice, tasks = emptyList(), nextCursor = null, detail = null) }
+        action { accountId, expected -> loadTasks(accountId, selected.id, expected) }
+    }
+
+    fun filterDue(choice: String?) {
+        if (choice != null && choice !in setOf("before", "today", "week")) return
+        val current = mutableState.value
+        val selected = current.selectedSpace ?: return
+        if (current.navigationLocked || current.dueFilter == choice) return
+        mutableState.update { it.copy(dueFilter = choice, tasks = emptyList(), nextCursor = null, detail = null) }
+        action { accountId, expected -> loadTasks(accountId, selected.id, expected) }
+    }
+
+    private fun filters(state: TaskWorkspaceState): TaskFilters {
+        val range = dueRange(state.dueFilter, today())
+        val assignee = when (state.assigneeFilter) { "me" -> state.accountId; "none" -> "none"; else -> null }
+        return TaskFilters(assignee, range?.first?.toString(), range?.second?.toString())
+    }
+
+    private fun shows(state: TaskWorkspaceState, task: FamilyTaskDto): Boolean {
+        if (state.statusFilter != null && state.statusFilter != task.status) return false
+        if (state.assigneeFilter == "me" && task.assignee?.accountId != state.accountId) return false
+        if (state.assigneeFilter == "none" && (task.assignee != null || task.assigneeUnavailable)) return false
+        val range = dueRange(state.dueFilter, today()) ?: return true
+        val due = task.dueDate?.let(LocalDate::parse) ?: return false
+        return (range.first == null || !due.isBefore(range.first)) && (range.second == null || !due.isAfter(range.second))
+    }
+
     private suspend fun loadTasks(accountId: String, spaceId: String, expected: Long, cursor: String? = null) {
-        val page = repository.tasks(accountId, spaceId, cursor, mutableState.value.statusFilter)
+        val current = mutableState.value
+        val page = repository.tasks(accountId, spaceId, cursor, current.statusFilter, filters(current))
         update(expected) { it.copy(tasks = ((if (cursor == null) emptyList() else it.tasks) + page.items).distinctBy { item -> item.task.id }, nextCursor = page.nextCursor) }
     }
 
@@ -186,7 +233,7 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
         val fresh = repository.read(accountId, record.task.spaceId, record.task.id)
         if (!fresh.task.permissions.canEdit) throw IdentityFailure("ACCESS_DENIED", "This task cannot be edited.", 403)
         val assignees = repository.assignees(accountId, fresh.task.spaceId, fresh.task.id)
-        val fields = TaskFields(fresh.task.title, fresh.task.description, fresh.task.dueDate, fresh.task.assignee?.accountId)
+        val fields = TaskFields(fresh.task.title, fresh.task.description, fresh.task.dueDate, fresh.task.assignee?.accountId, fresh.task.priorityLevel)
         update(expected) { it.copy(editor = TaskEditor(original = fresh, fields = fields), detail = null, assignees = assignees, conflict = false) }
     }
 
@@ -238,9 +285,10 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
             mutableState.update { it.copy(error = "Select an eligible task assignee.", messageId = it.messageId + 1) }
             return
         }
+        if (fields.priority !in TASK_PRIORITIES) return
         val key = UUID.randomUUID().toString()
         val command = editor.original?.let {
-            EditTaskCommand(accountId, selected.id, key, it.task.id, it.etag, fields, editor.changeAssignee)
+            EditTaskCommand(accountId, selected.id, key, it.task.id, it.etag, fields, editor.changeAssignee, fields.priority != it.task.priorityLevel)
         } ?: CreateTaskCommand(accountId, selected.id, key, fields)
         mutableState.update { it.copy(pendingCommand = command) }
         executePending()
@@ -278,7 +326,7 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
             val saved = repository.execute(command)
             update(expected) { current ->
                 val others = current.tasks.filterNot { it.task.id == saved.task.id }
-                val matchesFilter = current.statusFilter == null || current.statusFilter == saved.task.status
+                val matchesFilter = shows(current, saved.task)
                 current.copy(
                     tasks = if (matchesFilter) listOf(saved) + others else others,
                     detail = saved, editor = null, assignees = emptyList(), pendingCommand = null,

@@ -1,17 +1,81 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, SmallInteger, String, Text,
+    UniqueConstraint, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 from app.modules.identity.models import AccountSession, User
 
-TOPICS = ("community", "education", "health", "local", "family", "events", "hobbies", "support", "news", "other")
 REPORT_REASONS = ("spam", "harassment", "hate", "violence", "sexual", "misinformation", "self_harm", "privacy", "other")
+# The shared vocabulary's kinds of term (DEC-027). A page may use all of them; a person chooses only the first four.
+TAXONOMY_DIMENSIONS = ("topic", "interest", "language", "place", "community_type", "audience", "activity", "content_kind")
+INTEREST_DIMENSIONS = ("topic", "interest", "language", "place")
+# What a single post may be tagged with (DEC-036).
+POST_DIMENSIONS = ("topic", "interest")
 
 
 def listed(values):
     return ", ".join(f"'{value}'" for value in values)
+
+
+class TaxonomyTerm(Base):
+    """One term of the shared vocabulary. Reference data: migration 0032 adds the terms, so tests never empty this table."""
+
+    __tablename__ = "taxonomy_terms"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["parent_dimension", "parent_code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_taxonomy_term_parent",
+        ),
+        CheckConstraint(f"dimension IN ({listed(TAXONOMY_DIMENSIONS)})", name="ck_taxonomy_term_dimension"),
+        CheckConstraint("code ~ '^[a-z0-9]+(-[a-z0-9]+)*$'", name="ck_taxonomy_term_code"),
+        CheckConstraint("status IN ('active', 'retired')", name="ck_taxonomy_term_status"),
+        CheckConstraint("char_length(label_en) > 0 AND char_length(path) > 0", name="ck_taxonomy_term_text"),
+        CheckConstraint(
+            "(dimension = 'interest' AND parent_dimension IS NOT NULL AND parent_dimension = 'topic' AND parent_code IS NOT NULL) OR "
+            "(dimension = 'place' AND ((parent_dimension IS NULL AND parent_code IS NULL) OR "
+            "(parent_dimension IS NOT NULL AND parent_dimension = 'place' AND parent_code IS NOT NULL))) OR "
+            "(dimension NOT IN ('interest', 'place') AND parent_dimension IS NULL AND parent_code IS NULL)",
+            name="ck_taxonomy_term_parent",
+        ),
+        CheckConstraint("dimension <> 'topic' OR char_length(code) <= 20", name="ck_taxonomy_term_topic_code"),
+        Index("ix_taxonomy_term_order", "dimension", "sort_order"),
+        {"info": {"reference_data": True}},
+    )
+
+    dimension: Mapped[str] = mapped_column(String(20), primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    parent_dimension: Mapped[str | None] = mapped_column(String(20))
+    parent_code: Mapped[str | None] = mapped_column(String(64))
+    # Codes from the top term down, joined by '/', so a place finds the places inside it with one prefix test.
+    path: Mapped[str] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(Integer)
+    sensitive: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    status: Mapped[str] = mapped_column(String(10), default="active", server_default="active")
+    label_en: Mapped[str] = mapped_column(String(80))
+    label_te: Mapped[str | None] = mapped_column(String(120))
+    label_hi: Mapped[str | None] = mapped_column(String(120))
+
+
+class TaxonomyTermChange(Base):
+    """What an operator changed in the vocabulary, and when (T128)."""
+
+    __tablename__ = "taxonomy_term_changes"
+    __table_args__ = (
+        ForeignKeyConstraint(["dimension", "code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_taxonomy_change_term"),
+        CheckConstraint("action IN ('added', 'named', 'retired', 'restored')", name="ck_taxonomy_change_action"),
+        Index("ix_taxonomy_change_term", "dimension", "code", "changed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(20))
+    code: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(10))
+    details: Mapped[str] = mapped_column(Text)
+    changed_by: Mapped[str] = mapped_column(String(20))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class PublicPage(Base):
@@ -19,10 +83,16 @@ class PublicPage(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'archived', 'read_only', 'deleted')", name="ck_public_page_status"),
         CheckConstraint("pre_delete_status IS NULL OR pre_delete_status IN ('active', 'read_only')", name="ck_public_page_restore"),
-        CheckConstraint(f"topic IN ({listed(TOPICS)})", name="ck_public_page_topic"),
+        CheckConstraint("topic_dimension = 'topic'", name="ck_public_page_topic_dimension"),
+        ForeignKeyConstraint(
+            ["topic_dimension", "topic"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_public_page_topic",
+        ),
         CheckConstraint("handle ~ '^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$'", name="ck_public_page_handle"),
         CheckConstraint("follower_count >= 0 AND version >= 1", name="ck_public_page_counts"),
         CheckConstraint("char_length(rules) <= 2000", name="ck_public_page_rules"),
+        CheckConstraint(
+            "(moderation_limited_at IS NULL) = (moderation_limit_decision_id IS NULL)", name="ck_public_page_moderation_limit",
+        ),
         UniqueConstraint("handle", name="uq_public_page_handle"),
         UniqueConstraint("owner_id", "creation_key", name="uq_public_page_creation"),
         Index("ix_public_page_owner", "owner_id"),
@@ -36,6 +106,7 @@ class PublicPage(Base):
     description: Mapped[str] = mapped_column(Text)
     rules: Mapped[str] = mapped_column(Text, default="", server_default="")
     topic: Mapped[str] = mapped_column(String(20))
+    topic_dimension: Mapped[str] = mapped_column(String(20), default="topic", server_default="topic")
     owner_id: Mapped[str] = mapped_column(ForeignKey(User.id))
     status: Mapped[str] = mapped_column(String(16))
     follower_count: Mapped[int] = mapped_column(Integer)
@@ -51,6 +122,11 @@ class PublicPage(Base):
     moderation_decision_id: Mapped[str | None] = mapped_column(
         ForeignKey("moderation_decisions.id", name="fk_public_pages_moderation_decision"),
     )
+    # A limit is separate from hiding: either can be lifted without the other (DEC-040).
+    moderation_limited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    moderation_limit_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("moderation_decisions.id", name="fk_public_pages_moderation_limit"),
+    )
 
 
 class PageFollow(Base):
@@ -60,6 +136,42 @@ class PageFollow(Base):
     page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id), primary_key=True)
     account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PageTerm(Base):
+    """A page's classification beyond its main topic: other topics, interests, languages, places and the rest (DEC-027)."""
+
+    __tablename__ = "page_terms"
+    __table_args__ = (
+        ForeignKeyConstraint(["dimension", "code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_page_term_term"),
+        CheckConstraint(f"dimension IN ({listed(TAXONOMY_DIMENSIONS)})", name="ck_page_term_dimension"),
+        CheckConstraint("position >= 0", name="ck_page_term_position"),
+        Index("ix_page_term_lookup", "dimension", "code", "page_id"),
+    )
+
+    page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(20), primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    position: Mapped[int] = mapped_column(SmallInteger)
+
+
+class AccountInterest(Base):
+    """A topic, interest, language or place a person chose. Private to that person (DEC-027 part 4)."""
+
+    __tablename__ = "account_interests"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["dimension", "code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_account_interest_term",
+        ),
+        CheckConstraint(f"dimension IN ({listed(INTEREST_DIMENSIONS)})", name="ck_account_interest_dimension"),
+        CheckConstraint("position >= 0", name="ck_account_interest_position"),
+    )
+
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(20), primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    position: Mapped[int] = mapped_column(SmallInteger)
+    chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 MODERATOR_STATES = (
@@ -171,6 +283,23 @@ class PublicPost(Base):
     )
 
 
+class PostTerm(Base):
+    """A topic or interest the page owner gave one post (DEC-036). A post without any is about its page's subjects."""
+
+    __tablename__ = "post_terms"
+    __table_args__ = (
+        ForeignKeyConstraint(["dimension", "code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_post_term_term"),
+        CheckConstraint(f"dimension IN ({listed(POST_DIMENSIONS)})", name="ck_post_term_dimension"),
+        CheckConstraint("position >= 0", name="ck_post_term_position"),
+        Index("ix_post_term_lookup", "dimension", "code", "post_id"),
+    )
+
+    post_id: Mapped[str] = mapped_column(ForeignKey(PublicPost.id), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(20), primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    position: Mapped[int] = mapped_column(SmallInteger)
+
+
 class PostComment(Base):
     __tablename__ = "public_post_comments"
     __table_args__ = (
@@ -262,6 +391,45 @@ class AccountBlock(Base):
     blocker_id: Mapped[str] = mapped_column(ForeignKey(User.id))
     target_type: Mapped[str] = mapped_column(String(16))
     target_id: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+FEED_CONTROL_KINDS = ("mute_page", "mute_term", "hide_post", "hide_suggestion")
+
+
+class FeedControl(Base):
+    """A private choice about what one person's lists show (DEC-037). Nobody else, the page owner included, is told."""
+
+    __tablename__ = "feed_controls"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["term_dimension", "term_code"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_feed_control_term",
+        ),
+        CheckConstraint(f"kind IN ({listed(FEED_CONTROL_KINDS)})", name="ck_feed_control_kind"),
+        CheckConstraint(
+            "(kind IN ('mute_page', 'hide_suggestion') AND page_id IS NOT NULL AND post_id IS NULL AND term_code IS NULL "
+            "AND term_dimension IS NULL) OR "
+            "(kind = 'hide_post' AND post_id IS NOT NULL AND page_id IS NULL AND term_code IS NULL AND term_dimension IS NULL) OR "
+            "(kind = 'mute_term' AND term_dimension IS NOT NULL AND term_dimension IN ('topic', 'interest') "
+            "AND term_code IS NOT NULL AND page_id IS NULL AND post_id IS NULL)",
+            name="ck_feed_control_target",
+        ),
+        Index("uq_feed_control_page", "account_id", "kind", "page_id", unique=True, postgresql_where=text("page_id IS NOT NULL")),
+        Index("uq_feed_control_post", "account_id", "post_id", unique=True, postgresql_where=text("post_id IS NOT NULL")),
+        Index(
+            "uq_feed_control_term", "account_id", "term_dimension", "term_code", unique=True,
+            postgresql_where=text("term_code IS NOT NULL"),
+        ),
+        Index("ix_feed_control_account", "account_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    kind: Mapped[str] = mapped_column(String(20))
+    page_id: Mapped[str | None] = mapped_column(ForeignKey(PublicPage.id))
+    post_id: Mapped[str | None] = mapped_column(ForeignKey(PublicPost.id))
+    term_dimension: Mapped[str | None] = mapped_column(String(20))
+    term_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

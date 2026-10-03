@@ -4,11 +4,13 @@ The permanent contract for the platform's core entities: what each one is, who o
 
 Established 2026-10-01. Code facts were read from the repository at migration 0017 on that date; the T02–T04 fixes (migration 0018) are included.
 
+The entity details retain that dated baseline unless a later batch updates them; they are not a current implementation audit. The [Part D audit](BLUEPRINT_AUDIT_2026-10-03.md#5-data-and-runtime-inventory) records the newer source tables/columns/FKs, and the index below reflects the verified agent/document/role additions. Confirmed rules and open entity decisions are unchanged.
+
 ## How to Read This Contract
 
 - **CONFIRMED**: an approved requirement ([R1–R13](PRODUCT_CONSTITUTION.md#article-2-approved-requirements)) or an accepted decision.
 - **Built**: what the code does today. As policy it counts as PROPOSED until the product owner confirms it.
-- **Built, not connected**: code that exists but is not wired into the running product (the agent models and tools).
+- **Built, not connected**: code that exists but is not wired into the running product at the entry's recorded checkpoint. The rule-based agent was connected later (T33-T35); this old label does not describe its current runtime.
 - **PROPOSED**: from the draft contracts, cited by decision ID with the status recorded in that contract. Not approved.
 - **ASSUMED**: an inference that needs confirmation.
 - **TBD**: unresolved. Every TBD names its open decision: D1–D6 and Q6–Q20 in [section 39 of the Product Understanding](PRODUCT_UNDERSTANDING.md#39-open-questions), a contract decision such as C3-D09, or an entity-level decision U-01 to U-18 in [Unresolved Decisions](#unresolved-decisions).
@@ -54,32 +56,32 @@ Shared rules S1–S12 apply to every entity unless its entry says otherwise. "Ev
 | 5 | [Device](#5-device) | — | No |
 | 6 | [Space](#6-space) | `spaces` | Family, couple, solo and group |
 | 7 | [Membership](#7-membership) | `space_memberships`, `space_ownership_transfers` | Yes |
-| 8 | [Role](#8-role) | `space_memberships.role` | Owner and member |
+| 8 | [Role](#8-role) | `space_memberships.role` | Owner, admin and member (T13) |
 | 9 | [Permission](#9-permission) | rules in service code | Fixed rules |
 | 10 | [Invitation](#10-invitation) | `space_invitations` | Yes |
 | 11 | [Relationship](#11-relationship) | — | No |
 | 12 | [Block](#12-block) | `account_blocks` | Public side only |
 | 13 | [Follow](#13-follow) | `public_page_follows` | Yes |
-| 14 | [Report](#14-report) | `content_reports` | Stored, not reviewed |
+| 14 | [Report](#14-report) | `content_reports`, `moderation_decisions`, `moderation_appeals` | Stored and reviewed, with appeals (T69) |
 | 15 | [Page](#15-page) (added) | `public_pages` | Yes |
 | 16 | [Post](#16-post) | `public_posts` | Yes |
 | 17 | [Comment](#17-comment) | `public_post_comments` | Yes |
 | 18 | [Reaction](#18-reaction) | `public_post_reactions` | Like only |
 | 19 | [Conversation](#19-conversation) | `conversations`, `conversation_read_states` | Yes |
-| 20 | [Message](#20-message) | `conversation_messages` | Yes |
+| 20 | [Message](#20-message) | `conversation_messages`, `conversation_message_reactions` | Yes |
 | 21 | [Task](#21-task) | `tasks` and four related tables | Yes |
 | 22 | [Schedule](#22-schedule) | inside each reminder; `reminder_series` for repeating ones | One-time and repeating (DEC-010) |
 | 23 | [Reminder](#23-reminder) | `reminders`, `reminder_requests`, `reminder_series` and their event and command tables | Yes |
 | 24 | [Event](#24-event) | `space_events`, `space_event_responses` | Yes (limited) |
 | 25 | [Notification](#25-notification) | `in_app_notifications`, `notification_preferences` | In-app only |
-| 26 | [Document](#26-document) | — | No |
-| 27 | [Memory](#27-memory) | model only, no table | No |
-| 28 | [Agent](#28-agent) | — | No |
+| 26 | [Document](#26-document) | `space_documents`, `space_document_chunks` | Text documents and scoped word search (T14/T15) |
+| 27 | [Memory](#27-memory) | `agent_memories` | Approved personal notes/preferences; per-Space scope remains C13 |
+| 28 | [Agent](#28-agent) | Shared rule-based runtime, no separate identity table | Limited runtime (T33-T35); configurable agent identities remain unbuilt |
 | 29 | [AgentScope](#29-agentscope) | — | No |
 | 30 | [AgentPermission](#30-agentpermission) | — | No |
-| 31 | [AgentTool](#31-agenttool) | definitions only | No |
-| 32 | [AgentRun](#32-agentrun) | models only, no tables | No |
-| 33 | [AgentApproval](#33-agentapproval) | model only, no table | No |
+| 31 | [AgentTool](#31-agenttool) | Fixed tool registry and `agent_tool_calls` | Seven tools, four approval-required changes |
+| 32 | [AgentRun](#32-agentrun) | `agent_runs`, `agent_run_events` | Rule-based requests and history (T33) |
+| 33 | [AgentApproval](#33-agentapproval) | `agent_approvals` | Exact reviewed approvals and outcomes (T33) |
 | 34 | [AuditLog](#34-auditlog) | seven audit tables and `domain_outbox` | Partly |
 
 Page was added to the requested list because posts, follows, reports and blocks depend on it.
@@ -514,24 +516,24 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Public communities exist (R3). **CONFLICTING** whether a public community is a Page or a Space (D1; conflict C1). DEC-011 keeps Pages as the public content model; a public group Space is findable but its content stays members-only. |
 | Owner | Module `community`; the page owner. |
 | Scope | Public. |
-| Lifecycle | Built: created as `active` and edited by its owner, including its rules since T83 ([DEC-025](DECISIONS.md#accepted-decisions), provisional). Since T84 the owner can hand the page over to one of its moderators, who becomes the owner while the old owner becomes a moderator. Since T85 the owner archives it (`read_only`) and restores it, or deletes it (`deleted`) after typing its name; for 7 days the owner can restore it as it was, and then the `account-deletion-worker` erases it and keeps its handle taken. |
+| Lifecycle | Built: created as `active` and edited by its owner, including its rules since T83 ([DEC-025](DECISIONS.md#accepted-decisions), provisional). Since T84 the owner can hand the page over to one of its moderators, who becomes the owner while the old owner becomes a moderator. Since T85 the owner archives it (`read_only`) and restores it, or deletes it (`deleted`) after typing its name; for 7 days the owner can restore it as it was, and then the `account-deletion-worker` erases it and keeps its handle taken. Since T126 ([DEC-027](DECISIONS.md#accepted-decisions), provisional) the owner also classifies it from the shared vocabulary; erasing the page or its owner's account erases its classification. |
 | States | Built: `status IN ('active','read_only','deleted','archived')`. `read_only`: readable by everyone, reportable and hideable by platform moderators, but nothing new is posted, edited, commented, liked, saved, followed or pinned (409 `PAGE_READ_ONLY`). `deleted`: visible to its owner only, with `purge_after` and `pre_delete_status`. `archived` is the state account deletion (T68) gives the pages it erases. |
-| Relationships | Owner (a User); Posts; Follows; Page moderators and handover offers (T84); the Blocks and Reports that target it. |
+| Relationships | Owner (a User); Posts; Follows; Page moderators and handover offers (T84); the Blocks and Reports that target it; its classification: terms of the shared vocabulary (T126). |
 | Permissions | Built: any signed-in account keeps up to 5 pages (archived and not yet erased deleted ones count); only the owner edits, manages moderators, hands over, archives, deletes and restores; the page's moderators pin posts and remove comments; anyone, signed out too, reads active and read-only pages, except people who blocked the page. Public responses never say who moderates. |
 | Privacy classification | Public (C11-C01). Built: public responses do not include account IDs. |
 | Events | `public.page_created`, `public.page_updated`, `public.page_archived`, `public.page_deleted`, `public.page_restored`, `public.page_purged`; `public.moderator_invited`, `_accepted`, `_declined`, `_withdrawn`, `_removed`, `_stepped_down`, `_expired`, `_invalidated`; `public.handover_offered`, `_accepted`, `_declined`, `_cancelled`, `_expired`, `_invalidated`. |
-| Commands | Create; edit (name, description, topic and rules); invite, withdraw and remove a moderator, and accept, decline or step down as one; offer, cancel, accept and decline a handover; archive, delete and restore. |
-| Queries | Read a page, with its rules and state; list my pages; discover pages by name, handle, description and topic; the page's moderators and latest handover offer (owner only); my moderator invitations and roles; pages offered to me. |
-| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match; a body of up to 64 KiB since T83, as for posts), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed); since T84 `POST`/`GET /v1/pages/{page_id}/moderators`, `POST /v1/pages/{page_id}/moderators/{moderator_id}/accept\|decline\|withdraw\|remove\|step-down` (If-Match), `GET /v1/me/moderator-roles`, `POST`/`GET /v1/pages/{page_id}/handover` (Idempotency-Key and If-Match), `POST /v1/pages/{page_id}/handover/{offer_id}/accept\|decline\|cancel` (If-Match), `GET /v1/me/handover-offers`; since T85 `POST /v1/pages/{page_id}/archive\|restore\|delete` (If-Match). |
-| Persistence | `public_pages` (with `deleted_at`, `purge_after`, `pre_delete_status` since migration `0031`), `page_moderators`, `page_handovers`. |
+| Commands | Create; edit (name, description, topic, rules and, since T126, classification); invite, withdraw and remove a moderator, and accept, decline or step down as one; offer, cancel, accept and decline a handover; archive, delete and restore. |
+| Queries | Read a page, with its rules, state and classification; list my pages; discover pages by name, handle and description and, since T126, by any of their topics, interest, language, place (a country or state also finds the places inside it), community type, audience, activity and content kind; since T127 pages suggested from my chosen interests (`interests-1`, at most 20, each with what matched); the page's moderators and latest handover offer (owner only); my moderator invitations and roles; pages offered to me. |
+| APIs | `POST /v1/pages` (Idempotency-Key), `GET /v1/me/pages`, `PATCH /v1/pages/{page_ref}` (If-Match; a body of up to 64 KiB since T83, as for posts), `GET /v1/pages/{page_ref}` (signed out allowed), `GET /v1/discover/pages` (signed out allowed); since T84 `POST`/`GET /v1/pages/{page_id}/moderators`, `POST /v1/pages/{page_id}/moderators/{moderator_id}/accept\|decline\|withdraw\|remove\|step-down` (If-Match), `GET /v1/me/moderator-roles`, `POST`/`GET /v1/pages/{page_id}/handover` (Idempotency-Key and If-Match), `POST /v1/pages/{page_id}/handover/{offer_id}/accept\|decline\|cancel` (If-Match), `GET /v1/me/handover-offers`; since T85 `POST /v1/pages/{page_id}/archive\|restore\|delete` (If-Match); since T126 and T127 `GET /v1/taxonomy` (signed out allowed), `GET`/`PUT /v1/me/interests` (If-Match) and `GET /v1/me/suggested-pages`. |
+| Persistence | `public_pages` (with `deleted_at`, `purge_after`, `pre_delete_status` since migration `0031`), `page_moderators`, `page_handovers`; since migration `0032` `taxonomy_terms` (the shared vocabulary, reference data), `page_terms` (a page's classification beyond its main topic) and `account_interests` (what a person chose). |
 | Retention | Built: kept while active or read only; a deleted page is erased 7 days after deletion, keeping its handle. |
 | Audit requirements | Built: `community_audit_events` plus outbox. |
 | Agent access | **TBD** (D4). **PROPOSED** a page agent answers only from approved public page material (Chapter 2 contract). |
 | Allowed agent actions | **TBD** (D4). |
 | External side effects | None. |
-| Validation rules | Built: handle 3–30 lowercase letters, digits and inner hyphens, unique and not reserved; name 1–80 characters on one line; description up to 500 characters; rules up to 2,000 characters on several lines, public and empty by default (T83); topic one of `community`, `education`, `health`, `local`, `family`, `events`, `hobbies`, `support`, `news`, `other`. |
+| Validation rules | Built: handle 3–30 lowercase letters, digits and inner hyphens, unique and not reserved; name 1–80 characters on one line; description up to 500 characters; rules up to 2,000 characters on several lines, public and empty by default (T83); topic one of `community`, `education`, `health`, `local`, `family`, `events`, `hobbies`, `support`, `news`, `other` until migration `0032`, and since then any current topic of the shared vocabulary (20). Since T126 a page may add up to 2 more topics, 10 interests, 5 languages, 3 places, 2 community types, 3 audiences, 4 activities and 4 content kinds, each a current term of that kind and chosen once; a retired term stays where it is but cannot be chosen again; the main topic is never repeated among the other topics. |
 | Invariants | Built: handles are unique; `follower_count >= 0`; `version >= 1`; one creation per owner and request key; at most one waiting moderator invitation and one waiting handover offer per page, at most 10 active moderators, and one active row per page and person. |
-| Failure modes | Built: 409 HANDLE_TAKEN, 409 PAGE_LIMIT_REACHED, 403 PAGE_MANAGER_REQUIRED, 412 CONTENT_CHANGED; since T84 and T85 409 MODERATOR_SELF, MODERATOR_ALREADY_ACTIVE, MODERATOR_LIMIT_REACHED, MODERATOR_INVITATION_PENDING, MODERATOR_INVITATION_CLOSED, MODERATOR_INVITATION_INVALIDATED, MODERATOR_REQUIRED, HANDOVER_PENDING, HANDOVER_CLOSED, HANDOVER_INVALIDATED, PAGE_READ_ONLY, PAGE_DELETED, PAGE_NAME_MISMATCH; 410 MODERATOR_INVITATION_EXPIRED, HANDOVER_EXPIRED, PAGE_RESTORE_EXPIRED; 403 REAUTHENTICATION_REQUIRED. Since 2026-10-01 a change that waits for a lock checks the session again before saving (T04). |
+| Failure modes | Built: 409 HANDLE_TAKEN, 409 PAGE_LIMIT_REACHED, 403 PAGE_MANAGER_REQUIRED, 412 CONTENT_CHANGED; since T126 422 TERM_UNAVAILABLE (an unknown or retired term, with the field and codes); since T84 and T85 409 MODERATOR_SELF, MODERATOR_ALREADY_ACTIVE, MODERATOR_LIMIT_REACHED, MODERATOR_INVITATION_PENDING, MODERATOR_INVITATION_CLOSED, MODERATOR_INVITATION_INVALIDATED, MODERATOR_REQUIRED, HANDOVER_PENDING, HANDOVER_CLOSED, HANDOVER_INVALIDATED, PAGE_READ_ONLY, PAGE_DELETED, PAGE_NAME_MISMATCH; 410 MODERATOR_INVITATION_EXPIRED, HANDOVER_EXPIRED, PAGE_RESTORE_EXPIRED; 403 REAUTHENTICATION_REQUIRED. Since 2026-10-01 a change that waits for a lock checks the session again before saving (T04). |
 | Dependencies | User; D1. |
 
 ### 16. Post
@@ -654,16 +656,16 @@ Permission rules as built:
 | Purpose | **CONFIRMED** Part of private conversations (R5). |
 | Owner | Module `messaging`; its sender. |
 | Scope | One conversation. |
-| Lifecycle | Built: sent (stored once per retry key), visible, and possibly deleted by its author, which leaves a tombstone without the text. Copies already seen are not recalled. Editing, reactions, attachments and reporting are **TBD** (U-11; C19-D10 and C19-D11, both PROPOSED). |
+| Lifecycle | Built: sent (stored once per retry key), visible, and possibly deleted by its author, which leaves a tombstone without the text. Copies already seen are not recalled. Built under provisional [DEC-033](DECISIONS.md#accepted-decisions) (T162): a message may answer one earlier message of its conversation, carry six fixed reactions, and be edited by its author for 15 minutes, at most 10 times, without keeping the earlier text; deletion removes its reactions. Attachments and reporting are **TBD** (U-11; C19-D10 and C19-D11, both PROPOSED). |
 | States | Built: visible or deleted (`deleted_at`). Per-message delivery and read receipts are **PROPOSED** (C19-D04 PROPOSED); only per-reader read positions exist. |
 | Relationships | Conversation; the sender's admission. |
 | Permissions | Built: current members send in the Space chat; the two participants send in a direct chat while both are current members; readers see messages from their admission onward; authors delete their own. |
 | Privacy classification | Private (C11-C03). Built: the text is encrypted at rest with a key derived from the local key file and bound to its conversation and message. The server can read it; it is not end-to-end encrypted. |
-| Events | `conversation.message_sent`, `conversation.message_deleted`. |
-| Commands | Send; delete. |
+| Events | `conversation.message_sent`, `conversation.message_deleted`, `conversation.message_edited`. |
+| Commands | Send (optionally answering a message); delete; edit; add or take back a reaction. |
 | Queries | List messages before or after a position. |
-| APIs | `POST /v1/conversations/{conversation_id}/messages` (Idempotency-Key), `GET /v1/conversations/{conversation_id}/messages`, `POST /v1/conversations/{conversation_id}/messages/{message_id}/delete`. |
-| Persistence | `conversation_messages` (`body_cipher`). |
+| APIs | `POST /v1/conversations/{conversation_id}/messages` (Idempotency-Key), `GET /v1/conversations/{conversation_id}/messages`, `POST /v1/conversations/{conversation_id}/messages/{message_id}/delete`, `POST .../messages/{message_id}/edit`, `POST .../messages/{message_id}/reactions`. |
+| Persistence | `conversation_messages` (`body_cipher`, `reply_to_id`, `edited_at`, `edit_count`, `revision`), `conversation_message_reactions`. |
 | Retention | Built: deleted messages keep a tombstone; nothing is hard-deleted. **TBD** (Q19). |
 | Audit requirements | Built: sends write an outbox record only; deletions write `space_audit_events` plus outbox. **TBD** (U-06). |
 | Agent access | **TBD** (D4; Q11; C19-D09 OPEN). |
@@ -771,7 +773,7 @@ Permission rules as built:
 | Relationships | Space; the creator's admission; one answer per admission. |
 | Permissions | Built: current members create events and answer; the Space owner, or the creator in the same admission, edits and cancels. |
 | Privacy classification | Private (C11-C03). Built: titles and locations are not encrypted at rest. |
-| Events | `event.created`, `event.updated`, `event.cancelled`, `event.attendee.updated`. |
+| Events | `event.created`, `event.updated`, `event.cancelled`, `event.attendee.updated`, and for budgets (DEC-039) `event.budget.updated`, `event.expense.recorded`, `event.expense.deleted`, and for contributions (DEC-041) `event.contribution.recorded`, `event.contribution.changed`, `event.contribution.withdrawn`, and for splits (DEC-042) `event.budget.split.updated`, `event.budget.split.removed`. |
 | Commands | Create; edit; cancel; answer. |
 | Queries | List a Space's upcoming or past events; read an event with its answers. |
 | APIs | `POST /v1/spaces/{space_id}/events` (Idempotency-Key), `GET /v1/spaces/{space_id}/events`, `GET /v1/events/{event_id}`, `PATCH /v1/events/{event_id}` (If-Match), `POST /v1/events/{event_id}/cancel` (If-Match), `POST /v1/events/{event_id}/attendance`. |
@@ -1082,6 +1084,9 @@ Records that belong to an entity above rather than standing alone.
 | Read position (`conversation_read_states`) | [Conversation](#19-conversation) |
 | Event answer (`space_event_responses`) | [Event](#24-event) |
 | Notification preference | [Notification](#25-notification) |
+| Shared vocabulary term (`taxonomy_terms`) and page classification (`page_terms`) | [Page](#15-page) |
+| Vocabulary change (`taxonomy_term_changes`, migration `0038`): what an operator added, named, retired or restored with `python3 -m app.cli vocabulary` (T128), and when; no account is recorded, as for the moderators command | [Page](#15-page) |
+| Chosen interests (`account_interests`): up to 10 topics, 30 interests, 5 languages and 5 places a person chose (T127, [DEC-027](DECISIONS.md#accepted-decisions), provisional). Private (C11-C03): only the person reads or changes them, with the reviewed version; never inferred; used only to suggest pages to them; in their data download; erased with the account. A choice of a term marked sensitive (health, support, caregiving) can say something about the person's health, and is stored like other private data, not encrypted; whether it should be is not decided. | [Profile](#3-profile) |
 | Outbox record (`domain_outbox`) | [AuditLog](#34-auditlog) |
 | Agent run event, agent tool call | [AgentRun](#32-agentrun), [AgentTool](#31-agenttool) |
 | Care instruction and dose report (`care_*` tables) | Not given a contract: care is not an approved requirement (Q12), and its screens were built after implementation was paused (X1 in [TASKS.md](TASKS.md#work-outside-the-approved-scope)). As built, only the person described can create, stop and report; the source is `prescriber`, `pharmacist`, `package_label` or `self`; details are encrypted; a repeated local time takes the first occurrence and a skipped one moves forward (conflict C6). |
@@ -1097,8 +1102,8 @@ Each backend module in `backend/app/modules/` owns its tables. Web features live
 | planning | tasks, task_access, task_checklist_items, task_commands, task_audit_events | Yes | Yes |
 | scheduling | reminders, reminder_events, reminder_requests, reminder_request_events, reminder_series, reminder_series_events, reminder_series_commands | Yes | Yes |
 | notifications | notification_preferences, in_app_notifications; and from the alerts work, waiting for the owner to keep or revert it ([X2](TASKS.md#work-outside-the-approved-scope), conflict C10): alert_settings, alert_dismissals, event_alerts, care_dose_alerts, reminder_backups | Yes | Yes |
-| messaging | conversations, conversation_messages, conversation_read_states | Yes | Yes |
-| community | public_pages, public_page_follows, public_posts, public_post_comments, public_post_reactions, public_saved_posts, content_reports, account_blocks, community_audit_events | Yes | Yes |
+| messaging | conversations, conversation_messages, conversation_message_reactions, conversation_read_states | Yes | Yes |
+| community | public_pages, public_page_follows, public_posts, public_post_comments, public_post_reactions, public_saved_posts, content_reports, account_blocks, community_audit_events; since migration `0032` taxonomy_terms, page_terms, account_interests; since `0038` taxonomy_term_changes | Yes | Yes |
 | events | space_events, space_event_responses | Yes | Yes |
 | care | care_instructions, care_dose_reports, care_commands, care_audit_events | Yes; kept by [DEC-007](DECISIONS.md#accepted-decisions), not an approved requirement ([TASKS X1](TASKS.md#work-outside-the-approved-scope); Q12) | Yes; kept by DEC-007 (X1) |
 | agents | agent_runs, agent_run_events, agent_approvals, agent_tool_calls, agent_memories (migration `0023`; **PROVISIONAL**, [DEC-012](DECISIONS.md#accepted-decisions), C11) | Yes (T34) | Yes (T35) |

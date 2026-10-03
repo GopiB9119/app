@@ -5,6 +5,12 @@ const uuid = z.string().uuid();
 const position = z.string().regex(/^(0|[1-9][0-9]{0,9})$/);
 const timestamp = z.string().datetime({ offset: true });
 export const MAX_MESSAGE_CHARACTERS = 2000;
+// Replies, reactions and edits (DEC-033): the six reactions in their fixed order, the reply excerpt and the edit limits.
+export const REACTIONS = ["like", "love", "laugh", "wow", "sad", "thanks"] as const;
+export type Reaction = typeof REACTIONS[number];
+export const REPLY_EXCERPT_CHARACTERS = 120;
+export const EDIT_WINDOW_MILLISECONDS = 15 * 60 * 1000;
+export const MAX_EDITS = 10;
 
 export const participantSchema = z.object({ account_id: uuid, display_name: chars(1, 80) });
 export const conversationSchema = z.object({
@@ -24,6 +30,22 @@ export const conversationSchema = z.object({
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
+export const replySchema = z.object({
+  message_id: uuid, status: z.enum(["sent", "deleted", "unavailable"]), position: position.refine(value => value !== "0").nullable(),
+  sender_name: chars(1, 80).nullable(),
+  // One line of at most 120 characters and an ellipsis; surrogate pairs can double the JavaScript length.
+  excerpt: z.string().min(1).max((REPLY_EXCERPT_CHARACTERS + 1) * 2).nullable(),
+}).superRefine((value, context) => {
+  const shown = value.status === "sent";
+  // Out of the viewer's history it says nothing about itself; deleted keeps who wrote it, not what.
+  const outside = value.status === "unavailable" && value.position === null;
+  if (shown !== (value.excerpt !== null) || (outside ? value.sender_name !== null : value.sender_name === null || value.position === null)) {
+    context.addIssue({ code: "custom", message: "Inconsistent reply." });
+  }
+});
+export type Reply = z.infer<typeof replySchema>;
+export const reactionSchema = z.object({ reaction: z.enum(REACTIONS), count: z.number().int().positive(), mine: z.boolean() });
+
 export const messageSchema = z.object({
   id: uuid, conversation_id: uuid, position: position.refine(value => value !== "0"),
   sender_account_id: uuid, sender_name: chars(1, 80), mine: z.boolean(),
@@ -31,14 +53,23 @@ export const messageSchema = z.object({
   // The server counts characters; UTF-16 surrogate pairs can double the JavaScript length.
   body: z.string().min(1).max(MAX_MESSAGE_CHARACTERS * 2).nullable(),
   created_at: timestamp, deleted_at: timestamp.nullable(),
+  // Servers from before replies, reactions and edits leave these out.
+  edited_at: timestamp.nullable().default(null), reply_to: replySchema.nullable().default(null),
+  reactions: z.array(reactionSchema).max(REACTIONS.length).default([]), revision: z.number().int().positive().default(1),
 }).superRefine((value, context) => {
   if ((value.status === "sent") !== (value.body !== null) || (value.status === "deleted") !== (value.deleted_at !== null)
     || value.mine !== (value.client_message_id !== null)) {
     context.addIssue({ code: "custom", message: "Inconsistent message." });
   }
+  // A deleted message keeps no reactions, each reaction appears once in the fixed order, and a message cannot answer itself.
+  const order = value.reactions.map(item => REACTIONS.indexOf(item.reaction));
+  if ((value.status === "deleted" && value.reactions.length > 0) || order.some((item, index) => index > 0 && item <= order[index - 1])
+    || value.reply_to?.message_id === value.id) {
+    context.addIssue({ code: "custom", message: "Inconsistent message." });
+  }
 });
 export type Message = z.infer<typeof messageSchema>;
-export type SendIntent = { accountId: string; conversationId: string; key: string; body: string };
+export type SendIntent = { accountId: string; conversationId: string; key: string; body: string; replyTo?: string };
 
 function checkConversation(accountId: string, value: Conversation, expected?: { id?: string; spaceId?: string }) {
   if ((expected?.id && value.id !== expected.id) || (expected?.spaceId && value.space_id !== expected.spaceId)
@@ -111,12 +142,14 @@ export async function messagePage(accountId: string, conversationId: string, opt
 }
 
 export async function sendMessage(intent: SendIntent) {
+  // A message that answers none sends exactly what it always did.
+  const body = intent.replyTo ? { body: intent.body, reply_to_message_id: intent.replyTo } : { body: intent.body };
   const result = await api(`conversations/${intent.conversationId}/messages`, messageSchema, {
-    method: "POST", accountId: intent.accountId, body: { body: intent.body },
+    method: "POST", accountId: intent.accountId, body,
     headers: { "Idempotency-Key": intent.key },
   });
   const message = checkMessage(intent.accountId, intent.conversationId, result.data);
-  if (!message.mine || message.client_message_id !== intent.key) {
+  if (!message.mine || message.client_message_id !== intent.key || (message.reply_to?.message_id ?? undefined) !== intent.replyTo) {
     throw new ApiError(502, "INVALID_RESPONSE", "The sent message could not be confirmed.");
   }
   return message;
@@ -129,6 +162,33 @@ export async function deleteMessage(accountId: string, conversationId: string, m
   return message;
 }
 
+/** The author changes the text of their message; the same text again changes nothing (DEC-033). */
+export async function editMessage(accountId: string, conversationId: string, messageId: string, body: string) {
+  const result = await api(`conversations/${conversationId}/messages/${messageId}/edit`, messageSchema, { method: "POST", accountId, body: { body } });
+  const message = checkMessage(accountId, conversationId, result.data);
+  if (message.id !== messageId || !message.mine || message.status !== "sent") {
+    throw new ApiError(502, "INVALID_RESPONSE", "The edit could not be confirmed.");
+  }
+  return message;
+}
+
+/** Adds or takes back one of the caller's own reactions; doing what is already done changes nothing. */
+export async function reactToMessage(accountId: string, conversationId: string, messageId: string, reaction: Reaction, on: boolean) {
+  const result = await api(`conversations/${conversationId}/messages/${messageId}/reactions`, messageSchema, {
+    method: "POST", accountId, body: { reaction, on },
+  });
+  const message = checkMessage(accountId, conversationId, result.data);
+  if (message.id !== messageId || (message.reactions.find(item => item.reaction === reaction)?.mine ?? false) !== on) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The reaction could not be confirmed.");
+  }
+  return message;
+}
+
+/** Whether the author may still edit [message] by the device clock; the server decides. */
+export function editable(message: Message, now = Date.now()) {
+  return message.mine && message.status === "sent" && now - Date.parse(message.created_at) < EDIT_WINDOW_MILLISECONDS;
+}
+
 export async function markRead(accountId: string, conversationId: string, through: string) {
   const result = await api(`conversations/${conversationId}/read`, conversationSchema, {
     method: "POST", accountId, body: { through_position: through },
@@ -138,7 +198,11 @@ export async function markRead(accountId: string, conversationId: string, throug
 
 export function mergeMessages(current: Message[], incoming: Message[]) {
   const byId = new Map(current.map(item => [item.id, item]));
-  // Deletion is final: an older copy that arrives late, such as from a poll that started before the deletion, cannot bring a message back.
-  for (const item of incoming) if (byId.get(item.id)?.status !== "deleted" || item.status === "deleted") byId.set(item.id, item);
+  // Deletion is final, and every edit or reaction raises the revision: an older copy that arrives late, such as from a
+  // poll that started before the change, cannot bring a message back or undo the change.
+  for (const item of incoming) {
+    const known = byId.get(item.id);
+    if (!known || item.status === "deleted" || (known.status !== "deleted" && (item.revision ?? 1) >= (known.revision ?? 1))) byId.set(item.id, item);
+  }
   return [...byId.values()].sort((left, right) => Number(left.position) - Number(right.position));
 }

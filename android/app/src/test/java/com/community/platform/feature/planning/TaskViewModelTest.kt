@@ -1,5 +1,6 @@
 package com.community.platform.feature.planning
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.feature.identity.AccountRepository
 import com.community.platform.feature.identity.AccountRepositoryTest
 import com.community.platform.feature.identity.Credentials
@@ -10,6 +11,9 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -27,6 +31,7 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
+import java.time.LocalDate
 import java.time.YearMonth
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -45,7 +50,19 @@ class TaskViewModelTest {
     private var calendarModel: CalendarViewModel? = null
 
     @Before fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { viewModel?.bind(null); calendarModel?.bind(null); Dispatchers.resetMain() }
+    @After fun cleanup() = runBlocking {
+        try { finishTestWork() } finally { Dispatchers.resetMain() }
+    }
+
+    private suspend fun finishTestWork() {
+        viewModel?.bind(null)
+        calendarModel?.bind(null)
+        withTimeout(5000) {
+            listOfNotNull(viewModel, calendarModel).forEach { model ->
+                model.viewModelScope.coroutineContext[Job]?.cancelAndJoin()
+            }
+        }
+    }
 
     private suspend fun ready(api: TaskApi = fake): TaskViewModel {
         val model = TaskViewModel(TaskRepository(api, accounts))
@@ -87,6 +104,45 @@ class TaskViewModelTest {
         assertTrue(fake.keys.isEmpty())
     }
 
+    // DEC-031 (T163): week and day views ask only for their dates; hiding a source changes the display, not the request.
+    @Test fun calendarViewsAskForTheirOwnDatesAndHidingASourceOnlyChangesTheDisplay() = runBlocking {
+        val queries = mutableListOf<Pair<String, String>>()
+        val api = object : CalendarApi {
+            override suspend fun entries(authorization: String, spaceId: String, startDate: String, endDate: String, timezone: String, limit: Int, cursor: String?): Response<EnvelopeDto<List<CalendarEntryDto>>> {
+                queries.add(startDate to endDate)
+                val due = CalendarEntryDto(taskId, "task", taskId, spaceId, "Due task", startDate, null, null, "open", false)
+                val reminder = CalendarEntryDto("81a09cbf-901e-470c-a905-27d565be91ae", "reminder", taskId, spaceId, "Call", endDate, "${endDate}T06:00:00Z", "UTC", "scheduled", false)
+                return Response.success(EnvelopeDto(listOf(due, reminder), null, PaginationDto(null, false)))
+            }
+        }
+        val model = CalendarViewModel(CalendarRepository(api, accounts), TaskRepository(fake, accounts))
+        calendarModel = model
+        model.bind(accountId, "UTC")
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        model.selectMonth(YearMonth.of(2028, 2))
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        model.selectView(CalendarView.WEEK)
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        assertEquals(LocalDate.of(2028, 2, 1), model.state.value.day)
+        model.selectDay(LocalDate.of(2028, 2, 29))
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        model.selectView(CalendarView.DAY)
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        val asked = queries.size
+        model.toggleSource("reminder")
+        assertEquals(listOf("task"), model.state.value.shown.map { it.kind })
+        assertEquals(2, model.state.value.entries.size)
+        model.toggleSource("planned")
+        assertEquals(setOf("reminder"), model.state.value.hidden)
+        model.toggleSource("reminder")
+        assertEquals(listOf("task", "reminder"), model.state.value.shown.map { it.kind })
+        assertEquals("Showing or hiding a source asks the server nothing.", asked, queries.size)
+        model.selectView(CalendarView.MONTH)
+        withTimeout(5000) { model.state.first { it.loaded && !it.busy } }
+        assertEquals(YearMonth.of(2028, 2), model.state.value.month)
+        assertEquals(listOf("2028-02-01" to "2028-02-29", "2028-01-30" to "2028-02-05", "2028-02-27" to "2028-03-04", "2028-02-29" to "2028-02-29", "2028-02-01" to "2028-02-29"), queries.drop(1))
+    }
+
     @Test fun calendarAccountChangeDiscardsAnInFlightPage() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val released = CompletableDeferred<Unit>()
@@ -107,6 +163,26 @@ class TaskViewModelTest {
         assertTrue(model.state.value.entries.isEmpty())
         assertTrue(model.state.value.spaces.isEmpty())
         assertTrue(!model.state.value.busy)
+    }
+
+    @Test fun cleanupAwaitsCancelledCalendarWork() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        val api = object : CalendarApi {
+            override suspend fun entries(authorization: String, spaceId: String, startDate: String, endDate: String, timezone: String, limit: Int, cursor: String?): Response<EnvelopeDto<List<CalendarEntryDto>>> {
+                entered.complete(Unit)
+                try { awaitCancellation() } finally { finished.complete(Unit) }
+            }
+        }
+        val model = CalendarViewModel(CalendarRepository(api, accounts), TaskRepository(fake, accounts))
+        calendarModel = model
+        model.bind(accountId)
+        withTimeout(5000) { entered.await() }
+
+        finishTestWork()
+
+        assertTrue(finished.isCompleted)
+        assertTrue(model.viewModelScope.coroutineContext[Job]!!.isCompleted)
     }
 
     @Test fun calendarRevokedSessionClearsSourcesAndRequiresSignIn() = runBlocking {
@@ -143,9 +219,9 @@ class TaskViewModelTest {
     @Test fun unavailableSpaceEntryCannotFallBackToAnotherFamiliesTasks() = runBlocking {
         var taskReads = 0
         val api = object : TaskApi by fake {
-            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
+            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?, assignee: String?, dueFrom: String?, dueTo: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
                 taskReads += 1
-                return fake.tasks(authorization, spaceId, limit, cursor, status)
+                return fake.tasks(authorization, spaceId, limit, cursor, status, assignee, dueFrom, dueTo)
             }
         }
         val model = TaskViewModel(TaskRepository(api, accounts))
@@ -156,6 +232,47 @@ class TaskViewModelTest {
         assertNull(state.selectedSpace)
         assertTrue(state.tasks.isEmpty())
         assertNotNull(state.error)
+    }
+
+    // DEC-029: filter choices become exact service filters, counted from the phone's day.
+    @Test fun assigneeAndDueChoicesSendExactFiltersAndAPriorityEditSendsOnlyThePriority() = runBlocking {
+        val model = ready()
+        model.today = { java.time.LocalDate.parse("2026-10-02") }
+        model.filterAssignee("me"); settled(model)
+        assertEquals(listOf(null, accountId, null, null), fake.filters)
+        model.filterDue("week"); settled(model)
+        assertEquals(listOf(null, accountId, "2026-10-02", "2026-10-08"), fake.filters)
+        model.filterAssignee("none"); settled(model)
+        model.filterDue("before"); settled(model)
+        assertEquals(listOf(null, "none", null, "2026-10-01"), fake.filters)
+        model.filterAssignee("someone"); model.filterDue("tomorrow"); settled(model)
+        assertEquals("none", model.state.value.assigneeFilter)
+        assertEquals("before", model.state.value.dueFilter)
+        model.filterAssignee(null); settled(model)
+        model.filterDue(null); settled(model)
+        assertEquals(listOf<String?>(null, null, null, null), fake.filters)
+
+        model.edit(model.state.value.tasks.single()); settled(model)
+        val editor = model.state.value.editor!!
+        assertEquals("normal", editor.fields.priority)
+        model.updateFields(editor.fields.copy(priority = "high"))
+        assertTrue(model.state.value.editor!!.dirty)
+        model.save(); settled(model)
+        assertEquals("high", fake.patch!!["priority"])
+        assertTrue("assignee_account_id" !in fake.patch!!)
+    }
+
+    @Test fun aSavedTaskThatNoLongerMatchesTheFiltersLeavesTheList() = runBlocking {
+        val model = ready()
+        model.today = { java.time.LocalDate.parse("2026-09-21") }
+        model.filterDue("today"); settled(model)
+        assertEquals(1, model.state.value.tasks.size)
+        model.edit(model.state.value.tasks.single()); settled(model)
+        fake.task = task.copy(dueDate = "2026-09-30", version = "2")
+        model.updateFields(model.state.value.editor!!.fields.copy(dueDate = "2026-09-30"))
+        model.save(); settled(model)
+        assertTrue(model.state.value.tasks.isEmpty())
+        assertEquals("2026-09-30", model.state.value.detail!!.task.dueDate)
     }
 
     @Test fun uncertainCreateRetainsAnImmutableCommandForExplicitRetry() = runBlocking {
@@ -224,9 +341,9 @@ class TaskViewModelTest {
         val release = CompletableDeferred<Unit>()
         val reads = AtomicInteger()
         val api = object : TaskApi by fake {
-            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
+            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?, assignee: String?, dueFrom: String?, dueTo: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
                 reads.incrementAndGet()
-                return fake.tasks(authorization, spaceId, limit, cursor, status)
+                return fake.tasks(authorization, spaceId, limit, cursor, status, assignee, dueFrom, dueTo)
             }
             override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<FamilyTaskDto>> {
                 reads.incrementAndGet()
@@ -268,10 +385,10 @@ class TaskViewModelTest {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val api = object : TaskApi by fake {
-            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
+            override suspend fun tasks(authorization: String, spaceId: String, limit: Int, cursor: String?, status: String?, assignee: String?, dueFrom: String?, dueTo: String?): Response<EnvelopeDto<List<FamilyTaskDto>>> {
                 entered.complete(Unit)
                 release.await()
-                return fake.tasks(authorization, spaceId, limit, cursor, status)
+                return fake.tasks(authorization, spaceId, limit, cursor, status, assignee, dueFrom, dueTo)
             }
         }
         val model = TaskViewModel(TaskRepository(api, accounts))

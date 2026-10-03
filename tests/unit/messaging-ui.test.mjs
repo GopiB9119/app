@@ -124,10 +124,12 @@ async function fixture(context, options = {}) {
         const existing = state.messages[conversation.id].find(item => item.client_message_id === key);
         if (existing) return reply(existing);
         const position = String(Number(conversation.last_position) + 1);
+        const original = body.reply_to_message_id && state.messages[conversation.id].find(item => item.id === body.reply_to_message_id);
         const saved = {
           id: crypto.randomUUID(), conversation_id: conversation.id, position, sender_account_id: accountId,
           sender_name: 'Alex Morgan', mine: true, client_message_id: key, status: 'sent', body: body.body,
-          created_at: '2026-09-19T10:05:00Z', deleted_at: null,
+          created_at: options.sentAt ?? '2026-09-19T10:05:00Z', deleted_at: null,
+          ...(original ? { reply_to: { message_id: original.id, status: 'sent', position: original.position, sender_name: original.sender_name, excerpt: original.body } } : {}),
         };
         state.messages[conversation.id].push(saved);
         Object.assign(conversation, { last_position: position, read_position: position, last_message_at: saved.created_at });
@@ -141,6 +143,20 @@ async function fixture(context, options = {}) {
         conversation.read_position = body.through_position;
         conversation.unread_count = Number(conversation.last_position) - Number(body.through_position);
         return reply(conversation);
+      }
+      // Edits and reactions (T162): each change raises the revision, as the API does.
+      const action = url.pathname.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/(edit|reactions)$/);
+      const target = action && state.messages[action[1]]?.find(item => item.id === action[2]);
+      if (target && method === 'POST') {
+        const order = ['like', 'love', 'laugh', 'wow', 'sad', 'thanks'];
+        if (action[3] === 'edit') Object.assign(target, { body: body.body, edited_at: '2026-09-19T10:06:00Z' });
+        else {
+          const reactions = (target.reactions ?? []).filter(item => item.reaction !== body.reaction);
+          if (body.on) reactions.push({ reaction: body.reaction, count: 1, mine: true });
+          target.reactions = reactions.sort((left, right) => order.indexOf(left.reaction) - order.indexOf(right.reaction));
+        }
+        target.revision = (target.revision ?? 1) + 1;
+        return reply(target);
       }
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
     };
@@ -268,6 +284,54 @@ test('the delete control and its confirmation take the 44 px target without cove
       for (const choice of choices) assert.ok((await choice.boundingBox()).height >= 44, `${await choice.innerText()} is at least 44 px tall.`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Nothing scrolls sideways.');
       if (large) await page.screenshot({ path: path.join(root, '.local/screenshots/messaging-delete-confirm-320-large-text.png'), fullPage: true });
+      assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('a reply quotes its original, a reaction and an edit are saved, and every control fits at 320 px and 200% text (T162)', async () => {
+  for (const large of [false, true]) {
+    const context = await browser.newContext({ viewport: { width: 320, height: 720 } });
+    try {
+      const { page, outbound, errors, pane } = await fixture(context, { unread: true, sentAt: new Date().toISOString() });
+      if (large) await page.addStyleTag({ content: 'html, body { font-size: 32px !important; }' });
+      await page.getByRole('button', { name: /^Morgan family/ }).click();
+      await pane.getByText('Bring the plates', { exact: true }).waitFor();
+
+      await pane.getByRole('button', { name: 'Reply to Sam Rivera' }).last().click();
+      await pane.getByRole('status').filter({ hasText: 'Replying to Sam Rivera' }).waitFor();
+      await pane.getByLabel('Message', { exact: true }).fill('I will bring six');
+      await pane.getByRole('button', { name: 'Send', exact: true }).click();
+      const mine = pane.getByRole('listitem').filter({ hasText: 'I will bring six' });
+      await mine.getByText('Bring the plates').waitFor();
+      assert.equal(await pane.getByRole('status').filter({ hasText: 'Replying to' }).count(), 0, 'The reply bar closes after sending.');
+
+      await mine.getByRole('button', { name: 'React', exact: true }).click();
+      await mine.getByRole('group', { name: 'Choose a reaction' }).getByRole('button', { name: 'Thanks', exact: true }).click();
+      const chosen = mine.getByRole('group', { name: 'Reactions', exact: true }).getByRole('button', { name: 'Thanks: 1, including you' });
+      await chosen.waitFor();
+      assert.equal(await chosen.getAttribute('aria-pressed'), 'true');
+
+      await mine.getByRole('button', { name: 'Edit message', exact: true }).click();
+      // While it is edited, the text lives in the editor, so the message is found by its editor.
+      const editing = pane.getByRole('listitem').filter({ has: page.getByLabel('Edit your message') });
+      await editing.getByLabel('Edit your message').fill('I will bring eight');
+      await editing.getByRole('button', { name: 'Save', exact: true }).click();
+      const edited = pane.getByRole('listitem').filter({ hasText: 'I will bring eight' });
+      await edited.getByText('Edited', { exact: true }).waitFor();
+
+      for (const control of await edited.getByRole('button').all()) {
+        const box = await control.boundingBox();
+        assert.ok(box.width >= 44 && box.height >= 44, `${await control.getAttribute('aria-label')} is ${box.width} by ${box.height} px.`);
+      }
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Nothing scrolls sideways.');
+      if (large) await page.screenshot({ path: path.join(root, '.local/screenshots/messaging-reply-react-edit-320-large-text.png'), fullPage: true });
+
+      const sent = await page.evaluate(chat => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.startsWith(`/api/conversations/${chat}/messages`)).map(call => ({ route: call.route.split('/').slice(-1)[0], body: call.body })), familyChatId);
+      assert.equal(sent[0].route, 'messages');
+      assert.equal(sent[0].body.body, 'I will bring six');
+      assert.match(sent[0].body.reply_to_message_id, /^[0-9a-f-]{36}$/);
+      assert.deepEqual(sent.slice(1), [{ route: 'reactions', body: { reaction: 'thanks', on: true } }, { route: 'edit', body: { body: 'I will bring eight' } }]);
       assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }

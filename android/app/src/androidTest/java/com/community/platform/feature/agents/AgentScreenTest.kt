@@ -134,6 +134,18 @@ class AgentScreenTest {
         compose.runOnIdle { assertEquals(listOf(memoryId), forgotten) }
     }
 
+    @Test fun aSpaceWithTheAgentOffShowsWhyInsteadOfTheRequestBox() {
+        val off = ready(proposed.copy(status = "cancelled", approval = null, answer = "The owner turned the agent off in this Space. Nothing was changed.",
+            stopReason = "agent_off", finishedAt = "2026-10-01T09:05:00Z")).let { it.copy(spaces = listOf(space.copy(agentEnabled = false))) }
+        compose.setContent { CommunityTheme { AgentScreen(off, AgentActions()) } }
+        compose.onNodeWithTag("agent-off").assertTextContains("The owner turned the agent off in this Space.", substring = true)
+        compose.onNodeWithTag("agent-space").assertIsEnabled()
+        compose.onNodeWithTag("agent-message").assertDoesNotExist()
+        compose.onNodeWithTag("agent-ask").assertDoesNotExist()
+        compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag("agent-answer-text-$runId"))
+        compose.onNodeWithTag("agent-answer-text-$runId").assertTextContains("Nothing was changed.", substring = true)
+    }
+
     @Test fun anUnconfirmedRequestKeepsItsTextAndOffersSendAgain() {
         val command = AgentCommand.Ask(accountId, spaceId, "Add a task to water the plants tomorrow", "4b7a1d0e-34c5-4d7f-9a2b-1c3d5e7f9a0b")
         var retries = 0

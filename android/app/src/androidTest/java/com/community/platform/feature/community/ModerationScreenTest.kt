@@ -10,16 +10,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -38,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.assertNarrowScreen
+import com.community.platform.feature.assertTextNotClipped
 import com.community.platform.feature.spaces.DeviceFontScale
 import com.community.platform.feature.spaces.EmulatorFontScaleRule
 import org.junit.Assert.assertEquals
@@ -177,7 +183,7 @@ class ModerationScreenTest {
         compose.setContent { CommunityTheme {
             val time = rememberModerationTime("UTC")
             CommunityScreen(CommunityState(accountId = accountId, destination = Destination.Blocked), CommunityActions(), "UTC", {},
-                safetyContent = { moderationHistory(state, actions, time) })
+                safetyMessage = state.message, safetyContent = { moderationHistory(state, actions, time) })
             ModerationAppealDialog(state, actions)
         } }
         reveal("moderation-open", "community-content")
@@ -203,6 +209,35 @@ class ModerationScreenTest {
             compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
         }
         compose.runOnIdle { assertEquals(listOf("Please review again."), sent) }
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun appealSentFurtherDownIsVisibleAndAnnouncedAtLargeText() {
+        assertNarrowScreen()
+        val notices = (1..12).map { notice.copy(id = "synthetic-notice-$it", targetId = "synthetic-post-$it") }
+        val last = notices.last()
+        var state by mutableStateOf(ModerationState(accountId = accountId, notices = ModerationList(notices, loaded = true)))
+        val sent = mutableListOf<String>()
+        val actions = ModerationActions(
+            selectAppeal = { state = state.copy(selectedNoticeId = it?.id, message = null) },
+            editAppeal = { id, note -> state = state.copy(appealDrafts = state.appealDrafts + (id to ModerationAppealDraft(note))) },
+            sendAppeal = { sent += it.id; state = state.copy(selectedNoticeId = null, message = ModerationMessage.APPEAL_SENT) },
+        )
+        compose.setContent { CommunityTheme {
+            val time = rememberModerationTime("UTC")
+            CommunityScreen(CommunityState(accountId = accountId, destination = Destination.Blocked), CommunityActions(), "UTC", {},
+                safetyMessage = state.message, safetyContent = { moderationHistory(state, actions, time) })
+            ModerationAppealDialog(state, actions)
+        } }
+        reveal("moderation-appeal-open-${last.id}", "community-content")
+        compose.onNodeWithTag("moderation-appeal-open-${last.id}").performClick()
+        compose.onNodeWithTag("moderation-appeal-note").performTextReplacement("Please review this decision.")
+        compose.onNodeWithTag("moderation-appeal-send").assertIsDisplayed().assertIsEnabled().performClick()
+        compose.onAllNodesWithTag("moderation-success").assertCountEquals(1)
+        compose.onNodeWithTag("moderation-success").assertIsDisplayed().assertTextContains("Appeal sent.")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        compose.assertTextNotClipped(hasTestTag("moderation-success"))
+        compose.runOnIdle { assertEquals(listOf(last.id), sent) }
     }
 
     @DeviceFontScale(2f)
@@ -250,6 +285,54 @@ class ModerationScreenTest {
         val commentMark = "Hidden by moderators: False information. Only you can see it."
         compose.onNodeWithTag("community-content").performScrollToNode(hasText(commentMark))
         compose.onNodeWithText(commentMark).performScrollTo().assertIsDisplayed()
+    }
+
+    private val pageItem = ModerationQueueDto("page", pageId, ModerationPreviewDto("active", name = "River Walkers", handle = "river-walkers"), null, 2,
+        listOf(ModerationReasonDto("spam", 2)), stamp)
+
+    @Test fun limitIsOfferedOnlyForPageReportsAndSendsLimit() {
+        var state by mutableStateOf(reviewing().copy(queue = ModerationList(listOf(item, pageItem), loaded = true)))
+        val decisions = mutableListOf<Pair<String, ModerationDecisionDraft>>()
+        val actions = ModerationActions(
+            editDecision = { target, action, reason, note -> state = state.copy(decisions = state.decisions + (target.key to ModerationDecisionDraft(action, reason, note))) },
+            decide = { target -> decisions += target.targetType to state.draft(target) },
+        )
+        compose.setContent { CommunityTheme { ModerationScreen(state, actions, "UTC") } }
+        compose.onAllNodesWithTag("moderation-$targetId-limit").assertCountEquals(0)
+        reveal("moderation-$pageId-limit")
+        compose.onNodeWithTag("moderation-$pageId-limit").assertTextContains("Limit page", substring = true)
+            .assertTextContains("new posts and comments are paused", substring = true).performClick()
+        reveal("moderation-record-$pageId")
+        compose.onNodeWithTag("moderation-record-$pageId").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(listOf("page" to ModerationDecisionDraft("limit", "spam", "")), decisions) }
+    }
+
+    @Test fun safetyReadsALimitAsLimitedAndOffersAnAppeal() {
+        val limit = notice.copy(targetType = "page", targetId = pageId, action = "limit", reason = "spam")
+        val lifted = limit.copy(id = appealId, action = "restore", appealOf = decisionId)
+        val state = ModerationState(accountId = accountId, moderator = false, notices = ModerationList(listOf(limit, lifted), loaded = true), reports = ModerationList(loaded = true))
+        compose.setContent { CommunityTheme {
+            val time = rememberModerationTime("UTC")
+            CommunityScreen(CommunityState(accountId = accountId, destination = Destination.Blocked), CommunityActions(), "UTC", {},
+                safetyMessage = state.message, safetyContent = { moderationHistory(state, ModerationActions(), time) })
+        } }
+        reveal("moderation-notice-$decisionId", "community-content")
+        compose.onNode(hasText("Limited", substring = true) and hasAnyAncestor(hasTestTag("moderation-notice-$decisionId"))).assertIsDisplayed()
+        reveal("moderation-appeal-open-$decisionId", "community-content")
+        reveal("moderation-notice-$appealId", "community-content")
+        compose.onAllNodesWithTag("moderation-appeal-open-$appealId").assertCountEquals(0)
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun narrowLargeTextKeepsTheLimitChoiceInside() {
+        assertEquals(320, InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.screenWidthDp)
+        val state = reviewing().copy(queue = ModerationList(listOf(pageItem), loaded = true))
+        compose.setContent { CommunityTheme { ModerationScreen(state, ModerationActions(), "UTC") } }
+        for (tag in listOf("moderation-$pageId-hide", "moderation-$pageId-limit", "moderation-$pageId-no_action", "moderation-record-$pageId")) {
+            reveal(tag)
+            within(tag, "moderation-content")
+        }
+        measureText("Limit page")
     }
 
     private fun within(tag: String, root: String) {

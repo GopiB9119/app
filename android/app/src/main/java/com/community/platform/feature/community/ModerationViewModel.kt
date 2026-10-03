@@ -190,7 +190,7 @@ class ModerationViewModel @Inject constructor(private val repository: Moderation
             catch (error: Exception) {
                 val failure = problem(error, expected)
                 update(expected) { if (it.moderator != true) it else it.copy(queue = it.queue.copy(loading = false, error = failure)) }
-            } finally { update(expected) { it.copy(queue = it.queue.copy(loading = false)) } }
+            }
         }
     }
 
@@ -209,7 +209,7 @@ class ModerationViewModel @Inject constructor(private val repository: Moderation
             catch (error: Exception) {
                 val failure = problem(error, expected)
                 update(expected) { if (it.moderator != true) it else it.copy(appeals = it.appeals.copy(loading = false, error = failure)) }
-            } finally { update(expected) { it.copy(appeals = it.appeals.copy(loading = false)) } }
+            }
         }
     }
 
@@ -226,7 +226,7 @@ class ModerationViewModel @Inject constructor(private val repository: Moderation
         val account = current.accountId ?: return
         val draft = current.draft(item)
         if (current.busy || current.moderator != true || current.queue.items.none { it.key == item.key } ||
-            draft.action !in setOf("hide", "no_action") || draft.reason !in REPORT_REASONS || !validNote(draft.note)) return
+            !decisionActionAllowed(draft.action, item.targetType) || draft.reason !in REPORT_REASONS || !validNote(draft.note)) return
         val body = ModerationDecisionBodyDto(item.targetType, item.targetId, requireNotNull(draft.action), draft.reason, normalized(draft.note))
         val intent = decisionIntents[item.key]?.takeIf { it.body == body }
             ?: ModerationDecisionIntent(account, UUID.randomUUID().toString(), body).also { decisionIntents[item.key] = it }

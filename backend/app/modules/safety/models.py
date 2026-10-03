@@ -19,7 +19,10 @@ class ModerationDecision(Base):
     __tablename__ = "moderation_decisions"
     __table_args__ = (
         CheckConstraint("target_type IN ('page', 'post', 'comment')", name="ck_moderation_decision_target"),
-        CheckConstraint("action IN ('no_action', 'hide', 'restore')", name="ck_moderation_decision_action"),
+        CheckConstraint(
+            "action IN ('no_action', 'hide', 'limit', 'restore') AND (action <> 'limit' OR target_type = 'page')",
+            name="ck_moderation_decision_action",
+        ),
         CheckConstraint(f"reason IN ({listed(REPORT_REASONS)})", name="ck_moderation_decision_reason"),
         CheckConstraint("char_length(moderator_note) <= 1000", name="ck_moderation_decision_note"),
         UniqueConstraint("decided_by", "creation_key", name="uq_moderation_decision_creation"),

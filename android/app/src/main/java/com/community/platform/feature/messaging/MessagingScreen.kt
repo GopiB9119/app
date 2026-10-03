@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -93,6 +94,14 @@ data class MessagingActions(
     val askDelete: (MessageDto) -> Unit = {},
     val cancelDelete: () -> Unit = {},
     val confirmDelete: () -> Unit = {},
+    // Replies, reactions and edits (DEC-033).
+    val startReply: (MessageDto) -> Unit = {},
+    val cancelReply: () -> Unit = {},
+    val react: (MessageDto, String, Boolean) -> Unit = { _, _, _ -> },
+    val startEdit: (MessageDto) -> Unit = {},
+    val editDraft: (String) -> Unit = {},
+    val cancelEdit: () -> Unit = {},
+    val saveEdit: () -> Unit = {},
 )
 
 @Composable
@@ -108,7 +117,9 @@ fun MessagingRoute(viewModel: MessagingViewModel, accountId: String, timezone: S
         close = viewModel::closeChat, reload = { viewModel.pollNow() }, loadEarlier = viewModel::loadEarlier,
         draft = viewModel::draft, send = viewModel::send, retry = viewModel::retry, stopTracking = viewModel::stopTracking,
         editFailed = viewModel::editFailed, askDelete = viewModel::askDelete, cancelDelete = viewModel::cancelDelete,
-        confirmDelete = viewModel::confirmDelete,
+        confirmDelete = viewModel::confirmDelete, startReply = viewModel::startReply, cancelReply = viewModel::cancelReply,
+        react = viewModel::react, startEdit = viewModel::startEdit, editDraft = viewModel::editDraft, cancelEdit = viewModel::cancelEdit,
+        saveEdit = viewModel::saveEdit,
     ), timezone, onBack)
 }
 
@@ -260,18 +271,13 @@ private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeF
     val newest = chat.messages.lastOrNull()?.id
     LaunchedEffect(newest, chat.pending.size) { if (list.firstVisibleItemIndex <= 2) list.scrollToItem(0) }
     Column(Modifier.widthIn(max = 720.dp).fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Lock, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(6.dp))
-            Text(stringResource(R.string.messages_protection), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("chat-protection"))
-        }
-        if (chat.conversation.kind == "space") Text(stringResource(R.string.messages_history_note), style = MaterialTheme.typography.bodySmall)
         chat.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp).testTag("chat-error")) }
         if (chat.denied) {
             Text(stringResource(R.string.messages_denied), modifier = Modifier.padding(top = 16.dp).testTag("chat-denied"))
             return@Column
         }
-        // Newest items are first so the list stays anchored at the latest message.
+        // Newest items are first so the list stays anchored at the latest message. The notes about protection and history
+        // scroll with the messages, so at large text and while replying the screen still has room for messages.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("chat-messages"), state = list, reverseLayout = true, contentPadding = PaddingValues(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(chat.pending.reversed(), key = { "pending-${it.intent.key}" }) { entry -> PendingBubble(entry, chat.draft.isBlank(), actions, onStop) }
             items(chat.messages.reversed(), key = { it.id }) { message -> MessageBubble(message, chat, actions, time) }
@@ -280,12 +286,23 @@ private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeF
             if (chat.earlierCursor != null) item("earlier") {
                 TextButton(onClick = actions.loadEarlier, enabled = !chat.loadingEarlier, modifier = Modifier.testTag("chat-earlier")) { Text(stringResource(R.string.messages_earlier)) }
             }
+            item("notes") {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Lock, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.messages_protection), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("chat-protection"))
+                    }
+                    if (chat.conversation.kind == "space") Text(stringResource(R.string.messages_history_note), style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
         if (chat.conversation.canSend) Composer(chat, actions)
         else Text(stringResource(R.string.messages_read_only), modifier = Modifier.padding(vertical = 12.dp).testTag("chat-read-only"))
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MessageBubble(message: MessageDto, chat: ChatState, actions: MessagingActions, time: DateTimeFormatter) {
     Box(Modifier.fillMaxWidth(), contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart) {
@@ -298,17 +315,84 @@ private fun MessageBubble(message: MessageDto, chat: ChatState, actions: Messagi
                     Column(Modifier.weight(1f)) {
                         Text(if (message.mine) stringResource(R.string.messages_you) else message.senderName, style = MaterialTheme.typography.labelLarge)
                         Text(time.display(message.createdAt), style = MaterialTheme.typography.labelSmall)
+                        if (message.editedAt != null && message.status != "deleted") Text(stringResource(R.string.messages_edited), style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("message-edited-${message.position}"))
                     }
                     if (message.mine && message.status == "sent") IconButton(onClick = { actions.askDelete(message) }, enabled = chat.deleting == null, modifier = Modifier.testTag("message-delete-${message.position}")) {
                         Icon(Icons.Default.Delete, stringResource(R.string.messages_delete))
                     }
                 }
-                when (message.status) {
-                    "sent" -> Text(message.body.orEmpty(), style = MaterialTheme.typography.bodyLarge)
-                    "deleted" -> Text(stringResource(R.string.messages_deleted), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
+                message.replyTo?.let { Quote(it) }
+                when {
+                    chat.editing == message.id -> {
+                        val problem = messageProblem(chat.editDraft)
+                        OutlinedTextField(value = chat.editDraft, onValueChange = actions.editDraft, label = { Text(stringResource(R.string.messages_edit_label)) },
+                            isError = chat.editDraft.isNotBlank() && problem != null, minLines = 1, maxLines = 5,
+                            supportingText = { Text(stringResource(R.string.messages_edit_hint)) }, modifier = Modifier.fillMaxWidth().testTag("message-edit-field"))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = actions.saveEdit, enabled = chat.acting == null && problem == null, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("message-edit-save")) { Text(stringResource(R.string.messages_edit_save)) }
+                            TextButton(onClick = actions.cancelEdit, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("message-edit-cancel")) { Text(stringResource(R.string.messages_edit_cancel)) }
+                        }
+                    }
+                    message.status == "sent" -> Text(message.body.orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                    message.status == "deleted" -> Text(stringResource(R.string.messages_deleted), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
                     else -> Text(stringResource(R.string.messages_unavailable), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                 }
+                Reactions(message, chat, actions)
             }
+        }
+    }
+}
+
+private val EMOJI = mapOf("like" to "\uD83D\uDC4D", "love" to "\u2764\uFE0F", "laugh" to "\uD83D\uDE02", "wow" to "\uD83D\uDE2E", "sad" to "\uD83D\uDE22", "thanks" to "\uD83D\uDE4F")
+
+@Composable
+private fun reactionName(reaction: String): String = stringResource(when (reaction) {
+    "like" -> R.string.messages_reaction_like
+    "love" -> R.string.messages_reaction_love
+    "laugh" -> R.string.messages_reaction_laugh
+    "wow" -> R.string.messages_reaction_wow
+    "sad" -> R.string.messages_reaction_sad
+    else -> R.string.messages_reaction_thanks
+})
+
+@Composable
+private fun Quote(reply: ReplyDto) {
+    val text = when (reply.status) {
+        "sent" -> "${reply.senderName}: ${reply.excerpt}"
+        "deleted" -> stringResource(R.string.messages_quote_deleted)
+        else -> stringResource(R.string.messages_quote_hidden)
+    }
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().testTag("message-quote")) {
+        Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Reactions(message: MessageDto, chat: ChatState, actions: MessagingActions) {
+    var picking by remember(message.id) { mutableStateOf(false) }
+    val active = message.status == "sent" && chat.conversation.canSend && chat.editing != message.id
+    if (message.reactionList.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        message.reactionList.forEach { item ->
+            val name = reactionName(item.reaction)
+            val description = if (item.mine) stringResource(R.string.messages_reaction_mine, name, item.count) else stringResource(R.string.messages_reaction_count, name, item.count)
+            FilterChip(selected = item.mine, onClick = { actions.react(message, item.reaction, !item.mine) }, enabled = active && chat.acting == null,
+                label = { Text("${EMOJI[item.reaction]} ${item.count}") },
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).semantics { contentDescription = description }.testTag("reaction-${message.position}-${item.reaction}"))
+        }
+    }
+    if (active) FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = { actions.startReply(message) }, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("message-reply-${message.position}")) { Text(stringResource(R.string.messages_reply)) }
+        TextButton(onClick = { picking = !picking }, enabled = chat.acting == null, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("message-react-${message.position}")) { Text(stringResource(R.string.messages_react)) }
+        if (editable(message)) TextButton(onClick = { actions.startEdit(message) }, enabled = chat.acting == null, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("message-edit-${message.position}")) { Text(stringResource(R.string.messages_edit_message)) }
+    }
+    if (active && picking) FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.testTag("reaction-picker-${message.position}")) {
+        REACTIONS.forEach { reaction ->
+            val mine = message.reactionList.any { it.reaction == reaction && it.mine }
+            val name = reactionName(reaction)
+            FilterChip(selected = mine, onClick = { picking = false; actions.react(message, reaction, !mine) }, enabled = chat.acting == null,
+                label = { Text(EMOJI.getValue(reaction)) },
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).semantics { contentDescription = name }.testTag("reaction-choice-$reaction"))
         }
     }
 }
@@ -346,6 +430,13 @@ private fun PendingBubble(entry: PendingSend, canEdit: Boolean, actions: Messagi
 private fun Composer(chat: ChatState, actions: MessagingActions) {
     val problem = if (chat.draft.isBlank()) null else messageProblem(chat.draft)
     val length = normalizeMessage(chat.draft).let { it.codePointCount(0, it.length) }
+    chat.replyingTo?.let { original ->
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("reply-bar"), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.messages_replying_to, if (original.mine) stringResource(R.string.messages_you) else original.senderName) + ": " + original.body.orEmpty(),
+                style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            TextButton(onClick = actions.cancelReply, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("reply-cancel")) { Text(stringResource(R.string.messages_reply_cancel)) }
+        }
+    }
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = chat.draft, onValueChange = actions.draft, label = { Text(stringResource(R.string.messages_composer)) },

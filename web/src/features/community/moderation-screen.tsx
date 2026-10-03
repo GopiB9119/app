@@ -21,7 +21,7 @@ export function ModerationScreen() {
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
   if (viewer.pending || viewer.signedOut) return <Loading label={t("community.loadingModeration")} />;
-  if (!viewer.account) return <CommunityFrame account={null} current="safety"><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
+  if (!viewer.account) return <CommunityFrame account={null} current="moderation"><Failure error={viewer.error} retry={viewer.retry} /></CommunityFrame>;
   return <ModeratorGate key={viewer.account.id} account={viewer.account} />;
 }
 
@@ -29,7 +29,7 @@ function ModeratorGate({ account }: { account: Account }) {
   const t = useText();
   const access = useQuery({ queryKey: ["platform-moderator", account.id], queryFn: ({ signal }) => moderatorStatus(account.id, signal), retry: false, networkMode: "always" });
   useEffect(() => { if (sessionLost(access.error)) window.location.replace("/login"); }, [access.error]);
-  return <CommunityFrame account={account} current="safety">
+  return <CommunityFrame account={account} current="moderation">
     {access.isPending ? <p role="status">{t("community.loadingModerationStatus")}</p>
       : access.isError ? <Failure error={access.error} retry={() => access.refetch()} />
       : !access.data.moderator ? <p>{t("community.moderatorsOnly")}</p>
@@ -130,7 +130,7 @@ function DecisionForm({ account, item, done }: { account: Account; item: Moderat
   const t = useText();
   const textProblem = useTextProblem();
   const heading = useId();
-  const [action, setAction] = useState<"hide" | "no_action" | "">("");
+  const [action, setAction] = useState<ModerationDecisionBody["action"] | "">("");
   const [reason, setReason] = useState<ReportReason>(() => item.reasons.reduce((best, entry) => entry.count > best.count ? entry : best).reason);
   const [note, setNote] = useState("");
   const [intent, setIntent] = useState<CreateIntent<ModerationDecisionBody> | null>(null);
@@ -155,7 +155,10 @@ function DecisionForm({ account, item, done }: { account: Account; item: Moderat
       <legend>{t("community.decision")}</legend>
       <label><input type="radio" name={`${heading}-action`} checked={action === "hide"} onChange={() => setAction("hide")} />{t("community.hide")}</label>
       <label><input type="radio" name={`${heading}-action`} checked={action === "no_action"} onChange={() => setAction("no_action")} />{t("community.action.no_action")}</label>
+      {item.target_type === "page" && <label><input type="radio" name={`${heading}-action`} checked={action === "limit"}
+        aria-describedby={`${heading}-limit-hint`} onChange={() => setAction("limit")} />{t("community.limitPage")}</label>}
     </fieldset>
+    {item.target_type === "page" && <p id={`${heading}-limit-hint`} className={reviewStyles.meta}>{t("community.limitPageHint")}</p>}
     <label className={reviewStyles.field} htmlFor={`${heading}-reason`}>{t("community.reason")}
       <select id={`${heading}-reason`} value={reason} disabled={busy || intent !== null} onChange={event => setReason(event.target.value as ReportReason)}>
         {REPORT_REASONS.map(value => <option key={value} value={value}>{t(`community.reason.${value}`)}</option>)}

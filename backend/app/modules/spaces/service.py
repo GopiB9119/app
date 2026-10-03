@@ -66,6 +66,7 @@ class SpaceService:
             space_type=space.space_type,
             visibility=space.visibility,
             member_invites=space.member_invites,
+            agent_enabled=space.agent_enabled,
             status=space.status,
             role=membership.role,
             version=str(space.version),
@@ -203,6 +204,50 @@ class SpaceService:
                     self.end_invitations_from(database, identifier, sender, caller.id)
             space.version += 1
             action = "space.member_invites_on" if body.member_invites else "space.member_invites_off"
+            event_id = str(uuid4())
+            now = self.clock()
+            database.add_all([
+                SpaceAuditEvent(id=event_id, space_id=identifier, actor_id=caller.id, target_id=identifier,
+                                action=action, created_at=now),
+                OutboxEvent(id=event_id, event_type=action, actor_id=caller.id,
+                            aggregate_id=identifier, schema_version=1, created_at=now),
+            ])
+            database.flush()
+            database.add(SpaceSettingsCommand(id=event_id, space_id=identifier, actor_id=caller.id,
+                actor_admission_id=member.admission_id, request_key=key, request_digest=digest))
+            return self.settings_view(space, member)
+
+    def change_agent_policy(self, token, identifier, body, key, expected):
+        """The owner turns the agent on or off in this Space (DEC-028); the agent checks it on every request and decision."""
+        with self.sessions.begin() as database:
+            caller, _accounts = self.lock_accounts(database, token, [])
+            space = self.lock_space(database, identifier)
+            self.require_owner(database, identifier, caller.id, lock=True)
+            member = database.get(SpaceMembership, (identifier, caller.id))
+            self.identity.authenticate(database, token, lock=True)
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current Space settings first.")
+            digest = self.security.digest("space.agent_policy.command", str(body.agent_enabled), expected)
+            receipt = database.scalar(select(SpaceSettingsCommand).where(
+                SpaceSettingsCommand.space_id == identifier, SpaceSettingsCommand.actor_id == caller.id,
+                SpaceSettingsCommand.request_key == key,
+            ))
+            if receipt is not None:
+                if receipt.actor_admission_id != member.admission_id:
+                    raise DomainError(404, "NOT_FOUND", "Space settings not found.")
+                if receipt.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Review the changed agent setting.")
+                return self.settings_view(space, member)
+            if expected != self.settings_view(space, member).etag:
+                raise DomainError(412, "SPACE_CHANGED", "This Space changed. Reload and review it again.")
+            if body.agent_enabled == space.agent_enabled:
+                raise DomainError(409, "NO_CHANGES", "This Space already has this setting.")
+            count = database.scalar(select(func.count()).select_from(SpaceSettingsCommand).where(SpaceSettingsCommand.space_id == identifier))
+            if count >= 500:
+                raise DomainError(409, "SETTINGS_LIMIT_REACHED", "The local Space settings limit was reached.")
+            space.agent_enabled = body.agent_enabled
+            space.version += 1
+            action = "space.agent_on" if body.agent_enabled else "space.agent_off"
             event_id = str(uuid4())
             now = self.clock()
             database.add_all([

@@ -71,7 +71,9 @@ class OutboxTest {
     }
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { models.forEach { it.bind(null) }; Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { models.forEach { it.finishTestWork() } } finally { Dispatchers.resetMain() }
+    }
 
     private suspend fun idle(current: MessagingViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
 
@@ -121,6 +123,15 @@ class OutboxTest {
         assertTrue(sealed.keep(SendIntent(fixture.accountId, "c1", "k1", "First")))
         assertEquals(1, key.replaced)
         assertEquals(listOf("First"), sealed.kept(fixture.accountId, "c1").map { it.intent.body })
+    }
+    // T162: a kept reply keeps what it answers, inside the sealed text; a body kept before replies reads as before.
+    @Test fun aKeptReplyKeepsTheMessageItAnswers() = runBlocking {
+        val answered = "8c3fbd31-2c9a-4f88-9d5d-4c4ca09c4d04"
+        assertTrue(outbox.keep(SendIntent(fixture.accountId, "c1", "k1", "Works for me", answered)))
+        assertTrue(outbox.keep(SendIntent(fixture.accountId, "c1", "k2", "Plain")))
+        assertFalse(store.rows.getValue("k1").sealedBody.contains(answered))
+        val kept = outbox.kept(fixture.accountId, "c1").map { it.intent }
+        assertEquals(listOf(answered to "Works for me", null to "Plain"), kept.map { it.replyTo to it.body })
     }
     @Test fun aMessageIsKeptSealedBeforeItIsSentAndForgottenOnceConfirmed() = runBlocking {
         val current = openChat()

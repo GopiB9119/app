@@ -1,5 +1,6 @@
 package com.community.platform.feature.care
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -9,6 +10,8 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -124,7 +127,16 @@ class CareTest {
     private var model: CareViewModel? = null
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null, "UTC"); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { finishTestWork() } finally { Dispatchers.resetMain() }
+    }
+
+    private suspend fun finishTestWork() {
+        model?.let { current ->
+            current.bind(null, "UTC")
+            withTimeout(5000) { requireNotNull(current.viewModelScope.coroutineContext[Job]).cancelAndJoin() }
+        }
+    }
 
     private suspend fun idle(current: CareViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
     private suspend fun ready(source: CareRepository = repository): CareViewModel {
@@ -158,6 +170,16 @@ class CareTest {
         )
         for (value in badDays) assertThrows(IdentityFailure::class.java) { repository.day(value, "2026-09-25") }
         assertEquals(day, repository.day(day, "2026-09-25"))
+        // DEC-030: earlier answers are newest first, older than the current answer, and at most ten.
+        val corrected = report.copy(outcome = "skipped", revision = 3, earlier = listOf(
+            CareEarlierAnswerDto("taken", 2, "2026-09-25T02:45:00Z", "2026-09-25T02:50:00Z"),
+            CareEarlierAnswerDto("skipped", 1, "2026-09-25T02:40:00Z", "2026-09-25T02:45:00Z")))
+        assertEquals(2, repository.occurrence(dose.copy(report = corrected)).report!!.earlier!!.size)
+        for (earlier in listOf(corrected.earlier!!.reversed(), listOf(corrected.earlier!![0].copy(revision = 3)),
+            listOf(corrected.earlier!![0].copy(outcome = "maybe")), listOf(corrected.earlier!![0].copy(replacedAt = "later")),
+            List(11) { corrected.earlier!![1] })) {
+            assertThrows(IdentityFailure::class.java) { repository.occurrence(dose.copy(report = corrected.copy(earlier = earlier))) }
+        }
     }
 
     @Test fun formProblemsAreFoundBeforeSending() = runBlocking {
@@ -379,6 +401,27 @@ class CareTest {
         current.reload(); idle(current)
         assertTrue(current.state.value.requiresSignIn)
         assertNull(current.state.value.day)
+    }
+
+    @Test fun fixtureCleanupFinishesAnUnansweredDayBeforeResettingMain() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<Unit>()
+        val delayed = object : CareApi by api {
+            override suspend fun day(authorization: String, date: String): Response<EnvelopeDto<CareDayDto>> {
+                entered.complete(Unit)
+                response.await()
+                return api.day(authorization, date)
+            }
+        }
+        val current = CareViewModel(CareRepository(delayed, fixture.accounts)); model = current
+        val scope = requireNotNull(current.viewModelScope.coroutineContext[Job])
+        current.bind(fixture.accountId, "UTC")
+        withTimeout(5000) { entered.await() }
+        finishTestWork()
+        assertTrue(scope.isCompleted)
+        assertTrue(scope.children.none())
+        assertNull(current.state.value.accountId)
+        assertFalse("Cleanup must cancel the read without releasing its answer.", response.isCompleted)
     }
 
     @Test fun accountChangeDropsLateDay() = runBlocking {

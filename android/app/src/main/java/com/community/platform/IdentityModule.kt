@@ -2,9 +2,13 @@ package com.community.platform
 
 import com.community.platform.feature.agents.AgentApi
 import com.community.platform.feature.care.CareApi
+import com.community.platform.feature.community.ClassificationApi
 import com.community.platform.feature.community.CommunityApi
+import com.community.platform.feature.community.FeedControlsApi
 import com.community.platform.feature.community.ModerationApi
+import com.community.platform.feature.community.PageInsightsApi
 import com.community.platform.feature.discovery.SearchApi
+import com.community.platform.feature.events.EventBudgetsApi
 import com.community.platform.feature.events.EventsApi
 import com.community.platform.feature.files.DocumentApi
 import com.community.platform.feature.identity.IdentityApi
@@ -41,7 +45,7 @@ import javax.inject.Singleton
 object IdentityModule {
     private val COMMUNITY_POST_LISTS = Regex("/v1/(feed|discover/posts|me/saved-posts|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/[a-f0-9-]{36}/comments)")
     // Twenty pages, each with up to 2,000 characters of rules (T83), can exceed the default 64 KiB.
-    private val COMMUNITY_PAGE_LISTS = Regex("/v1/(discover/pages|me/following)")
+    private val COMMUNITY_PAGE_LISTS = Regex("/v1/(discover/pages|me/following|me/suggested-pages)")
     private val COMMUNITY_DRAFTS = Regex("/v1/pages/[a-f0-9-]{36}/drafts")
 
     @Provides @Singleton fun gson(): Gson = Gson()
@@ -86,6 +90,8 @@ object IdentityModule {
                 // stay under 512 KiB, as do 20 pages with 2,000 characters of rules; 50 drafts under 1.5 MiB and 500 blocks under 256 KiB.
                 request.method == "GET" && COMMUNITY_POST_LISTS.matches(path) -> 524288L
                 request.method == "GET" && COMMUNITY_PAGE_LISTS.matches(path) -> 524288L
+                // The whole vocabulary of about 270 terms in three languages is about 80 KiB.
+                request.method == "GET" && path == "/v1/taxonomy" -> 524288L
                 request.method == "GET" && COMMUNITY_DRAFTS.matches(path) -> 1572864L
                 request.method == "GET" && path == "/v1/me/blocks" -> 262144L
                 request.method == "GET" && path == "/v1/moderation/queue" -> 524288L
@@ -176,12 +182,43 @@ object IdentityModule {
         .build()
         .create(CommunityApi::class.java)
 
+    // Without serializeNulls: every classification and interests list is sent in full, never as null.
+    @Provides @Singleton fun classification(client: OkHttpClient, gson: Gson): ClassificationApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson.newBuilder().disableHtmlEscaping().create()))
+        .build()
+        .create(ClassificationApi::class.java)
+
+    // Without serializeNulls: the server refuses fields a control's kind does not use, so they are left out.
+    @Provides @Singleton fun feedControls(client: OkHttpClient, gson: Gson): FeedControlsApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson))
+        .build()
+        .create(FeedControlsApi::class.java)
+
+    @Provides @Singleton fun pageInsights(client: OkHttpClient, gson: Gson): PageInsightsApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson))
+        .build()
+        .create(PageInsightsApi::class.java)
+
     @Provides @Singleton fun events(client: OkHttpClient, gson: Gson): EventsApi = Retrofit.Builder()
         .baseUrl(BuildConfig.API_URL)
         .client(client)
         .addConverterFactory(GsonConverterFactory.create(gson.newBuilder().serializeNulls().create()))
         .build()
         .create(EventsApi::class.java)
+
+    // Without serializeNulls: a new category and an expense without a category leave out their null ids.
+    @Provides @Singleton fun eventBudgets(client: OkHttpClient, gson: Gson): EventBudgetsApi = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_URL)
+        .client(client)
+        .addConverterFactory(GsonConverterFactory.create(gson))
+        .build()
+        .create(EventBudgetsApi::class.java)
 
     @Provides @Singleton fun moderation(client: OkHttpClient, gson: Gson): ModerationApi = Retrofit.Builder()
         .baseUrl(BuildConfig.API_URL)

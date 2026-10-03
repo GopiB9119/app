@@ -7,10 +7,11 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import func, or_, select
 
 from app.errors import DomainError
-from app.modules.care.models import CareAudit, CareCommand, CareDoseReport, CareInstruction
+from app.modules.care.models import CareAudit, CareCommand, CareDoseAnswer, CareDoseReport, CareInstruction
 from app.modules.care.schemas import (
     CareDayInstruction,
     CareDayView,
+    CareEarlierAnswer,
     CareInstructionView,
     CareOccurrenceView,
     CareReportView,
@@ -32,6 +33,7 @@ LONGEST_COURSE = 3660
 CONTENT = ("medicine_name", "strength", "form", "dose", "instructions")
 # The earliest instant of any local date is 14 hours before its UTC midnight. One more hour covers early reports.
 DAY_LEAD = timedelta(hours=15)
+EARLIER_SHOWN = 10
 
 
 def resolve(day, wall_time, zone):
@@ -106,12 +108,15 @@ class CareService:
             kept.append((wall, instant, shown, change))
         return sorted(kept, key=lambda item: item[1]), omitted
 
-    def occurrence(self, instruction, day, wall, instant, shown, change, report, now):
+    def occurrence(self, instruction, day, wall, instant, shown, change, report, now, earlier=()):
         view = CareOccurrenceView(
             instruction_id=instruction.id, local_date=day, local_time=wall, display_time=shown.strftime("%H:%M"),
             timezone=instruction.timezone, scheduled_at=instant, clock_change=change,
             report=None if report is None else CareReportView(
                 outcome=report.outcome, revision=report.revision, reported_at=report.reported_at, updated_at=report.updated_at,
+                earlier=[CareEarlierAnswer(
+                    outcome=answer.outcome, revision=answer.revision, recorded_at=answer.recorded_at, replaced_at=answer.replaced_at,
+                ) for answer in earlier],
             ),
             can_report=instant - EARLY_REPORT <= now <= instant + REPORT_WINDOW, etag="",
         )
@@ -121,14 +126,26 @@ class CareService:
         ) + '"'
         return view
 
+    @staticmethod
+    def earlier_answers(database, report_ids):
+        answers = {}
+        if report_ids:
+            for answer in database.scalars(select(CareDoseAnswer).where(CareDoseAnswer.report_id.in_(report_ids))
+                                           .order_by(CareDoseAnswer.report_id, CareDoseAnswer.revision.desc())):
+                kept = answers.setdefault(answer.report_id, [])
+                if len(kept) < EARLIER_SHOWN:
+                    kept.append(answer)
+        return answers
+
     def find_occurrence(self, database, instruction, day, wall, now):
         report = database.scalar(select(CareDoseReport).where(
             CareDoseReport.instruction_id == instruction.id, CareDoseReport.local_date == day, CareDoseReport.local_time == wall,
         ))
+        earlier = self.earlier_answers(database, [report.id]).get(report.id, []) if report else []
         kept, _omitted = self.occurrences(instruction, day, {wall} if report else set())
         for item in kept:
             if item[0] == wall:
-                return self.occurrence(instruction, day, *item, report, now), report, item[1]
+                return self.occurrence(instruction, day, *item, report, now, earlier), report, item[1]
         raise DomainError(404, "NOT_FOUND", "This dose time is not scheduled.")
 
     def record(self, database, account_id, instruction_id, action):
@@ -243,6 +260,7 @@ class CareService:
                     CareDoseReport.instruction_id.in_([instruction.id for instruction in instructions]),
                 )):
                     reports[(report.instruction_id, report.local_time)] = report
+            earlier = self.earlier_answers(database, [report.id for report in reports.values()])
             summaries, occurrences, omitted = [], [], []
             for instruction in instructions:
                 reported = {wall for identifier, wall in reports if identifier == instruction.id}
@@ -254,9 +272,11 @@ class CareService:
                     id=instruction.id, medicine_name=content["medicine_name"], strength=content["strength"],
                     form=content["form"], dose=content["dose"], status=instruction.status,
                 ))
-                occurrences.extend(
-                    self.occurrence(instruction, day, *item, reports.get((instruction.id, item[0])), now) for item in kept
-                )
+                for item in kept:
+                    report = reports.get((instruction.id, item[0]))
+                    occurrences.append(self.occurrence(
+                        instruction, day, *item, report, now, earlier.get(report.id, []) if report else [],
+                    ))
                 omitted.extend(skipped)
             occurrences.sort(key=lambda view: (view.scheduled_at, str(view.instruction_id), view.local_time))
             return CareDayView(local_date=day, instructions=summaries, occurrences=occurrences, omitted=omitted)
@@ -291,6 +311,10 @@ class CareService:
                 ))
                 action = "care.dose_reported"
             else:
+                database.add(CareDoseAnswer(
+                    id=str(uuid4()), report_id=report.id, account_id=user.id, outcome=report.outcome,
+                    revision=report.revision, recorded_at=report.updated_at, replaced_at=now,
+                ))
                 report.outcome = body.outcome
                 report.revision += 1
                 report.updated_at = now

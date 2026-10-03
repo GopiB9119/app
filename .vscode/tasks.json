@@ -142,8 +142,13 @@
 				"tests/events-client.test.mjs",
 				"tests/unit/events-ui.test.mjs"
 			],
-			"options": { "cwd": "${workspaceFolder}" },
-			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
@@ -152,9 +157,26 @@
 			"label": "Community Platform: verify live events",
 			"type": "process",
 			"command": "node",
-			"args": ["--test", "--test-concurrency=1", "--test-reporter=spec", "--test-reporter-destination=stdout", "--test-reporter=junit", "--test-reporter-destination=.local/events-quality-live.xml", "--test-name-pattern=^events( timezone)?:", "tests/e2e/identity.test.mjs"],
-			"options": { "cwd": "${workspaceFolder}", "env": { "COMMUNITY_WEB_URL": "http://127.0.0.1:3000" } },
-			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-reporter=spec",
+				"--test-reporter-destination=stdout",
+				"--test-reporter=junit",
+				"--test-reporter-destination=.local/events-quality-live.xml",
+				"--test-name-pattern=^events( timezone)?:",
+				"tests/e2e/identity.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3000"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"
@@ -163,11 +185,299 @@
 			"label": "Community Platform: check web types",
 			"type": "process",
 			"command": "node",
-			"args": ["node_modules/typescript/bin/tsc", "--noEmit", "--pretty", "false"],
-			"options": { "cwd": "${workspaceFolder}/web" },
-			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"args": [
+				"node_modules/typescript/bin/tsc",
+				"--noEmit",
+				"--pretty",
+				"false"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/web"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
 			"isBackground": false,
-			"problemMatcher": ["$tsc"],
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify engineering records",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"scripts/records-check.mjs"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify blueprint baseline",
+			"type": "shell",
+			"command": ".\\scripts\\verify.ps1",
+			"args": [
+				"-Suite",
+				"records,structure,tokens,typecheck,client",
+				"-Output",
+				".local\\verify\\blueprint-20261003-initial"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: snapshot qualification source",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".local/blueprint-audit-run.mjs",
+				"--snapshot-only"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify frozen Android",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".local/blueprint-audit-run.mjs",
+				"--android",
+				".local/blueprint-audit-2026-10-03T09-20-01-230Z-f8e5b1da"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify local restore",
+			"type": "shell",
+			"command": ".\\scripts\\restore-drill.ps1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify chat action errors",
+			"type": "process",
+			"command": "C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe",
+			"args": [
+				"-classpath",
+				"${workspaceFolder}/.local/blueprint-audit-2026-10-03T06-43-08-121Z-8476d422/android/gradle/wrapper/gradle-wrapper.jar",
+				"org.gradle.wrapper.GradleWrapperMain",
+				"-p",
+				"${workspaceFolder}/.local/blueprint-audit-2026-10-03T06-43-08-121Z-8476d422/android",
+				":app:testDebugUnitTest",
+				"--tests",
+				"com.community.platform.feature.messaging.MessagingTest",
+				"--offline",
+				"--console=plain",
+				"--no-daemon",
+				"--max-workers=2"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"JAVA_HOME": "C:\\Program Files\\Android\\Android Studio\\jbr",
+					"ANDROID_HOME": "C:\\Users\\91961\\AppData\\Local\\Android\\sdk",
+					"ANDROID_SDK_ROOT": "C:\\Users\\91961\\AppData\\Local\\Android\\sdk"
+				}
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify native qualification regressions",
+			"type": "shell",
+			"command": "& {\n$captured = @(& node .local/blueprint-audit-run.mjs --snapshot-only)\nif ($LASTEXITCODE -ne 0) { throw 'Source snapshot failed' }\n$captured | Write-Output\n$source = @($captured | Where-Object { $_ -match '^Snapshot: ' } | ForEach-Object { $_.Substring(10) })\nif ($source.Count -ne 1) { throw 'Expected one source snapshot' }\n& (Join-Path $env:JAVA_HOME 'bin/java.exe') -classpath (Join-Path $source[0] 'android/gradle/wrapper/gradle-wrapper.jar') org.gradle.wrapper.GradleWrapperMain -p (Join-Path $source[0] 'android') :app:testDebugUnitTest --tests com.community.platform.feature.community.CommunityClassificationTest --tests com.community.platform.feature.community.ModerationTest --tests com.community.platform.feature.messaging.MessagingTest --tests com.community.platform.feature.messaging.MessagingLiveTest --tests com.community.platform.feature.messaging.OutboxTest --tests com.community.platform.feature.realtime.LiveUpdatesTest --offline --console=plain --no-daemon --max-workers=2\nif ($LASTEXITCODE -ne 0) { throw 'Native qualification regressions failed' }\n}",
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"JAVA_HOME": "C:\\Program Files\\Android\\Android Studio\\jbr",
+					"ANDROID_HOME": "C:\\Users\\91961\\AppData\\Local\\Android\\sdk",
+					"ANDROID_SDK_ROOT": "C:\\Users\\91961\\AppData\\Local\\Android\\sdk"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify planning cleanup",
+			"type": "shell",
+			"command": "& {\n$busy = @(Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'java.exe' -and $_.CommandLine -match 'GradleWrapperMain|Gradle Test Executor') -or $_.Name -match '^(qemu-system-x86_64(-headless)?|emulator)\\.exe$' })\nif ($busy.Count -gt 0) {\n$busy | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List\nthrow 'Native resources are in use; no focused build was started.'\n}\n& node .local/blueprint-audit-run.mjs --android-focused .local/blueprint-audit-2026-10-03T10-49-07-626Z-4c7ae56f com.community.platform.feature.planning.TaskViewModelTest com.community.platform.feature.realtime.LiveUpdatesTest\nif ($LASTEXITCODE -ne 0) { throw 'Focused planning and realtime verification failed; preserve the reports.' }\n}",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify recovered live journeys",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-reporter=spec",
+				"--test-reporter-destination=stdout",
+				"--test-reporter=junit",
+				"--test-reporter-destination=.local/t169-live-recovered-05053de7.xml",
+				"--test-reporter=tap",
+				"--test-reporter-destination=.local/t169-live-recovered-05053de7.tap",
+				"--test-name-pattern=^(alerts:|reminders:|repeating reminders:)",
+				"tests/e2e/alerts.test.mjs",
+				"tests/e2e/identity.test.mjs",
+				"tests/e2e/scheduling.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3000"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify isolated native report gate",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--input-type=module",
+				"-e",
+				"import assert from 'node:assert/strict'; import { spawnSync } from 'node:child_process'; import { createHash, randomUUID } from 'node:crypto'; import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'; import { join } from 'node:path'; const started = new Date().toISOString(); const legacy = '.local/blueprint-audit-2026-10-03T06-43-08-121Z-8476d422'; const clean = '.local/qualification-native-20261003T080428Z-8d71b86b'; const missing = '.local/blueprint-audit-2026-10-03T07-30-03-483Z-979da227'; const roots = [legacy, clean, missing]; const fingerprint = () => roots.flatMap(root => { const folder = join(root, 'android/app/build/test-results/testDebugUnitTest'); const files = ['manifest.json', 'android-result.json', 'full-result.json'].map(name => join(root, name)).filter(existsSync); if (existsSync(folder)) files.push(...readdirSync(folder).filter(name => name.endsWith('.xml')).map(name => join(folder, name))); return files.map(path => [path, createHash('sha256').update(readFileSync(path)).digest('hex')]); }); const before = fingerprint(); const outcomes = []; const checks = [{ name: 'uncaught errors reject exit-zero assertions', root: legacy, exit: 1, tests: 583, uncaught: 2 }, { name: 'clean retained reports pass', root: clean, exit: 0, tests: 586, uncaught: 0 }, { name: 'old reports excluded by fresh-run boundary', root: clean, since: '2099-01-01T00:00:00.000Z', exit: 1 }, { name: 'UTC cutoff excludes older local-time reports', root: clean, since: '2026-10-03T08:11:00.000Z', exit: 1 }, { name: 'missing reports fail closed', root: missing, exit: 1 }]; for (const check of checks) { const args = ['.local/blueprint-audit-run.mjs', '--android-reports', check.root]; if (check.since) args.push(check.since); const result = spawnSync(process.execPath, args, { encoding: 'utf8' }); assert.equal(result.status, check.exit, result.stderr); const report = JSON.parse(result.stdout); assert.equal(report.passed, check.exit === 0); if (check.tests) { assert.equal(report.counts.tests, check.tests); assert.equal(report.counts.uncaughtClasses, check.uncaught); } outcomes.push({ name: check.name, command: [process.execPath, ...args], expectedExit: check.exit, exit: result.status, report }); console.log('PASS ' + check.name); } assert.deepEqual(fingerprint(), before); const evidence = join('.local', 'isolated-native-report-gate-' + started.replaceAll(/[:.]/g, '-') + '-' + randomUUID().slice(0, 8) + '.json'); const launcherSha256 = createHash('sha256').update(readFileSync('.local/blueprint-audit-run.mjs')).digest('hex'); writeFileSync(evidence, JSON.stringify({ started, finished: new Date().toISOString(), launcherSha256, checks: outcomes, preservedFiles: before, passed: checks.length, failed: 0 }, null, 2) + String.fromCharCode(10), { flag: 'wx' }); console.log('5/5 report checks passed; original manifests, results and XML files unchanged.'); console.log('Evidence: ' + evidence);"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify current API contract",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"scripts/check-openapi.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify qualification evidence",
+			"type": "process",
+			"command": "node",
+			"args": [
+				".local/blueprint-audit-run.mjs",
+				"--documents",
+				".local/blueprint-audit-2026-10-03T09-20-01-230Z-f8e5b1da"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify frozen backend",
+			"type": "process",
+			"command": "node",
+			"args": [
+				".local/blueprint-audit-run.mjs",
+				"--verify-full",
+				".local/blueprint-audit-2026-10-03T09-20-01-230Z-f8e5b1da"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify live web journeys",
+			"type": "shell",
+			"command": ".\\scripts\\verify.ps1",
+			"args": [
+				"-Suite",
+				"live",
+				"-Output",
+				".local\\verify\\t169-live"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect qualification processes",
+			"type": "shell",
+			"command": "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(node|java|docker|qemu-system-x86_64(-headless)?|emulator|powershell|cmd)\\.exe$' -and $_.CommandLine -match 'blueprint-audit|t169|verify\\.ps1|pytest|GradleWrapperMain|GradleDaemon|qemu|emulator\\.exe|tests/e2e|test:e2e|next|start-server\\.js' } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,@{Name='WorkingSetMiB';Expression={[math]::Round($_.WorkingSetSize / 1MB, 1)}},@{Name='PrivateMemoryMiB';Expression={[math]::Round($_.PrivatePageCount / 1MB, 1)}},CommandLine | Format-List",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: resume local qualification services",
+			"type": "shell",
+			"command": "& {\n& docker compose -f infra/compose.yaml up -d --no-build --pull never --no-recreate --wait db mail\nif ($LASTEXITCODE -ne 0) { throw 'Database and mail startup failed' }\n$head = @(& docker compose -f infra/compose.yaml exec -T db psql -U community -d community -At -c 'SELECT version_num FROM alembic_version')\nif ($LASTEXITCODE -ne 0 -or ($head -join '').Trim() -ne '0040') { throw 'Database does not match qualification source migration 0040; no migration was attempted' }\n& docker compose -f infra/compose.yaml start api identity-mail-worker reminder-worker export-worker account-deletion-worker\nif ($LASTEXITCODE -ne 0) { throw 'Local API or worker startup failed' }\nWrite-Output 'Existing local services resumed against migration 0040; no rebuild, migration or reset.'\n}",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated"
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: inspect local service health",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"-f",
+				"infra/compose.yaml",
+				"ps",
+				"--all"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
 			"group": "test"
 		}
 	]

@@ -15,7 +15,8 @@ interface TaskApi {
     suspend fun spaces(@Header("Authorization") authorization: String, @Query("limit") limit: Int, @Query("cursor") cursor: String?): Response<EnvelopeDto<List<FamilySpaceDto>>>
 
     @GET("v1/tasks")
-    suspend fun tasks(@Header("Authorization") authorization: String, @Query("space_id") spaceId: String, @Query("limit") limit: Int, @Query("cursor") cursor: String?, @Query("status") status: String?): Response<EnvelopeDto<List<FamilyTaskDto>>>
+    suspend fun tasks(@Header("Authorization") authorization: String, @Query("space_id") spaceId: String, @Query("limit") limit: Int, @Query("cursor") cursor: String?, @Query("status") status: String?,
+        @Query("assignee") assignee: String?, @Query("due_from") dueFrom: String?, @Query("due_to") dueTo: String?): Response<EnvelopeDto<List<FamilyTaskDto>>>
 
     @GET("v1/tasks/assignees")
     suspend fun assignees(@Header("Authorization") authorization: String, @Query("space_id") spaceId: String, @Query("task_id") taskId: String?): Response<EnvelopeDto<List<TaskAssigneeDto>>>

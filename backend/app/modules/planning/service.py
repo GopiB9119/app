@@ -1,8 +1,8 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from uuid import uuid4
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, false, func, select
 
 from app.errors import DomainError
 from app.modules.identity.models import OutboxEvent, User
@@ -122,7 +122,7 @@ class TaskService:
                 assignee = AssigneeView(account_id=row[1].id, display_name=row[1].display_name)
         return TaskView(
             id=task.id, space_id=task.space_id, title=task.title, description=task.description,
-            due_date=task.due_date, status=task.status, assignee=assignee,
+            due_date=task.due_date, status=task.status, priority=task.priority, assignee=assignee,
             assignee_unavailable=task.assignee_account_id is not None and assignee is None,
             created_by_account_id=task.created_by_id, completed_by_account_id=task.completed_by_account_id,
             completed_at=task.completed_at, created_at=task.created_at, updated_at=task.updated_at,
@@ -179,7 +179,7 @@ class TaskService:
             task = Task(
                 id=str(uuid4()), space_id=space_id, created_by_id=user.id,
                 creator_admission_id=member.admission_id, creation_key=key, creation_digest=digest,
-                title=body.title, description=body.description, due_date=body.due_date,
+                title=body.title, description=body.description, due_date=body.due_date, priority=body.priority,
                 status="open", version=1, created_at=now, updated_at=now,
                 assignee_account_id=assignee_id, assignee_admission_id=assigned.admission_id if assigned else None,
             )
@@ -190,7 +190,7 @@ class TaskService:
                            admission_id=membership.admission_id)
                 for membership, _user in audience
             ])
-            self.record(database, task, member, "task.created", None, ["title", "description", "due_date", "assignee_account_id"])
+            self.record(database, task, member, "task.created", None, ["title", "description", "due_date", "assignee_account_id", "priority"])
             result = self.view(database, task, member)
             return result, self.etag(result, member)
 
@@ -207,18 +207,47 @@ class TaskService:
             result = self.view(database, task, member)
             return result, self.etag(result, member)
 
-    def list_tasks(self, token, space_id, limit, cursor=None, status=None):
+    @staticmethod
+    def due_range(due_from, due_to):
+        try:
+            first = date.fromisoformat(due_from) if due_from else None
+            last = date.fromisoformat(due_to) if due_to else None
+        except ValueError:
+            raise DomainError(422, "INVALID_FILTER", "Use real calendar dates.") from None
+        if first and last and first > last:
+            raise DomainError(422, "INVALID_FILTER", "The first date must be on or before the last.")
+        return first, last
+
+    def list_tasks(self, token, space_id, limit, cursor=None, status=None, assignee=None, due_from=None, due_to=None):
+        first, last = self.due_range(due_from, due_to)
         with self.sessions() as database:
             user, member = self.context(database, token, space_id)
             statement = self.visible_tasks(user.id, space_id)
             if status:
                 statement = statement.where(Task.status == status)
+            if assignee == "none":
+                statement = statement.where(Task.assignee_account_id.is_(None))
+            elif assignee:
+                # Only the person's current admission counts, as in the task view; a former admission shows as unavailable.
+                admission = database.scalar(select(SpaceMembership.admission_id).where(
+                    SpaceMembership.space_id == space_id, SpaceMembership.account_id == assignee,
+                    SpaceMembership.status == "active",
+                ))
+                statement = statement.where(
+                    Task.assignee_account_id == assignee, Task.assignee_admission_id == admission,
+                ) if admission else statement.where(false())
+            if first:
+                statement = statement.where(Task.due_date >= first)
+            if last:
+                statement = statement.where(Task.due_date <= last)
             if cursor:
                 try:
                     position = TaskCursor.model_validate_json(self.security.open(cursor))
                 except (InvalidToken, TypeError, ValueError):
                     raise DomainError(400, "CURSOR_INVALID", "Reload tasks.") from None
-                if (str(position.account_id), str(position.space_id), str(position.admission_id), position.status) != (user.id, space_id, member.admission_id, status):
+                if (str(position.account_id), str(position.space_id), str(position.admission_id), position.status,
+                        position.assignee, position.due_from, position.due_to) != (
+                        user.id, space_id, member.admission_id, status, assignee, first, last):
                     raise DomainError(400, "CURSOR_INVALID", "Reload tasks.")
                 if position.expires_at <= self.clock():
                     raise DomainError(410, "CURSOR_EXPIRED", "Reload tasks.")
@@ -230,8 +259,8 @@ class TaskService:
             if has_more:
                 next_cursor = self.security.seal(TaskCursor(
                     kind="family_tasks", account_id=user.id, space_id=space_id,
-                    admission_id=member.admission_id, status=status, after_id=page[-1][0].id,
-                    expires_at=self.clock() + timedelta(minutes=15),
+                    admission_id=member.admission_id, status=status, assignee=assignee, due_from=first, due_to=last,
+                    after_id=page[-1][0].id, expires_at=self.clock() + timedelta(minutes=15),
                 ).model_dump_json())
             results = []
             for task, current_member in page:
@@ -300,7 +329,7 @@ class TaskService:
                     assigned = self.assignee(database, task.space_id, assignee_id, task.id)
                     task.assignee_account_id = assignee_id
                     task.assignee_admission_id = assigned.admission_id if assigned else None
-                for field in ("title", "description", "due_date"):
+                for field in ("title", "description", "due_date", "priority"):
                     if field in body.model_fields_set:
                         setattr(task, field, getattr(body, field))
                 changed = sorted(body.model_fields_set)

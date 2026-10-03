@@ -85,6 +85,12 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
             mutableState.value = AgentState(accountId = mutableState.value.accountId, requiresSignIn = true)
             return
         }
+        if (failure?.code == "AGENT_OFF" && command is AgentCommand.Ask) {
+            // The composer turns into the notice; the person's text stays in case the owner turns the agent on again.
+            mutableState.update { it.copy(spaces = it.spaces.map { space -> if (space.id == command.spaceId) space.copy(agentEnabled = false) else space },
+                at = at, error = null, issue = null) }
+            return
+        }
         val unknown = failure == null || failure.status == 0 || failure.status >= 500 || failure.status == 408
         mutableState.update {
             it.copy(pending = if (unknown && command != null) command else it.pending, at = at,
@@ -204,7 +210,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
         val current = mutableState.value
         val account = current.accountId ?: return
         val space = current.spaceId ?: return
-        if (!idle(current)) return
+        if (!idle(current) || current.space?.agentEnabled == false) return
         val message = normalizedAgentMessage(current.message)
         agentMessageProblem(message)?.let { problem -> mutableState.update { it.copy(problem = problem, issue = null, error = null, at = AGENT_AT_COMPOSER) }; return }
         submit(AgentCommand.Ask(account, space, message, UUID.randomUUID().toString()))

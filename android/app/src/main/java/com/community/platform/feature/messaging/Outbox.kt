@@ -56,7 +56,7 @@ class Outbox(
     private val clears = AtomicLong()
     override suspend fun keep(intent: SendIntent): Boolean = withContext(io) {
         val generation = clears.get()
-        store.put(UnsentMessage(intent.key, intent.accountId, intent.conversationId, sealer.seal(intent.body, binding(intent)), clock(), 0))
+        store.put(UnsentMessage(intent.key, intent.accountId, intent.conversationId, sealer.seal(sealedText(intent), binding(intent)), clock(), 0))
         // A sign-out or account change while this was sealed deletes everything kept, so this one goes too.
         if (clears.get() != generation) { store.remove(intent.key); false } else true
     }
@@ -92,10 +92,23 @@ class Outbox(
             // It can never be opened, so it can never be sent.
             store.remove(row.requestKey)
             null
-        } else KeptMessage(intent.copy(body = body), row.attempts)
+        } else KeptMessage(openedText(intent, body), row.attempts)
     }
 
     private fun binding(intent: SendIntent) = "${intent.accountId}/${intent.conversationId}/${intent.key}"
+
+    private companion object {
+        // A reply keeps the message it answers inside the sealed text (DEC-033), so the stored table is unchanged. A
+        // message body can never hold this control character, so a body kept before replies existed reads as before.
+        const val MARK = '\u0001'
+
+        fun sealedText(intent: SendIntent) = intent.replyTo?.let { "$MARK$it$MARK${intent.body}" } ?: intent.body
+
+        fun openedText(intent: SendIntent, text: String): SendIntent {
+            val end = if (text.startsWith(MARK)) text.indexOf(MARK, 1) else -1
+            return if (end > 1) intent.copy(replyTo = text.substring(1, end), body = text.substring(end + 1)) else intent.copy(body = text)
+        }
+    }
 }
 
 /** The app's session store: signing out, an ended session and a different account delete every kept message. */

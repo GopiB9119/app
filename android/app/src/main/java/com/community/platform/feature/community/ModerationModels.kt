@@ -3,6 +3,12 @@ package com.community.platform.feature.community
 import com.google.gson.annotations.SerializedName
 
 data class ModerationMarkDto(val hidden: Boolean, val reason: String)
+/** Actions a platform moderator can record; "limit" applies only to pages (DEC-040). */
+val DECISION_ACTIONS = setOf("hide", "limit", "no_action")
+fun decisionActionAllowed(action: String?, targetType: String) = action in DECISION_ACTIONS && (action != "limit" || targetType == "page")
+
+/** Sent only to the owner of a limited page (DEC-040). */
+data class PageLimitDto(val reason: String)
 data class ModeratorStatusDto(val moderator: Boolean)
 
 data class ModerationPreviewDto(
@@ -76,7 +82,7 @@ data class ModerationNoticeDto(
     @SerializedName("appeal_status") val appealStatus: String?,
     @SerializedName("appeal_of") val appealOf: String?,
 ) {
-    val canAppeal: Boolean get() = action == "hide" && appealStatus == null && appealOf == null
+    val canAppeal: Boolean get() = action in setOf("hide", "limit") && appealStatus == null && appealOf == null
 }
 
 enum class ReportReviewState { WAITING, ACTION_TAKEN, NO_ACTION }

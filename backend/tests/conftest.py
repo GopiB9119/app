@@ -63,7 +63,9 @@ def app():
     application = create_app(settings, clock)
     application.state.clock = clock
     with application.state.engine.begin() as connection:
-        names = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        # Reference data (the shared vocabulary) comes from the migrations, so emptying it would leave nothing to choose.
+        tables = [table for table in Base.metadata.sorted_tables if not table.info.get("reference_data")]
+        names = ", ".join(f'"{table.name}"' for table in tables)
         connection.execute(text(f"TRUNCATE {names} CASCADE"))
     yield application
     application.state.engine.dispose()

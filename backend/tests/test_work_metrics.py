@@ -4,11 +4,17 @@ from uuid import uuid4
 
 from sqlalchemy.exc import OperationalError
 
+from app.modules.community.models import PublicPage
 from app.modules.identity.delivery import deliver_one
-from app.modules.identity.models import AccountExport, IdentityMail
+from app.modules.identity.models import AccountExport, IdentityMail, User
 from app.modules.scheduling.models import Reminder
+from app.modules.spaces.models import Space, SpaceMembership
+from tests.test_account_deletion import request_deletion
+from tests.test_community import create_page
 from tests.test_exports import request_export
-from tests.test_identity import account, auth, begin
+from tests.test_identity import PASSWORD, account, auth, begin
+from tests.test_messaging import admit
+from tests.test_page_lifecycle import archive, delete, restore
 from tests.test_reminder_delivery_guards import preview_reminder
 from tests.test_spaces import create_space
 from tests.test_tasks import create_task
@@ -126,6 +132,157 @@ def test_export_gauges_count_queued_and_abandoned_builds_and_failures(client, ap
     assert gauges(client, app, "exports") == (0, 0.0, 1)
 
 
+def test_purge_queues_report_empty_backlogs_without_inventing_failure_counts(client, app):
+    values, _text = scrape(client, app)
+    assert values[("community_work_query_success", None)] == 1
+    for queue in ("account_deletion", "page_deletion"):
+        assert values[("community_work_ready", queue)] == 0
+        assert values[("community_work_ready_oldest_seconds", queue)] == 0
+        assert ("community_work_failed", queue) not in values
+    assert values[("community_work_blocked", "account_deletion")] == 0
+    assert values[("community_work_blocked_oldest_seconds", "account_deletion")] == 0
+    assert ("community_work_blocked", "page_deletion") not in values
+
+
+def test_account_purge_gauges_follow_grace_cancellation_and_completed_work(client, app):
+    clock = app.state.clock
+    people = [account(client, app, f"purge-{number}@example.test") for number in range(3)]
+    due, later, cancelled = people
+    assert request_deletion(client, due).status_code == 202
+    assert request_deletion(client, cancelled).status_code == 202
+    cancelled_response = client.post("/v1/auth/cancel-deletion", json={"email": "purge-2@example.test", "password": PASSWORD})
+    assert cancelled_response.status_code == 200, cancelled_response.text
+    with app.state.sessions() as database:
+        due_at = database.get(User, due["user"]["id"]).purge_after
+    clock.now += timedelta(seconds=60)
+    assert request_deletion(client, later).status_code == 202
+    clock.now = due_at - timedelta(seconds=1)
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 0
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 0
+
+    clock.now = due_at
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 0
+    clock.now += timedelta(seconds=30)
+    values, text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 30
+    assert values[("community_work_blocked", "account_deletion")] == 0
+    assert "@" not in text and all(person["user"]["id"] not in text for person in people)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 0
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 0
+
+    clock.now = due_at + timedelta(seconds=70)
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 10
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 0
+    assert ("community_work_failed", "account_deletion") not in values
+    with app.state.sessions() as database:
+        assert database.get(User, cancelled["user"]["id"]).status == "active"
+
+
+def test_account_purge_gauges_count_blocked_accounts_once_and_match_the_worker(client, app):
+    clock = app.state.clock
+    blocked = account(client, app, "blocked@example.test")
+    host = account(client, app, "host@example.test")
+    ready = account(client, app, "ready@example.test")
+    spaces = [create_space(client, host, name=f"Private shared Space {number}").json()["data"]["id"] for number in range(2)]
+    for space_id in spaces:
+        admit(client, host, space_id, blocked)
+    assert request_deletion(client, blocked).status_code == 202
+    assert request_deletion(client, ready).status_code == 202
+    with app.state.sessions.begin() as database:
+        due_at = database.get(User, blocked["user"]["id"]).purge_after
+        for space_id in spaces:
+            database.get(SpaceMembership, (space_id, host["user"]["id"])).role = "member"
+            database.flush()
+            database.get(SpaceMembership, (space_id, blocked["user"]["id"])).role = "owner"
+            database.flush()
+        assert len(app.state.account_deletion.owned_shared_spaces(database, blocked["user"]["id"])) == 2
+
+    clock.now = due_at - timedelta(seconds=1)
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 0
+    assert values[("community_work_blocked", "account_deletion")] == 0
+    clock.now = due_at + timedelta(seconds=90)
+    values, text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 90
+    assert values[("community_work_blocked", "account_deletion")] == 1
+    assert values[("community_work_blocked_oldest_seconds", "account_deletion")] == 90
+    assert "Private shared Space" not in text and all(space_id not in text for space_id in spaces)
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 1}
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 0
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 0
+    assert values[("community_work_blocked", "account_deletion")] == 1
+
+    with app.state.sessions.begin() as database:
+        database.get(Space, spaces[0]).status = "archived"
+    assert scrape(client, app)[0][("community_work_blocked", "account_deletion")] == 1
+    with app.state.sessions.begin() as database:
+        database.get(SpaceMembership, (spaces[1], host["user"]["id"])).status = "removed"
+        assert app.state.account_deletion.owned_shared_spaces(database, blocked["user"]["id"]) == []
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "account_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "account_deletion")] == 90
+    assert values[("community_work_blocked", "account_deletion")] == 0
+    assert values[("community_work_blocked_oldest_seconds", "account_deletion")] == 0
+    assert app.state.account_deletion.purge_due() == {"purged": 1, "blocked": 0}
+    assert scrape(client, app)[0][("community_work_ready", "account_deletion")] == 0
+
+
+def test_page_purge_gauges_follow_due_dates_restoration_and_purge_completion(client, app):
+    clock = app.state.clock
+    owner = account(client, app)
+    pages = [create_page(client, owner, handle=f"purge-page-{number}", name=f"Synthetic private page {number}").json()["data"] for number in range(5)]
+    due, later, restored, archived, active = pages
+    assert delete(client, owner, due, etag=due["etag"]).status_code == 200
+    deleted = delete(client, owner, restored, etag=restored["etag"])
+    assert deleted.status_code == 200, deleted.text
+    assert restore(client, owner, restored, etag=deleted.json()["data"]["etag"]).status_code == 200
+    assert archive(client, owner, archived, etag=archived["etag"]).status_code == 200
+    with app.state.sessions() as database:
+        due_at = database.get(PublicPage, due["id"]).purge_after
+    clock.now += timedelta(seconds=30)
+    assert delete(client, owner, later, etag=later["etag"]).status_code == 200
+    clock.now = due_at - timedelta(seconds=1)
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "page_deletion")] == 0
+    assert values[("community_work_ready_oldest_seconds", "page_deletion")] == 0
+
+    clock.now = due_at
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "page_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "page_deletion")] == 0
+    clock.now += timedelta(seconds=5)
+    values, text = scrape(client, app)
+    assert values[("community_work_ready", "page_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "page_deletion")] == 5
+    assert "Synthetic private page" not in text and all(page["id"] not in text and page["handle"] not in text for page in pages)
+    assert app.state.page_lifecycle.purge_due() == {"purged": 1}
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "page_deletion")] == 0
+    assert values[("community_work_ready_oldest_seconds", "page_deletion")] == 0
+    clock.now = due_at + timedelta(seconds=50)
+    values, _text = scrape(client, app)
+    assert values[("community_work_ready", "page_deletion")] == 1
+    assert values[("community_work_ready_oldest_seconds", "page_deletion")] == 20
+    assert app.state.page_lifecycle.purge_due() == {"purged": 1}
+    assert scrape(client, app)[0][("community_work_ready", "page_deletion")] == 0
+    with app.state.sessions() as database:
+        assert database.get(PublicPage, active["id"]).status == "active"
+        assert database.get(PublicPage, restored["id"]).status == "active"
+        assert database.get(PublicPage, archived["id"]).status == "read_only"
+
+
 def test_metrics_still_answer_when_the_database_is_unreachable(client, app, monkeypatch):
     assert client.get("/health/live").status_code == 200
 
@@ -136,4 +293,6 @@ def test_metrics_still_answer_when_the_database_is_unreachable(client, app, monk
     values, text = scrape(client, app)
     assert values[("community_work_query_success", None)] == 0
     assert "community_work_ready" not in text
+    assert "community_work_blocked" not in text
+    assert "community_work_failed" not in text
     assert 'community_http_requests_total{method="GET",route="/health/live",status="200"} 1' in text

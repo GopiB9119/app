@@ -65,6 +65,26 @@ class CareDoseReport(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class CareDoseAnswer(Base):
+    """An earlier answer for one dose, kept when the person corrects it (DEC-030). Never changed afterwards."""
+
+    __tablename__ = "care_dose_report_history"
+    __table_args__ = (
+        UniqueConstraint("report_id", "revision", name="uq_care_report_history_revision"),
+        CheckConstraint("outcome IN ('taken', 'skipped')", name="ck_care_report_history_outcome"),
+        CheckConstraint("revision > 0", name="ck_care_report_history_revision"),
+        CheckConstraint("replaced_at >= recorded_at", name="ck_care_report_history_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    report_id: Mapped[str] = mapped_column(ForeignKey(CareDoseReport.id))
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    outcome: Mapped[str] = mapped_column(String(8))
+    revision: Mapped[int] = mapped_column(Integer)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class CareAudit(Base):
     """Content-free evidence of a care command. Medicine text never appears here."""
 

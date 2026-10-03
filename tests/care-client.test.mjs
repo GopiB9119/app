@@ -173,6 +173,20 @@ test('Dose notes carry the reviewed version and are confirmed before being shown
   await assert.rejects(wrongDose.reportDose({ accountId, key, occurrence: shown, outcome: 'taken' }), { status: 502 });
 });
 
+// DEC-030 (T155): a correction keeps each earlier answer.
+test('Earlier answers come back with a corrected note, and a service without them means none', async () => {
+  const earlier = [{ outcome: 'taken', revision: 1, recorded_at: '2026-09-25T03:00:00Z', replaced_at: '2026-09-25T03:05:00Z' }];
+  const client = careClient(async () => Response.json({ data: occurrence({ report: { outcome: 'skipped', revision: 2, reported_at: '2026-09-25T03:00:00Z', updated_at: '2026-09-25T03:05:00Z', earlier }, etag: '"o2"' }) }));
+  const corrected = await client.reportDose({ accountId, key, occurrence: occurrence(), outcome: 'skipped' });
+  assert.deepEqual(corrected.report.earlier.map(answer => ({ ...answer })), earlier);
+  const older = client.occurrenceSchema.parse(occurrence({ report: { outcome: 'taken', revision: 1, reported_at: '2026-09-25T03:00:00Z', updated_at: '2026-09-25T03:00:00Z' } }));
+  assert.equal(older.report.earlier.length, 0);
+  for (const wrong of [[{ ...earlier[0], outcome: 'maybe' }], Array.from({ length: 11 }, () => earlier[0]), [{ ...earlier[0], replaced_at: 'later' }]]) {
+    const report = { outcome: 'skipped', revision: 2, reported_at: '2026-09-25T03:00:00Z', updated_at: '2026-09-25T03:05:00Z', earlier: wrong };
+    assert.equal(client.occurrenceSchema.safeParse(occurrence({ report })).success, false);
+  }
+});
+
 test('Day plan and stop responses must match the request', async () => {
   const good = careClient(async () => Response.json({ data: day() }));
   assert.equal((await good.careDay(accountId, '2026-09-25')).occurrences.length, 1);

@@ -131,6 +131,18 @@ class EventService:
                 SpaceEventResponse.admission_id == membership.admission_id,
             ))
         }
+        # Places in line are worked out from the answers each time, so the number going can never pass the capacity.
+        line = select(
+            SpaceEventResponse.event_id, SpaceEventResponse.account_id,
+            func.row_number().over(
+                partition_by=SpaceEventResponse.event_id, order_by=(SpaceEventResponse.going_since, SpaceEventResponse.account_id),
+            ).label("place"),
+        ).join(SpaceEvent, SpaceEvent.id == SpaceEventResponse.event_id).join(SpaceMembership, current).where(
+            SpaceEventResponse.event_id.in_(identifiers), SpaceEventResponse.response == "going",
+        ).subquery()
+        places = dict(database.execute(
+            select(line.c.event_id, line.c.place).where(line.c.account_id == membership.account_id)
+        ).all())
         names = dict(database.execute(
             select(User.id, User.display_name).where(User.id.in_({event.creator_id for event in events}))
         ).all())
@@ -143,6 +155,9 @@ class EventService:
             manager = membership.role == "owner" or (
                 event.creator_id == membership.account_id and event.creator_admission_id == membership.admission_id
             )
+            requested = counts.get(event.id, {}).get("going", 0)
+            going = requested if event.capacity is None else min(requested, event.capacity)
+            place = places.get(event.id)
             fields = dict(
                 id=event.id, space_id=event.space_id, space_name=space.name, title=event.title,
                 description=event.description, location=event.location, timezone=event.timezone,
@@ -150,10 +165,12 @@ class EventService:
                 ends_at=event.ends_at, status=event.status, ended=ended, created_by_name=names.get(event.creator_id, ""),
                 created_at=event.created_at, updated_at=event.updated_at,
                 schedule_changed_at=event.schedule_changed_at, cancelled_at=event.cancelled_at,
-                going=counts.get(event.id, {}).get("going", 0), maybe=counts.get(event.id, {}).get("maybe", 0),
+                going=going, maybe=counts.get(event.id, {}).get("maybe", 0),
                 not_going=counts.get(event.id, {}).get("not_going", 0),
+                capacity=event.capacity, waitlisted=requested - going,
                 my_response=own.response if own else None,
                 my_response_outdated=bool(own and event.schedule_changed_at and own.updated_at < event.schedule_changed_at),
+                my_waitlist_position=place - event.capacity if place and event.capacity is not None and place > event.capacity else None,
                 can_manage=manager and event.status == "scheduled" and not ended,
                 can_respond=event.status == "scheduled" and not ended,
                 etag=self.etag(event) if manager else None,
@@ -161,11 +178,20 @@ class EventService:
             if not detail:
                 views.append(SpaceEventView(**fields))
                 continue
+            waiting = {}
+            if event.capacity is not None:
+                waiting = {
+                    account_id: position - event.capacity
+                    for account_id, position in database.execute(
+                        select(line.c.account_id, line.c.place).where(line.c.event_id == event.id, line.c.place > event.capacity)
+                    ).all()
+                }
             attendees = [
                 AttendeeView(
                     name=name, response=item.response, responded_at=item.updated_at,
                     outdated=bool(event.schedule_changed_at and item.updated_at < event.schedule_changed_at),
                     mine=item.account_id == membership.account_id,
+                    waitlist_position=waiting.get(item.account_id),
                 )
                 for item, name in database.execute(
                     select(SpaceEventResponse, User.display_name)
@@ -184,7 +210,11 @@ class EventService:
             membership = self.membership(database, space_id, caller.id)
             if membership is None:
                 raise not_found("Space")
-            digest = self.security.digest("space.event.create", space_id, body.model_dump_json())
+            digest = self.security.digest(
+                "space.event.create", space_id,
+                # Without a capacity the body is digested as before capacities existed, so earlier retries still match.
+                body.model_dump_json(exclude={"capacity"} if body.capacity is None else None),
+            )
             existing = database.scalar(select(SpaceEvent).where(
                 SpaceEvent.space_id == space_id, SpaceEvent.creator_id == caller.id, SpaceEvent.creation_key == key,
             ))
@@ -209,7 +239,7 @@ class EventService:
                 id=str(uuid4()), space_id=space_id, creator_id=caller.id, creator_admission_id=membership.admission_id,
                 title=body.title, description=body.description, location=body.location, timezone=body.timezone,
                 local_start=body.local_start, local_end=body.local_end, starts_at=starts_at, ends_at=ends_at,
-                status="scheduled", version=1, creation_key=key, creation_digest=digest,
+                status="scheduled", version=1, creation_key=key, creation_digest=digest, capacity=body.capacity,
                 admissions_before=space.admission_sequence, created_at=now, updated_at=now,
             )
             database.add(event)
@@ -274,6 +304,17 @@ class EventService:
             raise DomainError(403, "EVENT_MANAGEMENT_DENIED", "Only the organizer or the Space owner can change this event.")
         return event, membership
 
+    @staticmethod
+    def going(database, event):
+        """People going now: current members who answered Going, up to the capacity."""
+        requested = database.scalar(
+            select(func.count()).select_from(SpaceEventResponse).join(SpaceMembership, and_(
+                SpaceMembership.space_id == event.space_id, SpaceMembership.account_id == SpaceEventResponse.account_id,
+                SpaceMembership.admission_id == SpaceEventResponse.admission_id, SpaceMembership.status == "active",
+            )).where(SpaceEventResponse.event_id == event.id, SpaceEventResponse.response == "going")
+        )
+        return requested if event.capacity is None else min(requested, event.capacity)
+
     def update(self, token, event_id, body, etag):
         with self.identity.signed_in_write(token) as (database, caller):
             event, membership = self.managed(database, caller, event_id)
@@ -284,14 +325,20 @@ class EventService:
             if self.finish(event) <= now:
                 raise DomainError(409, "EVENT_ENDED", "This event has ended.")
             rescheduled = (body.timezone, body.local_start, body.local_end) != (event.timezone, event.local_start, event.local_end)
-            details = (body.title, body.description, body.location) != (event.title, event.description, event.location)
+            capacity = body.capacity if "capacity" in body.model_fields_set else event.capacity
+            details = (body.title, body.description, body.location, capacity) != (event.title, event.description, event.location, event.capacity)
             if not rescheduled and not details:
                 return self.present(database, [event], membership, detail=True)[0]
+            if capacity is not None and capacity != event.capacity:
+                going = self.going(database, event)
+                if capacity < going:
+                    raise DomainError(409, "CAPACITY_BELOW_GOING", f"People going: {going}. Choose a capacity of at least {going}.")
             if rescheduled:
                 event.starts_at, event.ends_at = self.schedule(body, now)
                 event.timezone, event.local_start, event.local_end = body.timezone, body.local_start, body.local_end
                 event.schedule_changed_at = now
             event.title, event.description, event.location = body.title, body.description, body.location
+            event.capacity = capacity
             event.version += 1
             event.updated_at = now
             self.record(database, event, caller.id, "event.updated")
@@ -327,12 +374,20 @@ class EventService:
             outdated = bool(current and event.schedule_changed_at and current.updated_at < event.schedule_changed_at)
             if current is not None and current.admission_id == membership.admission_id and current.response == body.response and not outdated:
                 return self.present(database, [event], membership, detail=True)[0]
+            # Answering Going again, for example after the time changed, keeps the person's place in line.
+            keeps_place = current is not None and current.admission_id == membership.admission_id and current.response == "going"
+            joined = None
+            if body.response == "going" and not keeps_place:
+                # Answers are taken one at a time under the event lock, so a later one never shares an earlier one's time.
+                latest = database.scalar(select(func.max(SpaceEventResponse.going_since)).where(SpaceEventResponse.event_id == event.id))
+                joined = now if latest is None or latest < now else latest + timedelta(microseconds=1)
             if current is None:
                 current = SpaceEventResponse(event_id=event.id, account_id=caller.id)
                 database.add(current)
             current.admission_id = membership.admission_id
             current.response = body.response
             current.updated_at = now
+            current.going_since = (current.going_since if keeps_place else joined) if body.response == "going" else None
             self.record(database, event, caller.id, "event.attendee.updated", audit=False)
             database.flush()
             return self.present(database, [event], membership, detail=True)[0]

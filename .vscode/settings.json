@@ -1,0 +1,4 @@
+{
+    "github.copilot.chat.rateLimitAutoSwitchToAuto": true,
+    "chat.subagents.defaultToAuto": true
+}

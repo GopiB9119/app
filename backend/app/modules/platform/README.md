@@ -8,6 +8,23 @@ Feature inventory: database-migrations, api-contracts, state-machines, authoriza
 
 See the [complete feature catalog](../../../../packages/feature-catalog/features.json). Future implementation files belong here as each feature is built.
 
+## Background Work Gauges
+
+The protected `/metrics` endpoint reads [work.py](work.py) from the database at scrape time. It exposes counts and ages only, with five fixed queue labels; no user, page, Space, address or content becomes a label. T167 adds deletion visibility using the same read-only query builders as the purge workers, without changing retention, purge transactions or retries ([checkpoint](../../../../docs/BUILD_STATUS.md#purge-work-metrics-checkpoint)).
+
+| Metric | Queues | Meaning |
+| --- | --- | --- |
+| `community_work_ready` | `identity_mail`, `reminders`, `exports`, `account_deletion`, `page_deletion` | Eligible work at the scrape time, excluding an account whose purge is blocked by owning an active Space with another active member |
+| `community_work_ready_oldest_seconds` | The same five queues | Age of the oldest eligible item, zero for an empty queue; deletion age starts at `purge_after`, not at the deletion request |
+| `community_work_failed` | `identity_mail`, `reminders`, `exports` only | Persisted terminal failures; purge services have no such state, so their series are omitted, not reported as zero |
+| `community_work_blocked` | `account_deletion` only | Due accounts that still own a shared active Space, counted once even when several Spaces block them |
+| `community_work_blocked_oldest_seconds` | `account_deletion` only | Age since the oldest blocked account's `purge_after`; not time since its ownership block began |
+| `community_work_query_success` | No queue label | 1 after a successful complete read; 0 on a database error, with work gauge samples omitted instead of false zeroes |
+
+Future, cancelled/restored and already purged work is excluded. An archived Space or a removed other member does not block account purge, matching the worker. A scrape does not lock or claim work: eligibility can change and another transaction can hold a row. Queues are queried separately rather than in a single cross-queue snapshot; the existing two-second per-statement timeout remains. A growing ready age can reveal a stopped or slow worker; blocked age requires resolving ownership instead. Worker logs still report transient purge database failures, because no durable purge-attempt/failure ledger exists.
+
+These are operational observations, not alert thresholds, SLOs or a new privacy policy. The shared development API must load the changed source in a coordinated restart before it exposes the new series; this verification did not restart it.
+
 ## Local Restore Drill
 
 [`scripts/restore-drill.ps1`](../../../../scripts/restore-drill.ps1) exercises the isolated-restore procedure (C10-W11) on synthetic development data:

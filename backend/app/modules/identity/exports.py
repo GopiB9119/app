@@ -5,9 +5,12 @@ from uuid import uuid4
 from sqlalchemy import and_, func, or_, select, update
 
 from app.errors import DomainError
+from app.modules.community.models import INTEREST_DIMENSIONS, AccountInterest, FeedControl, PublicPage, TaxonomyTerm
 from app.modules.identity.models import AccountExport, AccountSession, SecurityEvent, User
 from app.modules.identity.schemas import (
     ArchiveEvent,
+    ArchiveFeedControl,
+    ArchiveInterest,
     ArchiveInvitation,
     ArchiveMembership,
     ArchiveNotification,
@@ -294,9 +297,34 @@ class ExportService:
         sections = {}
         omitted = []
         if "profile" in selected:
+            chosen = database.execute(
+                select(AccountInterest, TaxonomyTerm.label_en)
+                .join(TaxonomyTerm, and_(TaxonomyTerm.dimension == AccountInterest.dimension, TaxonomyTerm.code == AccountInterest.code))
+                .where(AccountInterest.account_id == user.id)
+            ).tuples().all()
+            chosen.sort(key=lambda row: (INTEREST_DIMENSIONS.index(row[0].dimension), row[0].position))
+            controls = database.execute(
+                select(FeedControl, TaxonomyTerm.label_en, PublicPage.name, PublicPage.status)
+                .outerjoin(TaxonomyTerm, and_(TaxonomyTerm.dimension == FeedControl.term_dimension, TaxonomyTerm.code == FeedControl.term_code))
+                .outerjoin(PublicPage, PublicPage.id == FeedControl.page_id)
+                .where(FeedControl.account_id == user.id)
+                .order_by(FeedControl.created_at, FeedControl.id)
+            ).tuples().all()
             sections["profile"] = ArchiveProfile(
                 id=user.id, email=self.security.open(user.email_cipher), display_name=user.display_name,
                 timezone=user.timezone, status=user.status, created_at=user.created_at, verified_at=user.verified_at,
+                interests=[
+                    ArchiveInterest(dimension=row.dimension, code=row.code, name=name, chosen_at=row.chosen_at)
+                    for row, name in chosen
+                ],
+                feed_controls=[
+                    ArchiveFeedControl(
+                        kind=control.kind, page_id=control.page_id, post_id=control.post_id, dimension=control.term_dimension,
+                        code=control.term_code, created_at=control.created_at,
+                        name=term_name or (page_name if page_status in ("active", "read_only") else None),
+                    )
+                    for control, term_name, page_name, page_status in controls
+                ],
             )
         if "security" in selected:
             sections["security"] = self.security_history(database, user.id, omitted)

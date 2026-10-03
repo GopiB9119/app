@@ -48,12 +48,12 @@ function Agent({ user }: { user: Account }) {
   useSessionGuard(spaces.error);
   return <Shell account><main className={styles.main}>
     <header className={styles.header}>
-      <h1>{t("agent.title")}</h1>
+      <h1>{t("agent.heading")}</h1>
       <p>{t("agent.description")}</p>
     </header>
     <div className={styles.tabs} role="group" aria-label={t("agent.viewLabel")}>
-      <button className={styles.tab} aria-pressed={view === "requests"} onClick={() => setView("requests")}>{t("agent.tabRequests")}</button>
-      <button className={styles.tab} aria-pressed={view === "memories"} onClick={() => setView("memories")}>{t("agent.tabMemories")}</button>
+      <button className={styles.tab} aria-pressed={view === "requests"} onClick={() => setView("requests")}>{t("agent.requests")}</button>
+      <button className={styles.tab} aria-pressed={view === "memories"} onClick={() => setView("memories")}>{t("agent.memories")}</button>
     </div>
     {view === "memories" ? <Memories user={user} /> : <>
       {spaces.isPending && <p role="status">{t("agent.loadingSpaces")}</p>}
@@ -61,19 +61,19 @@ function Agent({ user }: { user: Account }) {
       {spaces.data && spaceList.length === 0 && <p className={styles.empty}>{t("agent.spacesEmpty")}</p>}
       {spaceId && <>
         <div className={styles.controls}>
-          <label className={styles.field}>{t("agent.spaceLabel")}
+          <label className={styles.field}>{t("agent.space")}
             <select value={spaceId} onChange={event => setChosen(event.target.value)}>
               {spaceList.map(space => <option key={space.id} value={space.id}>{space.name}</option>)}
             </select>
           </label>
         </div>
-        <Requests key={spaceId} user={user} spaceId={spaceId} />
+        <Requests key={spaceId} user={user} spaceId={spaceId} agentEnabled={spaceList.find(space => space.id === spaceId)?.agent_enabled ?? true} />
       </>}
     </>}
   </main></Shell>;
 }
 
-function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
+function Requests({ user, spaceId, agentEnabled }: { user: Account; spaceId: string; agentEnabled: boolean }) {
   const client = useQueryClient();
   const t = useText();
   const fieldId = useId();
@@ -103,7 +103,11 @@ function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const parsed = messageSchema.safeParse(text);
-    if (!parsed.success) { setProblem(parsed.error.issues[0]?.message ?? t("agent.validationEmpty")); return; }
+    if (!parsed.success) {
+      setProblem(!text.trim() ? t("agent.requestRequired") : characters(text.trim()) > 500
+        ? t("agent.requestLength") : parsed.error.issues[0]?.message ?? t("agent.requestRequired"));
+      return;
+    }
     setProblem("");
     const command = intent && intent.message === parsed.data ? intent : { accountId: user.id, spaceId, message: parsed.data, key: crypto.randomUUID() };
     setIntent(command);
@@ -111,9 +115,10 @@ function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
   };
   const rows = [...new Map(runs.data?.pages.flatMap(page => page.data).map(run => [run.id, run] as const) ?? []).values()];
   return <>
-    <form className={styles.composer} onSubmit={submit} noValidate>
+    {!agentEnabled && <p className="message" role="status">{t("agent.offInSpace")}</p>}
+    {agentEnabled && <form className={styles.composer} onSubmit={submit} noValidate>
       <div className={styles.field}>
-        <label htmlFor={`${fieldId}-message`}>{t("agent.whatToDo")}</label>
+        <label htmlFor={`${fieldId}-message`}>{t("agent.message")}</label>
         <span className={styles.hint} id={`${fieldId}-hint`}>{t("agent.hint")}</span>
         <textarea id={`${fieldId}-message`} rows={2} maxLength={1000} value={text} aria-describedby={`${fieldId}-hint`}
           aria-invalid={!!problem} disabled={ask.isPending || (!!intent && ask.isError)} onChange={event => { setText(event.target.value); setProblem(""); }} />
@@ -124,25 +129,25 @@ function Requests({ user, spaceId }: { user: Account; spaceId: string }) {
         <button className="primary-button" type="submit" disabled={ask.isPending}>{ask.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Send size={17} aria-hidden />}{intent && ask.isError ? t("agent.sendAgain") : t("agent.ask")}</button>
         {intent && ask.isError && <button className="text-button" type="button" onClick={() => { setIntent(null); ask.reset(); }}>{t("agent.editRequest")}</button>}
       </div>
-    </form>
+    </form>}
     <section aria-labelledby={`${fieldId}-history`}>
       <div className={styles.runHead}><h2 id={`${fieldId}-history`}>{t("agent.yourRequests")}</h2>
         <button className="icon-button" aria-label={t("agent.refreshRequests")} title={t("agent.refreshRequests")} disabled={runs.isFetching} onClick={() => refresh()}><RefreshCw size={18} className={runs.isFetching ? "spin" : ""} aria-hidden /></button>
       </div>
       {runs.isPending && <p role="status">{t("agent.loadingRequests")}</p>}
       {runs.isError && <p className="message error" role="alert">{problemText(runs.error, t("agent.requestsError"))}</p>}
-      {!runs.isPending && !runs.isError && rows.length === 0 && <p className={styles.empty}>{t("agent.requestsEmpty")}</p>}
+      {!runs.isPending && !runs.isError && rows.length === 0 && <p className={styles.empty}>{t("agent.emptyRequests")}</p>}
       <ul className={styles.list}>{rows.map(run => <li key={run.id}><RunCard user={user} run={run} onChanged={refresh} /></li>)}</ul>
       {runs.hasNextPage && <button className="text-button" disabled={runs.isFetching} onClick={() => runs.fetchNextPage()}>{t("agent.showEarlier")}</button>}
     </section>
   </>;
 }
 
-const statusKeys: Record<AgentRun["status"], string> = {
-  queued: "agent.statusQueued", running: "agent.statusRunning", waiting_for_approval: "agent.statusWaitingApproval",
-  waiting_for_user: "agent.statusWaitingUser", verifying: "agent.statusVerifying", completed: "agent.statusCompleted",
-  failed: "agent.statusFailed", cancelled: "agent.statusCancelled", timed_out: "agent.statusTimedOut", expired: "agent.statusExpired",
-};
+const statusKeys = {
+  queued: "agent.status.queued", running: "agent.status.running", waiting_for_approval: "agent.status.waiting_for_approval",
+  waiting_for_user: "agent.status.waiting_for_user", verifying: "agent.status.verifying", completed: "agent.status.completed",
+  failed: "agent.status.failed", cancelled: "agent.status.cancelled", timed_out: "agent.status.timed_out", expired: "agent.status.expired",
+} as const satisfies Record<AgentRun["status"], string>;
 
 function RunCard({ user, run, onChanged }: { user: Account; run: AgentRun; onChanged: () => Promise<unknown> }) {
   const t = useText();
@@ -176,25 +181,25 @@ function RunCard({ user, run, onChanged }: { user: Account; run: AgentRun; onCha
   return <article className={styles.run} aria-labelledby={`${fieldId}-asked`}>
     <div className={styles.runHead}>
       <div><p className={styles.asked} id={`${fieldId}-asked`}>{run.message}</p><p className={styles.when}>{formatDateTime(language, run.created_at, { dateStyle: "medium", timeStyle: "short" })}</p></div>
-      <span className={styles.status}>{t(statusKeys[run.status] as any)}</span>
+      <span className={styles.status}>{t(statusKeys[run.status])}</span>
     </div>
     {run.answer && <p className={styles.answer}>{run.answer}</p>}
     {run.question && <form className={styles.check} onSubmit={event => { event.preventDefault(); if (reply.trim() && !replyTooLong) respond.mutate(reply.trim()); }}>
       <p className={styles.answer} id={`${fieldId}-question`}>{run.question.text}</p>
-      <label className={styles.field}>{t("agent.yourAnswer")}
+      <label className={styles.field}>{t("agent.answerLabel")}
         <input value={reply} maxLength={1000} aria-describedby={`${fieldId}-question`} aria-invalid={replyTooLong || undefined} disabled={busy} onChange={event => setReply(event.target.value)} />
       </label>
-      {replyTooLong && <p className="field-error" role="alert">{t("agent.answerTooLong")}</p>}
+      {replyTooLong && <p className="field-error" role="alert">{t("agent.answerLength")}</p>}
       {respond.isError && <p className="message error" role="alert">{problemText(respond.error, t("agent.answerError"))}</p>}
       <div className={styles.actions}>
         <button className="secondary-button" type="submit" disabled={busy || !reply.trim() || replyTooLong}><Send size={17} aria-hidden />{t("agent.answer")}</button>
-        <button className="text-button" type="button" disabled={busy} onClick={() => stop.mutate()}>{t("agent.stopRequest")}</button>
+        <button className="text-button" type="button" disabled={busy} onClick={() => stop.mutate()}>{t("agent.stop")}</button>
       </div>
     </form>}
     {approval && <section className={styles.check} aria-labelledby={`${fieldId}-check`}>
-      <h3 id={`${fieldId}-check`}>{pending ? t("agent.checkFirst") : approval.summary}</h3>
+      <h3 id={`${fieldId}-check`}>{pending ? t("agent.check") : approval.summary}</h3>
       <dl className={styles.facts}>{approval.fields.map(item => <div key={item.label} style={{ display: "contents" }}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>
-      {pending && <p className={styles.when}>{t("agent.waitingUntil", { time: formatDateTime(language, approval.expires_at, { dateStyle: "medium", timeStyle: "short" }) })}</p>}
+      {pending && <p className={styles.when}>{t("agent.waiting", { date: formatDateTime(language, approval.expires_at, { dateStyle: "medium", timeStyle: "short" }) })}</p>}
       {decision.isError && <p className="message error" role="alert">{problemText(decision.error, t("agent.decisionError"))}</p>}
       {pending && <div className={styles.actions}>
         <button className="primary-button" disabled={busy} onClick={() => choose("approve")}>{decision.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Check size={17} aria-hidden />}{decision.isError && isUnknown(decision.error) ? t("agent.approveAgain") : t("agent.approve")}</button>
@@ -215,21 +220,21 @@ function Memories({ user }: { user: Account }) {
   });
   useSessionGuard(memories.error ?? forget.error);
   return <section aria-labelledby="agent-memories">
-    <h2 id="agent-memories">{t("agent.memoriesTitle")}</h2>
+    <h2 id="agent-memories">{t("agent.memoriesHeading")}</h2>
     <p className={styles.hint}>{t("agent.memoriesHint")}</p>
     {memories.isPending && <p role="status">{t("agent.loadingMemories")}</p>}
     {memories.isError && <p className="message error" role="alert">{problemText(memories.error, t("agent.memoriesError"))}</p>}
-    {memories.data && memories.data.length === 0 && <p className={styles.empty}>{t("agent.memoriesEmpty")}</p>}
+    {memories.data && memories.data.length === 0 && <p className={styles.empty}>{t("agent.emptyMemories")}</p>}
     {memories.data && memories.data.length > 0 && <ul className={styles.memories}>{memories.data.map(memory => <li key={memory.id}>
       <p><span className={styles.label}>{memory.label}</span>{memory.content}</p>
-      <button className="text-button" aria-label={t("agent.deleteMemoryLabel", { content: memory.content })} onClick={() => { forget.reset(); setConfirm(memory); }}><Trash2 size={16} aria-hidden />{t("agent.delete")}</button>
+      <button className="text-button" aria-label={t("agent.deleteNamedMemory", { content: memory.content })} onClick={() => { forget.reset(); setConfirm(memory); }}><Trash2 size={16} aria-hidden />{t("agent.delete")}</button>
     </li>)}</ul>}
     {confirm && <ConfirmDialog title={t("agent.deleteTitle")} onClose={() => setConfirm(null)} locked={forget.isPending}>
       <p><strong>{confirm.label}:</strong> {confirm.content}</p>
       <p className={styles.hint}>{t("agent.deleteWarning")}</p>
       {forget.isError && <p className="message error" role="alert">{problemText(forget.error, t("agent.deleteError"))}</p>}
       <div className="dialog-actions">
-        <button className="secondary-button" disabled={forget.isPending} onClick={() => setConfirm(null)}>{t("agent.keepIt")}</button>
+        <button className="secondary-button" disabled={forget.isPending} onClick={() => setConfirm(null)}>{t("agent.keep")}</button>
         <button className="primary-button" disabled={forget.isPending} onClick={() => forget.mutate(confirm)}><Trash2 size={17} aria-hidden />{t("agent.deleteMemory")}</button>
       </div>
     </ConfirmDialog>}

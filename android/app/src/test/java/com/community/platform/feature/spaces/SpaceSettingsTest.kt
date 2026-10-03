@@ -35,6 +35,7 @@ class SpaceSettingsTest {
     private var failure = 0
     private val commands = mutableListOf<Triple<String, String, EditSpaceSettingsDto>>()
     private val policyCommands = mutableListOf<Triple<String, String, InvitePolicyDto>>()
+    private val agentCommands = mutableListOf<Triple<String, String, AgentPolicyDto>>()
     private var policyError: Exception? = null
     private var reads = 0
     private val api = object : SpaceSettingsApi {
@@ -51,6 +52,13 @@ class SpaceSettingsTest {
             assertEquals("Bearer ${fixture.token}", authorization)
             assertEquals(fixture.spaceId, spaceId)
             policyCommands.add(Triple(key, etag, body))
+            policyError?.let { throw it }
+            return result()
+        }
+        override suspend fun agentPolicy(authorization: String, spaceId: String, etag: String, key: String, body: AgentPolicyDto): Response<EnvelopeDto<SpaceSettingsDto>> {
+            assertEquals("Bearer ${fixture.token}", authorization)
+            assertEquals(fixture.spaceId, spaceId)
+            agentCommands.add(Triple(key, etag, body))
             policyError?.let { throw it }
             return result()
         }
@@ -185,6 +193,71 @@ class SpaceSettingsTest {
         current.confirmInvitePolicy(); idle(current)
         assertEquals(value.etag, policyCommands.last().second)
         assertNotEquals(policyCommands.first().first, policyCommands.last().first)
+    }
+
+    @Test fun agentPolicyWireSendsExactPathAndRejectsAMismatchedResult(): Unit = runBlocking {
+        var request: Request? = null
+        val response = original.copy(agentEnabled = false, version = "2", etag = "\"${"b".repeat(64)}\"")
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            request = chain.request()
+            okhttp3.Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(EnvelopeDto(response, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = SpaceSettingsRepository(IdentityModule.spaceSettings(http, Gson()), fixture.accounts)
+        val intent = AgentPolicyIntent(fixture.accountId, fixture.spaceId, false, original.etag, UUID.randomUUID().toString())
+        assertEquals(response, wire.changeAgentPolicy(intent))
+        assertEquals("POST", request!!.method)
+        assertEquals("/v1/spaces/${fixture.spaceId}/agent-policy", request!!.url.encodedPath)
+        assertEquals(intent.etag, request!!.header("If-Match"))
+        assertEquals(intent.requestKey, request!!.header("Idempotency-Key"))
+        val buffer = Buffer(); request!!.body!!.writeTo(buffer)
+        val body = JsonParser.parseString(buffer.readUtf8()).asJsonObject
+        assertEquals(setOf("agent_enabled"), body.keySet())
+        assertFalse(body["agent_enabled"].asBoolean)
+        val error = assertThrows(IdentityFailure::class.java) { runBlocking { wire.changeAgentPolicy(intent.copy(agentEnabled = true)) } }
+        assertEquals("INVALID_RESPONSE", error.code)
+    }
+
+    @Test fun agentPolicyConfirmsBothChoicesAndRetriesTheSameRequest() = runBlocking {
+        val current = ready()
+        assertTrue(current.state.value.basis!!.agentEnabled)
+        current.proposeAgentPolicy(); current.cancelAgentPolicy(); current.confirmAgentPolicy()
+        assertTrue(agentCommands.isEmpty())
+        current.proposeAgentPolicy()
+        policyError = IOException("Synthetic unanswered request")
+        current.confirmAgentPolicy(); idle(current)
+        val intent = current.state.value.pendingAgentPolicy!!
+        assertTrue(current.state.value.locked)
+        current.proposeInvitePolicy(); current.save()
+        assertFalse(current.state.value.confirmingInvitePolicy)
+        policyError = null
+        value = original.copy(agentEnabled = false, version = "2", etag = "\"${"b".repeat(64)}\"")
+        current.retry(); idle(current)
+        assertEquals(2, agentCommands.size)
+        assertEquals(agentCommands[0], agentCommands[1])
+        assertEquals(intent.requestKey, agentCommands.last().first)
+        assertFalse(agentCommands.last().third.agentEnabled)
+        assertEquals("The agent is off in this Space.", current.state.value.notice)
+        assertFalse(current.state.value.locked)
+        current.proposeAgentPolicy()
+        value = value.copy(agentEnabled = true, version = "3")
+        current.confirmAgentPolicy(); idle(current)
+        assertTrue(agentCommands.last().third.agentEnabled)
+        assertEquals("\"${"b".repeat(64)}\"", agentCommands.last().second)
+        assertEquals("The agent is on in this Space.", current.state.value.notice)
+        assertTrue(policyCommands.isEmpty())
+    }
+
+    @Test fun agentPolicyNeedsTheOwnerAndSavedSettings() = runBlocking {
+        val current = ready()
+        current.name("Unsaved name")
+        current.proposeAgentPolicy()
+        assertFalse(current.state.value.confirmingAgentPolicy)
+        current.name(original.name)
+        value = original.copy(spaceType = "solo")
+        current.reload(); idle(current)
+        current.proposeAgentPolicy()
+        assertTrue(current.state.value.confirmingAgentPolicy)
     }
 
     @Test fun invitePolicyRequiresFamilyOrGroupAndSavedSettings() = runBlocking {

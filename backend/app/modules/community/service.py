@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, exists, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import DomainError
@@ -10,28 +10,60 @@ from app.modules.community.models import (
     AccountBlock,
     CommunityAuditEvent,
     ContentReport,
+    FeedControl,
     PageFollow,
     PageHandover,
     PageModerator,
+    PageTerm,
     PostComment,
     PostReaction,
+    PostTerm,
     PublicPage,
     PublicPost,
     SavedPost,
+    TaxonomyTerm,
 )
 from app.modules.community.schemas import (
     BlockOutcome,
     BlockView,
+    ClassificationView,
     CommentView,
     CommunityCursor,
+    FeedControlOutcome,
+    FeedControlView,
     HandoverView,
+    InsightPeriod,
+    InterestPost,
+    InterestsView,
+    LimitMark,
     ModerationMark,
     ModeratorRoleView,
     ModeratorView,
+    PageInsights,
     PageView,
     PostOutcome,
     PostView,
     ReportView,
+    SuggestedPage,
+    Suggestions,
+)
+from app.modules.community.taxonomy import (
+    PERSON_FIELDS,
+    POST_FIELDS,
+    RANKING,
+    Matcher,
+    Vocabulary,
+    canonical,
+    classifications,
+    classify,
+    filtered,
+    interests_of,
+    post_terms_of,
+    save_interests,
+    searched_terms,
+    tag_post,
+    term_views,
+    unavailable,
 )
 from app.modules.identity.models import AccountSession, OutboxEvent, User
 from app.modules.spaces.schemas import Pagination
@@ -47,6 +79,7 @@ MAX_FOLLOWS = 1000
 MAX_SAVED = 1000
 MAX_PINNED_POSTS = 3
 MAX_MODERATORS = 10
+MAX_FEED_CONTROLS = {"mute_page": 200, "mute_term": 100, "hide_post": 1000, "hide_suggestion": 500}
 # Archived pages stay readable by everyone, so what is on them can still be reported and hidden (T109).
 PUBLIC_PAGE_STATES = ("active", "read_only")
 CURSOR_MINUTES = 15
@@ -54,6 +87,8 @@ MODERATOR_INVITE_LIFETIME = timedelta(hours=72)
 HANDOVER_OFFER_LIFETIME = timedelta(minutes=15)
 HANDOVER_AUTH_MAX_AGE = timedelta(minutes=15)
 PAGE_PURGE_GRACE = timedelta(days=7)
+INSIGHT_PERIOD = timedelta(days=7)
+INSIGHT_PERIODS = 8
 
 
 def not_found(subject):
@@ -144,6 +179,14 @@ class CommunityService:
             raise DomainError(409, "PAGE_READ_ONLY", "This page is read only. The owner can restore it.")
         if page.status == "deleted":
             raise DomainError(409, "PAGE_DELETED", "This page is deleted. The owner can restore it within seven days.")
+
+    @staticmethod
+    def open_for_new_content(page):
+        """A page a platform moderator hid (suspended) or limited takes no new posts or comments (DEC-040)."""
+        if page.moderation_hidden_at is not None:
+            raise DomainError(409, "PAGE_SUSPENDED", "Nothing new can be posted or commented on this page while it is hidden.")
+        if page.moderation_limited_at is not None:
+            raise DomainError(409, "PAGE_LIMITED", "New posts and comments are paused on this page.")
 
     def active_moderator(self, database, user, page_id, lock=False):
         if user is None:
@@ -251,6 +294,12 @@ class CommunityService:
         return or_(public, author == viewer.id)
 
     @staticmethod
+    def discoverable(viewer):
+        """A limited page leaves Discover for everyone but its owner (DEC-040)."""
+        open_page = PublicPage.moderation_limited_at.is_(None)
+        return open_page if viewer is None else or_(open_page, PublicPage.owner_id == viewer.id)
+
+    @staticmethod
     def can_view_moderated(target, viewer, page=None):
         if target.moderation_hidden_at is None:
             return True
@@ -272,19 +321,31 @@ class CommunityService:
         decision = database.get(ModerationDecision, target.moderation_decision_id)
         return ModerationMark(reason=decision.reason)
 
-    def page_view(self, database, page, viewer, following=None, blocked=None):
+    @staticmethod
+    def limit_mark(database, page, viewer):
+        from app.modules.safety.models import ModerationDecision
+
+        if page.moderation_limited_at is None or viewer is None or page.owner_id != viewer.id:
+            return None
+        return LimitMark(reason=database.get(ModerationDecision, page.moderation_limit_decision_id).reason)
+
+    def page_view(self, database, page, viewer, following=None, blocked=None, classification=None):
         manager = viewer is not None and page.owner_id == viewer.id
         if viewer is not None and following is None:
             following = database.get(PageFollow, (page.id, viewer.id)) is not None
         if viewer is not None and blocked is None:
             blocked = page.id in self.blocked(database, viewer, "page")
+        if classification is None:
+            classification = classifications(database, [page.id])[page.id]
         return PageView(
             id=page.id, handle=page.handle, name=page.name, description=page.description, rules=page.rules, topic=page.topic,
+            classification=ClassificationView(**classification),
             status=page.status, purge_after=page.purge_after if manager else None,
             follower_count=page.follower_count, created_at=page.created_at, updated_at=page.updated_at,
             following=bool(following), blocked=bool(blocked), can_manage=manager,
             etag=self.page_etag(page) if manager else None,
             moderation=self.moderation_mark(database, page, viewer),
+            limited=page.moderation_limited_at is not None, limit=self.limit_mark(database, page, viewer),
         )
 
     def page_views(self, database, pages, viewer):
@@ -293,7 +354,10 @@ class CommunityService:
         if viewer is not None and ids:
             followed = set(database.scalars(select(PageFollow.page_id).where(PageFollow.account_id == viewer.id, PageFollow.page_id.in_(ids))))
         blocked = self.blocked(database, viewer, "page")
-        return [self.page_view(database, page, viewer, page.id in followed, page.id in blocked) for page in pages]
+        classified = classifications(database, ids)
+        return [
+            self.page_view(database, page, viewer, page.id in followed, page.id in blocked, classified[page.id]) for page in pages
+        ]
 
     def post_views(self, database, rows, viewer):
         ids = [post.id for post, _page in rows]
@@ -305,17 +369,20 @@ class CommunityService:
             PostComment.post_id.in_(ids), PostComment.status == "visible", PostComment.moderation_hidden_at.is_not(None),
             *([PostComment.author_id != viewer.id] if viewer is not None else []),
         ).group_by(PostComment.post_id)).all()) if ids else {}
+        subjects = post_terms_of(database, ids)
         views = []
         for post, page in rows:
             manager = viewer is not None and page.owner_id == viewer.id
             views.append(PostView(
                 id=post.id, page_id=page.id, page_handle=page.handle, page_name=page.name, page_status=page.status,
+                page_limited=page.moderation_limited_at is not None,
                 title=post.title,
                 body=post.body, status=post.status, like_count=post.like_count,
                 comment_count=post.comment_count - hidden_counts.get(post.id, 0),
                 created_at=post.created_at, published_at=post.published_at, edited_at=post.edited_at,
                 liked=post.id in liked, saved=post.id in saved, pinned=self.is_pinned(post), can_manage=manager,
                 etag=self.post_etag(post) if manager else None,
+                topics=subjects[post.id]["topics"], interests=subjects[post.id]["interests"],
                 moderation=self.moderation_mark(database, post, viewer, page),
             ))
         return views
@@ -355,7 +422,10 @@ class CommunityService:
     # Pages
 
     def create_page(self, token, body, key):
-        digest = self.security.digest("public.page.create", body.handle, body.name, body.description, body.topic)
+        requested = body.classification.requested() if body.classification is not None else {}
+        # Only a page created with a classification adds it to the digest, so retries from before DEC-027 still match.
+        parts = (canonical(requested),) if requested else ()
+        digest = self.security.digest("public.page.create", body.handle, body.name, body.description, body.topic, *parts)
         with self.identity.signed_in_write(token) as (database, user):
             existing = database.scalar(select(PublicPage).where(PublicPage.owner_id == user.id, PublicPage.creation_key == key))
             if existing is not None:
@@ -367,6 +437,8 @@ class CommunityService:
             owned = database.scalar(select(func.count()).select_from(PublicPage).where(self.present_pages(user.id)))
             if owned >= MAX_PAGES_PER_OWNER:
                 raise DomainError(409, "PAGE_LIMIT_REACHED", f"You can own up to {MAX_PAGES_PER_OWNER} public pages in this local build.")
+            vocabulary = Vocabulary.load(database)
+            vocabulary.check("topic", "topic", [body.topic])
             if database.scalar(select(PublicPage.id).where(PublicPage.handle == body.handle)) is not None:
                 raise DomainError(409, "HANDLE_TAKEN", "This handle is already used. Choose another.")
             now = self.clock()
@@ -380,6 +452,9 @@ class CommunityService:
                 database.flush()
             except IntegrityError:
                 raise DomainError(409, "HANDLE_TAKEN", "This handle is already used. Choose another.") from None
+            nothing = {field: [] for field in ClassificationView.model_fields}
+            classify(database, vocabulary, page, requested, nothing)
+            database.flush()
             self.record(database, user.id, page.id, page.id, "public.page_created")
             return self.page_view(database, page, user, following=False, blocked=False)
 
@@ -401,12 +476,20 @@ class CommunityService:
             page = self.managed_page(database, user, page_id)
             self.writable(page)
             self.require_etag(etag, self.page_etag(page), "page")
+            vocabulary = Vocabulary.load(database)
+            current = classifications(database, [page.id])[page.id]
+            requested = body.classification.requested() if body.classification is not None else {}
+            if "topic" in body.model_fields_set and body.topic != page.topic:
+                vocabulary.check("topic", "topic", [body.topic])
+                # The new main topic leaves the other topics, where it would only repeat itself.
+                requested.setdefault("other_topics", current["other_topics"])
             changed = False
-            for field in body.model_fields_set:
+            for field in body.model_fields_set - {"classification"}:
                 value = getattr(body, field)
                 if getattr(page, field) != value:
                     setattr(page, field, value)
                     changed = True
+            changed = classify(database, vocabulary, page, requested, current) or changed
             if changed:
                 page.version += 1
                 page.updated_at = self.clock()
@@ -444,10 +527,53 @@ class CommunityService:
             next_cursor = self.seal_cursor("following", user, "", rows[-1][0].id, after_time=rows[-1][1]) if more else None
             return self.page_views(database, [page for page, _time in rows], user), Pagination(next_cursor=next_cursor, has_more=more)
 
+    def page_insights(self, token, page_id):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            page = self.find_page(database, page_id, viewer=user)
+            if page.owner_id != user.id:
+                raise DomainError(403, "PAGE_MANAGER_REQUIRED", "Only the page owner can see its insights.")
+            now = self.clock()
+            since = now - INSIGHT_PERIOD * INSIGHT_PERIODS
+            posts = select(PublicPost.id).where(PublicPost.page_id == page.id)
+            # What the owner did themselves is not counted; deleted, removed and hidden comments are not either.
+            moments = {
+                "new_followers": select(PageFollow.created_at).where(
+                    PageFollow.page_id == page.id, PageFollow.account_id != user.id, PageFollow.created_at > since,
+                ),
+                "posts": select(PublicPost.published_at).where(
+                    PublicPost.page_id == page.id, PublicPost.status == "published", PublicPost.published_at > since,
+                ),
+                "comments": select(PostComment.created_at).where(
+                    PostComment.post_id.in_(posts), PostComment.status == "visible", PostComment.moderation_hidden_at.is_(None),
+                    PostComment.author_id != user.id, PostComment.created_at > since,
+                ),
+                "likes": select(PostReaction.created_at).where(
+                    PostReaction.post_id.in_(posts), PostReaction.account_id != user.id, PostReaction.created_at > since,
+                ),
+            }
+            counts = {name: [0] * INSIGHT_PERIODS for name in moments}
+            for name, statement in moments.items():
+                for moment in database.scalars(statement):
+                    index = int((now - moment) / INSIGHT_PERIOD)
+                    if 0 <= index < INSIGHT_PERIODS:
+                        counts[name][index] += 1
+            periods = [
+                InsightPeriod(
+                    start=now - INSIGHT_PERIOD * (index + 1), end=now - INSIGHT_PERIOD * index,
+                    **{name: values[index] for name, values in counts.items()},
+                )
+                for index in range(INSIGHT_PERIODS)
+            ]
+            return PageInsights(page_id=page.id, follower_count=page.follower_count, as_of=now, periods=periods)
+
     # Posts
 
     def create_post(self, token, page_id, body, key):
-        digest = self.security.digest("public.post.create", page_id, body.title or "", body.body)
+        requested = body.requested_terms()
+        # Only a post created with topics or interests adds them to the digest, so retries from before DEC-036 still match.
+        parts = (";".join(f"{field}={','.join(codes)}" for field, codes in requested.items()),) if requested else ()
+        digest = self.security.digest("public.post.create", page_id, body.title or "", body.body, *parts)
         with self.identity.signed_in_write(token) as (database, user):
             page = self.managed_page(database, user, page_id)
             self.writable(page)
@@ -465,6 +591,9 @@ class CommunityService:
                 raise DomainError(409, "DRAFT_LIMIT_REACHED", f"A page can keep up to {MAX_DRAFTS_PER_PAGE} drafts. Publish or delete one first.")
             if sum(counts.values()) >= MAX_POSTS_PER_PAGE:
                 raise DomainError(409, "POST_LIMIT_REACHED", "The local post limit for this page was reached.")
+            vocabulary = Vocabulary.load(database) if requested else None
+            for field, codes in requested.items():
+                vocabulary.check(field, POST_FIELDS[field], codes)
             now = self.clock()
             post = PublicPost(
                 id=str(uuid4()), page_id=page.id, author_id=user.id, title=body.title, body=body.body, status="draft",
@@ -473,6 +602,9 @@ class CommunityService:
             )
             database.add(post)
             database.flush()
+            if requested:
+                tag_post(database, vocabulary, post.id, requested, {field: [] for field in POST_FIELDS})
+                database.flush()
             self.record(database, user.id, page.id, post.id, "public.post_drafted")
             return self.post_views(database, [(post, page)], user)[0]
 
@@ -488,11 +620,15 @@ class CommunityService:
             post, page = self.managed_post(database, user, post_id)
             self.require_etag(etag, self.post_etag(post), "post")
             changed = False
-            for field in body.model_fields_set:
+            for field in body.model_fields_set - set(POST_FIELDS):
                 value = getattr(body, field)
                 if getattr(post, field) != value:
                     setattr(post, field, value)
                     changed = True
+            requested = body.requested_terms()
+            if requested:
+                current = post_terms_of(database, [post.id])[post.id]
+                changed = tag_post(database, Vocabulary.load(database), post.id, requested, current) or changed
             if changed:
                 now = self.clock()
                 post.version += 1
@@ -509,6 +645,7 @@ class CommunityService:
             if post.status == "published":
                 # A retry after a lost response finds the post already public and changes nothing.
                 return self.post_views(database, [(post, page)], user)[0]
+            self.open_for_new_content(page)
             self.require_etag(etag, self.post_etag(post), "draft")
             now = self.clock()
             post.status = "published"
@@ -545,6 +682,8 @@ class CommunityService:
                 post.deleted_at = now
                 post.updated_at = now
                 post.version += 1
+                # A deleted post keeps no subject either.
+                database.execute(delete(PostTerm).where(PostTerm.post_id == post.id))
                 database.flush()
                 self.record(database, user.id, page.id, post.id, "public.post_deleted")
             return PostOutcome(id=post.id, status="deleted")
@@ -631,6 +770,8 @@ class CommunityService:
             )
             if followed_only:
                 statement = statement.join(PageFollow, and_(PageFollow.page_id == PublicPage.id, PageFollow.account_id == viewer.id))
+            else:
+                statement = statement.where(self.discoverable(viewer))
             blocked = self.blocked(database, viewer, "page")
             if blocked:
                 statement = statement.where(PublicPage.id.notin_(blocked))
@@ -639,27 +780,38 @@ class CommunityService:
                 pattern = contains(query)
                 statement = statement.where(or_(PublicPost.title.ilike(pattern, escape="\\"), PublicPost.body.ilike(pattern, escape="\\")))
                 kind, scope = "post_search", self.security.digest("public.post-search", query.lower())
+            else:
+                # Mutes shape the lists a person browses; a search still finds what was asked for.
+                statement = self.without_muted_posts(database, statement, viewer)
             rows, more = self.newest_first(database, statement, PublicPost.published_at, PublicPost.id, limit, cursor, kind, viewer, scope)
             next_cursor = self.seal_cursor(kind, viewer, scope, rows[-1][0].id, after_time=rows[-1][0].published_at) if more else None
             return self.post_views(database, rows, viewer), Pagination(next_cursor=next_cursor, has_more=more)
 
-    def discover_pages(self, token, query, topic, limit, cursor):
+    def discover_pages(self, token, query, filters, limit, cursor):
         query = " ".join((query or "").split())
+        filters = {dimension: code for dimension, code in filters.items() if code}
         with self.sessions() as database:
             viewer = self.viewer(database, token)
-            statement = select(PublicPage).where(PublicPage.status == "active", self.moderation_visible(PublicPage, viewer))
+            statement = select(PublicPage).where(
+                PublicPage.status == "active", self.moderation_visible(PublicPage, viewer), self.discoverable(viewer),
+            )
             if query:
                 pattern = contains(query)
-                statement = statement.where(or_(
+                matches = [
                     PublicPage.name.ilike(pattern, escape="\\"), PublicPage.handle.ilike(pattern, escape="\\"),
                     PublicPage.description.ilike(pattern, escape="\\"),
-                ))
-            if topic:
-                statement = statement.where(PublicPage.topic == topic)
+                ]
+                terms = searched_terms(Vocabulary.load(database), query)
+                if terms:
+                    matches.append(PublicPage.topic.in_([code for dimension, code in terms if dimension == "topic"]))
+                    matches.append(exists().where(PageTerm.page_id == PublicPage.id, tuple_(PageTerm.dimension, PageTerm.code).in_(sorted(terms))))
+                statement = statement.where(or_(*matches))
+            statement = filtered(database, statement, filters)
             blocked = self.blocked(database, viewer, "page")
             if blocked:
                 statement = statement.where(PublicPage.id.notin_(blocked))
-            scope = self.security.digest("public.discover", query.lower(), topic or "")
+            # The filters are part of the list's identity: a cursor from one list cannot continue another.
+            scope = self.security.digest("public.discover", query.lower(), *(f"{name}={code}" for name, code in sorted(filters.items())))
             if cursor:
                 position = self.open_cursor(cursor, "discover", viewer, scope)
                 if position.after_number is None:
@@ -673,6 +825,91 @@ class CommunityService:
             pages = pages[:limit]
             next_cursor = self.seal_cursor("discover", viewer, scope, pages[-1].id, after_number=pages[-1].follower_count) if more else None
             return self.page_views(database, pages, viewer), Pagination(next_cursor=next_cursor, has_more=more)
+
+    # The shared vocabulary and the interests a person chooses (DEC-027)
+
+    def taxonomy(self):
+        with self.sessions() as database:
+            return term_views(database)
+
+    def interests_etag(self, account_id, chosen):
+        parts = (f"{field}={','.join(chosen[field])}" for field in PERSON_FIELDS)
+        return '"' + self.security.digest("account.interests", account_id, *parts) + '"'
+
+    def interests(self, token):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            chosen = interests_of(database, user.id)
+            return InterestsView(**chosen, etag=self.interests_etag(user.id, chosen))
+
+    def set_interests(self, token, body, etag):
+        with self.identity.signed_in_write(token) as (database, user):
+            current = interests_of(database, user.id)
+            wanted = {field: list(getattr(body, field)) for field in PERSON_FIELDS}
+            # Sending what is already saved changes nothing, so a retry after a lost answer needs no fresh version.
+            if wanted != current:
+                self.require_etag(etag, self.interests_etag(user.id, current), "list of interests")
+                save_interests(database, Vocabulary.load(database), user.id, current, wanted, self.clock())
+                database.flush()
+            return InterestsView(**wanted, etag=self.interests_etag(user.id, wanted))
+
+    def suggested_pages(self, token, limit):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            matcher = Matcher(Vocabulary.load(database), interests_of(database, user.id))
+            choices = self.feed_choices(database, user.id)
+            muted = self.muted_subjects(database, choices)
+            hidden = self.blocked(database, user, "page") | choices["pages"] | choices["suggestions"]
+            pages = matcher.candidates(database, user, hidden, avoid=muted.page_match() if muted else None)
+            classified = classifications(database, [page.id for page in pages])
+            scored = [(page, *matcher.score(page, classified[page.id])) for page in pages]
+            # The candidates come most followed first, so a stable sort keeps that order between equal points.
+            chosen = sorted((item for item in scored if item[1]), key=lambda item: -item[1])[:limit]
+            items = [
+                SuggestedPage(
+                    page=self.page_view(database, page, user, following=False, blocked=False, classification=classified[page.id]),
+                    reasons=reasons,
+                )
+                for page, _points, reasons in chosen
+            ]
+            return Suggestions(ranking=RANKING, items=items)
+
+    def interest_posts(self, token, limit, cursor):
+        """Published posts about the person's chosen topics and interests, newest first, each with what it matched
+        (DEC-036). The person's own pages and the pages they blocked are left out; nothing about what they see is kept."""
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            chosen = interests_of(database, user.id)
+            matcher = Matcher(Vocabulary.load(database), chosen)
+            match = matcher.post_match()
+            if match is None:
+                return [], Pagination(next_cursor=None, has_more=False)
+            statement = select(PublicPost, PublicPage).join(PublicPage, PublicPage.id == PublicPost.page_id).where(
+                PublicPost.status == "published", PublicPage.status.in_(PUBLIC_PAGE_STATES), PublicPage.owner_id != user.id,
+                PublicPage.moderation_limited_at.is_(None),
+                self.moderation_visible(PublicPage, user), self.moderation_visible(PublicPost, user), match,
+            )
+            blocked = self.blocked(database, user, "page")
+            if blocked:
+                statement = statement.where(PublicPage.id.notin_(blocked))
+            statement = self.without_muted_posts(database, statement, user)
+            # A cursor continues only the list it came from: after the person changes their choices, the list starts again.
+            scope = self.security.digest(
+                "public.interest-posts", *(f"{field}={','.join(sorted(chosen[field]))}" for field in POST_FIELDS),
+            )
+            rows, more = self.newest_first(
+                database, statement, PublicPost.published_at, PublicPost.id, limit, cursor, "interest_posts", user, scope,
+            )
+            next_cursor = self.seal_cursor("interest_posts", user, scope, rows[-1][0].id, after_time=rows[-1][0].published_at) if more else None
+            views = self.post_views(database, rows, user)
+            pages = classifications(database, list({page.id for _post, page in rows}))
+            items = []
+            for (_post, page), view in zip(rows, views):
+                subjects = {"topics": view.topics, "interests": view.interests}
+                if not view.topics and not view.interests:
+                    subjects = {"topics": [page.topic, *pages[page.id]["other_topics"]], "interests": pages[page.id]["interests"]}
+                items.append(InterestPost(post=view, reasons=matcher.post_reasons(subjects)))
+            return items, Pagination(next_cursor=next_cursor, has_more=more)
 
     # Likes and saves
 
@@ -780,6 +1017,7 @@ class CommunityService:
                 if existing.creation_digest != digest or existing.post_id != post.id:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original comment.")
                 return self.comment_view(database, existing, user, user, page, moderator=False)
+            self.open_for_new_content(page)
             if page.owner_id != user.id and database.scalar(select(AccountBlock.id).where(
                 AccountBlock.blocker_id == page.owner_id, AccountBlock.target_type == "account", AccountBlock.target_id == user.id,
             )) is not None:
@@ -797,7 +1035,7 @@ class CommunityService:
                 PostComment.author_id == user.id, PostComment.created_at > now - timedelta(minutes=1),
             ))
             if recent >= MAX_COMMENTS_PER_MINUTE:
-                raise DomainError(429, "COMMENT_RATE_LIMITED", "You are commenting quickly. Wait a minute, then retry.")
+                raise DomainError(429, "COMMENT_RATE_LIMITED", "You are commenting quickly. Wait a minute, then retry.", retry_after=60)
             total = database.scalar(select(func.count()).select_from(PostComment).where(PostComment.post_id == post.id))
             if total >= MAX_COMMENTS_PER_POST:
                 raise DomainError(409, "COMMENT_LIMIT_REACHED", "This post reached the local comment limit.")
@@ -823,7 +1061,8 @@ class CommunityService:
                 raise not_found("Comment")
             mine = comment.author_id == user.id
             manager = page.owner_id == user.id
-            moderator = self.active_moderator(database, user, page.id) is not None
+            # Locked, so a removal of this moderator that commits first is seen, and one that starts later waits.
+            moderator = self.active_moderator(database, user, page.id, lock=True) is not None
             if not mine and not manager and not moderator:
                 raise DomainError(403, "COMMENT_NOT_YOURS", "Only the author, the page owner or a moderator can remove this comment.")
             if comment.status == "visible":
@@ -943,6 +1182,112 @@ class CommunityService:
             rows = database.scalars(select(AccountBlock).where(AccountBlock.blocker_id == user.id)
                                     .order_by(AccountBlock.created_at.desc(), AccountBlock.id.desc())).all()
             return [self.block_view(database, block) for block in rows]
+
+    # Private feed controls (DEC-037): mutes and Not interested shape one person's lists and are told to nobody.
+
+    @staticmethod
+    def feed_choices(database, account_id):
+        choices = {"pages": set(), "posts": set(), "suggestions": set(), "topics": [], "interests": []}
+        rows = database.execute(select(
+            FeedControl.kind, FeedControl.page_id, FeedControl.post_id, FeedControl.term_dimension, FeedControl.term_code,
+        ).where(FeedControl.account_id == account_id)).all()
+        for kind, page_id, post_id, dimension, code in rows:
+            if kind == "mute_page":
+                choices["pages"].add(page_id)
+            elif kind == "hide_suggestion":
+                choices["suggestions"].add(page_id)
+            elif kind == "hide_post":
+                choices["posts"].add(post_id)
+            else:
+                choices["topics" if dimension == "topic" else "interests"].append(code)
+        return choices
+
+    @staticmethod
+    def muted_subjects(database, choices):
+        """The muted topics and interests as a Matcher, so a muted topic covers the interests under it; None if none."""
+        if not choices["topics"] and not choices["interests"]:
+            return None
+        chosen = {"topics": choices["topics"], "interests": choices["interests"], "languages": [], "places": []}
+        return Matcher(Vocabulary.load(database), chosen)
+
+    def without_muted_posts(self, database, statement, viewer):
+        if viewer is None:
+            return statement
+        choices = self.feed_choices(database, viewer.id)
+        if choices["pages"]:
+            statement = statement.where(PublicPage.id.notin_(choices["pages"]))
+        if choices["posts"]:
+            statement = statement.where(PublicPost.id.notin_(choices["posts"]))
+        muted = self.muted_subjects(database, choices)
+        if muted is not None:
+            statement = statement.where(~muted.post_match())
+        return statement
+
+    def control_views(self, database, controls, viewer):
+        post_ids = {control.post_id for control in controls if control.post_id}
+        posts = {post.id: post for post in database.scalars(select(PublicPost).where(PublicPost.id.in_(post_ids)))} if post_ids else {}
+        page_ids = {control.page_id for control in controls if control.page_id} | {post.page_id for post in posts.values()}
+        pages = {page.id: page for page in database.scalars(select(PublicPage).where(PublicPage.id.in_(page_ids)))} if page_ids else {}
+        views = []
+        for control in controls:
+            post = posts.get(control.post_id)
+            page = pages.get(post.page_id if post else control.page_id)
+            page_shown = page is not None and self.can_view_page(page, viewer) and self.can_view_moderated(page, viewer)
+            post_shown = post is not None and page_shown and post.status == "published" and self.can_view_moderated(post, viewer)
+            views.append(FeedControlView(
+                id=control.id, kind=control.kind, page_id=page.id if page else None,
+                page_handle=page.handle if page_shown else None, page_name=page.name if page_shown else None,
+                post_id=control.post_id, post_title=post.title if post_shown else None,
+                post_available=post_shown if control.post_id else None,
+                dimension=control.term_dimension, code=control.term_code, created_at=control.created_at,
+            ))
+        return views
+
+    def feed_controls(self, token):
+        with self.sessions() as database:
+            user, _session = self.identity.authenticate(database, token)
+            controls = database.scalars(select(FeedControl).where(FeedControl.account_id == user.id)
+                                        .order_by(FeedControl.created_at.desc(), FeedControl.id.desc())).all()
+            return self.control_views(database, controls, user)
+
+    def add_feed_control(self, token, body):
+        with self.identity.signed_in_write(token) as (database, user):
+            page = None
+            if body.kind == "hide_post":
+                post, page = self.visible_post(database, user, str(body.post_id))
+                target = {"post_id": post.id}
+            elif body.kind == "mute_term":
+                if database.get(TaxonomyTerm, (body.dimension, body.code)) is None:
+                    raise unavailable("code", [body.code])
+                target = {"term_dimension": body.dimension, "term_code": body.code}
+            else:
+                page = self.find_page(database, str(body.page_id), viewer=user)
+                target = {"page_id": page.id}
+            if page is not None and page.owner_id == user.id:
+                raise DomainError(409, "OWN_CONTENT", "This is your own page.")
+            control = database.scalar(select(FeedControl).where(
+                FeedControl.account_id == user.id, FeedControl.kind == body.kind,
+                *(getattr(FeedControl, column) == value for column, value in target.items()),
+            ))
+            if control is None:
+                limit = MAX_FEED_CONTROLS[body.kind]
+                count = database.scalar(select(func.count()).select_from(FeedControl).where(
+                    FeedControl.account_id == user.id, FeedControl.kind == body.kind,
+                ))
+                if count >= limit:
+                    raise DomainError(409, "FEED_CONTROL_LIMIT_REACHED", f"You can keep up to {limit} of these. Undo one first.")
+                control = FeedControl(id=str(uuid4()), account_id=user.id, kind=body.kind, created_at=self.clock(), **target)
+                database.add(control)
+                database.flush()
+            return self.control_views(database, [control], user)[0]
+
+    def remove_feed_control(self, token, control_id):
+        with self.identity.signed_in_write(token) as (database, user):
+            control = database.get(FeedControl, control_id)
+            if control is None or control.account_id != user.id:
+                raise not_found("Control")
+            database.delete(control)
+            return FeedControlOutcome(id=control_id, status="removed")
 
     # Moderators (DEC-025 part 3)
 
@@ -1084,7 +1429,8 @@ class CommunityService:
     def offer_handover(self, token, page_id, body, key, expected):
         to_id = str(body.to_account_id)
         with self.sessions.begin() as database:
-            caller, _session = self.identity.authenticate(database, token)
+            # The account before the page, as every other page change, so two of the owner's requests cannot deadlock.
+            caller, _session = self.identity.authenticate(database, token, lock=True)
             page = self.managed_page(database, caller, page_id)
             self.writable(page)
             if expected is None:

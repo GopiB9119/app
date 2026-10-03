@@ -186,6 +186,23 @@ class ExportView(BaseModel):
     requested_here: bool
 
 
+class ArchiveInterest(BaseModel):
+    dimension: Literal["topic", "interest", "language", "place"]
+    code: str
+    name: str
+    chosen_at: datetime
+
+
+class ArchiveFeedControl(BaseModel):
+    kind: Literal["mute_page", "mute_term", "hide_post", "hide_suggestion"]
+    page_id: str | None
+    post_id: str | None
+    dimension: Literal["topic", "interest"] | None
+    code: str | None
+    name: str | None = Field(description="The topic's or interest's name, or the page's while it is shown; otherwise null.")
+    created_at: datetime
+
+
 class ArchiveProfile(BaseModel):
     id: str
     email: str
@@ -194,6 +211,10 @@ class ArchiveProfile(BaseModel):
     status: str
     created_at: datetime
     verified_at: datetime
+    interests: list[ArchiveInterest] = Field(default_factory=list, description="The topics, interests, languages and places you chose.")
+    feed_controls: list[ArchiveFeedControl] = Field(
+        default_factory=list, description="The pages and topics you muted, and the posts and suggested pages you marked Not interested.",
+    )
 
 
 class ArchiveSession(BaseModel):
