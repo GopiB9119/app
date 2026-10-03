@@ -43,6 +43,7 @@ import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -102,6 +103,8 @@ data class TaskActions(
     val cancelStatus: () -> Unit,
     val retry: () -> Unit,
     val reloadLatest: () -> Unit,
+    val filterAssignee: (String?) -> Unit = {},
+    val filterDue: (String?) -> Unit = {},
 )
 
 @Composable
@@ -118,7 +121,7 @@ fun TaskRoute(viewModel: TaskViewModel, accountId: String, onBack: () -> Unit, o
         viewModel::loadMore, viewModel::create, viewModel::open, viewModel::edit,
         viewModel::updateFields, viewModel::save, viewModel::closeEditor, viewModel::closeDetail,
         viewModel::proposeStatus, viewModel::confirmStatus, viewModel::cancelStatus,
-        viewModel::retry, viewModel::reloadLatest,
+        viewModel::retry, viewModel::reloadLatest, viewModel::filterAssignee, viewModel::filterDue,
     ), onBack, onRemind, onChecklist)
 }
 
@@ -194,6 +197,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                             item("title") { OutlinedTextField(value = editor.fields.title, onValueChange = { actions.updateFields(editor.fields.copy(title = it.take(400)), false) }, label = { Text(stringResource(R.string.task_title)) }, enabled = enabled, minLines = 1, maxLines = 3, modifier = Modifier.fillMaxWidth().testTag("task-title")) }
                             item("notes") { OutlinedTextField(value = editor.fields.description, onValueChange = { actions.updateFields(editor.fields.copy(description = it.take(10000)), false) }, label = { Text(stringResource(R.string.task_notes)) }, enabled = enabled, minLines = 3, maxLines = 8, modifier = Modifier.fillMaxWidth().testTag("task-notes")) }
                             item("due-date") { TaskDateField(editor.fields.dueDate, enabled) { actions.updateFields(editor.fields.copy(dueDate = it), false) } }
+                            item("priority") { TaskPriorityField(editor.fields.priority, enabled) { actions.updateFields(editor.fields.copy(priority = it), false) } }
                             item("assignee") { TaskAssigneeField(editor, state.assignees, enabled) { actions.updateFields(editor.fields.copy(assigneeId = it), true) } }
                             item("editor-actions") {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 3), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
@@ -216,6 +220,8 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                                     }
                                     if (state.selectedSpace != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 3), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                                         TaskFilter(state.statusFilter, !state.busy, actions.filter)
+                                        TaskChoice("task-filter-assignee", state.assigneeFilter, listOf(null to R.string.tasks_filter_anyone, "me" to R.string.tasks_filter_me, "none" to R.string.tasks_filter_nobody), !state.busy, actions.filterAssignee)
+                                        TaskChoice("task-filter-due", state.dueFilter, listOf(null to R.string.tasks_due_any, "before" to R.string.tasks_due_before, "today" to R.string.tasks_due_today, "week" to R.string.tasks_due_week), !state.busy, actions.filterDue)
                                         Button(onClick = actions.create, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) {
                                             Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(unit * 2)); Text(stringResource(R.string.tasks_new))
                                         }
@@ -270,6 +276,7 @@ private fun TaskRow(record: TaskRecord, enabled: Boolean, open: (TaskRecord) -> 
             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
         }
         Text(stringResource(statusLabel(record.task.status)), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        TaskPriorityLabel(record.task)
         Text(assigneeLabel(record.task), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         record.task.dueDate?.let { Text(stringResource(R.string.tasks_due_value, formatDate(it)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         HorizontalDivider(Modifier.padding(top = unit * 2))
@@ -284,6 +291,7 @@ private fun TaskDetail(record: TaskRecord, state: TaskWorkspaceState, actions: T
     Column(verticalArrangement = Arrangement.spacedBy(unit * 5)) {
         Text(task.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Text(stringResource(statusLabel(task.status)), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+        TaskPriorityLabel(task)
         if (task.description.isNotEmpty()) SelectionContainer { Text(task.description, style = MaterialTheme.typography.bodyLarge) }
         HorizontalDivider()
         Text(assigneeLabel(task), style = MaterialTheme.typography.bodyLarge)
@@ -320,6 +328,49 @@ private fun TaskFilter(selected: String?, enabled: Boolean, onSelected: (String?
             }
         }
     }
+}
+
+@Composable
+private fun TaskChoice(tag: String, selected: String?, options: List<Pair<String?, Int>>, enabled: Boolean, onSelected: (String?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, enabled = enabled, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag(tag)) {
+            Text(stringResource(options.firstOrNull { it.first == selected }?.second ?: options.first().second)); Icon(Icons.Default.ArrowDropDown, null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, label) ->
+                DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { expanded = false; onSelected(value) }, modifier = Modifier.testTag("$tag-${value ?: "all"}"))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TaskPriorityField(selected: String, enabled: Boolean, onSelected: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+        Text(stringResource(R.string.task_priority), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+            TASK_PRIORITIES.forEach { value ->
+                FilterChip(selected = selected == value, onClick = { onSelected(value) }, enabled = enabled, label = { Text(stringResource(priorityLabel(value))) },
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("task-priority-$value"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskPriorityLabel(task: FamilyTaskDto) {
+    when (task.priorityLevel) {
+        "high" -> Text(stringResource(R.string.tasks_high_priority), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("task-priority-label-${task.id}"))
+        "low" -> Text(stringResource(R.string.tasks_low_priority), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("task-priority-label-${task.id}"))
+    }
+}
+
+private fun priorityLabel(priority: String): Int = when (priority) {
+    "high" -> R.string.task_priority_high
+    "low" -> R.string.task_priority_low
+    else -> R.string.task_priority_normal
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

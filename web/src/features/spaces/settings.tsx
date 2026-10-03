@@ -2,11 +2,11 @@
 
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Globe, LoaderCircle, LockKeyhole, RefreshCw, Save, UserPlus, X } from "lucide-react";
+import { Bot, Globe, LoaderCircle, LockKeyhole, RefreshCw, Save, UserPlus, X } from "lucide-react";
 import { ApiError } from "@/features/identity/client";
 import { useText } from "@/features/i18n/i18n";
-import { changeInvitePolicy, changeVisibility, characters, lengthProblem, readSpaceSettings, saveSpaceSettings } from "./client";
-import type { InvitePolicyIntent, SpaceSettings, SpaceSettingsIntent, VisibilityIntent } from "./client";
+import { changeAgentPolicy, changeInvitePolicy, changeVisibility, characters, lengthProblem, readSpaceSettings, saveSpaceSettings } from "./client";
+import type { AgentPolicyIntent, InvitePolicyIntent, SpaceSettings, SpaceSettingsIntent, VisibilityIntent } from "./client";
 import styles from "./spaces.module.css";
 
 export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId: string; spaceId: string; onClose: () => void }) {
@@ -20,8 +20,10 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
   const [intent, setIntent] = useState<SpaceSettingsIntent | null>(null);
   const [visibilityIntent, setVisibilityIntent] = useState<VisibilityIntent | null>(null);
   const [inviteIntent, setInviteIntent] = useState<InvitePolicyIntent | null>(null);
+  const [agentIntent, setAgentIntent] = useState<AgentPolicyIntent | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmingInvites, setConfirmingInvites] = useState(false);
+  const [confirmingAgent, setConfirmingAgent] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [discard, setDiscard] = useState<"close" | "reload" | null>(null);
   const [notice, setNotice] = useState("");
@@ -57,9 +59,17 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
     },
     onError: error => failed(error, () => setInviteIntent(null)),
   });
-  const problem = save.error ?? visibility.error ?? invitePolicy.error ?? review.error;
+  const agentPolicy = useMutation({ mutationFn: changeAgentPolicy, retry: false, networkMode: "always",
+    onSuccess: async result => {
+      setAgentIntent(null); setConfirmingAgent(false);
+      setNotice(t(result.agent_enabled ? "spaces.settings.agent.nowOn" : "spaces.settings.agent.nowOff"));
+      await settled(result);
+    },
+    onError: error => failed(error, () => setAgentIntent(null)),
+  });
+  const problem = save.error ?? visibility.error ?? invitePolicy.error ?? agentPolicy.error ?? review.error;
   const denied = problem instanceof ApiError && ([401, 403, 404].includes(problem.status) || problem.code === "ACCOUNT_CHANGED");
-  const locked = intent !== null || visibilityIntent !== null || inviteIntent !== null || save.isPending || visibility.isPending || invitePolicy.isPending;
+  const locked = intent !== null || visibilityIntent !== null || inviteIntent !== null || agentIntent !== null || save.isPending || visibility.isPending || invitePolicy.isPending || agentPolicy.isPending;
   const dirty = basis !== null && (name !== basis.name || description !== basis.description);
   useEffect(() => {
     if (!dirty && !locked) return;
@@ -74,12 +84,13 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
   }, [problem, cache]);
   function close() { if (!locked || denied) { if (dirty && !denied) setDiscard("close"); else onClose(); } }
   async function reload() {
-    setDiscard(null); save.reset(); visibility.reset(); invitePolicy.reset(); setNotice(""); setConfirming(false); setConfirmingInvites(false);
+    setDiscard(null); save.reset(); visibility.reset(); invitePolicy.reset(); agentPolicy.reset(); setNotice(""); setConfirming(false); setConfirmingInvites(false); setConfirmingAgent(false);
     const result = await review.refetch();
     if (result.data && !result.isError) { setBasis(result.data); setName(result.data.name); setDescription(result.data.description); setConflict(false); }
   }
   const target = basis?.visibility === "public" ? "private" : "public";
   const inviteTarget = basis ? !basis.member_invites : true;
+  const agentTarget = basis ? !basis.agent_enabled : false;
   const nameProblem = lengthProblem(name, 80);
   const descriptionProblem = lengthProblem(description, 280);
   return <dialog ref={setDialog} className={styles.invitationDialog} aria-labelledby={heading} onCancel={event => { event.preventDefault(); close(); }}>
@@ -108,7 +119,7 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
       </form>
       {basis.space_type === "group" ? <div className={styles.invitationSection}>
         <h3>{basis.visibility === "public" ? <><Globe size={17} aria-hidden className={styles.publicMark} /> Public group</> : <><LockKeyhole size={17} aria-hidden /> Private group</>}</h3>
-        {!confirming ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirmingInvites} onClick={() => { setConfirming(true); setNotice(""); }}>
+        {!confirming ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirmingInvites || confirmingAgent} onClick={() => { setConfirming(true); setNotice(""); }}>
           {target === "public" ? <Globe size={17} aria-hidden /> : <LockKeyhole size={17} aria-hidden />}{target === "public" ? "Make this group public" : "Make this group private"}</button>
         : <div className={styles.noteForm}>
           <p>{target === "public"
@@ -128,7 +139,7 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
       {(basis.space_type === "family" || basis.space_type === "group") && <div className={styles.invitationSection}>
         <h3><UserPlus size={17} aria-hidden /> {t("spaces.settings.invites.title")}</h3>
         <p>{t(basis.member_invites ? "spaces.settings.invites.everyone" : "spaces.settings.invites.admins")}</p>
-        {!confirmingInvites ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirming} onClick={() => { setConfirmingInvites(true); setNotice(""); }}>
+        {!confirmingInvites ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirming || confirmingAgent} onClick={() => { setConfirmingInvites(true); setNotice(""); }}>
           <UserPlus size={17} aria-hidden />{t(inviteTarget ? "spaces.settings.invites.allow" : "spaces.settings.invites.restrict")}</button>
         : <div className={styles.noteForm}>
           <p>{t(inviteTarget ? "spaces.settings.invites.confirmOn" : "spaces.settings.invites.confirmOff")}</p>
@@ -143,6 +154,23 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
         </div>}
         {dirty && !locked && <p className={styles.emptyNote}>{t("spaces.settings.invites.saveFirst")}</p>}
       </div>}
+      <div className={styles.invitationSection}>
+        <h3><Bot size={17} aria-hidden /> {t("spaces.settings.agent.title")}</h3>
+        <p>{t(basis.agent_enabled ? "spaces.settings.agent.on" : "spaces.settings.agent.off")}</p>
+        {!confirmingAgent ? <button className="secondary-button" disabled={locked || dirty || conflict || review.isFetching || confirming || confirmingInvites} onClick={() => { setConfirmingAgent(true); setNotice(""); }}>
+          <Bot size={17} aria-hidden />{t(agentTarget ? "spaces.settings.agent.turnOnQuestion" : "spaces.settings.agent.turnOffQuestion")}</button>
+        : <div className={styles.noteForm}>
+          <p>{t(agentTarget ? "spaces.settings.agent.confirmOn" : "spaces.settings.agent.confirmOff", { space: basis.name })}</p>
+          {agentIntent && !agentPolicy.isPending && <p role="status">{t("spaces.settings.visibilityUnconfirmed")}</p>}
+          <div className={`dialog-actions ${styles.membershipActions}`}>
+            <button className="secondary-button" disabled={agentPolicy.isPending || agentIntent !== null} onClick={() => setConfirmingAgent(false)}>{t(agentTarget ? "spaces.settings.agent.keepOff" : "spaces.settings.agent.keepOn")}</button>
+            <button className="primary-button" disabled={agentPolicy.isPending} onClick={() => {
+              const command = agentIntent ?? { accountId, spaceId, agentEnabled: agentTarget, etag: basis.etag, key: crypto.randomUUID() };
+              setAgentIntent(command); agentPolicy.mutate(command);
+            }}>{agentPolicy.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : null}{agentIntent && !agentPolicy.isPending ? t("spaces.retry") : t(agentTarget ? "spaces.settings.agent.turnOn" : "spaces.settings.agent.turnOff")}</button>
+          </div>
+        </div>}
+      </div>
       {conflict && <button className="text-button" disabled={review.isFetching} onClick={() => setDiscard("reload")}><RefreshCw size={17} aria-hidden />Reload current settings</button>}
     </>}
     {discard && !locked && <div className={styles.invitationSection}>

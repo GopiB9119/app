@@ -59,6 +59,11 @@ class ConversationMessage(Base):
         CheckConstraint("sequence > 0", name="ck_conversation_message_sequence"),
         CheckConstraint("(deleted_at IS NULL) = (body_cipher IS NOT NULL)", name="ck_conversation_message_tombstone"),
         CheckConstraint("admissions_before >= 0", name="ck_conversation_message_admissions"),
+        CheckConstraint("reply_to_id IS NULL OR reply_to_id <> id", name="ck_conversation_message_reply"),
+        CheckConstraint(
+            "edit_count BETWEEN 0 AND 10 AND (edited_at IS NULL) = (edit_count = 0)", name="ck_conversation_message_edits",
+        ),
+        CheckConstraint("revision >= 1", name="ck_conversation_message_revision"),
         Index("ix_conversation_message_time", "conversation_id", "created_at"),
         Index("ix_conversation_message_sender_time", "sender_id", "created_at"),
     )
@@ -74,6 +79,29 @@ class ConversationMessage(Base):
     body_cipher: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Replies, edits and the revision that every change raises (DEC-033).
+    reply_to_id: Mapped[str | None] = mapped_column(ForeignKey("conversation_messages.id", name="fk_conversation_message_reply"))
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    edit_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+REACTIONS = ("like", "love", "laugh", "wow", "sad", "thanks")
+
+
+class ConversationMessageReaction(Base):
+    __tablename__ = "conversation_message_reactions"
+    __table_args__ = (
+        CheckConstraint(
+            "reaction IN (" + ", ".join(f"'{name}'" for name in REACTIONS) + ")", name="ck_conversation_message_reaction",
+        ),
+        Index("ix_conversation_message_reaction_account", "account_id"),
+    )
+
+    message_id: Mapped[str] = mapped_column(ForeignKey(ConversationMessage.id), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
+    reaction: Mapped[str] = mapped_column(String(16), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class ConversationReadState(Base):

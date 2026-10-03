@@ -59,7 +59,9 @@ class MessagingLiveTest {
     }
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher(scheduler)) }
-    @After fun cleanup() { model?.bind(null); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { model?.finishTestWork() } finally { Dispatchers.resetMain() }
+    }
 
     private suspend fun idle(current: MessagingViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
 

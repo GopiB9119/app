@@ -1499,6 +1499,85 @@ test('messages: Space chat and direct messages keep one copy per retry, honor me
   }
 });
 
+test('message replies: a reply quotes its original, a reaction and an edit reach the other member (T162)', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `reply-owner-${suffix}@example.test`);
+    await signUp(memberPage, `reply-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Reply family ${suffix}`, space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(sent.status(), 201);
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+
+    await ownerPage.goto(`${base}/app/messages?space_id=${family.id}`);
+    const ownerPane = ownerPage.getByRole('region', { name: 'Conversation', exact: true });
+    await ownerPane.getByRole('heading', { name: family.name, exact: true }).waitFor();
+    await ownerPane.getByLabel('Message', { exact: true }).fill('Dinner at eight');
+    await ownerPane.getByRole('button', { name: 'Send', exact: true }).click();
+    await ownerPane.getByRole('button', { name: 'Delete message for everyone', exact: true }).waitFor();
+
+    await memberPage.goto(`${base}/app/messages`);
+    await memberPage.getByRole('button', { name: new RegExp(`^Reply family ${suffix}`) }).click();
+    const memberPane = memberPage.getByRole('region', { name: 'Conversation', exact: true });
+    await memberPane.getByText('Dinner at eight', { exact: true }).waitFor();
+    await memberPane.getByRole('button', { name: 'Reply to Alex Morgan', exact: true }).click();
+    await memberPane.getByLabel('Message', { exact: true }).fill('Works for me');
+    await memberPane.getByRole('button', { name: 'Send', exact: true }).click();
+    const reply = memberPane.getByRole('listitem').filter({ hasText: 'Works for me' });
+    // While it is being sent the reply also shows as pending, so wait for the saved copy's own controls.
+    await reply.getByRole('button', { name: 'Edit message', exact: true }).waitFor();
+    await reply.getByText('Dinner at eight').first().waitFor();
+
+    // The owner sees the quote, then reacts to the reply.
+    const ownerReply = ownerPane.getByRole('listitem').filter({ hasText: 'Works for me' });
+    await ownerReply.getByText('Dinner at eight').waitFor({ timeout: 30000 });
+    await ownerReply.getByRole('button', { name: 'React', exact: true }).click();
+    await ownerReply.getByRole('group', { name: 'Choose a reaction' }).getByRole('button', { name: 'Thanks', exact: true }).click();
+    await ownerReply.getByRole('button', { name: 'Thanks: 1, including you' }).waitFor();
+    await reply.getByRole('button', { name: 'Thanks: 1', exact: true }).waitFor({ timeout: 30000 });
+
+    // The member corrects the reply; the owner sees the new text marked as edited.
+    await reply.getByRole('button', { name: 'Edit message', exact: true }).click();
+    const editing = memberPane.getByRole('listitem').filter({ has: memberPage.getByLabel('Edit your message') });
+    await editing.getByLabel('Edit your message').fill('Works for me, see you then');
+    await editing.getByRole('button', { name: 'Save', exact: true }).click();
+    await memberPane.getByText('Works for me, see you then', { exact: true }).waitFor();
+    const edited = ownerPane.getByRole('listitem').filter({ hasText: 'Works for me, see you then' });
+    await edited.getByText('Edited', { exact: true }).waitFor({ timeout: 30000 });
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/message-replies-live-mobile.png'), fullPage: true });
+
+    const chat = (await (await ownerContext.request.get(`${base}/api/conversations?space_id=${family.id}`, { headers: ownerHeaders })).json()).data[0];
+    const stored = (await (await ownerContext.request.get(`${base}/api/conversations/${chat.id}/messages`, { headers: ownerHeaders })).json()).data;
+    assert.equal(stored.length, 2);
+    assert.equal(stored[1].reply_to.message_id, stored[0].id);
+    assert.equal(stored[1].reply_to.excerpt, 'Dinner at eight');
+    assert.deepEqual(stored[1].reactions, [{ reaction: 'thanks', count: 1, mine: true }]);
+    assert.equal(stored[1].body, 'Works for me, see you then');
+    assert.ok(stored[1].edited_at && stored[1].revision >= 3);
+    for (const width of [320, 390]) {
+      await memberPage.setViewportSize({ width, height: 844 });
+      assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `width ${width}`);
+    }
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
+  }
+});
+
 test('community: page creation retry, private drafts, publication, follow feed, comments, report and block', { timeout: 240000 }, async () => {
   const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const readerContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -2832,5 +2911,465 @@ test('invite permission: the owner lets everyone invite, a member invites someon
     assert.deepEqual(errors, []);
   } finally {
     for (const context of contexts) await context.close();
+  }
+});
+
+test('privacy: what a person allowed is listed, and each permission is taken back through its own operation (T164)', { timeout: 240000 }, async () => {
+  assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname), 'Synthetic consent journeys require the approved local web origin');
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const personContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const errors = [];
+  const external = [];
+  for (const context of [ownerContext, personContext]) {
+    await context.route('**/*', route => {
+      if (new URL(route.request().url()).origin === new URL(base).origin) return route.continue();
+      external.push(route.request().url());
+      return route.abort('blockedbyclient');
+    });
+  }
+  const ownerPage = await ownerContext.newPage();
+  const page = await personContext.newPage();
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `privacy-owner-${suffix}@example.test`);
+    await signUp(page, `privacy-person-${suffix}@example.test`);
+    async function named(context, displayName) {
+      const profile = await context.request.get(`${base}/api/me`);
+      const account = (await profile.json()).data;
+      const updated = await context.request.patch(`${base}/api/me/profile`, {
+        headers: { Origin: base, 'X-Account-ID': account.id, 'If-Match': profile.headers().etag },
+        data: { display_name: displayName, timezone: 'UTC' },
+      });
+      assert.equal(updated.status(), 200);
+      return (await updated.json()).data;
+    }
+    const owner = await named(ownerContext, 'Morgan Organizer');
+    const person = await named(personContext, 'Riley Recipient');
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const headers = { Origin: base, 'X-Account-ID': person.id };
+    const read = async (context, route, accountHeaders) => {
+      const response = await context.request.get(`${base}/api/${route}`, { headers: accountHeaders });
+      assert.equal(response.status(), 200, await response.text());
+      return response;
+    };
+
+    // Four permissions, each made where it is kept: an accepted reminder request, in-app reminders, an agent memory and interests.
+    const createdSpace = await ownerContext.request.post(`${base}/api/spaces`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Privacy family ${suffix}`, space_type: 'family' },
+    });
+    assert.equal(createdSpace.status(), 201);
+    const space = (await createdSpace.json()).data;
+    const invitation = await ownerContext.request.post(`${base}/api/spaces/${space.id}/invitations`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: person.id },
+    });
+    assert.equal(invitation.status(), 201);
+    assert.equal((await personContext.request.post(`${base}/api/invitations/${(await invitation.json()).data.id}/accept`, { headers, data: {} })).status(), 200);
+    const createdTask = await ownerContext.request.post(`${base}/api/tasks`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+      data: { space_id: space.id, title: 'Check the smoke alarm', description: 'Synthetic privacy journey', due_date: null, assignee_account_id: person.id },
+    });
+    assert.equal(createdTask.status(), 201);
+    const task = (await createdTask.json()).data;
+    const instant = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    instant.setUTCSeconds(0, 0);
+    const preview = await ownerContext.request.post(`${base}/api/reminder-requests/preview`, {
+      headers: ownerHeaders, data: { task_id: task.id, recipient_account_id: person.id, local_time: instant.toISOString().slice(0, 16), timezone: 'UTC' },
+    });
+    assert.equal(preview.status(), 200, await preview.text());
+    const proposed = await ownerContext.request.post(`${base}/api/reminder-requests`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { preview_token: (await preview.json()).data.options[0].preview_token },
+    });
+    assert.equal(proposed.status(), 201, await proposed.text());
+    const requestId = (await proposed.json()).data.id;
+    const review = (await (await read(personContext, `reminder-requests/${requestId}/review`, headers)).json()).data;
+    const accepted = await personContext.request.post(`${base}/api/reminder-requests/${requestId}/accept`, { headers, data: { preview_token: review.preview_token } });
+    assert.equal(accepted.status(), 200, await accepted.text());
+    const reminderId = (await accepted.json()).data.reminder_id;
+    assert.ok(reminderId);
+
+    const asked = await personContext.request.post(`${base}/api/agent-runs`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { space_id: space.id, message: 'Remember that the spare key is under the blue pot' },
+    });
+    assert.ok(asked.ok(), await asked.text());
+    let run = (await asked.json()).data;
+    for (const deadline = Date.now() + 30000; run.status !== 'waiting_for_approval' && Date.now() < deadline;) {
+      await delay(250);
+      run = (await (await read(personContext, `agent-runs?space_id=${space.id}&limit=20`, headers)).json()).data.find(item => item.id === run.id) ?? run;
+    }
+    assert.equal(run.status, 'waiting_for_approval');
+    const approved = await personContext.request.post(`${base}/api/agent-approvals/${run.approval.id}/approve`, {
+      headers: { ...headers, 'If-Match': run.approval.etag, 'Idempotency-Key': crypto.randomUUID() }, data: {},
+    });
+    assert.equal(approved.status(), 200, await approved.text());
+    let memories = [];
+    for (const deadline = Date.now() + 30000; memories.length === 0 && Date.now() < deadline; await delay(250)) {
+      memories = (await (await read(personContext, 'agent-memories', headers)).json()).data;
+    }
+    assert.equal(memories.length, 1);
+
+    const terms = (await (await read(personContext, 'taxonomy', headers)).json()).data;
+    const topic = terms.find(term => term.dimension === 'topic' && term.status === 'active').code;
+    const interests = (await (await read(personContext, 'me/interests', headers)).json()).data;
+    const chosen = await personContext.request.put(`${base}/api/me/interests`, {
+      headers: { ...headers, 'If-Match': interests.etag }, data: { topics: [topic], interests: [], languages: [], places: [] },
+    });
+    assert.equal(chosen.status(), 200, await chosen.text());
+    const preferences = await read(personContext, 'me/notification-preferences', headers);
+    assert.equal((await preferences.json()).data.in_app_reminders_enabled, true, 'a new account receives in-app reminders');
+
+    // The page is reached from Profile and changes nothing by being opened.
+    const writes = [];
+    page.on('request', request => { if (request.url().includes('/api/') && request.method() !== 'GET') writes.push(`${request.method()} ${new URL(request.url()).pathname}`); });
+    await page.goto(`${base}/app/settings/account`);
+    await page.getByRole('link', { name: 'Privacy', exact: true }).click();
+    await page.getByRole('heading', { name: 'Privacy', exact: true, level: 1 }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/app/settings/privacy');
+    await page.getByText(`Morgan Organizer may remind you about "${task.title}"`, { exact: false }).waitFor();
+    await page.getByText('Reminders can reach your inbox.', { exact: true }).waitFor();
+    await page.getByText(memories[0].content, { exact: true }).waitFor();
+    await page.getByText('1 chosen topics, interests, languages and places.', { exact: true }).waitFor();
+    await page.getByRole('region', { name: 'Recent account activity' }).getByText('Signed in', { exact: false }).first().waitFor();
+    assert.deepEqual(writes, []);
+
+    async function takeBack(name) {
+      await page.getByRole('button', { name: `Take back: ${name}`, exact: true }).click();
+      const confirmation = page.getByRole('group', { name: 'Take this back?' });
+      await confirmation.getByText(name, { exact: true }).waitFor();
+      await confirmation.getByRole('button', { name: 'Take back', exact: true }).click();
+    }
+    const taken = () => page.getByRole('status').filter({ hasText: 'Taken back.' }).waitFor();
+    await takeBack(task.title);
+    await taken();
+    await page.getByText('Morgan Organizer may remind you about', { exact: false }).waitFor({ state: 'detached' });
+    await takeBack(memories[0].content);
+    await taken();
+    await page.getByText(memories[0].content, { exact: true }).waitFor({ state: 'detached' });
+
+    // Turned off and on again elsewhere after the page loaded: the server refuses the older version, and the next attempt uses the newer one.
+    let current = await read(personContext, 'me/notification-preferences', headers);
+    for (const enabled of [false, true]) {
+      current = await personContext.request.patch(`${base}/api/me/notification-preferences`, {
+        headers: { ...headers, 'If-Match': current.headers().etag }, data: { in_app_reminders_enabled: enabled },
+      });
+      assert.equal(current.status(), 200, await current.text());
+    }
+    await takeBack('Reminders in your inbox');
+    await page.getByRole('alert').filter({ hasText: 'Notification preferences changed' }).waitFor();
+    assert.equal(await page.getByRole('group', { name: 'Take this back?' }).count(), 0);
+    await takeBack('Reminders in your inbox');
+    await taken();
+    await page.getByText('Reminders are turned off. Turn them on again under Reminders.', { exact: true }).waitFor();
+    await takeBack('Interests used for page and post suggestions');
+    await taken();
+    await page.getByRole('region', { name: 'Interests used for page and post suggestions' }).getByText('Nothing to show here.', { exact: true }).waitFor();
+
+    assert.deepEqual(writes.map(write => write.replace(/[0-9a-f-]{36}/g, 'ID')), [
+      'POST /api/reminders/ID/cancel', 'DELETE /api/agent-memories/ID', 'PATCH /api/me/notification-preferences',
+      'PATCH /api/me/notification-preferences', 'PUT /api/me/interests',
+    ]);
+    const reminders = (await (await read(personContext, 'reminders', headers)).json()).data;
+    assert.equal(reminders.find(item => item.id === reminderId).status, 'cancelled');
+    assert.equal((await (await read(personContext, 'me/notification-preferences', headers)).json()).data.in_app_reminders_enabled, false);
+    assert.deepEqual((await (await read(personContext, 'agent-memories', headers)).json()).data, []);
+    const cleared = (await (await read(personContext, 'me/interests', headers)).json()).data;
+    assert.deepEqual([cleared.topics, cleared.interests, cleared.languages, cleared.places], [[], [], [], []]);
+
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/privacy-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(external, []);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await personContext.close();
+  }
+});
+
+test('calendar views: week and day ask only for their own dates, a hidden source is not asked for again, and entries say who sees them (T163)', { timeout: 180000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await signUp(page, `calendar-views-${Date.now()}@example.test`);
+    const profile = (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': profile.id };
+    async function create(route, data) {
+      const response = await context.request.post(`${base}/api/${route}`, { headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data });
+      assert.equal(response.status(), 201, await response.text());
+      return (await response.json()).data;
+    }
+    // A Wednesday task and a Thursday reminder in the week of Sunday, November 1, 2026 (Asia/Kolkata).
+    const space = await create('spaces', { name: 'Calendar views family', space_type: 'family' });
+    const task = await create('tasks', { space_id: space.id, title: 'Views task', due_date: '2026-11-04', description: '', assignee_account_id: null });
+    const preview = await context.request.post(`${base}/api/reminders/preview`, { headers, data: { task_id: task.id, local_time: '2026-11-05T10:00', timezone: 'Asia/Kolkata' } });
+    assert.equal(preview.status(), 200, await preview.text());
+    await create('reminders', { preview_token: (await preview.json()).data.options[0].preview_token });
+    const reads = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/calendar') reads.push({ start: url.searchParams.get('start_date'), end: url.searchParams.get('end_date') });
+    });
+    await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Home', exact: true }).click();
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
+    await page.getByRole('link', { name: 'Calendar', exact: true }).click();
+    await page.getByRole('heading', { name: 'Calendar', exact: true }).waitFor();
+    const rows = page.locator('li[data-kind]');
+    const views = page.getByRole('group', { name: 'Calendar view', exact: true });
+    await views.getByRole('button', { name: 'Week', exact: true }).click();
+    await page.getByLabel('Date', { exact: true }).fill('2026-11-04');
+    await page.getByRole('heading', { name: 'Sun, Nov 1, 2026 to Sat, Nov 7, 2026', exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 2);
+    assert.equal(await page.locator('li[data-kind="task"]').getByText('Shared in this Space', { exact: true }).count(), 1);
+    assert.equal(await page.locator('li[data-kind="reminder"]').getByText('Only you', { exact: true }).count(), 1);
+
+    const asked = reads.length;
+    const show = page.getByRole('group', { name: 'Show', exact: true });
+    await show.getByRole('checkbox', { name: 'Reminders', exact: true }).uncheck();
+    await page.getByText('Hidden by your choices: 1', { exact: true }).waitFor();
+    assert.equal(await rows.count(), 1);
+    await show.getByRole('checkbox', { name: 'Reminders', exact: true }).check();
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 2);
+    assert.equal(reads.length, asked, 'Showing or hiding a source does not ask the server again.');
+
+    await views.getByRole('button', { name: 'Day', exact: true }).click();
+    await page.getByRole('heading', { name: 'Wed, Nov 4, 2026', exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 1 && document.querySelector('li[data-kind="task"]'));
+    await page.getByRole('button', { name: 'Next day', exact: true }).click();
+    await page.getByRole('heading', { name: 'Thu, Nov 5, 2026', exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 1 && document.querySelector('li[data-kind="reminder"]'));
+    for (const range of [{ start: '2026-11-01', end: '2026-11-07' }, { start: '2026-11-04', end: '2026-11-04' }, { start: '2026-11-05', end: '2026-11-05' }]) {
+      assert.ok(reads.some(read => read.start === range.start && read.end === range.end), `asked for ${range.start} to ${range.end}`);
+    }
+    await page.screenshot({ path: path.join(root, '.local/screenshots/calendar-views-live-desktop.png'), fullPage: true });
+
+    await views.getByRole('button', { name: 'Week', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('li[data-kind]').length === 2);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/calendar-views-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event capacity: a full event puts the next Going answer in line and moves it up when a place opens (T154)', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `capacity-owner-${suffix}@example.test`);
+    await signUp(memberPage, `capacity-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Capacity family ${suffix}`, space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(sent.status(), 201);
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+
+    // The owner sets one place in the form and takes it by answering Going.
+    const day = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await ownerPage.goto(`${base}/app/events?space_id=${family.id}`);
+    await ownerPage.getByRole('heading', { name: 'Events', exact: true }).waitFor();
+    await ownerPage.getByRole('button', { name: 'New event', exact: true }).click();
+    const form = ownerPage.getByRole('form', { name: 'New event', exact: true });
+    await form.getByLabel('Title', { exact: true }).fill('Boat trip');
+    await form.getByLabel('Starts', { exact: true }).fill(`${day}T09:00`);
+    await form.getByLabel('Time zone', { exact: true }).selectOption('Asia/Kolkata');
+    await form.getByLabel('Places (optional)', { exact: true }).fill('1');
+    await form.getByRole('button', { name: 'Create event', exact: true }).click();
+    const ownerPanel = ownerPage.getByRole('region', { name: 'Boat trip', exact: true });
+    await ownerPanel.getByText('0 of 1 places taken', { exact: true }).waitFor();
+    await ownerPanel.getByRole('button', { name: 'Going', exact: true }).click();
+    await ownerPanel.getByText('1 of 1 places taken', { exact: true }).waitFor();
+    const event = (await (await ownerContext.request.get(`${base}/api/spaces/${family.id}/events`, { headers: ownerHeaders })).json()).data[0];
+    assert.equal(event.capacity, 1);
+
+    // The member answers Going and waits first in line.
+    await memberPage.goto(`${base}/app/events?space_id=${family.id}`);
+    await memberPage.getByRole('button', { name: 'Boat trip', exact: true }).click();
+    const memberPanel = memberPage.getByRole('region', { name: 'Boat trip', exact: true });
+    await memberPanel.getByRole('button', { name: 'Going', exact: true }).click();
+    await memberPanel.getByText('You are waiting in line: number 1. You will be going when a place opens.', { exact: true }).waitFor();
+    await memberPanel.getByText('1 of 1 places taken · Waiting in line: 1', { exact: true }).waitFor();
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/event-capacity-live-waiting.png'), fullPage: true });
+    let seen = (await (await memberContext.request.get(`${base}/api/events/${event.id}`, { headers: memberHeaders })).json()).data;
+    assert.deepEqual([seen.going, seen.waitlisted, seen.my_waitlist_position], [1, 1, 1]);
+
+    // Wait for the saved answer: the count stays full when the member moves up.
+    await ownerPanel.getByRole('button', { name: 'Not going', exact: true }).click();
+    await ownerPanel.getByRole('button', { name: 'Not going', exact: true, pressed: true }).waitFor();
+    await ownerPanel.getByText('1 of 1 places taken', { exact: true }).waitFor();
+    seen = (await (await memberContext.request.get(`${base}/api/events/${event.id}`, { headers: memberHeaders })).json()).data;
+    assert.deepEqual([seen.going, seen.waitlisted, seen.my_waitlist_position, seen.my_response], [1, 0, null, 'going']);
+    await memberPage.reload();
+    await memberPage.getByRole('button', { name: 'Boat trip', exact: true }).click();
+    await memberPanel.getByText('1 of 1 places taken', { exact: true }).waitFor();
+    assert.equal(await memberPanel.getByText('You are waiting in line', { exact: false }).count(), 0);
+
+    await memberPage.setViewportSize({ width: 320, height: 844 });
+    await memberPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/event-capacity-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
+  }
+});
+
+test('event budget: the organizer plans in exact money, members record expenses, and a cancelled event only reads (T159)', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const memberContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const ownerPage = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  memberPage.on('pageerror', error => errors.push(error.message));
+  try {
+    const suffix = Date.now();
+    await signUp(ownerPage, `budget-owner-${suffix}@example.test`);
+    await signUp(memberPage, `budget-member-${suffix}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const created = await ownerContext.request.post(`${base}/api/spaces`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { name: `Budget family ${suffix}`, space_type: 'family' } });
+    assert.equal(created.status(), 201);
+    const family = (await created.json()).data;
+    const sent = await ownerContext.request.post(`${base}/api/spaces/${family.id}/invitations`, { headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { recipient_account_id: member.id } });
+    assert.equal(sent.status(), 201);
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${(await sent.json()).data.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+    const day = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const planned = await ownerContext.request.post(`${base}/api/spaces/${family.id}/events`, {
+      headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+      data: { title: 'Naming ceremony', description: '', location: '', timezone: 'Asia/Kolkata', local_start: `${day}T11:00`, local_end: null },
+    });
+    assert.equal(planned.status(), 201);
+    const event = (await planned.json()).data;
+
+    // The organizer sets up the budget in rupees with two categories.
+    await ownerPage.goto(`${base}/app/events?space_id=${family.id}`);
+    await ownerPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    const ownerBudget = ownerPage.getByRole('region', { name: 'Budget', exact: true });
+    await ownerBudget.getByText('Recording an expense is not a payment. Nothing is collected or owed here.', { exact: true }).waitFor();
+    await ownerBudget.getByRole('button', { name: 'Set up budget', exact: true }).click();
+    const plan = ownerBudget.getByRole('form', { name: 'Set up budget' });
+    await plan.getByRole('combobox', { name: 'Currency', exact: true }).selectOption('INR');
+    await plan.getByRole('button', { name: 'Add category', exact: true }).click();
+    await plan.getByRole('textbox', { name: 'Category 1', exact: true }).fill('Food');
+    await plan.getByRole('textbox', { name: 'Planned amount for category 1', exact: true }).fill('1500');
+    await plan.getByRole('button', { name: 'Add category', exact: true }).click();
+    await plan.getByRole('textbox', { name: 'Category 2', exact: true }).fill('Venue');
+    await plan.getByRole('textbox', { name: 'Planned amount for category 2', exact: true }).fill('5000.50');
+    await plan.getByRole('button', { name: 'Save budget', exact: true }).click();
+    await plan.waitFor({ state: 'detached' });
+    const rupees = value => new Intl.NumberFormat('en', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+    await ownerBudget.getByText(`Food: planned ${rupees(1500)}, recorded ${rupees(0)}, ${rupees(1500)} left`, { exact: true }).waitFor();
+
+    // The member records two small amounts; they add up exactly, and the plan is not theirs to change.
+    await memberPage.goto(`${base}/app/events?space_id=${family.id}`);
+    await memberPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    const memberBudget = memberPage.getByRole('region', { name: 'Budget', exact: true });
+    const recorder = memberBudget.getByRole('form', { name: 'Record an expense' });
+    for (const [amount, note] of [['0.10', 'Bread'], ['0.20', 'Milk']]) {
+      await recorder.getByRole('textbox', { name: 'Amount (INR)', exact: true }).fill(amount);
+      await recorder.getByRole('combobox', { name: 'Category (optional)', exact: true }).selectOption({ label: 'Food' });
+      await recorder.getByRole('textbox', { name: 'What it was for', exact: true }).fill(note);
+      await recorder.getByRole('button', { name: 'Record', exact: true }).click();
+      await memberBudget.getByText(note, { exact: true }).waitFor();
+    }
+    await memberBudget.getByText(`Food: planned ${rupees(1500)}, recorded ${rupees(0.3)}, ${rupees(1499.7)} left`, { exact: true }).waitFor();
+    assert.equal(await memberBudget.getByRole('button', { name: 'Edit budget', exact: true }).count(), 0);
+    const seen = (await (await memberContext.request.get(`${base}/api/events/${event.id}/budget`, { headers: memberHeaders })).json()).data;
+    assert.deepEqual([seen.currency, seen.recorded_minor, seen.estimate_minor, seen.can_manage, seen.etag], ['INR', 30, 650050, false, null]);
+    const refused = await memberContext.request.put(`${base}/api/events/${event.id}/budget`, { headers: { ...memberHeaders, 'If-Match': '"any"' }, data: { currency: 'USD', categories: [] } });
+    assert.equal(refused.status(), 403);
+
+    // The organizer deletes the member's Milk after confirming; the member sees it gone.
+    await ownerPage.reload();
+    await ownerPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    await ownerBudget.getByRole('button', { name: `Delete expense ${rupees(0.2)}: Milk`, exact: true }).click();
+    await ownerBudget.getByRole('group', { name: 'Confirm deletion', exact: true }).getByRole('button', { name: 'Yes, delete', exact: true }).click();
+    await ownerBudget.getByText(`Food: planned ${rupees(1500)}, recorded ${rupees(0.1)}, ${rupees(1499.9)} left`, { exact: true }).waitFor();
+    await memberPage.reload();
+    await memberPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    await memberBudget.getByText('Bread', { exact: true }).waitFor();
+    assert.equal(await memberBudget.getByText('Milk', { exact: true }).count(), 0);
+
+    // T173: the member promises a contribution and marks it given; only the organizer sees whose it is.
+    const giving = memberBudget.getByRole('form', { name: 'Record your contribution' });
+    await giving.getByRole('textbox', { name: 'Amount (INR)', exact: true }).fill('250');
+    await giving.getByRole('button', { name: 'Promised', exact: true }).click();
+    await giving.getByRole('textbox', { name: 'Note (optional)', exact: true }).fill('Sweets');
+    await giving.getByRole('button', { name: 'Record contribution', exact: true }).click();
+    await memberBudget.getByText(`${rupees(250)} · Promised`, { exact: true }).waitFor();
+    await memberBudget.getByRole('button', { name: `Mark your contribution of ${rupees(250)} as given`, exact: true }).click();
+    await memberBudget.getByText(`${rupees(250)} · Given`, { exact: true }).waitFor();
+    const gifts = (await (await ownerContext.request.get(`${base}/api/events/${event.id}/budget`, { headers: ownerHeaders })).json()).data;
+    assert.deepEqual([gifts.given_minor, gifts.promised_minor, gifts.contribution_count, gifts.recorded_minor], [25000, 0, 1, 10]);
+    assert.deepEqual(gifts.contributions.map(item => [item.note, item.mine, item.can_change]), [['Sweets', false, false]]);
+    const [gift] = gifts.contributions;
+    const taken = await ownerContext.request.delete(`${base}/api/events/${event.id}/contributions/${gift.id}`, { headers: ownerHeaders, data: {} });
+    assert.equal(taken.status(), 403);
+    assert.equal((await taken.json()).error.code, 'CONTRIBUTION_CHANGE_DENIED');
+    const currencyLocked = await ownerContext.request.put(`${base}/api/events/${event.id}/budget`, { headers: { ...ownerHeaders, 'If-Match': gifts.etag }, data: { currency: 'USD', categories: gifts.categories.map(({ id, name, estimate_minor }) => ({ id, name, estimate_minor })) } });
+    assert.equal(currencyLocked.status(), 409);
+
+    // T174: the organizer splits the planned total equally; the member sees only their own share.
+    await ownerPage.reload();
+    await ownerPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    const ownerSplit = ownerPage.getByRole('region', { name: 'Split', exact: true });
+    await ownerSplit.getByRole('button', { name: 'Split the cost', exact: true }).click();
+    const splitForm = ownerSplit.getByRole('form', { name: 'Split the cost' });
+    for (const box of await splitForm.getByRole('checkbox').all()) await box.check();
+    await splitForm.getByRole('button', { name: 'Save split', exact: true }).click();
+    await splitForm.waitFor({ state: 'detached' });
+    await ownerSplit.getByText(`The planned total: ${rupees(6500.5)}, divided equally.`, { exact: true }).waitFor();
+    await ownerSplit.getByText(`Alex Morgan: ${rupees(3250.25)}`, { exact: true }).waitFor();
+    await memberPage.reload();
+    await memberPage.getByRole('button', { name: 'Naming ceremony', exact: true }).click();
+    const memberSplit = memberPage.getByRole('region', { name: 'Split', exact: true });
+    await memberSplit.getByText(/^Your share: /).waitFor();
+    assert.equal(await memberSplit.getByRole('listitem').count(), 0);
+    const divided = (await (await memberContext.request.get(`${base}/api/events/${event.id}/budget`, { headers: memberHeaders })).json()).data.split;
+    assert.deepEqual([divided.people_count, divided.allocated_minor, divided.all_shares, divided.shares.length], [2, 650050, false, 1]);
+
+    // Once the event is cancelled the budget only reads.
+    const current = (await (await ownerContext.request.get(`${base}/api/events/${event.id}`, { headers: ownerHeaders })).json()).data;
+    assert.equal((await ownerContext.request.post(`${base}/api/events/${event.id}/cancel`, { headers: { ...ownerHeaders, 'If-Match': current.etag }, data: {} })).status(), 200);
+    const late = await memberContext.request.post(`${base}/api/events/${event.id}/expenses`, { headers: { ...memberHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: { amount_minor: 100, note: 'Late taxi' } });
+    assert.equal(late.status(), 409);
+    assert.equal((await late.json()).error.code, 'EVENT_CANCELLED');
+    await memberPage.reload();
+    // The card's name now ends with its Cancelled mark.
+    await memberPage.getByRole('button', { name: /^Naming ceremony/ }).click();
+    await memberBudget.getByText('Bread', { exact: true }).waitFor();
+    assert.equal(await memberBudget.getByRole('form', { name: 'Record an expense' }).count(), 0);
+
+    await memberPage.setViewportSize({ width: 320, height: 844 });
+    await memberPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/event-budget-live-320-200pct.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await memberContext.close();
   }
 });

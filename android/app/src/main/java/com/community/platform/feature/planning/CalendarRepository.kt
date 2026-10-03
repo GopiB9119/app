@@ -12,6 +12,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -33,10 +34,14 @@ interface CalendarApi {
 class CalendarRepository @Inject constructor(private val api: CalendarApi, private val accounts: AccountRepository) {
     private fun invalid(): Nothing = throw IdentityFailure("INVALID_RESPONSE", "The calendar could not be confirmed. Reload this view.")
 
-    suspend fun entries(accountId: String, spaceId: String, month: YearMonth, timezone: String, cursor: String? = null): TaskPage<CalendarEntryDto> = accounts.authorized(accountId) { authorization ->
-        require(month.year in 1900..2100)
+    suspend fun entries(accountId: String, spaceId: String, month: YearMonth, timezone: String, cursor: String? = null): TaskPage<CalendarEntryDto> =
+        entries(accountId, spaceId, month.atDay(1), month.atEndOfMonth(), timezone, cursor)
+
+    /** One page from [start] to [end], both included: at most 31 days within 1900 to 2100 (DEC-031 week and day views). */
+    suspend fun entries(accountId: String, spaceId: String, start: LocalDate, end: LocalDate, timezone: String, cursor: String? = null): TaskPage<CalendarEntryDto> = accounts.authorized(accountId) { authorization ->
+        require(start.year >= 1900 && end.year <= 2100 && !end.isBefore(start) && ChronoUnit.DAYS.between(start, end) < 31)
         val zone = ZoneId.of(timezone)
-        val response = api.entries(authorization, spaceId, month.atDay(1).toString(), month.atEndOfMonth().toString(), timezone, 20, cursor)
+        val response = api.entries(authorization, spaceId, start.toString(), end.toString(), timezone, 20, cursor)
         val entries = accounts.result(response)
         val pagination = response.body()?.pagination ?: invalid()
         if (entries.size > 20 || pagination.hasMore != (pagination.nextCursor != null)) invalid()
@@ -49,7 +54,7 @@ class CalendarRepository @Inject constructor(private val api: CalendarApi, priva
                 else require(entry.taskId != null && UUID.fromString(entry.taskId).toString() == entry.taskId)
                 require(entry.spaceId == spaceId && entry.title.length in 1..400)
                 val date = LocalDate.parse(entry.date)
-                require(date.toString() == entry.date && YearMonth.from(date) == month)
+                require(date.toString() == entry.date && !date.isBefore(start) && !date.isAfter(end))
                 when (entry.kind) {
                     "task" -> require(entry.id == entry.taskId && entry.scheduledAt == null && entry.timezone == null && !entry.sourceChanged && entry.seriesId == null && entry.status in setOf("open", "in_progress", "completed", "cancelled"))
                     "reminder", "planned", "event" -> {

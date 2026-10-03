@@ -53,6 +53,75 @@
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 3); padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-control); }
 .row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+.insights { min-width: 0; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.insights h2 { margin: 0; font-size: 1.25rem; }
+.insights > div { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.insights > [hidden] { display: none; }
+.insights button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.insights svg { flex: 0 0 auto; }
+.insightsScroll { min-width: 0; max-width: 100%; overflow-x: auto; container-type: inline-size; }
+.insightsScroll:focus-visible { outline: 3px solid var(--color-accent); outline-offset: var(--space-unit); }
+.insightsTable { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.insightsTable caption { padding: 0 0 calc(var(--space-unit) * 3); font-weight: 600; text-align: left; }
+.insightsTable :is(th, td) { padding: calc(var(--space-unit) * 3); border-bottom: 1px solid var(--color-border); text-align: right; vertical-align: top; }
+.insightsTable th:first-child { width: 40%; text-align: left; }
+.insightsTable tbody th { font-weight: 400; }
+/* Narrow screens and large text: each period becomes a block of labelled numbers, so none is off-screen. */
+@container (max-width: 36rem) {
+  .insightsTable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .insightsTable :is(tbody, tr, th, td) { display: block; }
+  .insightsTable tr { padding-block: calc(var(--space-unit) * 2); border-bottom: 1px solid var(--color-border); }
+  .insightsTable :is(th, td) { padding: var(--space-unit) 0; border-bottom: 0; text-align: left; }
+  .insightsTable tbody th:first-child { width: auto; font-weight: 600; }
+  .insightsTable td { display: flex; justify-content: space-between; gap: calc(var(--space-unit) * 2); }
+  .insightsTable td::before { content: attr(data-label); }
+}
+
+.vocabularyScreen { min-width: 0; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.vocabularyScreen h1 { margin: 0; font-size: 1.75rem; }
+.vocabularyForm { display: grid; grid-template-columns: minmax(0, 1fr); gap: calc(var(--space-unit) * 5); min-width: 0; }
+.termPicker { min-width: 0; margin: 0; padding: 0 0 calc(var(--space-unit) * 5); border: 0; border-bottom: 1px solid var(--color-border); }
+.termPicker legend { max-width: 100%; padding: 0; font-weight: 650; overflow-wrap: anywhere; }
+.selectionCount { margin: var(--space-unit) 0 calc(var(--space-unit) * 2); color: var(--color-muted); font-size: 0.875rem; }
+.termPicker > label { display: block; margin-bottom: calc(var(--space-unit) * 2); overflow-wrap: anywhere; }
+.termPicker > input { width: 100%; min-width: 0; min-height: var(--target-minimum); padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); border: 1px solid var(--color-control-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); font: inherit; }
+.termPicker > input:focus-visible, .termOptions:focus-visible, .taxonomyDetails > summary:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+.termOptions { max-height: calc(var(--space-unit) * 56); overflow-y: auto; list-style: none; padding: 0; margin: calc(var(--space-unit) * 2) 0 0; }
+.termOptions li { min-width: 0; }
+.termPicker .termOption { display: flex; flex-direction: row; align-items: center; min-height: var(--target-minimum); gap: calc(var(--space-unit) * 3); padding: var(--space-unit) 0; font-weight: 400; }
+.termOption span { min-width: 0; overflow-wrap: anywhere; }
+.termPicker .termOption input { width: calc(var(--space-unit) * 5); height: calc(var(--space-unit) * 5); min-height: 0; flex: 0 0 auto; margin: 0; padding: 0; accent-color: var(--color-primary); }
+.selectedTerms, .classification { list-style: none; display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); padding: 0; margin: 0 0 calc(var(--space-unit) * 3); }
+.selectedTerms li, .classification li { display: inline-flex; align-items: center; max-width: 100%; gap: var(--space-unit); padding: var(--space-unit) calc(var(--space-unit) * 2); border-radius: var(--radius-control); background: var(--color-primary-surface); color: var(--color-primary); overflow-wrap: anywhere; }
+.selectedTerms li > span { min-width: 0; }
+.selectedTerms button { flex: 0 0 auto; }
+.classification li { display: block; font-size: 0.875rem; }
+.classification li > span { font-weight: 650; }
+.taxonomyDetails { min-width: 0; }
+.taxonomyDetails > summary { min-height: var(--target-minimum); padding: calc(var(--space-unit) * 3) 0; cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.taxonomyDetails > div { margin-top: calc(var(--space-unit) * 3); min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.vocabularyForm :is(button, a), .taxonomyDetails :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.extraFilters { grid-column: 1 / -1; }
+.extraFilters > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--space-unit) * 56)), 1fr)); gap: calc(var(--space-unit) * 3); }
+.matchReasons { margin: 0; padding: 0; list-style: none; color: var(--color-muted); font-size: 0.875rem; display: grid; gap: var(--space-unit); overflow-wrap: anywhere; }
+
+.feedMenu { position: relative; margin-left: auto; min-width: 0; }
+.feedMenuList { position: absolute; z-index: 5; top: calc(100% + var(--space-unit)); right: 0; width: min(18rem, calc(100vw - var(--space-unit) * 20)); max-height: 70dvh; overflow-y: auto; padding: var(--space-unit); display: grid; gap: var(--space-unit); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); font-size: 1rem; }
+.feedMenuList button { display: flex; align-items: center; gap: calc(var(--space-unit) * 2); width: 100%; min-width: 0; min-height: var(--target-minimum); padding: calc(var(--space-unit) * 2); border: 0; border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); font: inherit; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.feedMenuList button:hover, .feedMenuList button:focus-visible { background: var(--color-primary-surface); }
+.feedMenuList button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 0; }
+.feedMenuList svg { flex: 0 0 auto; }
+.feedMenuList span { min-width: 0; }
+.feedWhy { color: var(--color-ink); font-size: 1rem; overflow-wrap: anywhere; }
+.feedWhy h2 { font-size: 1.25rem; }
+.feedFeedback { min-width: 0; overflow-wrap: anywhere; }
+.feedFeedback :is(button, a), .feedWhy button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.feedSettings h2 { margin: 0; font-size: 1.125rem; }
+.feedSettings :is(button, a) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.feedSettings svg { flex: 0 0 auto; }
+.feedControlLabel { display: grid; gap: var(--space-unit); }
+.feedSettings .feedControlLabel { flex-basis: min(100%, 16rem); }
+
 :global(html:lang(te)) :is(.main, .dialog), :global(html:lang(hi)) :is(.main, .dialog) { overflow-wrap: anywhere; }
 :global(html:lang(te)) :is(.main, .stack, .form, .form label, .dialog form, .dialog fieldset),
 :global(html:lang(hi)) :is(.main, .stack, .form, .form label, .dialog form, .dialog fieldset) { min-width: 0; grid-template-columns: minmax(0, 1fr); }

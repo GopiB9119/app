@@ -43,6 +43,12 @@ data class CareDayInstructionDto(
 
 data class CareReportDto(
     val outcome: String, val revision: Int, @SerializedName("reported_at") val reportedAt: String, @SerializedName("updated_at") val updatedAt: String,
+    // DEC-030: answers a correction replaced, newest first; null from an older service means none.
+    val earlier: List<CareEarlierAnswerDto>? = null,
+)
+
+data class CareEarlierAnswerDto(
+    val outcome: String, val revision: Int, @SerializedName("recorded_at") val recordedAt: String, @SerializedName("replaced_at") val replacedAt: String,
 )
 
 data class CareOccurrenceDto(
@@ -182,6 +188,12 @@ class CareRepository @Inject constructor(private val api: CareApi, private val a
         value.report?.let {
             require(it.outcome in DOSE_OUTCOMES && it.revision >= 1)
             Instant.parse(it.reportedAt); Instant.parse(it.updatedAt)
+            val earlier = it.earlier.orEmpty()
+            require(earlier.size <= 10 && earlier.zipWithNext().all { (newer, older) -> newer.revision > older.revision })
+            earlier.forEach { answer ->
+                require(answer.outcome in DOSE_OUTCOMES && answer.revision in 1 until it.revision)
+                Instant.parse(answer.recordedAt); Instant.parse(answer.replacedAt)
+            }
         }
         version(value.etag)
         value

@@ -265,6 +265,13 @@ private fun DoseRow(occurrence: CareOccurrenceDto, medicine: CareDayInstructionD
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("care-dose-status"),
         )
+        occurrence.report?.earlier.orEmpty().forEach { answer ->
+            val changed = runCatching {
+                DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).format(Instant.parse(answer.replacedAt).atZone(ZoneId.of(occurrence.timezone)))
+            }.getOrDefault(answer.replacedAt)
+            Text(stringResource(R.string.care_earlier_answer, outcomeLabel(answer.outcome), changed), style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("care-earlier-${answer.revision}"))
+        }
         if (occurrence.clockChange == "shifted_forward") Text(stringResource(R.string.care_shifted, occurrence.localTime, occurrence.displayTime), style = MaterialTheme.typography.bodySmall)
         if (occurrence.clockChange == "repeated_time_first") Text(stringResource(R.string.care_repeated, occurrence.localTime), style = MaterialTheme.typography.bodySmall)
         if (occurrence.canReport) {

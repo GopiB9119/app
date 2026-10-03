@@ -291,6 +291,55 @@ test('an owner offers the page to a moderator against the version shown, sees it
   } finally { await context.close(); }
 });
 
+test('T151: an unconfirmed handover hides Offer and retries the exact original command', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await open(context, { moderators: [moderator()] });
+    const section = page.getByRole('region', { name: 'Moderators', exact: true });
+    const question = section.getByRole('group', { name: 'Moderators', exact: true });
+    await page.evaluate(pageId => {
+      const originalFetch = window.fetch;
+      let lost = false;
+      window.fetch = async (input, config = {}) => {
+        const response = await originalFetch(input, config);
+        if (String(input) === `/api/pages/${pageId}/handover` && config.method === 'POST' && !lost) {
+          lost = true;
+          throw new TypeError('Synthetic lost handover response');
+        }
+        return response;
+      };
+    }, pageId);
+    await section.getByRole('button', { name: 'Hand over the page', exact: true }).click();
+    await question.getByRole('button', { name: 'Offer the page', exact: true }).click();
+    const retry = section.getByRole('button', { name: 'Retry offer', exact: true });
+    await retry.waitFor();
+    assert.equal(await question.isVisible(), true, 'The reviewed recipient stays visible after the lost answer.');
+    assert.equal(await section.getByRole('button', { name: 'Offer the page', exact: true }).count(), 0, 'A tracked retry must not allow a second offer key.');
+    assert.equal(await section.getByRole('button', { name: 'Hand over the page', exact: true }).count(), 0);
+    const original = await commands(page);
+    assert.deepEqual(original, [[`pages/${pageId}/handover`, { to_account_id: otherId }, '"page-1"', '00000000-0000-4000-8000-000000000001']]);
+
+    await page.evaluate(() => document.fonts.ready);
+    const normalSize = await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body, body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), normalSize * 2);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'The tracked offer fits at 320px and 200% text.');
+    const retryBox = await retry.boundingBox();
+    assert.ok(retryBox.x >= 0 && retryBox.x + retryBox.width <= 320 && retryBox.height >= 44);
+
+    await retry.click();
+    await page.getByRole('status').filter({ hasText: 'Offer sent. It lasts 15 minutes.' }).waitFor();
+    await section.getByText('Offered to Sam Lee until', { exact: false }).waitFor();
+    await retry.waitFor({ state: 'detached' });
+    assert.equal(await question.count(), 0);
+    assert.deepEqual(await commands(page), [original[0], original[0]], 'Retry preserves the recipient, reviewed version and original key.');
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('archiving makes the page read only; deleting needs its exact name, hides it and offers Restore for 7 days', async () => {
   const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
   try {

@@ -9,8 +9,10 @@ from app.modules.community.models import (
     PageFollow,
     PageHandover,
     PageModerator,
+    PageTerm,
     PostComment,
     PostReaction,
+    PostTerm,
     PublicPage,
     PublicPost,
     SavedPost,
@@ -33,13 +35,17 @@ class PageLifecycleService:
             outcome["purged"] += 1
         return outcome
 
+    @staticmethod
+    def purge_candidates(now):
+        return select(PublicPage).where(
+            PublicPage.status == "deleted", PublicPage.purge_after.is_not(None), PublicPage.purge_after <= now,
+        )
+
     def purge_next(self):
         with self.sessions.begin() as database:
             database.execute(text("SET LOCAL lock_timeout = '5s'"))
             now = self.clock()
-            page = database.scalar(select(PublicPage).where(
-                PublicPage.status == "deleted", PublicPage.purge_after.is_not(None), PublicPage.purge_after <= now,
-            ).order_by(PublicPage.purge_after, PublicPage.id).limit(1)
+            page = database.scalar(self.purge_candidates(now).order_by(PublicPage.purge_after, PublicPage.id).limit(1)
             .with_for_update(skip_locked=True).execution_options(populate_existing=True))
             if page is None:
                 return False
@@ -53,10 +59,14 @@ class PageLifecycleService:
             ).values(status="deleted", body=None, ended_at=func.coalesce(PostComment.ended_at, now)))
             database.execute(delete(PostReaction).where(PostReaction.post_id.in_(posts)))
             database.execute(delete(SavedPost).where(SavedPost.post_id.in_(posts)))
+            database.execute(delete(PostTerm).where(PostTerm.post_id.in_(posts)))
             database.execute(delete(PageFollow).where(PageFollow.page_id == page.id))
             database.execute(delete(PageModerator).where(PageModerator.page_id == page.id))
             database.execute(delete(PageHandover).where(PageHandover.page_id == page.id))
+            database.execute(delete(PageTerm).where(PageTerm.page_id == page.id))
             page.name = "Deleted page"
+            # The erased page keeps no subject either: a health or support topic says something about its owner.
+            page.topic = "other"
             page.description = ""
             page.rules = ""
             page.follower_count = 0

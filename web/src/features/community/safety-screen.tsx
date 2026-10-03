@@ -100,7 +100,7 @@ function SafetyHistory({ account }: { account: Account }) {
             {item.appeal_status && <span>{t(appealLabels[item.appeal_status])}</span>}
             {item.action === "restore" && item.appeal_of !== null && item.appeal_status === null && <span>{t("community.appealStatus.overturned")}</span>}
           </div>
-          {item.action === "hide" && item.appeal_status === null && item.appeal_of === null
+          {(item.action === "hide" || item.action === "limit") && item.appeal_status === null && item.appeal_of === null
             && <button className="secondary-button" onClick={() => { setSelection(item); setMessage(""); }}>{t("community.appeal")}</button>}
         </li>)}
       </ul>

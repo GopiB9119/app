@@ -41,6 +41,8 @@ class Space(Base):
     space_type: Mapped[str] = mapped_column(String(16), default="family")
     visibility: Mapped[str] = mapped_column(String(16), default="private")
     member_invites: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # DEC-028: the owner can turn the agent off in this Space.
+    agent_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     status: Mapped[str] = mapped_column(String(16), default="active")
     version: Mapped[int] = mapped_column(Integer, default=1)
     # Counts admissions; each membership keeps its own number, and history boundaries compare numbers, not times.

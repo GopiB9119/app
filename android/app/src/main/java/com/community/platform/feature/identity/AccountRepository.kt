@@ -3,6 +3,7 @@ package com.community.platform.feature.identity
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -94,17 +95,26 @@ class AccountRepository @Inject constructor(
         }
     }
 
-    internal suspend fun <Value> authorized(expectedAccountId: String, operation: suspend (String) -> Value): Value = withContext(Dispatchers.IO) {
-        mutex.withLock {
+    private suspend fun <Value> withSession(expectedAccountId: String, operation: suspend (Credentials) -> Value): Value = withContext(Dispatchers.IO) {
+        val saved = mutex.withLock {
             val saved = store.load() ?: throw IdentityFailure("AUTHENTICATION_REQUIRED", "Sign in to continue.", 401)
             if (saved.accountId != expectedAccountId) throw IdentityFailure("ACCOUNT_CHANGED", "The signed-in account changed. Reload before continuing.", 409)
-            coroutineContext.ensureActive()
-            try { operation("Bearer ${saved.token}") } catch (error: IdentityFailure) {
-                if (error.status == 401) store.clear()
-                throw error
-            }
+            saved
+        }
+        coroutineContext.ensureActive()
+        try { operation(saved) } catch (error: IdentityFailure) {
+            if (error.status == 401) clearIfCurrent(saved)
+            throw error
         }
     }
+
+    private suspend fun clearIfCurrent(saved: Credentials) = withContext(NonCancellable) {
+        // Session cleanup must finish even when signInAgain is cancelled while waiting for its answer.
+        mutex.withLock { if (store.load() == saved) store.clear() }
+    }
+
+    internal suspend fun <Value> authorized(expectedAccountId: String, operation: suspend (String) -> Value): Value =
+        withSession(expectedAccountId) { operation("Bearer ${it.token}") }
 
     suspend fun update(accountId: String, etag: String, name: String, timezone: String): Profile = authorized(accountId) { authorization ->
         profile(api.profile(authorization, etag, ProfileDto(name, timezone)))
@@ -113,20 +123,20 @@ class AccountRepository @Inject constructor(
     suspend fun events(accountId: String): List<SecurityEventDto> = authorized(accountId) { result(api.events(it)) }
     suspend fun revoke(accountId: String, sessionId: String) = authorized(accountId) { result(api.revoke(it, sessionId)) }
     suspend fun revokeOthers(accountId: String) = authorized(accountId) { result(api.revokeOthers(it)) }
-    suspend fun logout(accountId: String) = authorized(accountId) {
-        result(api.logout(it))
-        store.clear()
+    suspend fun logout(accountId: String) = withSession(accountId) {
+        result(api.logout("Bearer ${it.token}"))
+        clearIfCurrent(it)
     }
 
-    suspend fun signInAgain(accountId: String) = authorized(accountId) {
-        try { result(api.logout(it)) } finally { store.clear() }
+    suspend fun signInAgain(accountId: String) = withSession(accountId) {
+        try { result(api.logout("Bearer ${it.token}")) } finally { clearIfCurrent(it) }
     }
 
-    suspend fun deleteAccount(accountId: String, password: String): DeletionDto = authorized(accountId) {
-        val deletion = result(api.deleteAccount(it, DeleteAccountDto(password)))
+    suspend fun deleteAccount(accountId: String, password: String): DeletionDto = withSession(accountId) {
+        val deletion = result(api.deleteAccount("Bearer ${it.token}", DeleteAccountDto(password)))
         if (deletion.status != "deletion_requested") throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected response.")
         Instant.parse(deletion.purgeAfter)
-        store.clear()
+        clearIfCurrent(it)
         deletion
     }
 

@@ -42,6 +42,8 @@ ERASE = (
     # Care records are the person's own.
     ("care_alerts", "DELETE FROM care_dose_alerts WHERE account_id = :a OR instruction_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
     ("care_commands", "DELETE FROM care_commands WHERE account_id = :a OR target_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
+    ("care_report_history", "DELETE FROM care_dose_report_history WHERE account_id = :a OR report_id IN (SELECT id FROM care_dose_reports "
+                            "WHERE account_id = :a OR instruction_id IN (SELECT id FROM care_instructions WHERE account_id = :a))"),
     ("care_reports", "DELETE FROM care_dose_reports WHERE account_id = :a OR instruction_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
     ("care_audit", "DELETE FROM care_audit_events WHERE account_id = :a OR instruction_id IN (SELECT id FROM care_instructions WHERE account_id = :a)"),
     ("care_instructions", "DELETE FROM care_instructions WHERE account_id = :a"),
@@ -59,6 +61,10 @@ ERASE = (
     ("series_commands", "DELETE FROM reminder_series_commands WHERE account_id = :a OR series_id IN (SELECT id FROM reminder_series WHERE account_id = :a)"),
     ("series", "DELETE FROM reminder_series WHERE account_id = :a"),
     ("preferences", "DELETE FROM notification_preferences WHERE account_id = :a"),
+    # The topics, interests, languages and places the person chose (DEC-027).
+    ("interests", "DELETE FROM account_interests WHERE account_id = :a"),
+    # What they muted or marked Not interested (DEC-037).
+    ("feed_controls", "DELETE FROM feed_controls WHERE account_id = :a"),
     # Public community: the person's likes, saves, follows and blocks go; what they wrote is deleted in place.
     # Pages are locked before their posts, in one order, as pinning does, so the two cannot wait for each other.
     ("lock_pages", "SELECT id FROM public_pages WHERE id IN (SELECT page_id FROM public_page_follows WHERE account_id = :a "
@@ -74,7 +80,9 @@ ERASE = (
     ("comment_counts", "UPDATE public_posts p SET comment_count = GREATEST(p.comment_count - c.n, 0) FROM (SELECT post_id, count(*) AS n FROM public_post_comments WHERE author_id = :a AND status = 'visible' GROUP BY post_id) c WHERE p.id = c.post_id"),
     ("comments", "UPDATE public_post_comments SET status = 'deleted', body = NULL, ended_at = COALESCE(ended_at, :now) WHERE author_id = :a AND status = 'visible'"),
     ("posts", "UPDATE public_posts SET status = 'deleted', title = NULL, body = NULL, deleted_at = COALESCE(deleted_at, :now), updated_at = :now WHERE (author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)) AND status <> 'deleted'"),
-    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
+    ("post_terms", "DELETE FROM post_terms WHERE post_id IN (SELECT id FROM public_posts WHERE author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a))"),
+    ("page_terms", "DELETE FROM page_terms WHERE page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)"),
+    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', topic = 'other', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
     ("reports", "UPDATE content_reports SET details = '' WHERE reporter_id = :a"),
     ("moderator", "DELETE FROM platform_moderators WHERE account_id = :a"),
     # Page roles (DEC-025, T112): the person steps down on other pages and their open invitations end; on their own
@@ -92,9 +100,18 @@ ERASE = (
     ("resolution_notes", "UPDATE moderation_appeals SET resolution_note = '' WHERE resolved_by = :a AND resolution_note IS NOT NULL"),
     ("decision_notes", "UPDATE moderation_decisions SET moderator_note = '' WHERE decided_by = :a"),
     # Private Spaces: their own messages and answers go; shared tasks stop being assigned to them.
-    ("messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL WHERE sender_id = :a AND deleted_at IS NULL"),
+    # Their reactions go, and so do others' reactions to the messages being erased (DEC-033).
+    ("reactions", "DELETE FROM conversation_message_reactions WHERE account_id = :a OR message_id IN (SELECT id FROM conversation_messages WHERE sender_id = :a AND deleted_at IS NULL)"),
+    ("messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL, revision = revision + 1 WHERE sender_id = :a AND deleted_at IS NULL"),
     ("read_states", "DELETE FROM conversation_read_states WHERE account_id = :a"),
     ("event_answers", "DELETE FROM space_event_responses WHERE account_id = :a"),
+    # Expenses they recorded keep the amount and category for the others, without the note or who recorded it (DEC-039).
+    ("expense_notes", "UPDATE event_expenses SET note = '', recorder_id = NULL, recorder_admission_id = NULL WHERE recorder_id = :a"),
+    # Their promises go, because nobody can keep them now; what they gave stays in the totals without the note or name (DEC-041).
+    ("promises", "DELETE FROM event_contributions WHERE contributor_id = :a AND state = 'promised'"),
+    ("contribution_notes", "UPDATE event_contributions SET note = NULL, contributor_id = NULL, contributor_admission_id = NULL WHERE contributor_id = :a"),
+    # Their share of a split stays, so nobody else's share moves, without their name (DEC-042).
+    ("split_people", "UPDATE event_budget_split_people SET account_id = NULL, admission_id = NULL WHERE account_id = :a"),
     ("assignments", "UPDATE tasks SET assignee_account_id = NULL, assignee_admission_id = NULL, version = version + 1, updated_at = :now WHERE assignee_account_id = :a"),
     ("task_access", "DELETE FROM task_access WHERE account_id = :a"),
     ("task_commands", "DELETE FROM task_commands WHERE actor_id = :a"),
@@ -105,9 +122,13 @@ ERASE = (
     ("alone_request_names", "UPDATE space_join_requests SET space_name = 'Deleted Space' WHERE space_id = ANY(:alone)"),
     ("ownership_offers", "UPDATE space_ownership_transfers SET status = 'cancelled', resolved_at = :now WHERE status = 'pending' AND (from_account_id = :a OR to_account_id = :a)"),
     # A Space where the person was the only current member is closed and its contents erased.
-    ("alone_messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL WHERE deleted_at IS NULL AND conversation_id IN (SELECT id FROM conversations WHERE space_id = ANY(:alone))"),
+    ("alone_reactions", "DELETE FROM conversation_message_reactions WHERE message_id IN (SELECT id FROM conversation_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE space_id = ANY(:alone)))"),
+    ("alone_messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL, revision = revision + 1 WHERE deleted_at IS NULL AND conversation_id IN (SELECT id FROM conversations WHERE space_id = ANY(:alone))"),
     ("alone_checklists", "UPDATE task_checklist_items SET title = 'Deleted item' WHERE task_id IN (SELECT id FROM tasks WHERE space_id = ANY(:alone))"),
     ("alone_tasks", "UPDATE tasks SET title = 'Deleted task', description = '', due_date = NULL, updated_at = :now WHERE space_id = ANY(:alone)"),
+    ("alone_budget_categories", "UPDATE event_budget_categories SET name = 'Deleted category' WHERE event_id IN (SELECT id FROM space_events WHERE space_id = ANY(:alone))"),
+    ("alone_expense_notes", "UPDATE event_expenses SET note = '' WHERE event_id IN (SELECT id FROM space_events WHERE space_id = ANY(:alone))"),
+    ("alone_contribution_notes", "UPDATE event_contributions SET note = NULL WHERE event_id IN (SELECT id FROM space_events WHERE space_id = ANY(:alone))"),
     # An event keeps only its creation time as its start, so its schedule says nothing about the person (T110).
     ("alone_events", "UPDATE space_events SET title = 'Deleted event', description = '', location = '', timezone = 'UTC', "
                      "starts_at = created_at, local_start = to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), "
@@ -191,18 +212,20 @@ class AccountDeletionService:
             return self.identity._new_session(database, user, body)
 
     @staticmethod
-    def owned_shared_spaces(database, account_id):
+    def owned_shared_spaces_query(account_id):
         """Active Spaces this account owns that still have another current member: they need a new owner first."""
         others = aliased(SpaceMembership)
         someone_else = select(others.account_id).where(
             others.space_id == Space.id, others.account_id != account_id, others.status == "active",
-        ).exists()
-        return database.execute(
-            select(Space.id, Space.name).join(SpaceMembership, SpaceMembership.space_id == Space.id).where(
-                SpaceMembership.account_id == account_id, SpaceMembership.status == "active", SpaceMembership.role == "owner",
-                Space.status == "active", someone_else,
-            ).order_by(Space.name, Space.id)
-        ).all()
+        ).correlate(Space, User).exists()
+        return select(Space.id, Space.name).join(SpaceMembership, SpaceMembership.space_id == Space.id).where(
+            SpaceMembership.account_id == account_id, SpaceMembership.status == "active", SpaceMembership.role == "owner",
+            Space.status == "active", someone_else,
+        ).order_by(Space.name, Space.id)
+
+    @classmethod
+    def owned_shared_spaces(cls, database, account_id):
+        return database.execute(cls.owned_shared_spaces_query(account_id)).all()
 
     @staticmethod
     def told(row, account_id, current):
@@ -261,11 +284,15 @@ class AccountDeletionService:
             outcome[result] += 1
         return outcome
 
+    @staticmethod
+    def purge_candidates(now):
+        return select(User).where(User.status == "deletion_requested", User.purge_after <= now)
+
     def purge_next(self, skipped):
         with self.sessions.begin() as database:
             database.execute(text("SET LOCAL lock_timeout = '5s'"))
             now = self.clock()
-            statement = select(User).where(User.status == "deletion_requested", User.purge_after <= now)
+            statement = self.purge_candidates(now)
             if skipped:
                 statement = statement.where(User.id.not_in(skipped))
             user = database.scalar(

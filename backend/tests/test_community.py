@@ -239,6 +239,8 @@ def test_comments_thread_one_level_and_authors_or_page_owner_remove_them(client,
         assert comment(client, other, other_post["id"], f"Burst {index}").status_code == 201
     limited = comment(client, other, other_post["id"], "Too fast")
     assert limited.status_code == 429 and limited.json()["error"]["code"] == "COMMENT_RATE_LIMITED"
+    # T148: the limit lasts a minute, so the apps are told to wait a minute, not 15.
+    assert limited.headers["Retry-After"] == "60"
     page_one = client.get(f"/v1/posts/{other_post['id']}/comments?limit=10").json()
     page_two = client.get(f"/v1/posts/{other_post['id']}/comments", params={"limit": 10, "cursor": page_one["pagination"]["next_cursor"]}).json()
     assert len(page_one["data"]) == 10 and len(page_two["data"]) == 9

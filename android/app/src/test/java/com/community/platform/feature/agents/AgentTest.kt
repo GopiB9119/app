@@ -67,6 +67,8 @@ class AgentTest {
         val forgets = mutableListOf<String>()
         var lose = 0
         var failure = 0
+        var askRefusal: String? = null
+        var askCalls = 0
         var pageSize = AGENT_PAGE_SIZE
         var runsCalls = 0
 
@@ -81,6 +83,8 @@ class AgentTest {
         private fun replace(changed: AgentRunDto): AgentRunDto { runs.replaceAll { if (it.id == changed.id) changed else it }; return changed }
 
         override suspend fun ask(authorization: String, key: String, body: AgentAskDto): Response<EnvelopeDto<AgentRunDto>> {
+            askCalls += 1
+            askRefusal?.let { return refuse(409, it) }
             if (failure != 0) return refuse(failure, "SYNTHETIC")
             asks += key to body
             val existing = byKey[key]?.let { id -> runs.first { it.id == id } }
@@ -299,6 +303,29 @@ class AgentTest {
         assertEquals(listOf(created.approval!!.id), api.effects)
         assertEquals("completed", current.state.value.runs.single().status)
         assertNull(current.state.value.pending)
+    }
+
+    // DEC-028: the owner turned the agent off after the Space list loaded.
+    @Test fun aSpaceWithTheAgentOffShowsWhyAndSendsNothingMore(): Unit = runBlocking {
+        val current = ready()
+        assertTrue(current.state.value.space!!.agentEnabled)
+        api.askRefusal = "AGENT_OFF"
+        current.message("Add a task to water the plants tomorrow"); current.ask(); settle(current)
+        val after = current.state.value
+        assertFalse(after.space!!.agentEnabled)
+        assertNull(after.pending)
+        assertNull(after.error)
+        assertNull(after.issue)
+        assertEquals("Add a task to water the plants tomorrow", after.message)
+        assertTrue(after.runs.isEmpty())
+        current.ask(); settle(current)
+        assertEquals(1, api.askCalls)
+        api.askRefusal = null
+        current.reloadSpaces(); settle(current)
+        assertTrue(current.state.value.space!!.agentEnabled)
+        current.ask(); settle(current)
+        assertEquals(2, api.askCalls)
+        assertEquals(1, current.state.value.runs.size)
     }
 
     @Test fun aChangedApprovalIsRefusedAndTheRequestsReload(): Unit = runBlocking {

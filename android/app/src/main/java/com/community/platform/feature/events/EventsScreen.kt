@@ -43,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -74,16 +75,25 @@ data class EventsActions(
 )
 
 @Composable
-fun EventsRoute(viewModel: EventsViewModel, accountId: String, spaceName: String, onBack: () -> Unit, onSessionLost: () -> Unit) {
+fun EventsRoute(
+    viewModel: EventsViewModel, accountId: String, spaceName: String, onBack: () -> Unit, onSessionLost: () -> Unit, budget: BudgetViewModel? = null,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
+    val detailId = state.selected?.id?.takeIf { state.mode == EventMode.DETAIL }
+    val budgetState = budget?.state?.collectAsStateWithLifecycle()?.value
+    val budgetActions = remember(budget) { budget?.actions() ?: BudgetActions() }
+    LaunchedEffect(budget, accountId, detailId) { budget?.bind(accountId, detailId) }
+    // A cancelled event's budget only reads, so show it again as the server now answers.
+    LaunchedEffect(budget, detailId, state.selected?.status) { if (detailId != null && state.selected?.status == "cancelled") budget?.refresh() }
+    LaunchedEffect(budgetState?.requiresSignIn) { if (budgetState?.requiresSignIn == true) onSessionLost() }
     if (state.accountId == accountId) EventsScreen(state, EventsActions(
-        back = onBack, reload = { if (state.mode == EventMode.DETAIL) viewModel.refreshSelected() else viewModel.reload() },
+        back = onBack, reload = { if (state.mode == EventMode.DETAIL) { viewModel.refreshSelected(); budget?.refresh() } else viewModel.reload() },
         more = { viewModel.reload(more = true) }, showPast = viewModel::showPast, open = viewModel::open, close = viewModel::close,
         startCreate = viewModel::startCreate, startEdit = viewModel::startEdit, draft = viewModel::draft, save = viewModel::save,
         retry = viewModel::retry, discard = viewModel::discardPending, respond = viewModel::respond, askCancel = viewModel::askCancel,
         keep = viewModel::keepEvent, cancel = viewModel::cancelEvent,
-    ), spaceName)
+    ), spaceName, budget = budgetState?.takeIf { detailId != null && it.eventId == detailId }, budgetActions = budgetActions)
 }
 
 private fun wallTime(local: String): String =
@@ -117,11 +127,26 @@ private fun problemText(problem: EventProblem) = stringResource(when (problem) {
     EventProblem.END -> R.string.events_problem_end
     EventProblem.END_BEFORE_START -> R.string.events_problem_end_before
     EventProblem.ZONE -> R.string.events_problem_zone
+    EventProblem.CAPACITY -> R.string.events_problem_capacity
 })
+
+/** Places taken and the line when the event has a capacity, and the viewer's own place in that line. */
+@Composable
+private fun Places(event: EventDto) {
+    val capacity = event.capacity ?: return
+    Text(
+        stringResource(R.string.events_places, event.going, capacity) +
+            if (event.waitlisted > 0) " · " + stringResource(R.string.events_waitlist, event.waitlisted) else "",
+        style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("event-places"),
+    )
+    event.myWaitlistPosition?.let {
+        Text(stringResource(R.string.events_your_place, it), color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("event-your-place"))
+    }
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) {
+fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String, budget: BudgetState? = null, budgetActions: BudgetActions = BudgetActions()) {
     val back: () -> Unit = {
         when {
             state.working -> Unit
@@ -167,7 +192,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String) 
                             items(state.events, key = { it.id }) { event -> EventRow(event, state, actions) }
                             if (state.nextCursor != null) item("more") { TextButton(onClick = actions.more, enabled = !state.busy) { Text(stringResource(R.string.events_more)) } }
                         }
-                        EventMode.DETAIL -> state.selected?.let { event -> item("detail") { EventDetail(event, state, actions) } }
+                        EventMode.DETAIL -> state.selected?.let { event -> item("detail") { EventDetail(event, state, actions, budget, budgetActions) } }
                         EventMode.CREATE, EventMode.EDIT -> item("form") { EventForm(state, actions) }
                     }
                 }
@@ -196,16 +221,17 @@ private fun EventRow(event: EventDto, state: EventsState, actions: EventsActions
         if (event.location.isNotEmpty()) Text(event.location, style = MaterialTheme.typography.bodySmall)
         Text(
             stringResource(R.string.events_counts, event.going, event.maybe, event.notGoing) +
-                (event.myResponse?.let { " · " + stringResource(R.string.events_you_responded, responseLabel(it)) } ?: ""),
+                (event.myResponse?.let { " · " + stringResource(R.string.events_you_responded, if (event.myWaitlistPosition != null) stringResource(R.string.events_waiting) else responseLabel(it)) } ?: ""),
             style = MaterialTheme.typography.bodySmall,
         )
+        Places(event)
         HorizontalDivider()
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActions) {
+private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActions, budget: BudgetState?, budgetActions: BudgetActions) {
     Column(verticalArrangement = Arrangement.spacedBy(unit * 2), modifier = Modifier.testTag("event-detail")) {
         Text(event.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         if (event.status == "cancelled") Text(stringResource(R.string.events_cancelled_notice), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("event-cancelled"))
@@ -236,12 +262,14 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
         }
         Text(stringResource(R.string.events_responses), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
         Text(stringResource(R.string.events_counts, event.going, event.maybe, event.notGoing), modifier = Modifier.testTag("event-counts"))
+        Places(event)
         val people = event.attendees.orEmpty()
         if (people.isEmpty()) Text(stringResource(R.string.events_no_responses), style = MaterialTheme.typography.bodySmall)
         people.forEach { person ->
+            val name = if (person.mine) stringResource(R.string.events_you) else person.name
             Text(
-                "${if (person.mine) stringResource(R.string.events_you) else person.name}: ${responseLabel(person.response)}" +
-                    if (person.outdated) " " + stringResource(R.string.events_before_change) else "",
+                person.waitlistPosition?.let { "$name: " + stringResource(R.string.events_waiting_number, it) }
+                    ?: ("$name: ${responseLabel(person.response)}" + if (person.outdated) " " + stringResource(R.string.events_before_change) else ""),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -253,6 +281,7 @@ private fun EventDetail(event: EventDto, state: EventsState, actions: EventsActi
                 OutlinedButton(onClick = actions.askCancel, enabled = !state.working, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("event-cancel")) { Text(stringResource(R.string.events_cancel)) }
             }
         }
+        budget?.let { BudgetSection(it, budgetActions) }
         TextButton(onClick = actions.close, enabled = !state.working) { Text(stringResource(R.string.events_back_to_list)) }
     }
 }
@@ -280,6 +309,10 @@ private fun EventForm(state: EventsState, actions: EventsActions) {
             label = { Text(stringResource(R.string.events_field_location)) }, modifier = Modifier.fillMaxWidth().testTag("event-location"))
         OutlinedTextField(value = draft.details, onValueChange = { value -> actions.draft { it.copy(details = value.take(4000)) } }, enabled = !locked, minLines = 2, maxLines = 6,
             label = { Text(stringResource(R.string.events_field_details)) }, modifier = Modifier.fillMaxWidth().testTag("event-details"))
+        OutlinedTextField(value = draft.capacity, onValueChange = { value -> actions.draft { it.copy(capacity = value.take(6)) } }, enabled = !locked, singleLine = true,
+            label = { Text(stringResource(R.string.events_field_capacity)) }, supportingText = { Text(stringResource(R.string.events_capacity_hint)) },
+            isError = state.problem == EventProblem.CAPACITY, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth().testTag("event-capacity"))
         Text(stringResource(R.string.events_visibility), style = MaterialTheme.typography.bodySmall)
         state.problem?.let { Text(problemText(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("event-problem")) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(unit * 2), verticalArrangement = Arrangement.spacedBy(unit * 2)) {

@@ -12,6 +12,8 @@ Status columns are backend / web / Kotlin Android. `P` means a limited implement
 
 Messaging now has a limited Space chat and direct-message implementation on all three platforms (see the [messaging batch](#space-chat-and-direct-messages-batch)); its end-to-end encryption, device-key, realtime and attachment rows stay undelivered. The public community, Home/Discover and report/block rows now have a limited implementation (see the [public community batch](#public-community-batch)), as do Space events and RSVP (see the [events batch](#space-events-and-rsvp-batch)). No runtime implementation was found in the owning files, integrations or realtime modules on any of the three platforms; their rows stay `U` until a batch below records evidence. Reserved READMEs are not implementations. Identity export code and Agent parser/tool files have appeared in separate work and are preserved, but their existence alone is not client integration or verification. The 21 original source fingerprints match the previously completed full chapter review; this batch reused that review and rechecked the current catalog, implementation paths and owning scheduling/client contracts, not a new line-by-line reread of every Markdown file.
 
+Qualification recovery (T169, 2026-10-03) preserves every feature status below. The fixed `0043` candidate has an active backend run and passing local restore. Its native run failed 614/615 with one uncaught-error class from planning-fixture cleanup; a test-only correction is prepared, not yet verified. Current web requires later `0044` budget fields, and a matching pre-T174 web capture was not located. Matching client/packaging/device gates remain open. Later feature and request-concurrency changes need separate evidence, and no cross-platform or production pass is implied. See the [active qualification scope](BUILD_STATUS.md#current-backend-qualification-attempt); historical failures and passing corrections remain tied to their own sources.
+
 ## Source Map
 
 | Original | Product responsibility and controlling contract |
@@ -51,7 +53,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | identity.account-access | P/P/P | Synthetic email/password registration and sign-in; real-user rollout remains gated |
 | identity.email-verification | P/P/P | Context-bound local mail proof; production delivery not enabled |
 | identity.phone-verification | U/U/U | Verified phone linking, recycled-number and recovery policy |
-| identity.sessions-devices | P/P/P | Sessions/revocation; trusted cryptographic device management remains |
+| identity.sessions-devices | P/P/P | Sessions/revocation; native authenticated feature requests run concurrently with captured-session-only cleanup, preserving newer sign-ins ([T82](BUILD_STATUS.md#android-authenticated-request-concurrency)). Trusted cryptographic device management remains |
 | identity.profiles-handles | P/P/P | Name/timezone; handles, avatar and field audiences remain |
 | identity.account-recovery | P/P/P | Local email recovery; production abuse/recovery review remains |
 | identity.contact-linking | U/U/U | Explicit verified endpoint association; no identity merge by matching text |
@@ -78,7 +80,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 | community.reactions | P/P/P | One idempotent like per person with exact counts; other reaction types remain |
 | community.shares | U/U/U | References respect current source audience; no private-to-public leak |
 | community.saved-posts | P/P/P | Private saves list, never a public signal |
-| community.topics-hashtags | P/P/P | Ten fixed page topics with topic filter; hashtags and topic pages remain |
+| community.topics-hashtags | P/P/P | A shared vocabulary since T126 (DEC-027, provisional): a page's main topic from 20 and up to 2 more topics, interests, languages, places, community types, audiences, activities and content kinds; hashtags and topic pages remain |
 | community.page-analytics | U/U/U | Authorized aggregate analytics and small-cohort privacy |
 | community.scheduled-publication | U/U/U | Reviewed source version and current authority at execution |
 
@@ -155,7 +157,7 @@ Every catalog key appears exactly once below. Scope notes identify the next miss
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| events.shared-events | P/P/P | Space events with title, details, location, IANA zone and exact UTC start/end; reviewed edit and cancel. Web uses API zone names ([T118](BUILD_STATUS.md#web-event-timezone-checkpoint)); protects in-page drafts, links errors to fields, counts characters, localizes dates and offers Refresh ([T121/T123](BUILD_STATUS.md#web-event-workflow-improvements-checkpoint)). Public events, durable drafts and organizer workspaces remain |
+| events.shared-events | P/P/P | Space events with title, details, location, IANA zone and exact UTC start/end; reviewed edit and cancel. Web uses API zone names ([T118](BUILD_STATUS.md#web-event-timezone-checkpoint)); protects in-page drafts, links errors to fields, counts characters, localizes dates and offers Refresh ([T121/T123](BUILD_STATUS.md#web-event-workflow-improvements-checkpoint)). Native event commands cancel and resume obsolete list reads, retaining the page and refusal message ([T82](BUILD_STATUS.md#android-event-late-response-protection)), including with [concurrent requests](BUILD_STATUS.md#android-authenticated-request-concurrency). Public events, durable drafts and organizer workspaces remain |
 | events.public-events | U/U/U | Public projection excludes private workspace/roster/finance |
 | events.organizer-workspaces | U/U/U | Role-scoped event modules |
 | events.rsvp | P/P/P | Going/Maybe/Not going per admission; a response is intent, not attendance. Web lists now visibly mark the person's response as before the time change when reconfirmation is needed (T123). Invitations to people outside the Space remain |
@@ -233,11 +235,11 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 
 | Feature | B/W/A | Required scope |
 | --- | --- | --- |
-| discovery.public-search | P/P/P | Page search over name/handle/description with literal wildcards, topic filter and bound cursors; post search over title and text, literal, newest first, drafts and blocked pages excluded ([T29](TASKS.md#approved-requirements-not-built-yet)); relevance ranking and highlights remain |
+| discovery.public-search | P/P/P | Page search over name/handle/description with literal wildcards, topic filter and bound cursors; post search over title and text, literal, newest first, drafts and blocked pages excluded ([T29](TASKS.md#approved-requirements-not-built-yet)); since T138 ([DEC-035](DECISIONS.md#accepted-decisions), provisional) page search also matches the English, Telugu and Hindi names of a page's terms, allowing small typos in them; relevance ranking and highlights remain |
 | discovery.private-scoped-search | P/P/P | Search inside your Spaces over documents, tasks and events the person can open now; every word required, word beginnings; at most 20 of each kind ([T15](TASKS.md#approved-requirements-not-built-yet)). Messages, care, reminders and memory are not searched |
 | discovery.home-feed | P/P/P | Following / Latest / Saved public feeds; no private modules or private signals |
 | discovery.following-feed | P/P/P | Current follows only, blocked pages excluded, newest first; mutes remain |
-| discovery.topics | U/U/U | Public taxonomy and topic results |
+| discovery.topics | P/P/P | Public taxonomy and topic results: the vocabulary (`GET /v1/taxonomy`) and Discover filters by every kind of term since T126; suggestions from a person's own chosen interests since T127; topic pages remain |
 | discovery.local-discovery | U/U/U | Coarse explicit region, no precise/private location inference |
 | discovery.trending | U/U/U | Eligible public aggregates with cohort/abuse limits |
 | discovery.suggestions | U/U/U | Private query history never leaked as public suggestion |
@@ -294,14 +296,14 @@ The rows stay `D` until the owner confirms [DEC-012](DECISIONS.md#accepted-decis
 | Feature | B/W/A | Implemented boundary or remaining work |
 | --- | --- | --- |
 | platform.database-migrations | P/P/P | Additive Alembic/current schema checks; Room migrations not yet delivered |
-| platform.api-contracts | P/P/P | Implemented OpenAPI/typed clients; future APIs are not advertised |
+| platform.api-contracts | P/P/P | Implemented OpenAPI and handwritten Zod/Retrofit clients; source/artifact drift now blocks local verification (T166), with no-network/read-only checking and explicit regeneration. Full client/runtime compatibility remains separate ([checkpoint](BUILD_STATUS.md#openapi-contract-drift-gate-checkpoint)) |
 | platform.state-machines | P/P/P | Current domain states; broader canonical registry remains |
 | platform.authorization | P/P/P | Session/account/admission/object checks for implemented domains |
 | platform.audit | P/P/P | Atomic domain audit, no private payload logging; operations hardening remains |
 | platform.transactional-outbox | P/U/U | Database effects/audit/outbox; general fanout remains |
 | platform.durable-jobs | P/U/U | Identity mail and task reminders; other workers remain |
 | platform.worker-recovery | P/U/U | Bounded retries, suppression and local restart checks |
-| platform.observability | P/P/U | Request logs without private data, W3C trace IDs from the web proxy to the API and a key-protected `/metrics` (T09), with waiting and failed background work per queue (T32); collector, dashboards, alerts, SLOs, on-call, traces into workers and native trace context remain |
+| platform.observability | P/P/U | Request logs without private data, W3C trace IDs from the web proxy to the API and protected `/metrics` (T09), with work counts/ages (T32); account/page purge readiness and account ownership blocks added by T167, without unsupported purge failure counts. Collector, dashboards, alerts, SLOs, on-call, traces into workers and native trace context remain ([checkpoint](BUILD_STATUS.md#purge-work-metrics-checkpoint)) |
 | platform.rate-limits | P/P/P | Local bounded inputs/quotas; sign-in limits per email and per network, with each web browser's network named by the web proxy behind a trusted reverse proxy (T10); full abuse controls remain |
 | platform.feature-gates | P/P/P | Development-only configuration; governed release gates remain |
 | platform.backup-restore | P/U/U | Recorded isolated local restore and staged local key rotation (T11); production/PITR/key custody not qualified |

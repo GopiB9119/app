@@ -135,11 +135,20 @@ class CareDayInstruction(BaseModel):
     status: CareStatus
 
 
+class CareEarlierAnswer(BaseModel):
+    outcome: DoseOutcome
+    revision: int
+    recorded_at: AwareDatetime
+    replaced_at: AwareDatetime
+
+
 class CareReportView(BaseModel):
     outcome: DoseOutcome
     revision: int
     reported_at: AwareDatetime
     updated_at: AwareDatetime
+    # DEC-030: answers this one replaced, newest first; at most EARLIER_SHOWN of them.
+    earlier: list[CareEarlierAnswer] = []
 
 
 class CareOccurrenceView(BaseModel):

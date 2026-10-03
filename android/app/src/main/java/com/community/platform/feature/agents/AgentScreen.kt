@@ -242,20 +242,26 @@ private fun AgentComposer(state: AgentState, actions: AgentActions) {
                     modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) }
             }
         }
-        OutlinedTextField(value = asking?.message ?: state.message, onValueChange = actions.message,
-            enabled = !state.busy && asking == null && !state.requiresSignIn,
-            label = { Text(stringResource(R.string.agent_message)) }, supportingText = { Text(stringResource(R.string.agent_message_hint)) },
-            isError = state.problem != null, minLines = 2, maxLines = 5, shape = RoundedCornerShape(DesignTokens.ControlRadius),
-            modifier = Modifier.fillMaxWidth().testTag("agent-message"))
-        if (state.at == AGENT_AT_COMPOSER) AgentMessages(state, "agent-composer")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
-            Button(onClick = if (asking != null) actions.retry else actions.ask, enabled = !state.busy && (state.pending == null || asking != null),
-                shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-ask")) {
-                Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(DesignTokens.SpaceUnit * 5))
-                Text(stringResource(if (asking != null) R.string.agent_send_again else R.string.agent_ask), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+        if (state.space?.agentEnabled == false && asking == null) {
+            Text(stringResource(R.string.agent_off_in_space), style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("agent-off"))
+            if (state.at == AGENT_AT_COMPOSER) AgentMessages(state, "agent-composer")
+        } else {
+            OutlinedTextField(value = asking?.message ?: state.message, onValueChange = actions.message,
+                enabled = !state.busy && asking == null && !state.requiresSignIn,
+                label = { Text(stringResource(R.string.agent_message)) }, supportingText = { Text(stringResource(R.string.agent_message_hint)) },
+                isError = state.problem != null, minLines = 2, maxLines = 5, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                modifier = Modifier.fillMaxWidth().testTag("agent-message"))
+            if (state.at == AGENT_AT_COMPOSER) AgentMessages(state, "agent-composer")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                Button(onClick = if (asking != null) actions.retry else actions.ask, enabled = !state.busy && (state.pending == null || asking != null),
+                    shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-ask")) {
+                    Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(DesignTokens.SpaceUnit * 5))
+                    Text(stringResource(if (asking != null) R.string.agent_send_again else R.string.agent_ask), Modifier.padding(start = DesignTokens.SpaceUnit * 2))
+                }
+                if (asking != null) TextButton(onClick = actions.discard, enabled = !state.busy,
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-edit")) { Text(stringResource(R.string.agent_edit_request)) }
             }
-            if (asking != null) TextButton(onClick = actions.discard, enabled = !state.busy,
-                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-edit")) { Text(stringResource(R.string.agent_edit_request)) }
         }
     }
 }

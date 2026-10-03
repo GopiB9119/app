@@ -15,6 +15,7 @@ const spaceShape = z.object({
   space_type: z.enum(["family", "solo", "group", "couple"]),
   visibility: z.enum(["private", "public"]),
   member_invites: z.boolean().default(false),
+  agent_enabled: z.boolean().default(true),
   status: z.literal("active"),
   role: z.enum(["owner", "admin", "member"]),
   version: z.string().regex(/^[1-9][0-9]*$/),
@@ -35,6 +36,7 @@ export type SpaceSettings = z.infer<typeof spaceSettingsSchema>;
 export type SpaceSettingsIntent = { accountId: string; spaceId: string; name: string; description?: string; etag: string; key: string };
 export type VisibilityIntent = { accountId: string; spaceId: string; visibility: "private" | "public"; etag: string; key: string };
 export type InvitePolicyIntent = { accountId: string; spaceId: string; memberInvites: boolean; etag: string; key: string };
+export type AgentPolicyIntent = { accountId: string; spaceId: string; agentEnabled: boolean; etag: string; key: string };
 export const spaceTypeLabels: Record<FamilySpace["space_type"], string> = { family: "Family", group: "Group", solo: "Solo", couple: "Couple" };
 
 export async function readSpaceSettings(accountId: string, spaceId: string, signal?: AbortSignal) {
@@ -71,6 +73,17 @@ export async function changeInvitePolicy(intent: InvitePolicyIntent) {
   });
   if (result.data.id !== intent.spaceId || result.data.member_invites !== intent.memberInvites) {
     throw new ApiError(502, "INVALID_RESPONSE", "The invitation setting result does not match this review.");
+  }
+  return result.data;
+}
+
+export async function changeAgentPolicy(intent: AgentPolicyIntent) {
+  const result = await api(`spaces/${intent.spaceId}/agent-policy`, spaceSettingsSchema, {
+    method: "POST", accountId: intent.accountId, body: { agent_enabled: intent.agentEnabled },
+    headers: { "If-Match": intent.etag, "Idempotency-Key": intent.key },
+  });
+  if (result.data.id !== intent.spaceId || result.data.agent_enabled !== intent.agentEnabled) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The agent setting result does not match this review.");
   }
   return result.data;
 }

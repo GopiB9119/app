@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Check, CheckCheck, Clock3, Download, Globe2, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, X } from "lucide-react";
+import { Check, CheckCheck, Clock3, Download, Globe2, ListFilter, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, VolumeX, X } from "lucide-react";
 import { Account, ApiError, api, characters, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
 import { Shell } from "./shell";
 import { TimezoneListProblem } from "./timezone-list-problem";
@@ -88,7 +88,7 @@ function AccountDetails({ user, etag }: { user: Account; etag: string | null }) 
   const timezoneOptions = zones.data?.data ?? [user.timezone];
   return <Shell account>
     <main className={language === "en" ? "account-main" : `account-main ${styles.localized}`}>
-      <nav className="workspace-nav" aria-label={t("account.profile")}><span className="nav-active"><UserRound size={18} />{t("account.account")}</span><Link className="text-button" href="/app/safety"><ShieldBan size={18} aria-hidden />{t("account.blocked")}</Link><Link className="text-button" href="/app/settings/data"><Download size={18} aria-hidden />{t("account.yourData")}</Link><button className="text-button" onClick={() => setConfirm({ path: "auth/logout", method: "POST", current: true, label: "account.confirmSignOut" })}><LogOut size={17} />{t("account.signOut")}</button></nav>
+      <nav className={`workspace-nav ${styles.nav}`} aria-label={t("account.profile")}><span className="nav-active"><UserRound size={18} />{t("account.account")}</span><Link className="text-button" href="/app/settings/interests"><ListFilter size={18} aria-hidden />{t("community.interests.title")}</Link><Link className="text-button" href="/app/settings/feed"><VolumeX size={18} aria-hidden />{t("community.feedControls.title")}</Link><Link className="text-button" href="/app/safety"><ShieldBan size={18} aria-hidden />{t("account.blocked")}</Link><Link className="text-button" href="/app/settings/privacy"><ShieldCheck size={18} aria-hidden />{t("privacy.title")}</Link><Link className="text-button" href="/app/settings/data"><Download size={18} aria-hidden />{t("account.yourData")}</Link><button className="text-button" onClick={() => setConfirm({ path: "auth/logout", method: "POST", current: true, label: "account.confirmSignOut" })}><LogOut size={17} />{t("account.signOut")}</button></nav>
       <div className="account-heading"><div><span className="section-kicker">{t("account.kicker")}</span><h1>{t("account.heading")}</h1><p>{t("account.subtitle")}</p></div><div className="verified-badge"><ShieldCheck size={17} />{t("account.emailVerified")}</div></div>
       {notice && <div className="message success" role="status"><Check size={18} />{t(notice)}</div>}
       {error && <div className="message error" role="alert">{error}<button className="text-button" onClick={reloadProfile}><RefreshCw size={16} />{t("account.reloadProfile")}</button></div>}
@@ -140,6 +140,6 @@ function formatDate(value: string, timezone: string, language: Language) {
   return new Intl.DateTimeFormat(language === "en" ? "en" : language === "te" ? "te-IN" : "hi-IN", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: timezone }).format(new Date(value));
 }
 
-function eventLabel(action: string): MessageId {
+export function eventLabel(action: string): MessageId {
   return ({ "account.created": "account.eventCreated", "session.created": "account.eventSignedIn", "session.revoked": "account.eventSessionRevoked", "session.capacity_revoked": "account.eventOldestRevoked", "profile.updated": "account.eventProfileUpdated", "account.password_reset": "account.eventPasswordChanged" } as Record<string, MessageId>)[action] ?? "account.eventActivity";
 }

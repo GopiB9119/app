@@ -30,7 +30,12 @@ export const instructionSchema = z.object({
 });
 export type CareInstruction = z.infer<typeof instructionSchema>;
 
-const reportSchema = z.object({ outcome: z.enum(OUTCOMES), revision: z.number().int().positive(), reported_at: timestamp, updated_at: timestamp });
+// DEC-030: answers a correction replaced, newest first.
+const earlierSchema = z.object({ outcome: z.enum(OUTCOMES), revision: z.number().int().positive(), recorded_at: timestamp, replaced_at: timestamp });
+const reportSchema = z.object({
+  outcome: z.enum(OUTCOMES), revision: z.number().int().positive(), reported_at: timestamp, updated_at: timestamp,
+  earlier: z.array(earlierSchema).max(10).default([]),
+});
 export const occurrenceSchema = z.object({
   instruction_id: uuid, local_date: calendarDate, local_time: clock, display_time: clock, timezone: z.string().min(1).max(64),
   scheduled_at: timestamp, clock_change: z.enum(["none", "shifted_forward", "repeated_time_first"]),

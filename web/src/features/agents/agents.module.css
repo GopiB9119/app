@@ -1,9 +1,9 @@
-.main { width: min(860px, 100%); margin: 0 auto; padding: calc(var(--space-unit) * 6) calc(var(--space-unit) * 4) calc(var(--space-unit) * 16); display: grid; gap: calc(var(--space-unit) * 5); }
+.main { width: min(860px, 100%); margin: 0 auto; padding: calc(var(--space-unit) * 6) calc(var(--space-unit) * 4) calc(var(--space-unit) * 16); display: grid; grid-template-columns: minmax(0, 1fr); gap: calc(var(--space-unit) * 5); overflow-wrap: anywhere; }
 .header h1 { margin: 0 0 calc(var(--space-unit) * 2); }
 .header p { margin: 0; color: var(--color-muted); max-width: 70ch; }
 .controls { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 3); align-items: flex-end; }
 .field { display: grid; gap: calc(var(--space-unit) * 2); font-weight: 600; min-width: 0; flex: 1 1 calc(var(--space-unit) * 60); }
-.field select, .field textarea, .field input { font: inherit; font-weight: 400; min-height: var(--target-minimum); padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); border: 1px solid var(--color-control-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); width: 100%; box-sizing: border-box; }
+.field select, .field textarea, .field input { font: inherit; font-weight: 400; min-width: 0; min-height: var(--target-minimum); padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); border: 1px solid var(--color-control-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); width: 100%; box-sizing: border-box; }
 .field textarea { resize: vertical; }
 .hint { font-weight: 400; font-size: 0.92rem; color: var(--color-muted); }
 .tabs { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); }
@@ -31,4 +31,6 @@
 .empty { color: var(--color-muted); margin: 0; }
 .dialog { border: 1px solid var(--color-border); border-radius: var(--radius-dialog); padding: calc(var(--space-unit) * 6); max-width: min(520px, calc(100% - calc(var(--space-unit) * 8))); }
 .dialog p { overflow-wrap: anywhere; }
+.dialog :global(.dialog-actions) { flex-wrap: wrap; }
+.dialog :global(.dialog-actions) > button { flex: 1 1 auto; min-width: min(100%, 10em); }
 @media (max-width: 420px) { .facts { grid-template-columns: minmax(0, 1fr); } .memories > li { flex-direction: column; align-items: stretch; } }

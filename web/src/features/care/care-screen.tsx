@@ -115,6 +115,7 @@ function DayPlan({ user, date, today, setDate, onChanged }: { user: Account; dat
 
 function OccurrenceRow({ user, occurrence, label, dose, stopped, onChanged }: { user: Account; occurrence: Occurrence; label: string; dose: string; stopped: boolean; onChanged: () => void }) {
   const t = useText();
+  const { language } = useLanguage();
   const [intent, setIntent] = useState<ReportIntent | null>(null);
   const mutation = useMutation({
     mutationFn: reportDose,
@@ -138,6 +139,10 @@ function OccurrenceRow({ user, occurrence, label, dose, stopped, onChanged }: { 
       <div><strong className={styles.name}>{label}</strong>{dose && <span className={styles.dose}>{dose}</span>}</div>
     </div>
     <p className={styles.status} role="status">{current ? t("care.noted", { outcome: t(`care.outcome.${current}`) }) : t("care.notNoted")}{stopped ? t("care.stoppedSuffix") : ""}</p>
+    {occurrence.report && occurrence.report.earlier.length > 0 && <ul className={styles.notes} aria-label={t("care.earlierAnswers")}>{occurrence.report.earlier.map(answer => <li key={answer.revision}>{t("care.earlierAnswer", {
+      outcome: t(`care.outcome.${answer.outcome}`),
+      time: new Intl.DateTimeFormat(language === "en" ? "en" : `${language}-IN`, { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone || undefined }).format(new Date(answer.replaced_at)),
+    })}</li>)}</ul>}
     {occurrence.clock_change === "shifted_forward" && <p className={styles.note}>{t("care.shifted", { time: occurrence.local_time, display: occurrence.display_time })}</p>}
     {occurrence.clock_change === "repeated_time_first" && <p className={styles.note}>{t("care.repeated", { time: occurrence.local_time })}</p>}
     {occurrence.can_report ? <div className={styles.actions} role="group" aria-label={t("care.noteFor", { name: label, time: occurrence.display_time })}>

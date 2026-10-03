@@ -41,8 +41,13 @@ def create_task(request: Request, response: Response, body: CreateTask, idempote
 def list_tasks(
     request: Request, space_id: UUID, limit: int = Query(default=20, ge=1, le=50),
     cursor: str | None = Query(default=None, max_length=2048), status: TaskStatus | None = None,
+    assignee: str | None = Query(default=None, pattern=r"^(none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"),
+    due_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    due_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
 ):
-    data, pagination = request.app.state.tasks.list_tasks(token(request), str(space_id), limit, cursor, status)
+    data, pagination = request.app.state.tasks.list_tasks(
+        token(request), str(space_id), limit, cursor, status, assignee, due_from, due_to
+    )
     return {**envelope(request, data), "pagination": pagination}
 
 

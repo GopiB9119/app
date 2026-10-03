@@ -52,7 +52,8 @@ test('Untranslated ids fall back to English', () => {
 
 test('Each screen area names its ids after itself, so no id can be defined twice', () => {
   const names = Object.keys(areas);
-  assert.equal(names.length, 14);
+  // The privacy page (T164) added the fifteenth area.
+  assert.equal(names.length, 15);
   for (const name of names) {
     for (const id of Object.keys(areas[name].en)) assert.ok(id.startsWith(`${name}.`), `${id} belongs in the ${name} area`);
   }

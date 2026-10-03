@@ -3,13 +3,28 @@ from uuid import uuid4
 
 from cryptography.fernet import InvalidToken
 from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import delete as delete_rows
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
 from app.modules.identity.models import OutboxEvent, User
-from app.modules.messaging.models import Conversation, ConversationMessage, ConversationReadState
-from app.modules.messaging.schemas import ConversationCursor, ConversationView, MessageView, ParticipantView
+from app.modules.messaging.models import (
+    REACTIONS,
+    Conversation,
+    ConversationMessage,
+    ConversationMessageReaction,
+    ConversationReadState,
+)
+from app.modules.messaging.schemas import (
+    REPLY_EXCERPT_CHARACTERS,
+    ConversationCursor,
+    ConversationView,
+    MessageView,
+    ParticipantView,
+    ReactionView,
+    ReplyView,
+)
 from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceMembership
 from app.modules.spaces.schemas import Pagination
@@ -17,10 +32,23 @@ from app.modules.spaces.schemas import Pagination
 MAX_DIRECT_CONVERSATIONS_PER_SPACE = 200
 MAX_MESSAGES_PER_CONVERSATION = 10000
 MAX_MESSAGES_PER_MINUTE = 30
+# An author may correct a message for a short time only, and only a few times (DEC-033).
+EDIT_WINDOW = timedelta(minutes=15)
+MAX_EDITS_PER_MESSAGE = 10
 
 
 def not_found(subject="Conversation"):
     return DomainError(404, "NOT_FOUND", f"{subject} not found.")
+
+
+def read_only():
+    return DomainError(409, "CONVERSATION_READ_ONLY", "This conversation is read-only because a participant is no longer a current member.")
+
+
+def excerpt(text):
+    """The start of a message on one line, as a reply shows it."""
+    line = " ".join(text.split())
+    return line if len(line) <= REPLY_EXCERPT_CHARACTERS else line[:REPLY_EXCERPT_CHARACTERS].rstrip() + "…"
 
 
 class MessagingService:
@@ -269,7 +297,7 @@ class MessagingService:
                 int(total or 0),
             )
 
-    def message_view(self, message, sender, account_id, base, body=None):
+    def message_view(self, message, sender, account_id, base, body=None, reply=None, reactions=()):
         status = "sent"
         text = None
         if message.deleted_at is not None:
@@ -284,7 +312,53 @@ class MessagingService:
             sender_account_id=message.sender_id, sender_name=sender.display_name, mine=mine,
             client_message_id=message.client_message_id if mine else None,
             status=status, body=text, created_at=message.created_at, deleted_at=message.deleted_at,
+            edited_at=message.edited_at, reply_to=reply, reactions=list(reactions), revision=message.revision,
         )
+
+    def reply_view(self, original, sender, base):
+        """The answered message as this viewer may see it; one from before their admission shows nothing about itself."""
+        if original.sequence <= base:
+            return ReplyView(message_id=original.id, status="unavailable", position=None, sender_name=None, excerpt=None)
+        position = str(original.sequence - base)
+        text = None if original.deleted_at is not None else self.cipher.open(original.conversation_id, original.id, original.body_cipher)
+        status = "deleted" if original.deleted_at is not None else "sent" if text is not None else "unavailable"
+        return ReplyView(
+            message_id=original.id, status=status, position=position, sender_name=sender.display_name,
+            excerpt=excerpt(text) if text is not None else None,
+        )
+
+    def views(self, database, rows, account_id, base, bodies=None):
+        """Views of (message, sender) rows with what they answer and their reactions, read in two queries."""
+        ids = [message.id for message, _sender in rows]
+        reactions = {identifier: [] for identifier in ids}
+        if ids:
+            counted = database.execute(
+                select(
+                    ConversationMessageReaction.message_id, ConversationMessageReaction.reaction, func.count(),
+                    func.bool_or(ConversationMessageReaction.account_id == account_id),
+                ).where(ConversationMessageReaction.message_id.in_(ids))
+                .group_by(ConversationMessageReaction.message_id, ConversationMessageReaction.reaction)
+            ).all()
+            for message_id, reaction, count, mine in sorted(counted, key=lambda item: REACTIONS.index(item[1])):
+                reactions[message_id].append(ReactionView(reaction=reaction, count=count, mine=bool(mine)))
+        answered = {message.reply_to_id for message, _sender in rows if message.reply_to_id}
+        replies = {}
+        if answered:
+            originals = database.execute(
+                select(ConversationMessage, User).join(User, User.id == ConversationMessage.sender_id)
+                .where(ConversationMessage.id.in_(answered))
+            ).all()
+            replies = {original.id: self.reply_view(original, sender, base) for original, sender in originals}
+        return [
+            self.message_view(
+                message, sender, account_id, base, body=(bodies or {}).get(message.id),
+                reply=replies.get(message.reply_to_id), reactions=reactions[message.id],
+            )
+            for message, sender in rows
+        ]
+
+    def view(self, database, message, sender, account_id, base, body=None):
+        return self.views(database, [(message, sender)], account_id, base, {message.id: body} if body is not None else None)[0]
 
     def messages(self, token, conversation_id, limit, before=None, after=None):
         if before is not None and after is not None:
@@ -307,7 +381,7 @@ class MessagingService:
             has_more = len(rows) > limit
             if after is None:
                 page = list(reversed(page))
-            views = [self.message_view(message, sender, caller.id, base) for message, sender in page]
+            views = self.views(database, page, caller.id, base)
             next_cursor = None
             if has_more:
                 next_cursor = views[-1].position if after is not None else views[0].position
@@ -333,7 +407,9 @@ class MessagingService:
             row = self.authorized(database, conversation_id, caller.id)
             membership = row[2]
             base = int(row.base or 0)
-            digest = self.security.digest("conversation.message", conversation.id, body.body)
+            reply_to = str(body.reply_to_message_id) if body.reply_to_message_id else None
+            # A message that answers none keeps the digest it always had, so retries made before replies existed still match.
+            digest = self.security.digest("conversation.message", conversation.id, body.body, *([reply_to] if reply_to else []))
             existing = database.scalar(select(ConversationMessage).where(
                 ConversationMessage.conversation_id == conversation.id,
                 ConversationMessage.sender_id == caller.id,
@@ -344,9 +420,16 @@ class MessagingService:
                     raise not_found("Message")
                 if existing.request_digest != digest:
                     raise DomainError(409, "IDEMPOTENCY_CONFLICT", "This retry does not match the original message.")
-                return self.message_view(existing, caller, caller.id, base)
+                return self.view(database, existing, caller, caller.id, base)
             if not self.build(database, row, caller.id).can_send:
-                raise DomainError(409, "CONVERSATION_READ_ONLY", "This conversation is read-only because a participant is no longer a current member.")
+                raise read_only()
+            if reply_to is not None:
+                # The same answer whether the original never existed here, came before the sender joined, or was deleted.
+                original = database.scalar(select(ConversationMessage).where(
+                    ConversationMessage.id == reply_to, ConversationMessage.conversation_id == conversation.id,
+                ))
+                if original is None or original.sequence <= base or original.deleted_at is not None:
+                    raise DomainError(409, "REPLY_UNAVAILABLE", "The message you are replying to is no longer available.")
             if conversation.last_sequence >= MAX_MESSAGES_PER_CONVERSATION:
                 raise DomainError(409, "CONVERSATION_FULL", "The local message limit for this conversation was reached.")
             now = self.clock()
@@ -354,13 +437,13 @@ class MessagingService:
                 ConversationMessage.sender_id == caller.id, ConversationMessage.created_at > now - timedelta(minutes=1),
             ))
             if recent >= MAX_MESSAGES_PER_MINUTE:
-                raise DomainError(429, "MESSAGE_RATE_LIMITED", "You are sending messages quickly. Wait a minute, then retry.")
+                raise DomainError(429, "MESSAGE_RATE_LIMITED", "You are sending messages quickly. Wait a minute, then retry.", retry_after=60)
             conversation.last_sequence += 1
             conversation.last_message_at = now
             message = ConversationMessage(
                 id=str(uuid4()), conversation_id=conversation.id, sequence=conversation.last_sequence,
                 sender_id=caller.id, sender_admission_id=membership.admission_id, client_message_id=key,
-                request_digest=digest, admissions_before=space.admission_sequence, created_at=now,
+                request_digest=digest, admissions_before=space.admission_sequence, created_at=now, reply_to_id=reply_to,
             )
             message.body_cipher = self.cipher.seal(conversation.id, message.id, body.body)
             database.add_all([
@@ -370,7 +453,18 @@ class MessagingService:
             ])
             database.flush()
             self.announce(database, conversation, "message")
-            return self.message_view(message, caller, caller.id, base, body=body.body)
+            return self.view(database, message, caller, caller.id, base, body=body.body)
+
+    def lock_message(self, database, conversation, message_id, base):
+        """A message of a locked conversation that the caller can see, locked in the same order deletion uses."""
+        message = database.scalar(
+            select(ConversationMessage).where(
+                ConversationMessage.id == message_id, ConversationMessage.conversation_id == conversation.id,
+            ).with_for_update().execution_options(populate_existing=True)
+        )
+        if message is None or message.sequence <= base:
+            raise not_found("Message")
+        return message
 
     def delete(self, token, conversation_id, message_id):
         with self.identity.signed_in_write(token) as (database, caller):
@@ -390,9 +484,67 @@ class MessagingService:
             if message.deleted_at is None:
                 message.deleted_at = self.clock()
                 message.body_cipher = None
+                message.revision += 1
+                # Reactions were to what the message said; replies to it now say it was deleted (DEC-033).
+                database.execute(delete_rows(ConversationMessageReaction).where(ConversationMessageReaction.message_id == message.id))
                 self.record(database, conversation.space_id, caller.id, message.id, "conversation.message_deleted")
                 self.announce(database, conversation, "deleted")
-            return self.message_view(message, caller, caller.id, base)
+            return self.view(database, message, caller, caller.id, base)
+
+    def edit(self, token, conversation_id, message_id, body):
+        with self.identity.signed_in_write(token) as (database, caller):
+            conversation = self.lock_conversation(database, conversation_id)
+            row = self.authorized(database, conversation_id, caller.id)
+            membership = row[2]
+            base = int(row.base or 0)
+            message = self.lock_message(database, conversation, message_id, base)
+            if message.sender_id != caller.id or message.sender_admission_id != membership.admission_id:
+                raise DomainError(403, "MESSAGE_NOT_YOURS", "Only the author can edit this message.")
+            if message.deleted_at is not None:
+                raise DomainError(409, "MESSAGE_DELETED", "This message was deleted.")
+            current = self.cipher.open(message.conversation_id, message.id, message.body_cipher)
+            # The same text again changes nothing, so a retry of an edit that already happened succeeds.
+            if current != body.body:
+                if not self.build(database, row, caller.id).can_send:
+                    raise read_only()
+                now = self.clock()
+                if now - message.created_at > EDIT_WINDOW:
+                    raise DomainError(409, "EDIT_WINDOW_CLOSED", "A message can be edited for 15 minutes after it was sent.")
+                if message.edit_count >= MAX_EDITS_PER_MESSAGE:
+                    raise DomainError(409, "EDIT_LIMIT_REACHED", f"A message can be edited {MAX_EDITS_PER_MESSAGE} times.")
+                # The earlier text is not kept (DEC-033).
+                message.body_cipher = self.cipher.seal(conversation.id, message.id, body.body)
+                message.edited_at = now
+                message.edit_count += 1
+                message.revision += 1
+                self.record(database, conversation.space_id, caller.id, message.id, "conversation.message_edited")
+                self.announce(database, conversation, "changed")
+            return self.view(database, message, caller, caller.id, base, body=body.body)
+
+    def react(self, token, conversation_id, message_id, body):
+        with self.identity.signed_in_write(token) as (database, caller):
+            conversation = self.lock_conversation(database, conversation_id)
+            row = self.authorized(database, conversation_id, caller.id)
+            base = int(row.base or 0)
+            message = self.lock_message(database, conversation, message_id, base)
+            if message.deleted_at is not None:
+                raise DomainError(409, "MESSAGE_DELETED", "This message was deleted.")
+            existing = database.get(ConversationMessageReaction, (message.id, caller.id, body.reaction))
+            # Adding a reaction one already chose, or taking back one one never chose, changes nothing.
+            if body.on != (existing is not None):
+                if not self.build(database, row, caller.id).can_send:
+                    raise read_only()
+                if body.on:
+                    database.add(ConversationMessageReaction(
+                        message_id=message.id, account_id=caller.id, reaction=body.reaction, created_at=self.clock(),
+                    ))
+                else:
+                    database.delete(existing)
+                message.revision += 1
+                database.flush()
+                self.announce(database, conversation, "changed")
+            sender = caller if message.sender_id == caller.id else database.get(User, message.sender_id)
+            return self.view(database, message, sender, caller.id, base)
 
     def mark_read(self, token, conversation_id, body):
         with self.identity.signed_in_write(token) as (database, caller):

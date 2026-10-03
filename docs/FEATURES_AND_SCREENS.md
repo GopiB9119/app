@@ -16,6 +16,8 @@ Status words used here:
 
 No row is marked working because a folder, README, mock, compile or old test name exists. Device, accessibility, load, restore, release and production qualification belong to the independent testing workstream.
 
+T169 qualification recovery preserves chat action errors and moderation loading state across refreshes. Qualification follows the fixed `0043` candidate: its backend run is active and local restore passed, but native failed 614/615 with one uncaught-error class from planning-fixture cleanup. A test-only correction is prepared for verification; no screen behavior changed. Current web requires `0044` budget fields, and matching pre-T174 web source was not located. Client/packaging/device gates remain open, and later feature and request-concurrency work is not implicitly covered. No feature status is promoted by combining different source copies. Current scope and evidence are in the [active candidate](BUILD_STATUS.md#current-backend-qualification-attempt), with historical failures and corrections retained separately.
+
 ## 1. Languages, Packages and Runtime
 
 | Layer | Language and packages | Where versions live |
@@ -25,6 +27,8 @@ No row is marked working because a folder, README, mock, compile or old test nam
 | Web | TypeScript, Next.js 16 App Router, React 19, Zod, TanStack Query, React Hook Form, Lucide icons, same-origin session BFF | [web/package.json](../web/package.json) |
 | Android | Kotlin, Jetpack Compose + Material 3, Coroutines/StateFlow, ViewModel, Hilt, Retrofit/OkHttp, Android Keystore session storage; min SDK 26, target 35, JDK 21 toolchain | [app/build.gradle.kts](../android/app/build.gradle.kts) |
 | Checks | pytest on isolated PostgreSQL schemas, Node test runner (typed client/BFF + offline component + live browser), JUnit, Compose instrumentation | [tests](../tests), [backend/tests](../backend/tests) |
+| API contract gate (T166) | `npm run check:openapi` compares stored/source OpenAPI with no network and read-only mounts; default verification includes the `contracts` suite. No screen changed; handwritten clients still need their own tests | [OpenAPI verification](../packages/openapi/README.md#verification-and-client-compatibility) |
+| Purge work visibility (T167) | Protected ready-count/age metrics for account/page deletion and separate account ownership-block metrics. No user screen or deletion policy changed; no durable purge failure state is implied | [Work metrics](../backend/app/modules/platform/README.md#background-work-gauges) |
 | Design tokens | One JSON file generated into web CSS variables and Android Kotlin constants by `npm run tokens`; `npm run check:tokens` guards it ([DEC-013](DECISIONS.md#accepted-decisions)) | [tokens.json](../packages/design-tokens/tokens.json) |
 
 Not yet added, and only added with the feature that needs them: WebSocket gateway, Room database, WorkManager jobs, push provider, object storage/scanner, recurrence library, reviewed end-to-end encryption library, external calendar/SMS/WhatsApp/voice providers.
@@ -45,12 +49,14 @@ Columns B / W / A are backend / web / Android.
 | Phone verification, contact linking/discovery, relationships | No / No / No | Not built |
 | Account deactivation and deletion | No / No / No | Not built |
 
+Native request coordination ([T82](BUILD_STATUS.md#android-authenticated-request-concurrency)): a held authenticated feature request no longer queues other screens. Late session cleanup never clears a newer sign-in; screen-level guards still prevent old reads from undoing commands. This changes request ordering, not account permissions or automatic-retry policy.
+
 ### 2.2 Home and Discover
 
 | Capability | B / W / A | Status |
 | --- | --- | --- |
 | Home feed of public posts from followed pages | Yes / Yes / Yes | Working (limited): Following, Latest and Saved tabs, newest first |
-| Discover: page search, topics, trending, local | Yes / Yes / Yes | Working (limited): page search with topic filter, and post search over title and text, newest first ([T29](TASKS.md#approved-requirements-not-built-yet)); trending and local not built |
+| Discover: page search, topics, trending, local | Yes / Yes / Yes | Working (limited): page search with topic filter, and post search over title and text, newest first ([T29](TASKS.md#approved-requirements-not-built-yet)); since T126 and T127 ([DEC-027](DECISIONS.md#accepted-decisions), provisional) filters by any of a page's topics, interest, language, place (with the places inside it), community type, audience, activity and content kind, and "Suggested for you" from a person's own chosen interests, each saying what matched; since T138 ([DEC-035](DECISIONS.md#accepted-decisions), provisional) page search also finds pages by the English, Telugu or Hindi names of their terms, allowing small typos in them; trending and local not built |
 | Personalization controls, hide/mute/not interested | No / No / No | Not built |
 
 Rule: discovery never uses private chats, family tasks, calendars, health data or Agent memory as content or signals.
@@ -92,6 +98,7 @@ Rule: a public feed is not production-ready until reporting, blocking and visibi
 | Join requests to public groups: ask with a note, withdraw, owner approves or declines, 14-day expiry, 7 days before asking again | Yes / Yes / Yes | Working (limited) ([T22](TASKS.md#spaces)) |
 | Space admins: the owner makes a member an admin, who invites, removes ordinary members and answers join requests ([DEC-018](DECISIONS.md#accepted-decisions), provisional) | Yes / Yes / Yes | Working (limited): family and group Spaces; only the owner changes roles ([T13](TASKS.md#approved-requirements-not-built-yet)) |
 | Who can invite people: the owner of a family or group Space lets everyone in it invite, or keeps it to the owner and admins ([DEC-026](DECISIONS.md#accepted-decisions), provisional) | Yes / Yes / Yes | Working (limited): members invite as members and see only their own invitations ([checkpoint](BUILD_STATUS.md#who-can-invite-checkpoint)) |
+| Agent in this Space: the owner of any Space turns the agent on or off after a confirmation naming the Space; while it is off nobody can ask the agent there and requests waiting for approval stop ([DEC-028](DECISIONS.md#accepted-decisions), provisional) | Yes / Yes / Yes | Working: on by default; the agent screens show a notice instead of the request box ([checkpoint](BUILD_STATUS.md#agent-switch-per-space-checkpoint)) |
 | Moderator, guest and observer roles; other per-Space permission settings; configurable history sharing | No / No / No | Not built |
 
 ### 2.6 Space Chat and Direct Messages
@@ -104,7 +111,8 @@ Rule: a public feed is not production-ready until reporting, blocking and visibi
 | History boundary: members see messages from their current admission onward | Yes / Yes / Yes | Working (limited) |
 | Unread counts and read position | Yes / Yes / Yes | Working (limited) |
 | Author deletes own message for everyone (tombstone, no recall of seen copies) | Yes / Yes / Yes | Working (limited) |
-| Edits, threads, reactions, attachments, typing/presence, calls, message reports | No / No / No | Not built |
+| Replies quoting an earlier message, six fixed reactions (counts, not names), author edits for 15 minutes (at most 10, marked "Edited", earlier text not kept) ([DEC-033](DECISIONS.md#accepted-decisions), provisional; T162) | Yes / Yes / Yes | Working (limited) |
+| Threads, attachments, typing/presence, calls, message reports | No / No / No | Not built |
 | Realtime push of new messages (WebSocket) | No / No / No | WebSocket transport is not built; live hints use server-sent events with polling fallback (T65). The web honors Retry-After after a 429 without stopping chat polling ([T120 checkpoint](BUILD_STATUS.md#web-live-retry-after-checkpoint)) |
 
 ### 2.7 Conversation Encryption
@@ -135,6 +143,8 @@ Every chat screen must state the real protection level. Never label server-reada
 | Public events, invitations outside the Space, recurring events | No / No / No | Not built |
 
 Web workflow improvements ([T121/T123](BUILD_STATUS.md#web-event-workflow-improvements-checkpoint), 2026-10-02): protected in-page drafts and unconfirmed creates, stable Space selection across refresh, field-linked validation and focus, character counters, dates in the selected language, viewer-local times, visible outdated responses, explicit refresh and 44 px event targets. 28 focused checks and both live journeys passed, including 320 px with 200% text. Drafts are not durable offline storage; larger [recommended event features](../web/src/features/events/README.md#recommended-next-features) remain recommendations, not approvals.
+
+Android late-response protection ([T82 checkpoint](BUILD_STATUS.md#android-event-late-response-protection), 2026-10-03): a command cancels an unanswered list read and resumes the same page after its answer, preserving a refusal message. Refresh waits for the command; an older read cannot undo a confirmed response or clear a newer read's loading state. Capacity controls and repeated accessibility-message occurrences are retained. Removal of the app-wide feature-request bottleneck is recorded in the [subsequent concurrency checkpoint](BUILD_STATUS.md#android-authenticated-request-concurrency).
 
 ### 2.10 Reminders
 
@@ -173,6 +183,7 @@ Rules: organize confirmed instructions only. No diagnosis, prescribing, inferred
 | Capability | B / W / A | Status |
 | --- | --- | --- |
 | Month agenda of authorized task due dates, your own timed reminders and the planned times of your repeating reminders | Yes / Yes / Yes | Working (limited); native not device-qualified |
+| Week and day views, showing or hiding tasks, reminders and Space events (events in the calendar follow C10), and who sees each entry ("Only you" or "Shared in this Space") | Yes / Yes / Yes | Working (limited) since T163 ([DEC-031](DECISIONS.md#accepted-decisions), provisional); lists, no hour grid; native not device-qualified |
 | Events, external calendar sync | No / No / No | Not built: events are not yet shown in the agenda ([T23, T27](TASKS.md#scheduling)) |
 
 ### 2.14 Safety, Privacy and Data Rights
@@ -183,6 +194,7 @@ Rules: organize confirmed instructions only. No diagnosis, prescribing, inferred
 | Moderation cases, reviewer queues, restrictions, appeals | Yes / Yes / Yes | Working (limited): platform moderators review reported public pages, posts and comments, hide them or take no action, and resolve appeals; authors see decisions and appeal once; reporters see whether their report was reviewed ([DEC-024](DECISIONS.md#accepted-decisions), [T69](TASKS.md#owners-critical-gaps)); restrictions on people not built |
 | Export your data | Yes / Yes / Yes | Working (limited): choose categories, download for 24 hours in the browser or phone that asked, cancel ([T68](TASKS.md#owners-critical-gaps)) |
 | Delete your account and derived data | Yes / Yes / Yes | Working (limited): password, refused while you own a Space with other members, 7-day grace with cancel at sign-in, then erased; shared items stay for others as from a deleted account ([DEC-022](DECISIONS.md#accepted-decisions), [T68](TASKS.md#owners-critical-gaps)) |
+| Privacy page: what you have allowed, with take-back | Yes / Yes / Yes | Working (limited): reminders other members may still send you, in-app reminders, what your agent remembers and your interests, each taken back after a confirmation through the operation that already owns it, plus recent account activity; nothing new is stored. No consent records, no access history beyond your own account activity, and Space-level settings are not listed ([DEC-034](DECISIONS.md#accepted-decisions), provisional; [T164](TASKS.md#part-c-product-requirements-plan)) |
 | Age and guardian policy | No / No / No | Not built; needs qualified policy |
 
 ### 2.15 Files and Documents
@@ -208,13 +220,13 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | `/app/settings/account` | Profile: name, timezone, sessions, security activity, Blocked, sign out | Working (limited) |
 | `/app/spaces` | Space list/create, invitations, members, ownership, settings | Working (limited) |
 | `/app/tasks` | Task list/detail/editor/status per Space | Working (limited) |
-| `/app/calendar` | Month agenda | Working (limited) |
+| `/app/calendar` | Month, week or day agenda, with Tasks, Reminders and Events shown or hidden | Working (limited) |
 | `/app/reminders` | Reminder review/create/list/cancel, repeating reminders and requests | Working (limited) |
 | `/app/notifications` | In-app inbox with snooze, and preferences | Working (limited) |
 | `/app/messages` | Space chats and direct messages | Working (limited) |
-| `/app/home`, `/app/discover`, `/pages/[handle]`, `/posts/[id]` | Discover: the feed (Following, Latest, Saved), page and post search, public page and post (public page and post work signed out) | Working (limited) |
+| `/app/home`, `/app/discover`, `/pages/[handle]`, `/posts/[id]` | Discover: the feed (Following, Latest, Saved), page and post search with the vocabulary filters and suggestions (T126, T127), public page with its classification and post (public page and post work signed out) | Working (limited) |
 | `/app/pages` | Your pages, create a page, pages you follow | Working (limited) |
-| `/app/events` | Space events and RSVP | Working (limited) |
+| `/app/events` | Space events and RSVP; optional capacity with a waitlist (T154, provisional DEC-032) | Working (limited) |
 | `/app/care` | Medication instructions and daily care reminders | Working (limited): day plan and medicines list; no notifications |
 | `/app/safety` | Blocked pages and people, decisions about your content with appeals, your reports, and for moderators a link to the queue, under Profile | Working (limited) |
 | `/app/moderation` | Moderators only: reported public content with decisions, and appeals ([T69](TASKS.md#owners-critical-gaps)) | Working (limited) |
@@ -222,6 +234,8 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | `/app/search` | Search inside your Spaces | Working (limited) |
 | `/app/agent` | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Working (limited): no AI model; under provisional DEC-012 |
 | `/app/settings/data` | Your data: download your data, delete your account ([T68](TASKS.md#owners-critical-gaps)) | Working (limited) |
+| `/app/settings/interests` | Your interests: private topics, interests, languages and places used only to suggest pages to you ([T127](TASKS.md#community-intelligence-and-governance)), under Profile | Working (limited) |
+| `/app/settings/privacy` | Privacy: what you have allowed, each with take-back, and recent account activity ([T164](TASKS.md#part-c-product-requirements-plan)), under Profile | Working (limited) |
 
 ### Android screens
 
@@ -232,17 +246,17 @@ All Agent features (scoped chat, drafting, approvals, memory, tools, evaluation)
 | Account: profile, timezone, sessions, security activity | Profile in the bottom bar; opens after sign in | Working (limited) |
 | Spaces: list, create, detail, invitations, members, ownership | Spaces in the bottom bar / Home | Working (limited) |
 | Space settings | Owner Space detail | Working (limited) |
-| Tasks: list, detail, editor, status | Profile header / Space detail / Home | Working (limited) |
-| Calendar agenda | Home | Working (limited); not device-qualified |
+| Tasks: list, detail, editor, status | Profile header / Space detail / Home | Working (limited); priority and filters by assignee and due date since T153 ([DEC-029](DECISIONS.md#accepted-decisions), provisional) |
+| Calendar agenda: month, week or day, sources shown or hidden | Home | Working (limited); not device-qualified |
 | Reminders, repeating reminders and notification inbox with snooze | Bell on Home and Profile / task detail | Working (limited); repeating reminders and snooze not device-qualified |
 | Messages: conversation list and chat | Messages in the bottom bar / Space detail | Working (limited); not device-qualified |
-| Community: Feed, Pages and posts, page, post, comments, your pages | Discover in the bottom bar / Home | Working (limited); not device-qualified |
+| Community: Feed, Pages and posts, page, post, comments, your pages | Discover in the bottom bar / Home | Working (limited); not device-qualified. Since T126 and T127 the page's Topics and tags, Discover filters and suggestions, and Your interests (from Profile) passed device tests at 320 dp and 200% text |
 | Events and RSVP | Space detail / Home | Working (limited); not device-qualified |
 | Care instructions and medication reminders | Home (Medicines) | Working (limited); not device-qualified |
 | Documents: add, list, open at cited lines, delete | Space detail | Working (limited); 7 offline screen tests and a live journey on the emulator |
 | Search inside your Spaces | Home header | Working (limited); covered by the same device tests |
 | Agent: ask in a Space, answer its question, approve or decline the exact change, history, memories | Profile | Working (limited): no AI model; under provisional DEC-012; 6 offline screen tests and a live journey on the emulator ([T35](TASKS.md#approved-requirements-not-built-yet)) |
-| Safety, privacy, export, deletion | Profile | Working (limited): the blocked list, decisions about your content with appeals and your reports; for moderators the moderation screen with 7 device tests ([T69](TASKS.md#owners-critical-gaps)); "Your data" with the download and account deletion ([T68](TASKS.md#owners-critical-gaps)), its device tests not yet run |
+| Safety, privacy, export, deletion | Profile | Working (limited): the blocked list, decisions about your content with appeals and your reports; for moderators the moderation screen with 7 device tests ([T69](TASKS.md#owners-critical-gaps)); "Your data" with the download and account deletion ([T68](TASKS.md#owners-critical-gaps)), its device tests not yet run; Privacy with each permission's take-back ([T164](TASKS.md#part-c-product-requirements-plan)), 3 device tests at 320 dp and 200% text |
 | Phone alerts for new reminders and messages | Reminder inbox settings | Working (limited): checks about every 15 minutes after you turn them on; no push provider ([DEC-020](DECISIONS.md#accepted-decisions), [T66](TASKS.md#owners-critical-gaps)) |
 
 Every screen handles loading, empty, failed, denied, offline, stale/conflict, uncertain outcome, unsaved edits and account change where they apply, and keeps the exact person, Space, source and time in confirmations. Layouts must work at 320 px / 320 dp and at 200% text.

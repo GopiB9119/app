@@ -3,7 +3,12 @@ package com.community.platform.feature.events
 import com.community.platform.feature.identity.AccountRepository
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
+import com.google.gson.TypeAdapter
+import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.google.gson.stream.JsonWriter
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -21,10 +26,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 val EVENT_RESPONSES = listOf("going", "maybe", "not_going")
+const val MAX_CAPACITY = 500
 
 data class AttendeeDto(
     val name: String, val response: String, @SerializedName("responded_at") val respondedAt: String,
-    val outdated: Boolean, val mine: Boolean,
+    val outdated: Boolean, val mine: Boolean, @SerializedName("waitlist_position") val waitlistPosition: Int? = null,
 )
 
 data class EventDto(
@@ -39,11 +45,34 @@ data class EventDto(
     @SerializedName("my_response") val myResponse: String?, @SerializedName("my_response_outdated") val myResponseOutdated: Boolean,
     @SerializedName("can_manage") val canManage: Boolean, @SerializedName("can_respond") val canRespond: Boolean,
     val etag: String?, val attendees: List<AttendeeDto>? = null,
+    val capacity: Int? = null, val waitlisted: Int = 0, @SerializedName("my_waitlist_position") val myWaitlistPosition: Int? = null,
 )
+
+/** What a saved form says about the capacity: nothing (an edit keeps it; a new event has none), no limit, or a number of places. */
+sealed interface CapacityChoice {
+    data object Leave : CapacityChoice
+    data object Unlimited : CapacityChoice
+    data class Limit(val places: Int) : CapacityChoice
+}
+
+/** Leave writes no "capacity" field at all; Unlimited writes null, which removes an event's capacity. */
+class CapacityAdapter : TypeAdapter<CapacityChoice>() {
+    override fun write(writer: JsonWriter, value: CapacityChoice?) {
+        if (value is CapacityChoice.Limit) { writer.value(value.places.toLong()); return }
+        val nulls = writer.serializeNulls
+        writer.serializeNulls = value == CapacityChoice.Unlimited
+        writer.nullValue()
+        writer.serializeNulls = nulls
+    }
+
+    override fun read(reader: JsonReader): CapacityChoice =
+        if (reader.peek() == JsonToken.NULL) { reader.nextNull(); CapacityChoice.Unlimited } else CapacityChoice.Limit(reader.nextInt())
+}
 
 data class EventBodyDto(
     val title: String, val description: String, val location: String, val timezone: String,
     @SerializedName("local_start") val localStart: String, @SerializedName("local_end") val localEnd: String?,
+    @field:JsonAdapter(CapacityAdapter::class) val capacity: CapacityChoice = CapacityChoice.Leave,
 )
 
 data class AttendanceDto(val response: String)
@@ -52,15 +81,27 @@ data class EventPage(val items: List<EventDto>, val nextCursor: String?)
 /** One create attempt identity; a retry reuses this exact key and body so the server returns the first event. */
 data class EventCreateIntent(val accountId: String, val spaceId: String, val key: String, val body: EventBodyDto)
 
-enum class EventProblem { TITLE, TITLE_LONG, LOCATION_LONG, DETAILS_LONG, CONTROL, DATE, START, END, END_BEFORE_START, ZONE }
+enum class EventProblem { TITLE, TITLE_LONG, LOCATION_LONG, DETAILS_LONG, CONTROL, DATE, START, END, END_BEFORE_START, ZONE, CAPACITY }
 
 private val CONTROLS = Regex("[\\u0000-\\u0008\\u000B-\\u001F\\u007F\\u202A-\\u202E\\u2066-\\u2069]")
 
-fun eventBody(title: String, details: String, location: String, timezone: String, date: String, start: String, end: String) = EventBodyDto(
+fun eventBody(
+    title: String, details: String, location: String, timezone: String, date: String, start: String, end: String,
+    capacity: CapacityChoice = CapacityChoice.Leave,
+) = EventBodyDto(
     title = title.trim().replace(Regex("\\s+"), " "), description = details.replace("\r\n", "\n").trim(),
     location = location.trim().replace(Regex("\\s+"), " "), timezone = timezone.trim(),
     localStart = "${date.trim()}T${start.trim()}", localEnd = end.trim().takeIf { it.isNotEmpty() }?.let { "${date.trim()}T$it" },
+    capacity = capacity,
 )
+
+/** The capacity a form sends, given the event's [current] one (null for a new event), or null when the typed text is not 1 to 500. */
+fun capacityChoice(text: String, current: Int?): CapacityChoice? {
+    val typed = text.trim()
+    if (typed.isEmpty()) return if (current == null) CapacityChoice.Leave else CapacityChoice.Unlimited
+    val places = typed.takeIf { Regex("\\d{1,3}").matches(it) }?.toInt()?.takeIf { it in 1..MAX_CAPACITY } ?: return null
+    return if (places == current) CapacityChoice.Leave else CapacityChoice.Limit(places)
+}
 
 fun eventProblem(body: EventBodyDto): EventProblem? {
     fun length(value: String) = value.codePointCount(0, value.length)
@@ -134,9 +175,16 @@ class EventsRepository @Inject constructor(private val api: EventsApi, private v
         Instant.parse(value.createdAt); Instant.parse(value.updatedAt)
         value.scheduleChangedAt?.let(Instant::parse); value.cancelledAt?.let(Instant::parse)
         require(!detail || value.attendees != null)
+        // Nobody waits without a capacity, nobody waits while a place is free, and a place in line is only for Going (DEC-032).
+        value.capacity?.let { require(it in 1..MAX_CAPACITY && value.going <= it) }
+        require(value.waitlisted >= 0 && (value.capacity != null || value.waitlisted == 0) && (value.waitlisted == 0 || value.going == value.capacity))
+        value.myWaitlistPosition?.let { require(value.myResponse == "going" && it in 1..value.waitlisted) }
         value.attendees?.let { people ->
             require(people.size <= 500 && people.count { it.mine } <= 1)
-            people.forEach { text(it.name, 80); require(it.response in EVENT_RESPONSES); Instant.parse(it.respondedAt) }
+            people.forEach {
+                text(it.name, 80); require(it.response in EVENT_RESPONSES); Instant.parse(it.respondedAt)
+                it.waitlistPosition?.let { place -> require(it.response == "going" && place in 1..value.waitlisted) }
+            }
         }
         value
     }
@@ -159,15 +207,21 @@ class EventsRepository @Inject constructor(private val api: EventsApi, private v
 
     suspend fun create(intent: EventCreateIntent): EventDto = accounts.authorized(intent.accountId) {
         event(accounts.result(api.create(it, intent.spaceId, intent.key, intent.body)), intent.spaceId, detail = true).also { event ->
-            if (event.title != intent.body.title || event.localStart != intent.body.localStart || event.timezone != intent.body.timezone) {
+            if (event.title != intent.body.title || event.localStart != intent.body.localStart || event.timezone != intent.body.timezone
+                || event.capacity != (intent.body.capacity as? CapacityChoice.Limit)?.places) {
                 invalid("The created event does not match your form.")
             }
         }
     }
 
     suspend fun update(accountId: String, current: EventDto, body: EventBodyDto): EventDto = accounts.authorized(accountId) {
+        val capacity = when (val choice = body.capacity) {
+            is CapacityChoice.Limit -> choice.places
+            CapacityChoice.Unlimited -> null
+            CapacityChoice.Leave -> current.capacity
+        }
         event(accounts.result(api.update(it, current.id, current.etag ?: invalid(), body)), current.spaceId, detail = true).also { event ->
-            if (event.id != current.id) invalid()
+            if (event.id != current.id || event.capacity != capacity) invalid()
         }
     }
 

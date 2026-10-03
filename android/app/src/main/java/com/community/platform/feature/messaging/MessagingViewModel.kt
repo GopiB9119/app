@@ -43,10 +43,17 @@ data class ChatState(
     val deleting: String? = null,
     val denied: Boolean = false,
     val error: String? = null,
+    val errorFromAction: Boolean = false,
+    // Replies, reactions and edits (DEC-033): the message being answered, the one being edited and its text, and the
+    // message whose edit or reaction is on its way.
+    val replyingTo: MessageDto? = null,
+    val editing: String? = null,
+    val editDraft: String = "",
+    val acting: String? = null,
 ) {
     /** Leaving loses the retry identity of these sends: the ones not kept on the phone. */
     val unconfirmed: Boolean get() = pending.any { it.state != SendState.FAILED && !it.kept }
-    val working: Boolean get() = loading || polling || loadingEarlier || deleting != null || pending.any { it.state == SendState.SENDING }
+    val working: Boolean get() = loading || polling || loadingEarlier || deleting != null || acting != null || pending.any { it.state == SendState.SENDING }
 }
 
 data class MessagingState(
@@ -439,7 +446,7 @@ class MessagingViewModel @Inject constructor(
             }
             if (chatGeneration != expectedChat) return
             absorb(expectedChat, incoming)
-            updateChat(expectedChat) { it.copy(conversation = view, error = null, earlierCursor = if (first) latest.nextCursor else it.earlierCursor) }
+            updateChat(expectedChat) { it.copy(conversation = view, error = if (it.errorFromAction) it.error else null, earlierCursor = if (first) latest.nextCursor else it.earlierCursor) }
             val newest = mutableState.value.chat?.messages?.lastOrNull()?.position?.toLong() ?: 0L
             if (visible && newest > maxOf(markedThrough, view.readPosition.toLong())) {
                 val previous = markedThrough
@@ -469,7 +476,7 @@ class MessagingViewModel @Inject constructor(
             listChanged()
             return
         }
-        updateChat(expectedChat) { it.copy(error = describe(error, fallback)) }
+        updateChat(expectedChat) { it.copy(error = describe(error, fallback), errorFromAction = false) }
     }
 
     private suspend fun absorb(expectedChat: Long, incoming: List<MessageDto>) {
@@ -518,9 +525,73 @@ class MessagingViewModel @Inject constructor(
             updateChat(chatGeneration) { it.copy(error = "Resolve the unconfirmed messages before sending more.") }
             return
         }
-        val intent = SendIntent(account, chat.conversation.id, UUID.randomUUID().toString(), normalizeMessage(chat.draft))
-        updateChat(chatGeneration) { it.copy(draft = "", error = null, pending = it.pending + PendingSend(intent, SendState.SENDING)) }
+        val intent = SendIntent(account, chat.conversation.id, UUID.randomUUID().toString(), normalizeMessage(chat.draft), chat.replyingTo?.id)
+        updateChat(chatGeneration) { it.copy(draft = "", error = null, replyingTo = null, pending = it.pending + PendingSend(intent, SendState.SENDING)) }
         deliver(intent)
+    }
+
+    fun startReply(message: MessageDto) {
+        updateChat(chatGeneration) { chat ->
+            val known = chat.messages.firstOrNull { it.id == message.id }
+            if (chat.denied || !chat.conversation.canSend || known?.status != "sent") chat else chat.copy(replyingTo = known)
+        }
+    }
+
+    fun cancelReply() { updateChat(chatGeneration) { it.copy(replyingTo = null) } }
+
+    fun startEdit(message: MessageDto) {
+        updateChat(chatGeneration) { chat ->
+            val known = chat.messages.firstOrNull { it.id == message.id }
+            if (chat.denied || !chat.conversation.canSend || known == null || !editable(known) || chat.acting != null) chat
+            else chat.copy(editing = known.id, editDraft = known.body.orEmpty())
+        }
+    }
+
+    fun editDraft(value: String) { updateChat(chatGeneration) { if (it.editing == null) it else it.copy(editDraft = value.take(MAX_MESSAGE_CHARACTERS * 2)) } }
+
+    fun cancelEdit() { updateChat(chatGeneration) { it.copy(editing = null, editDraft = "") } }
+
+    fun saveEdit() {
+        val chat = mutableState.value.chat ?: return
+        val messageId = chat.editing ?: return
+        if (messageProblem(chat.editDraft) != null) return
+        val body = normalizeMessage(chat.editDraft)
+        command(messageId) { account, conversationId -> repository.edit(account, conversationId, messageId, body) }
+    }
+
+    fun react(message: MessageDto, reaction: String, on: Boolean) {
+        if (reaction !in REACTIONS) return
+        command(message.id) { account, conversationId -> repository.react(account, conversationId, message.id, reaction, on) }
+    }
+
+    /** An edit or a reaction names the change itself, so trying again is safe; one runs at a time. */
+    private fun command(messageId: String, call: suspend (String, String) -> MessageDto) {
+        val current = mutableState.value
+        val account = current.accountId ?: return
+        val chat = current.chat ?: return
+        if (chat.denied || chat.acting != null || !chat.conversation.canSend) return
+        val expected = generation
+        val expectedChat = chatGeneration
+        updateChat(expectedChat) { it.copy(acting = messageId, error = null, errorFromAction = false) }
+        chatScope().launch {
+            try {
+                absorb(expectedChat, listOf(call(account, chat.conversation.id)))
+                updateChat(expectedChat) { if (it.editing == messageId) it.copy(editing = null, editDraft = "") else it }
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                val failure = error as? IdentityFailure
+                val known = when (failure?.code) {
+                    "EDIT_WINDOW_CLOSED" -> "This message can no longer be edited: 15 minutes have passed."
+                    "EDIT_LIMIT_REACHED" -> "This message has been edited 10 times, the most allowed."
+                    "MESSAGE_DELETED" -> "This message was deleted."
+                    else -> null
+                }
+                if (known != null || (failure?.status == 404 && !sessionLost(error))) {
+                    updateChat(expectedChat) { it.copy(error = known ?: "This message is no longer available.", errorFromAction = true, editing = null, editDraft = "") }
+                    pollNow()
+                } else chatFailure(expected, expectedChat, error, "The change was not confirmed. Try again.")
+            } finally { updateChat(expectedChat) { it.copy(acting = null) } }
+        }
     }
 
     /** Retries exactly the original body with the original key; the server returns the first saved copy. */
@@ -596,7 +667,8 @@ class MessagingViewModel @Inject constructor(
         updateChat(chatGeneration) { chat ->
             val entry = chat.pending.firstOrNull { it.intent.key == key && it.state == SendState.FAILED }
             if (entry == null || chat.draft.isNotBlank()) chat
-            else chat.copy(draft = entry.intent.body, pending = chat.pending - entry)
+            else chat.copy(draft = entry.intent.body, pending = chat.pending - entry,
+                replyingTo = chat.messages.firstOrNull { it.id == entry.intent.replyTo && it.status == "sent" })
         }
     }
 

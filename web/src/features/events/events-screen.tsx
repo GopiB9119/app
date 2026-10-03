@@ -18,10 +18,11 @@ import { spacesSchema } from "@/features/spaces/client";
 import { eventAlert, eventLeads, setEventAlert } from "@/features/notifications/alerts-client";
 import type { EventLead } from "@/features/notifications/alerts-client";
 import {
-  MAX_DESCRIPTION, MAX_LOCATION, MAX_TITLE, RESPONSES, browserZone, cancelEvent, createEvent, eventBody, eventFormProblems, eventTimezone,
+  MAX_CAPACITY, MAX_DESCRIPTION, MAX_LOCATION, MAX_TITLE, RESPONSES, browserZone, cancelEvent, createEvent, eventBody, eventFormProblems, eventTimezone,
   formFromEvent, formatWhen, listEvents, readEvent, respondToEvent, sameBody, updateEvent,
 } from "./client";
 import type { CreateIntent, EventForm, EventFormProblems, EventResponse, SpaceEvent } from "./client";
+import { EventBudget } from "./budget-panel";
 import styles from "./events.module.css";
 
 type When = "upcoming" | "past";
@@ -49,8 +50,10 @@ const formProblems = new Map<string, [MessageId, MessageValues?]>([
   ["Choose a start time in the future.", ["events.problem.future"]],
   ["Choose a start within the next two years.", ["events.problem.twoYears"]],
   ["An event can last at most 14 days.", ["events.problem.duration"]],
+  [`Enter a whole number from 1 to ${MAX_CAPACITY}, or leave it empty.`, ["events.problem.capacity", { limit: MAX_CAPACITY }]],
+  ["More people are already going. Choose a larger number.", ["events.problem.capacityBelow"]],
 ]);
-const eventFields = ["title", "local_start", "local_end", "timezone", "location", "description"] as const;
+const eventFields = ["title", "local_start", "local_end", "timezone", "location", "description", "capacity"] as const;
 
 function serverFormProblems(error: unknown): EventFormProblems {
   if (!(error instanceof ApiError)) return {};
@@ -58,6 +61,7 @@ function serverFormProblems(error: unknown): EventFormProblems {
   if (error.code === "EVENT_TOO_FAR") return { local_start: "Choose a start within the next two years." };
   if (error.code === "EVENT_END_BEFORE_START") return { local_end: "The end must be after the start." };
   if (error.code === "EVENT_TOO_LONG") return { local_end: "An event can last at most 14 days." };
+  if (error.code === "CAPACITY_BELOW_GOING") return { capacity: "More people are already going. Choose a larger number." };
   const problems: EventFormProblems = {};
   if (error.code === "VALIDATION_ERROR") {
     for (const field of eventFields) if (error.details[`body.${field}`]) problems[field] = "Check this value.";
@@ -137,7 +141,10 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
         <div className={styles.actions}>
           <button className="icon-button" aria-label={t("events.refresh")} title={t("events.refresh")} disabled={editorGuard?.busy || spaces.isFetching || list.isFetching} onClick={() => {
             void spaces.refetch(); refresh();
-            if (selectedId) void queryClient.invalidateQueries({ queryKey: ["event", user.id, selectedId] });
+            if (selectedId) {
+              void queryClient.invalidateQueries({ queryKey: ["event", user.id, selectedId] });
+              void queryClient.invalidateQueries({ queryKey: ["eventBudget", user.id, selectedId] });
+            }
           }}><RefreshCw size={18} className={spaces.isFetching || list.isFetching ? "spin" : ""} aria-hidden /></button>
           {spaceId && !creating && <button className="primary-button" disabled={editorGuard?.busy} onClick={() => { if (!mayLeaveEditor(editorGuard)) return; setCreating(true); setSelectedId(null); }}><CalendarPlus size={18} aria-hidden />{t("events.new")}</button>}
         </div>
@@ -175,7 +182,8 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
             {whenText.yours && <p className={styles.meta}>{whenText.yours}</p>}
             {event.location && <p className={styles.meta}><MapPin size={15} aria-hidden />{event.location}</p>}
             <p className={styles.meta}><UsersRound size={15} aria-hidden />{event.my_response && !event.my_response_outdated
-              ? t("events.countsYou", { ...counts, response: t(responseLabels[event.my_response]) }) : t("events.counts", counts)}</p>
+              ? t("events.countsYou", { ...counts, response: t(event.my_waitlist_position !== null ? "events.response.waiting" : responseLabels[event.my_response]) }) : t("events.counts", counts)}</p>
+            <Places event={event} />
             {event.my_response && event.my_response_outdated && <p className={styles.notice} role="status">{t("events.yourResponseIsOutdated", { response: t(responseLabels[event.my_response]) })}</p>}
           </li>;
         })}</ul>
@@ -200,7 +208,11 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
     onChanged();
   };
   const respond = useMutation({ mutationFn: (response: EventResponse) => respondToEvent(user.id, eventId, response), onSuccess: store });
-  const cancel = useMutation({ mutationFn: (event: SpaceEvent) => cancelEvent(user.id, event), onSuccess: event => { setConfirmCancel(false); return store(event); } });
+  const cancel = useMutation({ mutationFn: (event: SpaceEvent) => cancelEvent(user.id, event), onSuccess: event => {
+    setConfirmCancel(false);
+    void queryClient.invalidateQueries({ queryKey: ["eventBudget", user.id, eventId] });
+    return store(event);
+  } });
   useEffect(() => {
     const problem = detail.error ?? respond.error ?? cancel.error;
     if (sessionLost(problem)) { queryClient.clear(); window.location.replace("/login"); }
@@ -247,8 +259,13 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
     {event.status === "scheduled" && !event.ended && <EventAlertChoice user={user} eventId={event.id} />}
     <h3>{t("events.responses")}</h3>
     <p className={styles.meta}>{t("events.counts", counts)}</p>
-    {event.attendees && event.attendees.length > 0 ? <ul className={styles.attendees}>{event.attendees.map((person, index) =>
-      <li key={`${person.name}-${index}`}>{t(person.outdated ? "events.attendeeOutdated" : "events.attendee", { name: person.mine ? t("events.you") : person.name, response: t(responseLabels[person.response]) })}</li>)}</ul>
+    <Places event={event} />
+    {event.attendees && event.attendees.length > 0 ? <ul className={styles.attendees}>{event.attendees.map((person, index) => {
+      const name = person.mine ? t("events.you") : person.name;
+      return <li key={`${person.name}-${index}`}>{person.waitlist_position !== null
+        ? t("events.attendeeWaiting", { name, place: person.waitlist_position })
+        : t(person.outdated ? "events.attendeeOutdated" : "events.attendee", { name, response: t(responseLabels[person.response]) })}</li>;
+    })}</ul>
       : <p className={styles.meta}>{t("events.noResponses")}</p>}
     {event.can_manage && <div className={styles.actions}>
       <button className="secondary-button" onClick={() => setEditing(event)}><Pencil size={16} aria-hidden />{t("events.edit")}</button>
@@ -261,10 +278,21 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
       {cancel.isError && <p role="alert">{problemText(cancel.error, t("events.cancelProblem"), t)}{cancel.error && "code" in cancel.error && cancel.error.code === "EVENT_CHANGED" ? ` ${t("events.reviewLatest")}` : ""}</p>}
       {cancel.isError && <button className="text-button" onClick={() => { setConfirmCancel(false); cancel.reset(); void detail.refetch(); }}>{t("events.reload")}</button>}
     </div>}
+    <EventBudget user={user} eventId={event.id} />
   </section>;
 }
 
-const blank = (zone: string): EventForm => ({ title: "", description: "", location: "", timezone: zone, local_start: "", local_end: "" });
+const blank = (zone: string): EventForm => ({ title: "", description: "", location: "", timezone: zone, local_start: "", local_end: "", capacity: "" });
+
+// Places taken and the line when the event has a capacity, and the viewer's own place in that line (DEC-032).
+function Places({ event }: { event: SpaceEvent }) {
+  const t = useText();
+  if (event.capacity === null) return null;
+  return <>
+    <p className={styles.meta}>{t("events.places", { going: event.going, capacity: event.capacity })}{event.waitlisted > 0 ? ` · ${t("events.waitlist", { count: event.waitlisted })}` : ""}</p>
+    {event.my_waitlist_position !== null && <p className={styles.notice}>{t("events.yourPlace", { place: event.my_waitlist_position })}</p>}
+  </>;
+}
 
 // The person's own alert before this event, in the app only. It follows the event if its time changes.
 function EventAlertChoice({ user, eventId }: { user: Account; eventId: string }) {
@@ -358,6 +386,7 @@ function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, o
     id: `${formId}-field-${name}`, name, "aria-invalid": Boolean(local[name]),
     "aria-describedby": [
       ["title", "location", "description"].includes(name) ? `${formId}-count-${name}` : "",
+      name === "capacity" ? `${formId}-hint-capacity` : "",
       local[name] ? `${formId}-error-${name}` : "",
     ].filter(Boolean).join(" ") || undefined,
   });
@@ -415,6 +444,12 @@ function EventEditor({ user, spaceId, zone, existing: shown, onClose, onSaved, o
       <label htmlFor={`${formId}-field-description`}>{t("events.field.details")}</label>
       <textarea {...attributes("description")} value={form.description} rows={3} maxLength={MAX_DESCRIPTION * 2} onChange={set("description")} disabled={save.isPending || pendingSame} />
       {counter("description", MAX_DESCRIPTION)}{fieldProblem("description")}
+    </div>
+    <div className={styles.field}>
+      <label htmlFor={`${formId}-field-capacity`}>{t("events.field.capacity")}</label>
+      <input {...attributes("capacity")} inputMode="numeric" value={form.capacity} maxLength={6} onChange={set("capacity")} disabled={save.isPending || pendingSame} />
+      <p id={`${formId}-hint-capacity`} className="field-hint">{t("events.capacityHint")}</p>
+      {fieldProblem("capacity")}
     </div>
     <p className={styles.meta}>{t("events.visibility")}</p>
     {save.isError && !hasProblems && <p role="alert">{problemText(save.error, t("events.saveProblem"), t)}{pendingSame ? ` ${t("events.retrySame")}` : ""}</p>}

@@ -72,6 +72,13 @@ class SafetyService:
         if user.id in {self.author_id(target), page.owner_id}:
             raise DomainError(409, "CONFLICT_OF_INTEREST", "Another moderator must review this content.")
 
+    @staticmethod
+    def in_force(target, decision):
+        """Whether a hiding or limiting decision still applies to its content; each is lifted on its own (DEC-040)."""
+        if decision.action == "limit":
+            return target.moderation_limit_decision_id == decision.id
+        return target.moderation_hidden_at is not None and target.moderation_decision_id == decision.id
+
     def preview(self, database, target_type, target_id):
         try:
             target, page = self.target(database, target_type, target_id)
@@ -171,11 +178,13 @@ class SafetyService:
             target, page = self.target(database, body.target_type, str(body.target_id), lock=True)
             self.identity.authenticate(database, token, lock=True)
             self.require_independent(target, page, user)
-            if body.action == "hide":
+            if body.action in ("hide", "limit"):
                 if target.status not in {"page": ("active", "read_only"), "post": ("published",), "comment": ("visible",)}[body.target_type]:
                     raise DomainError(409, "CONTENT_UNAVAILABLE", "This content is no longer public.")
                 if target.moderation_hidden_at is not None:
                     raise DomainError(409, "CONTENT_ALREADY_HIDDEN", "This content already has a hiding decision.")
+            if body.action == "limit" and target.moderation_limited_at is not None:
+                raise DomainError(409, "PAGE_ALREADY_LIMITED", "This page already has a limiting decision.")
             decision = ModerationDecision(
                 id=str(uuid4()), target_type=body.target_type, target_id=str(body.target_id), action=body.action,
                 reason=body.reason, moderator_note=body.note, decided_by=user.id, decided_at=self.clock(),
@@ -186,6 +195,9 @@ class SafetyService:
             if body.action == "hide":
                 target.moderation_hidden_at = decision.decided_at
                 target.moderation_decision_id = decision.id
+            elif body.action == "limit":
+                target.moderation_limited_at = decision.decided_at
+                target.moderation_limit_decision_id = decision.id
             self.close_reports(database, decision)
             self.community.record(database, user.id, page.id, target.id, f"moderation.{body.action}")
             database.flush()
@@ -218,12 +230,12 @@ class SafetyService:
             self.identity.authenticate(database, token, lock=True)
             if self.author_id(target) != user.id:
                 raise DomainError(403, "CONTENT_AUTHOR_REQUIRED", "Only the content author can appeal this decision.")
-            if decision.action != "hide":
-                raise DomainError(409, "APPEAL_UNAVAILABLE", "Only a hiding decision can be appealed.")
+            if decision.action not in ("hide", "limit"):
+                raise DomainError(409, "APPEAL_UNAVAILABLE", "Only a hiding or limiting decision can be appealed.")
             if database.scalar(select(ModerationAppeal.id).where(ModerationAppeal.decision_id == decision.id)) is not None:
                 raise DomainError(409, "APPEAL_ALREADY_EXISTS", "This decision already has an appeal.")
-            if target.moderation_hidden_at is None or target.moderation_decision_id != decision.id:
-                raise DomainError(409, "APPEAL_UNAVAILABLE", "This hiding decision is no longer active.")
+            if not self.in_force(target, decision):
+                raise DomainError(409, "APPEAL_UNAVAILABLE", "This decision is no longer in force.")
             appeal = ModerationAppeal(
                 id=str(uuid4()), decision_id=decision.id, account_id=user.id, note=body.note,
                 status="open", created_at=self.clock(), creation_key=key, creation_digest=digest,
@@ -271,8 +283,8 @@ class SafetyService:
                 if appeal.status == body.outcome and appeal.resolution_note == body.note:
                     return self.appeal_view(appeal)
                 raise DomainError(409, "APPEAL_ALREADY_RESOLVED", "This appeal has already been resolved.")
-            if target.moderation_hidden_at is None or target.moderation_decision_id != original.id:
-                raise DomainError(409, "APPEAL_UNAVAILABLE", "This appeal no longer matches the active hiding decision.")
+            if not self.in_force(target, original):
+                raise DomainError(409, "APPEAL_UNAVAILABLE", "This appeal no longer matches a decision in force.")
             now = self.clock()
             appeal.status = body.outcome
             appeal.resolved_by = user.id
@@ -285,8 +297,12 @@ class SafetyService:
                 )
                 database.add(decision)
                 database.flush()
-                target.moderation_hidden_at = None
-                target.moderation_decision_id = None
+                if original.action == "limit":
+                    target.moderation_limited_at = None
+                    target.moderation_limit_decision_id = None
+                else:
+                    target.moderation_hidden_at = None
+                    target.moderation_decision_id = None
                 self.close_reports(database, decision)
                 action = "moderation.restore"
             else:

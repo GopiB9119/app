@@ -66,6 +66,10 @@ class ChangeInvitePolicy(Input):
     member_invites: bool = Field(strict=True)
 
 
+class ChangeAgentPolicy(Input):
+    agent_enabled: bool = Field(strict=True)
+
+
 class SpaceView(BaseModel):
     id: str
     name: str
@@ -74,6 +78,8 @@ class SpaceView(BaseModel):
     visibility: Literal["private", "public"]
     # DEC-026: whether every member, not only the owner and admins, may invite people.
     member_invites: bool
+    # DEC-028: whether anyone can ask the agent in this Space.
+    agent_enabled: bool
     status: Literal["active"]
     role: Literal["owner", "admin", "member"]
     version: str

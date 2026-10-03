@@ -119,7 +119,7 @@ async function fixture(t, screen, options = {}, contextOptions = {}) {
       denyCalendar: 0, denyChecklist: 0, canManage: options.canManage ?? true, canCheck: options.canCheck ?? true,
       taskTitle: options.longText ? `Synthetic task ${'W'.repeat(180)}` : taskTitle,
       spaces: [
-        { id: spaceId, name: options.longText ? `Synthetic ${'M'.repeat(65)}` : 'Synthetic family', space_type: 'family' },
+        { id: spaceId, name: options.longText ? `Synthetic ${'M'.repeat(65)}` : 'Synthetic family', space_type: options.solo ? 'solo' : 'family' },
         { id: otherSpaceId, name: 'Other synthetic family', space_type: 'family' },
       ],
       items: options.emptyChecklist ? [] : [{
@@ -231,8 +231,10 @@ async function fixture(t, screen, options = {}, contextOptions = {}) {
         if (state.denyCalendar) return failed(state.denyCalendar, 'ACCESS_DENIED', 'Synthetic calendar access is unavailable.');
         const parameters = Object.fromEntries(url.searchParams);
         const { space_id: selectedSpace, start_date: start, end_date: end, timezone, cursor } = parameters;
+        // Month views ask from the first of a month; tests of the week and day views (DEC-031) opt in to other starts.
         if (parameters.limit !== '50' || !state.spaces.some(space => space.id === selectedSpace)
-          || !/^\d{4}-\d{2}-01$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !timezone) {
+          || !(options.ranges ? /^\d{4}-\d{2}-\d{2}$/.test(start) && start <= end : /^\d{4}-\d{2}-01$/.test(start))
+          || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !timezone) {
           return failed(422, 'INVALID_QUERY', 'The synthetic calendar requires an explicit scope and month.');
         }
         const values = entries(selectedSpace, timezone, start, end);
@@ -673,6 +675,127 @@ test('calendar: the agenda and date controls fit 320 px with actual 200% text', 
   await page.getByRole('heading', { name: 'Fri, Oct 2, 2026', exact: true }).waitFor();
   await assertFits(page, 'Selected calendar day at 200% text', [calendarRows(page).first()]);
   assert.equal((await calls(page, '/api/calendar')).length, 1);
+  await assertOffline(result);
+});
+
+// DEC-031 (T163): month, week and day views; showing or hiding each source; who sees each entry.
+const rangeQuery = (start, end, timezone = 'Asia/Kolkata') => `?${new URLSearchParams({ space_id: spaceId, start_date: start, end_date: end, timezone, limit: '50' })}`;
+const calendarViews = page => page.getByRole('group', { name: 'Calendar view', exact: true });
+const sourceChoices = page => page.getByRole('group', { name: 'Show', exact: true });
+
+async function showsRange(page, title, rows) {
+  await page.getByRole('heading', { name: title, exact: true }).waitFor();
+  await readyCalendar(page);
+  assert.deepEqual(await calendarRows(page).locator('h3').allTextContents(), rows, title);
+}
+
+test('calendar: week and day views ask only for their own dates and step by a week or a day', { timeout }, async t => {
+  const result = await fixture(t, 'calendar', { ranges: true });
+  const { page } = result;
+  await readyCalendar(page);
+  assert.equal(await calendarViews(page).getByRole('button', { name: 'Month', exact: true }).getAttribute('aria-pressed'), 'true');
+  await calendarViews(page).getByRole('button', { name: 'Week', exact: true }).click();
+  await showsRange(page, 'Sun, Sep 27, 2026 to Sat, Oct 3, 2026', [
+    'Synthetic month-edge reminder', 'Synthetic task due', 'Synthetic one-off reminder', 'Synthetic daily task', 'Synthetic daily task',
+  ]);
+  assert.equal(await calendarViews(page).getByRole('button', { name: 'Week', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await calendarViews(page).getByRole('button', { name: 'Month', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await page.getByLabel('Date', { exact: true }).inputValue(), '2026-10-02', 'The week opens around today, in the display timezone.');
+  assert.equal(await page.getByLabel('Month', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('region', { name: 'Calendar dates', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Previous week', exact: true }).click();
+  await showsRange(page, 'Sun, Sep 20, 2026 to Sat, Sep 26, 2026', []);
+  await page.getByText('No tasks, reminders or events for these dates.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Next week', exact: true }).click();
+  await showsRange(page, 'Sun, Sep 27, 2026 to Sat, Oct 3, 2026', [
+    'Synthetic month-edge reminder', 'Synthetic task due', 'Synthetic one-off reminder', 'Synthetic daily task', 'Synthetic daily task',
+  ]);
+  await page.getByRole('button', { name: 'Next week', exact: true }).click();
+  await showsRange(page, 'Sun, Oct 4, 2026 to Sat, Oct 10, 2026', ['Synthetic daily task']);
+  await calendarViews(page).getByRole('button', { name: 'Day', exact: true }).click();
+  await showsRange(page, 'Fri, Oct 9, 2026', []);
+  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await showsRange(page, 'Fri, Oct 2, 2026', ['Synthetic task due', 'Synthetic one-off reminder', 'Synthetic daily task']);
+  await page.getByRole('button', { name: 'Next day', exact: true }).click();
+  await showsRange(page, 'Sat, Oct 3, 2026', ['Synthetic daily task']);
+  await page.getByLabel('Date', { exact: true }).fill('2026-10-04');
+  await showsRange(page, 'Sun, Oct 4, 2026', ['Synthetic daily task']);
+  await calendarViews(page).getByRole('button', { name: 'Month', exact: true }).click();
+  await showsRange(page, 'Month agenda', [
+    'Synthetic month-edge reminder', 'Synthetic task due', 'Synthetic one-off reminder',
+    'Synthetic daily task', 'Synthetic daily task', 'Synthetic daily task',
+  ]);
+  assert.equal(await page.getByLabel('Month', { exact: true }).inputValue(), '2026-10');
+  const reads = await calls(page, '/api/calendar');
+  assert.deepEqual(reads.map(call => call.query), [
+    calendarQuery(), rangeQuery('2026-09-27', '2026-10-03'), rangeQuery('2026-09-20', '2026-09-26'), rangeQuery('2026-09-27', '2026-10-03'),
+    rangeQuery('2026-10-04', '2026-10-10'), rangeQuery('2026-10-09', '2026-10-09'), rangeQuery('2026-10-02', '2026-10-02'),
+    rangeQuery('2026-10-03', '2026-10-03'), rangeQuery('2026-10-04', '2026-10-04'), calendarQuery(),
+  ]);
+  for (const call of reads) assertRead(call, '/api/calendar', call.query);
+  await assertOffline(result);
+});
+
+test('calendar: hiding a source only changes the display, and each entry says who sees it', { timeout }, async t => {
+  const result = await fixture(t, 'calendar');
+  const { page } = result;
+  await readyCalendar(page);
+  for (const name of ['Tasks', 'Reminders', 'Events']) assert.equal(await sourceChoices(page).getByRole('checkbox', { name, exact: true }).isChecked(), true);
+  assert.equal(await sourceChoices(page).locator('label').evaluateAll(labels => labels.every(label => {
+    const box = label.querySelector('input').getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(label.lastChild);
+    const text = range.getBoundingClientRect();
+    return box.right <= text.left && box.top < text.bottom && box.bottom > text.top;
+  })), true, 'Each checkbox sits beside its own text.');
+  assert.equal(await page.locator('li[data-kind="task"]').getByText('Shared in this Space', { exact: true }).count(), 1);
+  assert.equal(await page.locator('li[data-kind="reminder"], li[data-kind="planned"]').getByText('Only you', { exact: true }).count(), 5);
+  assert.equal(await calendarRows(page).getByText('Shared in this Space', { exact: true }).count(), 1, 'Reminders are never shown as shared.');
+  await sourceChoices(page).getByRole('checkbox', { name: 'Reminders', exact: true }).uncheck();
+  assert.deepEqual(await calendarRows(page).locator('h3').allTextContents(), ['Synthetic task due']);
+  await agenda(page).getByText('Hidden by your choices: 5', { exact: true }).waitFor();
+  await sourceChoices(page).getByRole('checkbox', { name: 'Tasks', exact: true }).uncheck();
+  assert.equal(await calendarRows(page).count(), 0);
+  await agenda(page).getByText('Hidden by your choices: 6', { exact: true }).waitFor();
+  assert.equal(await agenda(page).getByText('No tasks, reminders or events for these dates.', { exact: true }).count(), 0, 'Hidden entries are not an empty calendar.');
+  await page.getByRole('region', { name: 'Calendar dates', exact: true }).getByRole('button', { name: 'Fri, Oct 2, 2026', exact: true }).click();
+  await page.getByRole('heading', { name: 'Fri, Oct 2, 2026', exact: true }).waitFor();
+  await page.getByText('Hidden by your choices: 3', { exact: true }).waitFor();
+  await sourceChoices(page).getByRole('checkbox', { name: 'Tasks', exact: true }).check();
+  await sourceChoices(page).getByRole('checkbox', { name: 'Reminders', exact: true }).check();
+  assert.deepEqual(await calendarRows(page).locator('h3').allTextContents(), ['Synthetic task due', 'Synthetic one-off reminder', 'Synthetic daily task']);
+  assert.equal(await page.getByText(/^Hidden by your choices/).count(), 0);
+  await page.getByRole('button', { name: 'All dates', exact: true }).click();
+  assert.equal(await calendarRows(page).count(), 6);
+  assert.equal((await calls(page, '/api/calendar')).length, 1, 'Showing or hiding a source does not ask the server again.');
+  await assertOffline(result);
+});
+
+test('calendar: in a solo Space every entry is only for the person', { timeout }, async t => {
+  const result = await fixture(t, 'calendar', { solo: true });
+  const { page } = result;
+  await readyCalendar(page);
+  assert.equal(await calendarRows(page).count(), 6);
+  assert.equal(await calendarRows(page).getByText('Only you', { exact: true }).count(), 6);
+  assert.equal(await calendarRows(page).getByText('Shared in this Space', { exact: true }).count(), 0);
+  await assertOffline(result);
+});
+
+test('calendar: the view, date and source controls fit 320 px with actual 200% text', { timeout }, async t => {
+  const result = await fixture(t, 'calendar', { longText: true, ranges: true }, { viewport: { width: 320, height: 844 } });
+  const { page } = result;
+  await readyCalendar(page);
+  await calendarViews(page).getByRole('button', { name: 'Week', exact: true }).click();
+  const title = 'Sun, Sep 27, 2026 to Sat, Oct 3, 2026';
+  await page.getByRole('heading', { name: title, exact: true }).waitFor();
+  await readyCalendar(page);
+  await doubleText(page, [page.getByRole('heading', { name: 'Calendar', exact: true }), page.getByRole('heading', { name: title, exact: true }), sourceChoices(page).locator('label').first()]);
+  await page.screenshot({ path: path.join(screenshots, 't163-calendar-week-320-200.png'), fullPage: true });
+  await assertFits(page, 'Calendar week at 320 px / 200% text', [
+    calendarViews(page), sourceChoices(page), page.getByLabel('Date', { exact: true }), page.getByRole('region', { name: title, exact: true }),
+    ...await calendarViews(page).getByRole('button').all(), ...await sourceChoices(page).locator('label').all(),
+    calendarRows(page).first(),
+  ]);
   await assertOffline(result);
 });
 

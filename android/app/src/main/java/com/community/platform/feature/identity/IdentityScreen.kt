@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -100,7 +101,7 @@ data class IdentityActions(
 )
 
 @Composable
-fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, dataViewModel: AccountDataViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
+fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, dataViewModel: AccountDataViewModel = androidx.lifecycle.viewmodel.compose.viewModel(), onOpenInterests: (() -> Unit)? = null, onOpenPrivacy: (() -> Unit)? = null) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val dataState by dataViewModel.state.collectAsStateWithLifecycle()
     var showingData by rememberSaveable(state.profile?.user?.id) { mutableStateOf(false) }
@@ -114,13 +115,13 @@ fun IdentityRoute(viewModel: IdentityViewModel, onOpenTasks: (() -> Unit)? = nul
             onBack = { showingData = false }, onSignInAgain = viewModel::signInAgain, onDeleted = viewModel::accountDeleted)
     } else {
         IdentityScreen(state, IdentityActions(viewModel::mode, viewModel::begin, viewModel::login, viewModel::verify, viewModel::saveProfile, viewModel::revoke, viewModel::revokeOthers, viewModel::logout, viewModel::refresh, viewModel::credentialsChanged, viewModel::cancelDeletion),
-            onOpenTasks, onOpenInbox, onOpenAgent, onOpenBlocked, onOpenData = { dataViewModel.bind(state.profile); showingData = true })
+            onOpenTasks, onOpenInbox, onOpenAgent, onOpenBlocked, onOpenData = { dataViewModel.bind(state.profile); showingData = true }, onOpenInterests = onOpenInterests, onOpenPrivacy = onOpenPrivacy)
     }
 }
 
 /** Sign-in, and once signed in the Profile section: account, sessions, the agent and the blocked list (DEC-014). */
 @Composable
-fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, secrets: SignInSecrets = viewModel(), onOpenData: (() -> Unit)? = null) {
+fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: (() -> Unit)? = null, onOpenInbox: (() -> Unit)? = null, onOpenAgent: (() -> Unit)? = null, onOpenBlocked: (() -> Unit)? = null, secrets: SignInSecrets = viewModel(), onOpenData: (() -> Unit)? = null, onOpenInterests: (() -> Unit)? = null, onOpenPrivacy: (() -> Unit)? = null) {
     SideEffect { if (state.profile != null) secrets.forget() }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
@@ -150,6 +151,10 @@ fun IdentityScreen(state: IdentityState, actions: IdentityActions, onOpenTasks: 
                         }
                         if (state.profile != null && onOpenAgent != null) OutlinedButton(onClick = onOpenAgent, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-agent")) { Icon(Icons.Default.Face, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.agent_title)) }
                         if (state.profile != null && onOpenBlocked != null) OutlinedButton(onClick = onOpenBlocked, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-blocked")) { Icon(Icons.Default.Lock, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.account_blocked)) }
+                        // Private: only this person sees their interests, which only suggest pages to them.
+                        if (state.profile != null && onOpenInterests != null) OutlinedButton(onClick = onOpenInterests, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-interests")) { Icon(Icons.Default.Star, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.community_interests)) }
+                        // DEC-034: one place listing what this person has allowed, each with its take-back.
+                        if (state.profile != null && onOpenPrivacy != null) OutlinedButton(onClick = onOpenPrivacy, enabled = !state.busy, shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("account-privacy")) { Icon(Icons.Default.CheckCircle, null, Modifier.size(DesignTokens.SpaceUnit * 5)); Spacer(Modifier.width(DesignTokens.SpaceUnit * 2)); Text(stringResource(R.string.privacy_title)) }
                         when {
                             state.profile != null -> AccountBody(state, actions, onOpenData)
                             state.signInUnchecked -> UncheckedSignIn(state, actions)
@@ -320,7 +325,7 @@ private fun AccountBody(state: IdentityState, actions: IdentityActions, onOpenDa
     Text(stringResource(R.string.security_activity), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = unit * 3).semantics { heading() })
     state.events.take(5).forEach { event ->
         Column {
-            Text(stringResource(when (event.action) { "account.created" -> R.string.account_created; "session.created" -> R.string.signed_in; "session.revoked", "session.capacity_revoked" -> R.string.session_revoked; "profile.updated" -> R.string.profile_updated; "account.password_reset" -> R.string.password_changed; else -> R.string.account_activity }), style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(securityEventLabel(event.action)), style = MaterialTheme.typography.bodyMedium)
             Text(formatTimestamp(event.createdAt, profile.user.timezone), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -359,3 +364,12 @@ private fun StatusMessage(message: String, error: Boolean) {
 private fun formatTimestamp(value: String, timezone: String): String = try {
     DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault()).withZone(ZoneId.of(timezone)).format(Instant.parse(value))
 } catch (_error: RuntimeException) { "" }
+
+internal fun securityEventLabel(action: String): Int = when (action) {
+    "account.created" -> R.string.account_created
+    "session.created" -> R.string.signed_in
+    "session.revoked", "session.capacity_revoked" -> R.string.session_revoked
+    "profile.updated" -> R.string.profile_updated
+    "account.password_reset" -> R.string.password_changed
+    else -> R.string.account_activity
+}

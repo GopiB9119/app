@@ -58,6 +58,7 @@ import com.community.platform.R
 data class SpaceSettingsActions(
     val name: (String) -> Unit, val save: () -> Unit, val retry: () -> Unit, val reload: () -> Unit, val description: (String) -> Unit,
     val proposeInvitePolicy: () -> Unit = {}, val cancelInvitePolicy: () -> Unit = {}, val confirmInvitePolicy: () -> Unit = {},
+    val proposeAgentPolicy: () -> Unit = {}, val cancelAgentPolicy: () -> Unit = {}, val confirmAgentPolicy: () -> Unit = {},
 )
 
 @Composable
@@ -67,7 +68,8 @@ fun SpaceSettingsRoute(viewModel: SpaceSettingsViewModel, accountId: String, spa
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
     if (state.accountId == accountId && state.spaceId == spaceId) SpaceSettingsScreen(state,
         SpaceSettingsActions(viewModel::name, viewModel::save, viewModel::retry, viewModel::reload, viewModel::description,
-            viewModel::proposeInvitePolicy, viewModel::cancelInvitePolicy, viewModel::confirmInvitePolicy), onBack)
+            viewModel::proposeInvitePolicy, viewModel::cancelInvitePolicy, viewModel::confirmInvitePolicy,
+            viewModel::proposeAgentPolicy, viewModel::cancelAgentPolicy, viewModel::confirmAgentPolicy), onBack)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -78,8 +80,9 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
     val descriptionDirty = state.basis != null && state.description != state.basis.description.orEmpty()
     val back: () -> Unit = {
         if (!state.busy) {
-            if (state.pending != null || state.pendingInvitePolicy != null) confirmation = "uncertain"
+            if (state.pending != null || state.pendingInvitePolicy != null || state.pendingAgentPolicy != null) confirmation = "uncertain"
             else if (state.confirmingInvitePolicy) actions.cancelInvitePolicy()
+            else if (state.confirmingAgentPolicy) actions.cancelAgentPolicy()
             else if (state.dirty) confirmation = "leave"
             else onBack()
         }
@@ -99,6 +102,8 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
                     "Everyone in the Space can now invite people." -> stringResource(R.string.space_settings_invite_policy_enabled)
                     "Only you and admins can invite people now." -> stringResource(R.string.space_settings_invite_policy_disabled)
                     "This Space changed. Reload and review it again." -> stringResource(R.string.space_settings_invite_policy_changed)
+                    "The agent is on in this Space." -> stringResource(R.string.space_settings_agent_now_on)
+                    "The agent is off in this Space." -> stringResource(R.string.space_settings_agent_now_off)
                     else -> it
                 }, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                 if (state.basis != null && !state.denied) {
@@ -114,7 +119,7 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
                         modifier = Modifier.fillMaxWidth().testTag("space-settings-description"))
                     if (state.pending != null && !state.busy) Text(stringResource(if (state.pending.description != null) R.string.space_settings_uncertain_changes else R.string.space_settings_uncertain))
                     Button(onClick = if (state.pending != null) actions.retry else actions.save,
-                        enabled = !state.busy && !state.conflict && !state.confirmingInvitePolicy && state.pendingInvitePolicy == null && state.name.isNotBlank() && (state.pending != null || state.name.trim() != state.basis.name || descriptionChanged),
+                        enabled = !state.busy && !state.conflict && !state.confirmingInvitePolicy && state.pendingInvitePolicy == null && !state.confirmingAgentPolicy && state.pendingAgentPolicy == null && state.name.isNotBlank() && (state.pending != null || state.name.trim() != state.basis.name || descriptionChanged),
                         shape = RoundedCornerShape(DesignTokens.ControlRadius),
                         modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("space-settings-save")) {
                         Icon(if (state.pending != null) Icons.Default.Refresh else Icons.Default.Check, null)
@@ -151,6 +156,32 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
                             }
                         }
                     }
+                    if (state.basis.role == "owner") {
+                        HorizontalDivider()
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3)) {
+                            Text(stringResource(R.string.space_settings_agent_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                            Text(stringResource(if (state.basis.agentEnabled) R.string.space_settings_agent_on else R.string.space_settings_agent_off))
+                            if (!state.confirmingAgentPolicy) {
+                                OutlinedButton(onClick = actions.proposeAgentPolicy, enabled = !state.locked && !state.dirty && !state.conflict,
+                                    shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("space-settings-agent-policy")) {
+                                    Icon(Icons.Default.Edit, null)
+                                    Text(stringResource(if (state.basis.agentEnabled) R.string.space_settings_agent_turn_off else R.string.space_settings_agent_turn_on), Modifier.weight(1f).padding(start = DesignTokens.SpaceUnit * 2))
+                                }
+                            } else {
+                                val enabled = state.pendingAgentPolicy?.agentEnabled ?: !state.basis.agentEnabled
+                                Text(stringResource(if (enabled) R.string.space_settings_agent_confirm_on else R.string.space_settings_agent_confirm_off, state.basis.name), Modifier.testTag("space-settings-agent-policy-description"))
+                                if (state.pendingAgentPolicy != null && !state.busy) Text(stringResource(R.string.space_settings_invite_policy_uncertain))
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                                    TextButton(onClick = actions.cancelAgentPolicy, enabled = !state.busy && state.pendingAgentPolicy == null,
+                                        modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("space-settings-agent-policy-cancel")) { Text(stringResource(R.string.cancel)) }
+                                    Button(onClick = actions.confirmAgentPolicy, enabled = !state.busy,
+                                        shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("space-settings-agent-policy-confirm")) {
+                                        Text(stringResource(if (state.pendingAgentPolicy != null) R.string.space_settings_invite_policy_retry else if (enabled) R.string.space_settings_agent_turn_on else R.string.space_settings_agent_turn_off))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if (state.conflict) TextButton(onClick = { confirmation = "reload" }, enabled = !state.busy) { Text(stringResource(R.string.space_settings_reload)) }
                 } else if (!state.denied && !state.busy) TextButton(onClick = actions.reload) { Text(stringResource(R.string.space_settings_reload)) }
             }
@@ -164,7 +195,7 @@ fun SpaceSettingsScreen(state: SpaceSettingsState, actions: SpaceSettingsActions
             else -> R.string.space_settings_discard_title
         })) },
         text = { Text(stringResource(when {
-            confirmation == "uncertain" && state.pendingInvitePolicy != null -> R.string.space_settings_invite_policy_leave_uncertain
+            confirmation == "uncertain" && (state.pendingInvitePolicy != null || state.pendingAgentPolicy != null) -> R.string.space_settings_invite_policy_leave_uncertain
             confirmation == "uncertain" && state.pending?.description != null -> R.string.space_settings_leave_uncertain_changes
             confirmation == "uncertain" -> R.string.space_settings_leave_uncertain
             confirmation == "reload" && descriptionDirty -> R.string.space_settings_discard_changes_reload

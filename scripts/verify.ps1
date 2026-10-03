@@ -11,7 +11,7 @@ The script changes nothing in the repository. It writes only under the output fo
 tools already use, and it restores the environment variables it sets.
 
 .PARAMETER Suite
-The suites to run, separated by commas: records, structure, tokens, typecheck, client, unit, backend, android, device, live.
+The suites to run, separated by commas: runner, records, structure, tokens, contracts, typecheck, client, unit, backend, android, device, live.
 The default is every suite except two: live, which needs the web preview and the local services (COMMUNITY_WEB_URL,
 by default http://127.0.0.1:3000), and device, which starts its own Android emulator for about half an hour
 (scripts\verify-android-device.ps1).
@@ -29,19 +29,21 @@ The folder for the logs and the summary. The default is .local\verify\<date-time
 npm run verify -- -Suite live
 #>
 param(
-    [string[]]$Suite = @('records', 'structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android'),
+    [string[]]$Suite = @('runner', 'records', 'structure', 'tokens', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android'),
     [string]$Output
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
-$order = @('records', 'structure', 'tokens', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
+$order = @('runner', 'records', 'structure', 'tokens', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
 $suites = @{
+    runner    = @{ Title = 'Verification runner'; Kind = 'node'; Commands = @('powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.test.ps1') }
     # Records only grow: no task, decision, checkpoint or changelog section may disappear, in the working copy or the last commit.
     records   = @{ Title = 'Records kept'; Kind = 'node'; Commands = @('npm run test:records', 'npm run check:records') }
     structure = @{ Title = 'Structure'; Kind = 'node'; Commands = @('npm run test:structure', 'npm run check:structure') }
     tokens    = @{ Title = 'Design tokens'; Kind = 'node'; Commands = @('npm run test:tokens', 'npm run check:tokens') }
+    contracts = @{ Title = 'OpenAPI contract'; Kind = 'pytest'; Commands = @('npm run test:openapi', 'npm run check:openapi') }
     typecheck = @{ Title = 'Web type check'; Kind = 'none'; Commands = @('npm --prefix web run typecheck') }
     client    = @{ Title = 'Web client and BFF'; Kind = 'node'; Commands = @('npm --prefix web run test:client') }
     unit      = @{ Title = 'Web offline components'; Kind = 'node'; Commands = @('npm --prefix web run test:unit') }
@@ -88,11 +90,14 @@ function Read-Counts([string]$Kind, [string]$Text, [datetime]$Since) {
         $files = @(Get-ChildItem -Path $folder -Filter 'TEST-*.xml' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $Since })
         if ($files.Count -gt 0) {
             $counts['classes'] = $files.Count
+            $counts['uncaughtClasses'] = 0
             foreach ($name in 'tests', 'failures', 'errors', 'skipped') { $counts[$name] = 0 }
             foreach ($file in $files) {
                 $report = New-Object Xml.XmlDocument
                 $report.Load($file.FullName)
                 foreach ($name in 'tests', 'failures', 'errors', 'skipped') { $counts[$name] += [int]$report.DocumentElement.GetAttribute($name) }
+                $stderr = (@($report.SelectNodes('//system-err')) | ForEach-Object { $_.InnerText }) -join "`n"
+                if ($stderr -match '(?m)^\s*Exception in thread "[^"]+"') { $counts['uncaughtClasses']++ }
             }
         }
     } elseif ($Kind -eq 'instrument') {
@@ -137,7 +142,7 @@ function Format-Tally($Tally) {
 }
 
 function Get-Blocker([string]$Name) {
-    if ($Name -eq 'backend' -and -not (Get-Command docker -ErrorAction SilentlyContinue)) { return 'Docker is not installed or not on PATH.' }
+    if ($Name -in @('backend', 'contracts') -and -not (Get-Command docker -ErrorAction SilentlyContinue)) { return 'Docker is not installed or not on PATH.' }
     if ($Name -eq 'backend') {
         # Sessions sharing this tree have written migrations with the same number at the same time; every test then fails
         # with "Multiple heads". Say so at once instead.
@@ -214,6 +219,12 @@ function Invoke-Suite([string]$Name) {
     # A runner that exits 0 while reporting failures still failed.
     if ($tally -and $tally.failed -gt 0) { $result = 'failed' }
     $counted = Format-Tally $tally
+    if ($definition.Kind -eq 'junit' -and $totals.Contains('uncaughtClasses') -and $totals['uncaughtClasses'] -gt 0) {
+        $result = 'failed'
+        $diagnostic = "uncaught exceptions in $($totals['uncaughtClasses']) JVM test classes; inspect XML system-err"
+        $counted = (@($counted, $diagnostic) | Where-Object { $_ }) -join '; '
+        [IO.File]::AppendAllText($log, "Verification failed: $diagnostic.`r`n", $utf8)
+    }
     if ($definition.Kind -eq 'instrument' -and $result -eq 'failed') {
         # A class whose process stopped before any test started adds no counts, so name it.
         $classes = [regex]::Match([IO.File]::ReadAllText($log), '(?m)^Classes with problems: (.+?)\s*$')

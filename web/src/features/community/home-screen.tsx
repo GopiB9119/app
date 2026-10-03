@@ -10,6 +10,7 @@ import type { MessageId } from "@/features/i18n/messages";
 import { homeFeed, latestPosts, savedPosts } from "./client";
 import type { PublicPost, ReportTarget } from "./client";
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, sessionLost, useViewer } from "./shared";
+import { FeedControlFeedback, PostFeedMenu, useFeedControlActions } from "./feed-controls";
 import styles from "./community.module.css";
 
 type Tab = "following" | "latest" | "saved";
@@ -25,6 +26,7 @@ export function HomeScreen() {
 
 function Home({ viewer }: { viewer: ReturnType<typeof useViewer>["account"] }) {
   const t = useText();
+  const controls = useFeedControlActions(viewer?.id);
   const [tab, setTab] = useState<Tab>(viewer ? "following" : "latest");
   const [updates, setUpdates] = useState<Record<string, PublicPost>>({});
   const [report, setReport] = useState<ReportTarget | null>(null);
@@ -52,11 +54,14 @@ function Home({ viewer }: { viewer: ReturnType<typeof useViewer>["account"] }) {
     </div>}
     {!viewer && <p className={styles.notice}><Link href="/login">{t("community.signIn")}</Link>{t("community.signedOutFeedAfter")}</p>}
     <p className={styles.meta}>{t("community.feedPrivacy")}</p>
+    <FeedControlFeedback controls={controls} />
     {posts.isPending && <p role="status" aria-busy="true">{t("community.loadingPosts")}</p>}
     {posts.isError && !sessionLost(posts.error) && <Failure error={posts.error} retry={() => posts.refetch()} />}
     {!posts.isPending && !posts.isError && items.length === 0 && <p className={styles.empty}>{empty}</p>}
     <div className={styles.stack}>
       {!posts.isError && items.map(post => <PostCard key={post.id} post={updates[post.id] ?? post} account={viewer}
+        menu={tab !== "saved" && <PostFeedMenu post={updates[post.id] ?? post} controls={controls}
+          why={tab === "following" ? t("community.feedControls.whyFollowing", { page: post.page_name }) : t("community.feedControls.whyLatest")} />}
         onChange={next => setUpdates(current => ({ ...current, [next.id]: next }))} onReport={setReport} />)}
     </div>
     {posts.hasNextPage && !posts.isError && <button className="secondary-button" disabled={posts.isFetchingNextPage} onClick={() => posts.fetchNextPage()}>{t("community.morePosts")}</button>}

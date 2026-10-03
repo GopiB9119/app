@@ -1,5 +1,6 @@
 package com.community.platform.feature.community
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -10,7 +11,9 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -101,6 +104,7 @@ class CommunityTest {
             return if (editFailure != 0) failed(editFailure, "CONTENT_CHANGED")
             else ok(post.copy(title = if ("title" in body) body["title"] else post.title, body = body["body"] ?: post.body, editedAt = "2026-09-19T10:05:00Z", canManage = true, etag = "\"v2\""))
         }
+        override suspend fun updatePostTerms(authorization: String, postId: String, etag: String, body: Map<String, Any?>): Response<EnvelopeDto<PostDto>> = failed(404, "NOT_FOUND")
         override suspend fun publish(authorization: String, postId: String, etag: String, body: Map<String, String>) = ok(post)
         override suspend fun deletePost(authorization: String, postId: String, etag: String, body: Map<String, String>) = ok(OutcomeDto(postId, "deleted"))
         override suspend fun react(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
@@ -333,13 +337,43 @@ class CommunityTest {
     private var model: CommunityViewModel? = null
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { finishTestWork() } finally { Dispatchers.resetMain() }
+    }
+
+    private suspend fun finishTestWork() {
+        model?.let { current ->
+            current.bind(null)
+            withTimeout(5000) { requireNotNull(current.viewModelScope.coroutineContext[Job]).cancelAndJoin() }
+        }
+    }
 
     private suspend fun idle(current: CommunityViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
     private suspend fun ready(source: CommunityRepository = repository): CommunityViewModel {
         val current = CommunityViewModel(source); model = current
         current.bind(fixture.accountId); idle(current)
         return current
+    }
+
+    @Test fun fixtureCleanupFinishesAnUnansweredFeedBeforeResettingMain() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<Unit>()
+        val delayed = object : CommunityApi by api {
+            override suspend fun feed(authorization: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<PostDto>>> {
+                entered.complete(Unit)
+                response.await()
+                return api.feed(authorization, cursor, limit)
+            }
+        }
+        val current = CommunityViewModel(CommunityRepository(delayed, fixture.accounts)); model = current
+        val scope = requireNotNull(current.viewModelScope.coroutineContext[Job])
+        current.bind(fixture.accountId)
+        withTimeout(5000) { entered.await() }
+        finishTestWork()
+        assertTrue(scope.isCompleted)
+        assertTrue(scope.children.none())
+        assertNull(current.state.value.accountId)
+        assertFalse("Cleanup must cancel the read without releasing its answer.", response.isCompleted)
     }
 
     @Test fun rejectsInconsistentPublicFacts() {
@@ -2462,5 +2496,86 @@ class CommunityTest {
         current.restorePage(); idle(current)
         assertTrue(current.state.value.page!!.writable)
         assertEquals(listOf("POST archive \"p1\" {}", "POST restore \"p2\" {}", "POST delete \"p3\" {confirm=River Walkers}", "POST restore \"p4\" {}"), server.calls.filter { it.startsWith("POST") })
+    }
+
+    // DEC-040: limited and suspended pages.
+    @Test fun limitFieldsParseWithAndWithoutThem() {
+        val gson = Gson()
+        val plain = gson.fromJson(gson.toJsonTree(page).asJsonObject.apply { remove("limited"); remove("limit") }, PageDto::class.java)
+        assertFalse(plain.limited); assertNull(plain.limit); assertFalse(plain.paused)
+        val owned = gson.fromJson("""{"limited":true,"limit":{"reason":"spam"}}""", PageDto::class.java)
+        assertTrue(owned.limited); assertEquals(PageLimitDto("spam"), owned.limit); assertTrue(owned.paused)
+        assertFalse(gson.fromJson(gson.toJsonTree(post).asJsonObject.apply { remove("page_limited") }, PostDto::class.java).pageLimited)
+        val limitedPost = gson.fromJson(gson.toJsonTree(post).asJsonObject.apply { addProperty("page_limited", true) }, PostDto::class.java)
+        assertTrue(limitedPost.pageLimited); assertTrue(limitedPost.pageWritable); assertFalse(limitedPost.commentsOpen)
+        assertTrue(page.copy(moderation = ModerationMarkDto(true, "spam")).paused)
+    }
+
+    @Test fun limitReasonReachesOnlyTheOwnerOfALimitedPage() {
+        val owner = page.copy(canManage = true, etag = "\"p1\"")
+        assertEquals(page.copy(limited = true), repository.page(page.copy(limited = true)))
+        assertEquals(owner.copy(limited = true, limit = PageLimitDto("spam")), repository.page(owner.copy(limited = true, limit = PageLimitDto("spam"))))
+        for (bad in listOf(page.copy(limited = true, limit = PageLimitDto("spam")), owner.copy(limit = PageLimitDto("spam")), owner.copy(limited = true, limit = PageLimitDto("gossip")))) {
+            assertThrows(IdentityFailure::class.java) { repository.page(bad) }
+        }
+        assertTrue(repository.post(post.copy(pageLimited = true)).pageLimited)
+    }
+
+    @Test fun commentsOnALimitedPageAreNotSentButLikesAndSavesStay() = runBlocking {
+        val limited = post.copy(pageLimited = true)
+        val source = object : CommunityApi by api {
+            override suspend fun post(authorization: String, postId: String) = ok(limited)
+            override suspend fun react(authorization: String, postId: String, action: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> {
+                api.actions += action
+                return ok(limited.copy(liked = action == "like", likeCount = if (action == "like") 1 else 0, saved = action == "save"))
+            }
+        }
+        val current = ready(CommunityRepository(source, fixture.accounts))
+        current.open(Destination.Post(postId)); idle(current)
+        assertFalse(current.state.value.post!!.commentsOpen)
+        assertFalse(current.comment("Hello", null))
+        assertFalse(current.comment("Hello", comment))
+        assertTrue(api.comments.isEmpty())
+        current.like(current.state.value.post!!); idle(current)
+        current.save(current.state.value.post!!); idle(current)
+        assertEquals(listOf("like", "save"), api.actions)
+    }
+
+    @Test fun publishIsNotSentForTheOwnerOfALimitedOrHiddenPage() = runBlocking {
+        val draft = post.copy(id = draftId, status = "draft", publishedAt = null, canManage = true, etag = "\"d1\"")
+        for (paused in listOf(page.copy(limited = true, limit = PageLimitDto("spam")), page.copy(moderation = ModerationMarkDto(true, "spam")))) {
+            val published = mutableListOf<String>()
+            val source = object : CommunityApi by api {
+                override suspend fun page(authorization: String, reference: String) = ok(paused.copy(canManage = true, etag = "\"p1\""))
+                override suspend fun drafts(authorization: String, pageId: String) = ok(listOf(draft))
+                override suspend fun publish(authorization: String, postId: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<PostDto>> { published += postId; return ok(post) }
+            }
+            val current = ready(CommunityRepository(source, fixture.accounts))
+            current.open(Destination.Page("river-walkers")); idle(current)
+            assertTrue(current.state.value.page!!.paused)
+            assertEquals(listOf(draft), current.state.value.drafts)
+            current.publish(draft); idle(current)
+            assertTrue(published.isEmpty())
+            assertFalse(current.state.value.working)
+            finishTestWork()
+        }
+    }
+
+    @Test fun aStalePausedRefusalShowsItsMessageAndReloads() = runBlocking {
+        for (code in listOf("PAGE_LIMITED", "PAGE_SUSPENDED")) {
+            var reads = 0
+            val source = object : CommunityApi by api {
+                override suspend fun post(authorization: String, postId: String): Response<EnvelopeDto<PostDto>> { reads += 1; return ok(post.copy(pageLimited = reads > 1)) }
+                override suspend fun comment(authorization: String, postId: String, key: String, body: CreateCommentDto): Response<EnvelopeDto<CommentDto>> = failed(409, code)
+            }
+            val current = ready(CommunityRepository(source, fixture.accounts))
+            current.open(Destination.Post(postId)); idle(current)
+            assertTrue(current.comment("Hello", null)); idle(current)
+            assertEquals("Synthetic $code", current.state.value.error)
+            assertNull(current.state.value.pending)
+            assertEquals(2, reads)
+            assertTrue(current.state.value.post!!.pageLimited)
+            finishTestWork()
+        }
     }
 }

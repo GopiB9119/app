@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bookmark, BookmarkCheck, Compass, Flag, Heart, LoaderCircle, LogIn, MessageCircle, Newspaper, RefreshCw, Rss, ShieldBan, UserRound } from "lucide-react";
+import { Bookmark, BookmarkCheck, Compass, Flag, Heart, LoaderCircle, LogIn, MessageCircle, Newspaper, RefreshCw, Rss, ShieldBan, ShieldCheck, UserRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
-import { REPORT_REASONS, isUnknown, reactToPost, reportContent, textProblem } from "./client";
+import { REPORT_REASONS, isUnknown, reactToPost, reportContent, termLabel, textProblem } from "./client";
 import type { PublicPost, ReportReason, ReportTarget } from "./client";
+import { useTaxonomy } from "./taxonomy-controls";
 import styles from "./community.module.css";
 
 export const time = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -54,7 +55,7 @@ export function useTextProblem() {
 }
 
 // The public feed, page and post search, and your pages make up the Discover section (DEC-014); Blocked is under Profile.
-type Section = "home" | "discover" | "pages" | "safety";
+type Section = "home" | "discover" | "pages" | "safety" | "moderation";
 const sections: { key: Section; href: string; label: MessageId; icon: React.ReactNode; signedIn: boolean }[] = [
   { key: "home", href: "/app/home", label: "community.feed", icon: <Rss size={18} aria-hidden />, signedIn: true },
   { key: "discover", href: "/app/discover", label: "community.pagesAndPosts", icon: <Compass size={18} aria-hidden />, signedIn: false },
@@ -65,10 +66,13 @@ export function CommunityFrame({ account, current, children }: { account: Accoun
   const t = useText();
   return <Shell account={Boolean(account)}>
     <main className={styles.main}>
-      {current === "safety" && account
+      {(current === "safety" || current === "moderation") && account
         ? <nav className={styles.navigation} aria-label={t("community.profile")}>
           <Link href="/app/settings/account"><UserRound size={18} aria-hidden />{t("community.account")}</Link>
-          <span aria-current="page"><ShieldBan size={18} aria-hidden />{t("community.blocked")}</span>
+          {current === "safety"
+            ? <span aria-current="page"><ShieldBan size={18} aria-hidden />{t("community.blocked")}</span>
+            : <Link href="/app/safety"><ShieldBan size={18} aria-hidden />{t("community.blocked")}</Link>}
+          {current === "moderation" && <span aria-current="page"><ShieldCheck size={18} aria-hidden />{t("community.moderation")}</span>}
         </nav>
         : <nav className={styles.navigation} aria-label={t("community.discover")}>
           {sections.filter(item => account || !item.signedIn).map(item => item.key === current
@@ -94,9 +98,9 @@ export function Failure({ error, retry }: { error: unknown; retry: () => void })
   </div>;
 }
 
-export function PostCard({ post, account, onChange, onReport, linkTitle = true, pinnedMark = false, children }: {
+export function PostCard({ post, account, onChange, onReport, linkTitle = true, pinnedMark = false, commentsPaused = false, menu, children }: {
   post: PublicPost; account: Account | null; onChange: (post: PublicPost) => void; onReport?: (target: ReportTarget) => void;
-  linkTitle?: boolean; pinnedMark?: boolean; children?: React.ReactNode;
+  linkTitle?: boolean; pinnedMark?: boolean; commentsPaused?: boolean; menu?: React.ReactNode; children?: React.ReactNode;
 }) {
   const t = useText();
   const time = useCommunityTime();
@@ -124,11 +128,14 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
       {pinnedMark && post.pinned && <span className={styles.badge}>{t("community.pinned")}</span>}
       {post.page_status !== "active" && <span className={styles.badge}>{t("community.manage.status.read_only")}</span>}
       {post.status === "draft" && <span className={`${styles.badge} ${styles.draftBadge}`}>{t("community.privateDraft")}</span>}
+      {menu}
     </div>
     {post.title && (linkTitle && post.status === "published"
       ? <h2 className={styles.title}><Link href={`/posts/${post.id}`}>{post.title}</Link></h2>
       : <h2 className={styles.title}>{post.title}</h2>)}
     <p className={styles.body}>{post.body}</p>
+    {(post.topics.length > 0 || post.interests.length > 0) && <PostTermChips post={post} />}
+    {post.status === "published" && open && (post.page_limited || commentsPaused) && <p className={styles.notice} role="status">{t("community.commentsPaused")}</p>}
     {post.status === "published" && <div className={styles.actions}>
       {(open || post.liked) && <button className={`text-button ${post.liked ? styles.toggled : ""}`} aria-pressed={post.liked} disabled={!account || busy}
         onClick={() => toggle(post.liked ? "unlike" : "like")} title={account ? undefined : t("community.signInToLike")}>
@@ -143,6 +150,16 @@ export function PostCard({ post, account, onChange, onReport, linkTitle = true, 
     {error && <div className="message error" role="alert">{error}</div>}
     {children}
   </article>;
+}
+
+function PostTermChips({ post }: { post: PublicPost }) {
+  const t = useText();
+  const { language } = useLanguage();
+  const vocabulary = useTaxonomy();
+  return <ul className={styles.classification} aria-label={t("community.postTerms")}>
+    {post.topics.map(code => <li key={`topic:${code}`}>{termLabel(vocabulary.data ?? [], "topic", code, language)}</li>)}
+    {post.interests.map(code => <li key={`interest:${code}`}>{termLabel(vocabulary.data ?? [], "interest", code, language)}</li>)}
+  </ul>;
 }
 
 export function ReportDialog({ account, target, onClose }: { account: Account; target: ReportTarget; onClose: () => void }) {

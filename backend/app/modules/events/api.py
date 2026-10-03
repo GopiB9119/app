@@ -4,7 +4,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.security import HTTPBearer
 
-from app.modules.events.schemas import Attendance, CreateEvent, EventAction, EventDetail, EventList, UpdateEvent
+from app.modules.events.schemas import (
+    Attendance, BudgetView, ChangeContribution, CreateEvent, EventAction, EventDetail, EventList, RecordContribution,
+    RecordExpense, SaveBudget, SaveSplit, UpdateEvent,
+)
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
 
@@ -51,3 +54,57 @@ def cancel_event(request: Request, event_id: UUID, body: EventAction, if_match: 
 @router.post("/events/{event_id}/attendance", response_model=Envelope[EventDetail])
 def respond_to_event(request: Request, event_id: UUID, body: Attendance):
     return envelope(request, service(request).respond(token(request), str(event_id), body))
+
+
+# Budgets (DEC-039): planned and recorded amounts; recording an expense is never a payment.
+@router.get("/events/{event_id}/budget", response_model=Envelope[BudgetView])
+def read_budget(request: Request, event_id: UUID):
+    return envelope(request, request.app.state.budgets.read(token(request), str(event_id)))
+
+
+@router.put("/events/{event_id}/budget", response_model=Envelope[BudgetView])
+def save_budget(request: Request, event_id: UUID, body: SaveBudget, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, request.app.state.budgets.save(token(request), str(event_id), body, if_match))
+
+
+# Splits (DEC-042): a plan for dividing the cost, never a bill; it changes the budget's version like the plan does.
+@router.put("/events/{event_id}/budget/split", response_model=Envelope[BudgetView])
+def save_split(request: Request, event_id: UUID, body: SaveSplit, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, request.app.state.budgets.save_split(token(request), str(event_id), body, if_match))
+
+
+@router.delete("/events/{event_id}/budget/split", response_model=Envelope[BudgetView])
+def remove_split(request: Request, event_id: UUID, if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, request.app.state.budgets.remove_split(token(request), str(event_id), if_match))
+
+
+@router.post("/events/{event_id}/expenses", response_model=Envelope[BudgetView], status_code=201)
+def record_expense(request: Request, event_id: UUID, body: RecordExpense, idempotency_key: UUID = Header()):
+    return envelope(request, request.app.state.budgets.record_expense(token(request), str(event_id), body, str(idempotency_key)))
+
+
+@router.delete("/events/{event_id}/expenses/{expense_id}", response_model=Envelope[BudgetView])
+def delete_expense(request: Request, event_id: UUID, expense_id: UUID):
+    return envelope(request, request.app.state.budgets.delete_expense(token(request), str(event_id), str(expense_id)))
+
+
+# Contributions (DEC-041): what a person says they promised or gave; only they change it, and it is never a payment.
+@router.post("/events/{event_id}/contributions", response_model=Envelope[BudgetView], status_code=201)
+def record_contribution(request: Request, event_id: UUID, body: RecordContribution, idempotency_key: UUID = Header()):
+    return envelope(
+        request, request.app.state.budgets.record_contribution(token(request), str(event_id), body, str(idempotency_key)),
+    )
+
+
+@router.put("/events/{event_id}/contributions/{contribution_id}", response_model=Envelope[BudgetView])
+def change_contribution(request: Request, event_id: UUID, contribution_id: UUID, body: ChangeContribution):
+    return envelope(
+        request, request.app.state.budgets.change_contribution(token(request), str(event_id), str(contribution_id), body),
+    )
+
+
+@router.delete("/events/{event_id}/contributions/{contribution_id}", response_model=Envelope[BudgetView])
+def withdraw_contribution(request: Request, event_id: UUID, contribution_id: UUID):
+    return envelope(
+        request, request.app.state.budgets.withdraw_contribution(token(request), str(event_id), str(contribution_id)),
+    )

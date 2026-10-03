@@ -11,9 +11,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import javax.inject.Inject
+
+/** DEC-031: the month (as before), the Sunday-to-Saturday week, or one day. */
+enum class CalendarView { MONTH, WEEK, DAY }
+
+/** Where an entry comes from; planned repeats are reminders, so one choice shows or hides both. */
+val CALENDAR_SOURCES = listOf("task", "reminder", "event")
+fun calendarSource(entry: CalendarEntryDto) = if (entry.kind == "planned") "reminder" else entry.kind
+
+private val firstCalendarDay = LocalDate.of(1900, 1, 1)
+private val lastCalendarDay = LocalDate.of(2100, 12, 31)
+
+/** The dates a view covers: the month, the Sunday-to-Saturday week around [day], or [day] itself, within 1900 to 2100. */
+fun calendarRange(view: CalendarView, month: YearMonth, day: LocalDate): Pair<LocalDate, LocalDate> = when (view) {
+    CalendarView.MONTH -> month.atDay(1) to month.atEndOfMonth()
+    CalendarView.WEEK -> day.minusDays(day.dayOfWeek.value % 7L).let { start -> maxOf(start, firstCalendarDay) to minOf(start.plusDays(6), lastCalendarDay) }
+    CalendarView.DAY -> day to day
+}
 
 data class CalendarState(
     val accountId: String? = null,
@@ -29,7 +47,14 @@ data class CalendarState(
     val loaded: Boolean = false,
     val error: String? = null,
     val requiresSignIn: Boolean = false,
-)
+    val view: CalendarView = CalendarView.MONTH,
+    val day: LocalDate = LocalDate.now(ZoneId.of("UTC")),
+    val hidden: Set<String> = emptySet(),
+) {
+    val range: Pair<LocalDate, LocalDate> get() = calendarRange(view, month, day)
+    /** Hiding a source only changes what is shown; nothing is deleted and the request stays the same. */
+    val shown: List<CalendarEntryDto> get() = entries.filter { calendarSource(it) !in hidden }
+}
 
 @HiltViewModel
 class CalendarViewModel @Inject constructor(
@@ -45,7 +70,7 @@ class CalendarViewModel @Inject constructor(
         if (mutableState.value.accountId == accountId && (accountId == null || mutableState.value.profileTimezone == timezone)) return
         generation += 1
         work?.cancel()
-        mutableState.value = CalendarState(accountId = accountId, profileTimezone = timezone, timezone = timezone, month = YearMonth.now(ZoneId.of(timezone)))
+        mutableState.value = CalendarState(accountId = accountId, profileTimezone = timezone, timezone = timezone, month = YearMonth.now(ZoneId.of(timezone)), day = LocalDate.now(ZoneId.of(timezone)))
         if (accountId != null) refresh()
     }
 
@@ -92,7 +117,8 @@ class CalendarViewModel @Inject constructor(
         val current = mutableState.value
         val selected = current.selectedSpace ?: return
         val expected = generation
-        val page = calendar.entries(accountId, selected.id, current.month, current.timezone, cursor)
+        val (start, end) = current.range
+        val page = calendar.entries(accountId, selected.id, start, end, current.timezone, cursor)
         if (generation != expected) return
         mutableState.update { it.copy(entries = ((if (cursor == null) emptyList() else it.entries) + page.items).distinctBy { entry -> "${entry.kind}:${entry.id}" }.sortedWith(CalendarRepository.calendarOrder), nextCursor = page.nextCursor, loaded = true) }
     }
@@ -108,6 +134,30 @@ class CalendarViewModel @Inject constructor(
         if (mutableState.value.busy || month.year !in 1900..2100) return
         mutableState.update { it.copy(month = month, entries = emptyList(), nextCursor = null) }
         action { load(it) }
+    }
+
+    /** Switching to a week or day starts from today when it is in the shown month, else the month's first day. */
+    fun selectView(view: CalendarView) {
+        val current = mutableState.value
+        if (current.busy || view == current.view) return
+        val today = LocalDate.now(ZoneId.of(current.timezone))
+        val day = if (current.view == CalendarView.MONTH && view != CalendarView.MONTH) {
+            if (YearMonth.from(today) == current.month) today else current.month.atDay(1)
+        } else current.day
+        val month = if (view == CalendarView.MONTH) YearMonth.from(day) else current.month
+        mutableState.update { it.copy(view = view, day = day, month = month, entries = emptyList(), nextCursor = null) }
+        action { load(it) }
+    }
+
+    fun selectDay(day: LocalDate) {
+        if (mutableState.value.busy || day.year !in 1900..2100) return
+        mutableState.update { it.copy(day = day, entries = emptyList(), nextCursor = null) }
+        action { load(it) }
+    }
+
+    fun toggleSource(source: String) {
+        if (source !in CALENDAR_SOURCES) return
+        mutableState.update { it.copy(hidden = if (source in it.hidden) it.hidden - source else it.hidden + source) }
     }
 
     fun selectTimezone(timezone: String) {

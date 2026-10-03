@@ -6,6 +6,8 @@ An unconfirmed send stays with its conversation, marked "Not confirmed" in the l
 
 Source chapters: 1, 4, 19.
 
+Replies, reactions and edits (T162, [DEC-033](../../../../docs/DECISIONS.md#accepted-decisions), provisional): Reply, React and Edit controls on each message, a reply bar above the composer, quotes in bubbles, and "Edited" marks. `mergeMessages` keeps the higher `revision`, so an older poll cannot undo an edit or reaction. Tests: `tests/messaging-replies-client.test.mjs`, the T162 case in `tests/unit/messaging-ui.test.mjs` (320 px / 200% text).
+
 Feature inventory: direct-conversations, group-conversations, messages, offline-outbox, history-sync, delivery-read-receipts, unread-counts, typing-presence, edits-deletion, threads-replies, attachments, encryption-modes, devices-keys, key-recovery, calls.
 
 See the [complete feature catalog](../../../../packages/feature-catalog/features.json). Future implementation files belong here as each feature is built.

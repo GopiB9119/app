@@ -34,7 +34,7 @@ class TaskRepository @Inject constructor(private val api: TaskApi, private val a
             Instant.parse(task.updatedAt)
             task.completedAt?.let(Instant::parse)
             require(task.title.length in 1..400 && task.description.length <= 10000)
-            require(task.version.toLong() > 0 && task.status in statuses)
+            require(task.version.toLong() > 0 && task.status in statuses && (task.priority == null || task.priority in TASK_PRIORITIES))
             require(task.permissions.allowedStatuses.all { it in statuses })
             require(expectedSpace == null || task.spaceId == expectedSpace)
             require(!task.assigneeUnavailable || task.assignee == null)
@@ -62,14 +62,15 @@ class TaskRepository @Inject constructor(private val api: TaskApi, private val a
     suspend fun spaces(accountId: String, cursor: String? = null): TaskPage<FamilySpaceDto> = accounts.authorized(accountId) {
         val result = page(api.spaces(it, 50, cursor), 50)
         try {
-            result.items.forEach { space -> UUID.fromString(space.id); require(space.name.isNotBlank() && space.role in setOf("owner", "member")) }
+            // Admins since DEC-018 (T13); refusing them made the whole task and calendar list fail for an admin.
+            result.items.forEach { space -> UUID.fromString(space.id); require(space.name.isNotBlank() && space.role in setOf("owner", "admin", "member")) }
             require(result.items.map { space -> space.id }.distinct().size == result.items.size)
         } catch (_error: IllegalArgumentException) { invalid() }
         result
     }
 
-    suspend fun tasks(accountId: String, spaceId: String, cursor: String? = null, status: String? = null): TaskPage<TaskRecord> = accounts.authorized(accountId) {
-        val result = page(api.tasks(it, spaceId, 10, cursor, status), 10)
+    suspend fun tasks(accountId: String, spaceId: String, cursor: String? = null, status: String? = null, filters: TaskFilters = TaskFilters()): TaskPage<TaskRecord> = accounts.authorized(accountId) {
+        val result = page(api.tasks(it, spaceId, 10, cursor, status, filters.assignee, filters.dueFrom, filters.dueTo), 10)
         val records = result.items.map { task -> TaskRecord(checked(task, spaceId), etag(task.etag)) }
         if (records.map { record -> record.task.id }.distinct().size != records.size) invalid()
         TaskPage(records, result.nextCursor)
@@ -91,7 +92,7 @@ class TaskRepository @Inject constructor(private val api: TaskApi, private val a
 
     suspend fun execute(command: TaskCommand): TaskRecord = accounts.authorized(command.accountId) { authorization ->
         val response = when (command) {
-            is CreateTaskCommand -> api.create(authorization, command.requestKey, CreateTaskDto(command.spaceId, command.fields.title, command.fields.description, command.fields.dueDate, command.fields.assigneeId))
+            is CreateTaskCommand -> api.create(authorization, command.requestKey, CreateTaskDto(command.spaceId, command.fields.title, command.fields.description, command.fields.dueDate, command.fields.assigneeId, command.fields.priority))
             is EditTaskCommand -> api.edit(authorization, command.taskId, command.requestKey, command.etag, command.payload())
             is ChangeTaskStatusCommand -> api.status(authorization, command.taskId, command.requestKey, command.etag, TaskStatusDto(command.status))
         }

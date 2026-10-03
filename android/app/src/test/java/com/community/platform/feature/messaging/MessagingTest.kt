@@ -1,5 +1,6 @@
 package com.community.platform.feature.messaging
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -11,6 +12,8 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -37,6 +40,11 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal suspend fun MessagingViewModel.finishTestWork() {
+    bind(null)
+    withTimeout(5000) { requireNotNull(viewModelScope.coroutineContext[Job]).cancelAndJoin() }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MessagingTest {
     private val fixture = SpaceRepositoryTest.Fixture()
@@ -57,6 +65,8 @@ class MessagingTest {
         var listed: List<ConversationDto>? = null
         var listFailure = 0
         var readFailure = 0
+        var readStarted: CompletableDeferred<Unit>? = null
+        var readGate: CompletableDeferred<Unit>? = null
         var sendFailure = 0
         var dropAfterCommit = false
         var rawPage: List<MessageDto>? = null
@@ -89,8 +99,11 @@ class MessagingTest {
             return ok(items, PaginationDto(null, false), items.sumOf { it.unreadCount })
         }
 
-        override suspend fun conversation(authorization: String, conversationId: String): Response<EnvelopeDto<ConversationDto>> =
-            if (readFailure != 0) failed(readFailure, "NOT_FOUND") else ok(conversation)
+        override suspend fun conversation(authorization: String, conversationId: String): Response<EnvelopeDto<ConversationDto>> {
+            readStarted?.complete(Unit)
+            readGate?.await()
+            return if (readFailure != 0) failed(readFailure, "NOT_FOUND") else ok(conversation)
+        }
 
         override suspend fun messages(authorization: String, conversationId: String, before: String?, after: String?, limit: Int): Response<EnvelopeDto<List<MessageDto>>> {
             pages += before to after
@@ -110,7 +123,10 @@ class MessagingTest {
         override suspend fun send(authorization: String, conversationId: String, key: String, body: SendMessageDto): Response<EnvelopeDto<MessageDto>> {
             sends += key to body
             if (sendFailure != 0) return failed(sendFailure, if (sendFailure == 429) "MESSAGE_RATE_LIMITED" else "SYNTHETIC")
-            val saved = stored.firstOrNull { it.clientMessageId == key } ?: message(stored.size + 1, mine = true, key = key, body = body.body).also(::add)
+            val saved = stored.firstOrNull { it.clientMessageId == key } ?: message(stored.size + 1, mine = true, key = key, body = body.body).let { created ->
+                val original = body.replyTo?.let { id -> stored.firstOrNull { it.id == id } }
+                if (original == null) created else created.copy(replyTo = ReplyDto(original.id, "sent", original.position, original.senderName, original.body))
+            }.also(::add)
             return if (dropAfterCommit) failed(503) else ok(saved)
         }
 
@@ -127,6 +143,31 @@ class MessagingTest {
             conversation = conversation.copy(readPosition = body.throughPosition, unreadCount = 0)
             return ok(conversation)
         }
+
+        // Edits and reactions (T162): each change raises the revision, as the API does.
+        val edits = mutableListOf<EditMessageDto>()
+        val reactions = mutableListOf<ReactDto>()
+        var actionFailure: String? = null
+
+        override suspend fun edit(authorization: String, conversationId: String, messageId: String, body: EditMessageDto): Response<EnvelopeDto<MessageDto>> {
+            edits += body
+            actionFailure?.let { return failed(409, it) }
+            val index = stored.indexOfFirst { it.id == messageId }
+            if (index < 0) return failed(404, "NOT_FOUND")
+            stored[index] = stored[index].copy(body = body.body, editedAt = "2026-09-19T10:20:00Z", revision = stored[index].version + 1)
+            return ok(stored[index])
+        }
+
+        override suspend fun react(authorization: String, conversationId: String, messageId: String, body: ReactDto): Response<EnvelopeDto<MessageDto>> {
+            reactions += body
+            actionFailure?.let { return failed(409, it) }
+            val index = stored.indexOfFirst { it.id == messageId }
+            if (index < 0) return failed(404, "NOT_FOUND")
+            val others = stored[index].reactionList.filter { it.reaction != body.reaction }
+            val next = (if (body.on) others + ReactionDto(body.reaction, 1, true) else others).sortedBy { REACTIONS.indexOf(it.reaction) }
+            stored[index] = stored[index].copy(reactions = next, revision = stored[index].version + 1)
+            return ok(stored[index])
+        }
     }
 
     private val api = FakeApi()
@@ -134,7 +175,9 @@ class MessagingTest {
     private var model: MessagingViewModel? = null
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { model?.finishTestWork() } finally { Dispatchers.resetMain() }
+    }
 
     private suspend fun idle(current: MessagingViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
 
@@ -190,6 +233,22 @@ class MessagingTest {
         val deleted = message(4, mine = true).copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z")
         api.rawPage = listOf(deleted); api.rawPagination = PaginationDto(null, false)
         assertEquals("deleted", runBlocking { repository.messages(fixture.accountId, conversationId) }.items.single().status)
+    }
+
+    @Test fun fixtureCleanupFinishesAnUnansweredReadBeforeResettingMain() = runBlocking {
+        val current = ready()
+        val scope = requireNotNull(current.viewModelScope.coroutineContext[Job])
+        val entered = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<Unit>()
+        api.readStarted = entered
+        api.readGate = response
+        current.pollNow()
+        withTimeout(5000) { entered.await() }
+        current.finishTestWork()
+        assertTrue(scope.isCompleted)
+        assertTrue(scope.children.none())
+        assertNull(current.state.value.accountId)
+        assertTrue("Cleanup must cancel the read without releasing its answer.", !response.isCompleted)
     }
 
     @Test fun lostSendResponseRetriesTheSameKeyAndBodyOnce() = runBlocking {
@@ -331,6 +390,93 @@ class MessagingTest {
         assertNull(shown.body)
         current.askDelete(shown)
         assertNull(current.state.value.chat!!.confirmDelete)
+    }
+
+    // T162 (DEC-033): replies, reactions and edits.
+    @Test fun aReplyNamesWhatItAnswersAndAPlainMessageSendsOnlyItsBody() = runBlocking {
+        api.add(message(1, body = "Dinner at 8"))
+        val current = ready()
+        current.startReply(current.state.value.chat!!.messages.first())
+        current.draft("Works for me"); current.send(); idle(current)
+        assertEquals(SendMessageDto("Works for me", message(1).id), api.sends.last().second)
+        val reply = current.state.value.chat!!.messages.last().replyTo!!
+        assertEquals("Dinner at 8", reply.excerpt)
+        assertNull(current.state.value.chat!!.replyingTo)
+        current.draft("And dessert"); current.send(); idle(current)
+        assertNull(api.sends.last().second.replyTo)
+    }
+
+    @Test fun reactionsAndEditsAreSavedAndAnOlderCopyCannotUndoThem() = runBlocking {
+        api.add(message(1, mine = true, body = "Dinner at 8").copy(createdAt = Instant.now().toString()))
+        val current = ready()
+        val mine = current.state.value.chat!!.messages.first()
+        current.react(mine, "thanks", true); idle(current)
+        assertEquals(listOf(ReactDto("thanks", true)), api.reactions)
+        assertEquals(listOf(ReactionDto("thanks", 1, true)), current.state.value.chat!!.messages.first().reactionList)
+        val beforeEdit = api.stored.toList()
+        current.startEdit(mine); current.editDraft("  Dinner at 9 "); current.saveEdit(); idle(current)
+        assertEquals(listOf(EditMessageDto("Dinner at 9")), api.edits)
+        val shown = current.state.value.chat!!.messages.first()
+        assertEquals("Dinner at 9", shown.body); assertEquals(3, shown.version); assertNull(current.state.value.chat!!.editing)
+        // A page read before the edit arrives late.
+        api.rawPage = beforeEdit
+        current.pollNow(); idle(current)
+        assertEquals("Dinner at 9", current.state.value.chat!!.messages.first().body)
+        api.rawPage = null
+        current.react(current.state.value.chat!!.messages.first(), "fire", true)
+        assertEquals(1, api.reactions.size)
+    }
+
+    @Test fun onlyOwnRecentMessagesCanBeEditedAndAClosedWindowIsExplained() = runBlocking {
+        api.add(message(1)); api.add(message(2, mine = true))
+        api.add(message(3, mine = true).copy(createdAt = Instant.now().toString()))
+        val current = ready()
+        val (theirs, old, recent) = current.state.value.chat!!.messages
+        current.startEdit(theirs); current.startEdit(old)
+        assertNull(current.state.value.chat!!.editing)
+        current.startEdit(recent)
+        assertEquals(recent.id, current.state.value.chat!!.editing)
+        api.actionFailure = "EDIT_WINDOW_CLOSED"
+        current.editDraft("Too late"); current.saveEdit(); idle(current)
+        assertEquals("This message can no longer be edited: 15 minutes have passed.", current.state.value.chat!!.error)
+        assertNull(current.state.value.chat!!.editing)
+        assertEquals("Message 3", current.state.value.chat!!.messages.last().body)
+        current.pollNow(); idle(current)
+        assertEquals("This message can no longer be edited: 15 minutes have passed.", current.state.value.chat!!.error)
+        api.actionFailure = null
+        current.react(recent, "thanks", true); idle(current)
+        assertNull(current.state.value.chat!!.error)
+        assertEquals(listOf(ReactionDto("thanks", 1, true)), current.state.value.chat!!.messages.last().reactionList)
+    }
+
+    @Test fun aSuccessfulPollClearsAnEarlierReadFailure() = runBlocking {
+        api.add(message(1))
+        val current = ready()
+        api.readFailure = 503
+        current.pollNow(); idle(current)
+        assertNotNull(current.state.value.chat!!.error)
+        api.readFailure = 0
+        current.pollNow(); idle(current)
+        assertNull(current.state.value.chat!!.error)
+        assertEquals("Message 1", current.state.value.chat!!.messages.single().body)
+    }
+
+    @Test fun repliesReactionsAndEditsMustBeConsistent() {
+        val sent = message(1, mine = true)
+        for (bad in listOf(
+            sent.copy(reactions = listOf(ReactionDto("thanks", 1, false), ReactionDto("like", 1, false))),
+            sent.copy(reactions = listOf(ReactionDto("fire", 1, false))),
+            sent.copy(reactions = listOf(ReactionDto("like", 0, false))),
+            sent.copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", reactions = listOf(ReactionDto("like", 1, false))),
+            sent.copy(replyTo = ReplyDto(sent.id, "sent", "1", "Sam", "Hi")),
+            sent.copy(replyTo = ReplyDto(UUID(9, 9).toString(), "sent", "1", "Sam", null)),
+            sent.copy(replyTo = ReplyDto(UUID(9, 9).toString(), "unavailable", null, "Sam", null)),
+        )) {
+            api.rawPage = listOf(bad)
+            invalid { repository.messages(fixture.accountId, conversationId) }
+        }
+        api.rawPage = listOf(sent.copy(replyTo = ReplyDto(UUID(9, 9).toString(), "unavailable", null, null, null), reactions = listOf(ReactionDto("like", 2, true))))
+        runBlocking { assertEquals(1, repository.messages(fixture.accountId, conversationId).items.size) }
     }
 
     // T82: without the app-wide request lock, a page read before a deletion can arrive after it.

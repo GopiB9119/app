@@ -18,7 +18,7 @@ enum class EventMode { LIST, DETAIL, CREATE, EDIT }
 
 data class EventDraft(
     val title: String = "", val date: String = "", val start: String = "", val end: String = "",
-    val timezone: String = "UTC", val location: String = "", val details: String = "",
+    val timezone: String = "UTC", val location: String = "", val details: String = "", val capacity: String = "",
 )
 
 data class EventsState(
@@ -50,6 +50,8 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
     private var generation = 0L
     private var zone = "UTC"
     private var loadJob: Job? = null
+    private var loadingMore = false
+    private var loads = 0L
 
     fun bind(accountId: String?, spaceId: String?, timezone: String) {
         zone = timezone
@@ -79,7 +81,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
         mutableState.update { it.copy(error = message, messageId = it.messageId + 1) }
         if (failure?.status == 404 && mutableState.value.mode != EventMode.LIST) {
             mutableState.update { it.copy(mode = EventMode.LIST, selected = null, confirmingCancel = false) }
-            reload()
+            load()
         }
     }
 
@@ -88,12 +90,21 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
         val account = current.accountId ?: return
         if (current.working) return
         val expected = generation
+        // A read started before this command must be sent again after its answer, not undo that answer.
+        val interrupted = loadJob?.takeIf { it.isActive }
+        val more = loadingMore
+        interrupted?.cancel()
         mutableState.update { it.copy(working = true, error = null, notice = null) }
         viewModelScope.launch {
             try { work(account) }
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected, unknownMessage) }
-            finally { if (generation == expected) mutableState.update { it.copy(working = false) } }
+            finally {
+                if (generation == expected) {
+                    if (interrupted != null && loadJob === interrupted) load(more, keepError = true)
+                    mutableState.update { it.copy(working = false) }
+                }
+            }
         }
     }
 
@@ -104,14 +115,21 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
     }
 
     fun reload(more: Boolean = false) {
+        if (mutableState.value.working) return
+        load(more)
+    }
+
+    private fun load(more: Boolean = false, keepError: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
         val space = current.spaceId ?: return
         val cursor = if (more) current.nextCursor ?: return else null
         val past = current.past
         val expected = generation
+        val sequence = ++loads
         loadJob?.cancel()
-        mutableState.update { it.copy(loading = true, error = if (more) it.error else null) }
+        loadingMore = more
+        mutableState.update { it.copy(loading = true, error = if (more || keepError) it.error else null) }
         loadJob = viewModelScope.launch {
             try {
                 val page = repository.list(account, space, past, cursor)
@@ -120,7 +138,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected) }
-            finally { if (generation == expected) mutableState.update { it.copy(loading = false) } }
+            finally { mutableState.update { if (generation == expected && loads == sequence) it.copy(loading = false) else it } }
         }
     }
 
@@ -157,6 +175,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
             it.copy(mode = EventMode.EDIT, problem = null, error = null, notice = null, draft = EventDraft(
                 title = event.title, date = event.localStart.substringBefore("T"), start = event.localStart.substringAfter("T"),
                 end = event.localEnd?.substringAfter("T") ?: "", timezone = event.timezone, location = event.location, details = event.description,
+                capacity = event.capacity?.toString() ?: "",
             ))
         }
     }
@@ -173,8 +192,9 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
         val space = current.spaceId ?: return
         if (current.working) return
         val draft = current.draft
-        val body = eventBody(draft.title, draft.details, draft.location, draft.timezone, draft.date, draft.start, draft.end)
-        eventProblem(body)?.let { problem -> mutableState.update { it.copy(problem = problem) }; return }
+        val capacity = capacityChoice(draft.capacity, if (current.mode == EventMode.EDIT) current.selected?.capacity else null)
+        val body = eventBody(draft.title, draft.details, draft.location, draft.timezone, draft.date, draft.start, draft.end, capacity ?: CapacityChoice.Leave)
+        (eventProblem(body) ?: EventProblem.CAPACITY.takeIf { capacity == null })?.let { problem -> mutableState.update { it.copy(problem = problem) }; return }
         if (current.mode == EventMode.EDIT) {
             val event = current.selected ?: return
             command({ id ->
@@ -200,7 +220,7 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
         try {
             val created = repository.create(intent)
             mutableState.update { it.copy(pending = null, mode = EventMode.DETAIL, selected = created, past = false, draft = EventDraft(timezone = zone), notice = "Event created.", messageId = it.messageId + 1) }
-            reload()
+            load()
         } catch (error: IdentityFailure) {
             // A definite rejection releases the attempt; an unknown outcome keeps it for an exact retry.
             if (error.status in 400..499 && error.status != 408) mutableState.update { it.copy(pending = null) }

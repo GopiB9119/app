@@ -18,6 +18,7 @@ from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
 
 TaskStatus = Literal["open", "in_progress", "completed", "cancelled"]
+TaskPriority = Literal["high", "normal", "low"]
 
 
 def plain_title(value: str) -> str:
@@ -55,6 +56,7 @@ class CreateTask(Input):
     description: TaskDescription = ""
     due_date: DueDate = None
     assignee_account_id: UUID | None = None
+    priority: TaskPriority = "normal"
 
 
 class EditTask(Input):
@@ -62,13 +64,14 @@ class EditTask(Input):
     description: TaskDescription | None = None
     due_date: DueDate = None
     assignee_account_id: UUID | None = None
+    priority: TaskPriority | None = None
 
     @model_validator(mode="after")
     def valid_patch(self):
         if not self.model_fields_set:
             raise ValueError("Submit at least one editable field.")
-        if any(field in self.model_fields_set and getattr(self, field) is None for field in ("title", "description")):
-            raise ValueError("Title and notes cannot be null.")
+        if any(field in self.model_fields_set and getattr(self, field) is None for field in ("title", "description", "priority")):
+            raise ValueError("Title, notes and priority cannot be null.")
         return self
 
 
@@ -93,6 +96,7 @@ class TaskView(BaseModel):
     description: str
     due_date: date | None
     status: TaskStatus
+    priority: TaskPriority
     assignee: AssigneeView | None
     assignee_unavailable: bool
     created_by_account_id: str
@@ -118,6 +122,9 @@ class TaskCursor(Input):
     space_id: UUID
     admission_id: UUID
     status: TaskStatus | None
+    assignee: str | None = None
+    due_from: date | None = None
+    due_to: date | None = None
     after_id: UUID
     expires_at: AwareDatetime
 

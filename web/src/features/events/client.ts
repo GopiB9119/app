@@ -10,11 +10,13 @@ export const RESPONSE_LABELS: Record<EventResponse, string> = { going: "Going", 
 export const MAX_TITLE = 120;
 export const MAX_DESCRIPTION = 2000;
 export const MAX_LOCATION = 200;
+export const MAX_CAPACITY = 500;
 
 const count = z.number().int().nonnegative();
+const place = z.number().int().positive().nullable().default(null);
 export const attendeeSchema = z.object({
   name: chars(1, 80), response: z.enum(RESPONSES), responded_at: timestamp,
-  outdated: z.boolean(), mine: z.boolean(),
+  outdated: z.boolean(), mine: z.boolean(), waitlist_position: place,
 });
 export const eventSchema = z.object({
   id: uuid, space_id: uuid, space_name: chars(1, 80),
@@ -24,7 +26,8 @@ export const eventSchema = z.object({
   created_by_name: chars(0, 80), created_at: timestamp, updated_at: timestamp,
   schedule_changed_at: timestamp.nullable(), cancelled_at: timestamp.nullable(),
   going: count, maybe: count, not_going: count,
-  my_response: z.enum(RESPONSES).nullable(), my_response_outdated: z.boolean(),
+  capacity: z.number().int().min(1).max(MAX_CAPACITY).nullable().default(null), waitlisted: count.default(0),
+  my_response: z.enum(RESPONSES).nullable(), my_response_outdated: z.boolean(), my_waitlist_position: place,
   can_manage: z.boolean(), can_respond: z.boolean(), etag: z.string().min(3).max(200).nullable(),
   attendees: z.array(attendeeSchema).max(500).optional(),
 }).superRefine((value, context) => {
@@ -32,15 +35,19 @@ export const eventSchema = z.object({
     || (value.ends_at !== null && Date.parse(value.ends_at) <= Date.parse(value.starts_at))
     || (value.can_manage && value.etag === null) || (value.can_respond && (value.status !== "scheduled" || value.ended))
     || (value.my_response === null && value.my_response_outdated)
-    || (value.attendees && value.attendees.filter(item => item.mine).length > 1)) {
+    || (value.attendees && value.attendees.filter(item => item.mine).length > 1)
+    // Nobody waits without a capacity, and nobody waits while a place is free (DEC-032).
+    || (value.capacity === null ? value.waitlisted > 0 : value.going > value.capacity || (value.waitlisted > 0 && value.going < value.capacity))
+    || (value.my_waitlist_position !== null && (value.my_response !== "going" || value.my_waitlist_position > value.waitlisted))
+    || (value.attendees && value.attendees.some(item => item.waitlist_position !== null && (item.response !== "going" || item.waitlist_position > value.waitlisted)))) {
     context.addIssue({ code: "custom", message: "Inconsistent event." });
   }
 });
 export type SpaceEvent = z.infer<typeof eventSchema>;
-export type EventForm = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string };
+export type EventForm = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string; capacity: string };
 export type EventFormProblems = Partial<Record<keyof EventForm, string>>;
 export type CreateIntent = { accountId: string; spaceId: string; key: string; body: EventBody };
-type EventBody = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string | null };
+type EventBody = { title: string; description: string; location: string; timezone: string; local_start: string; local_end: string | null; capacity?: number | null };
 
 function checkEvent(value: SpaceEvent, expected: { id?: string; spaceId?: string }) {
   if ((expected.id && value.id !== expected.id) || (expected.spaceId && value.space_id !== expected.spaceId)) {
@@ -70,10 +77,13 @@ export function eventTimezone(current: string, available: readonly string[]) {
 }
 
 export function eventBody(form: EventForm): EventBody {
+  // An empty capacity is left out: a new event then has no limit, and an edit keeps the event's current capacity.
+  const capacity = (form.capacity ?? "").trim();
   return {
     title: form.title.trim().replace(/\s+/g, " "), description: form.description.replace(/\r\n/g, "\n").trim(),
     location: form.location.trim().replace(/\s+/g, " "), timezone: form.timezone,
     local_start: form.local_start.slice(0, 16), local_end: form.local_end ? form.local_end.slice(0, 16) : null,
+    ...(capacity ? { capacity: Number(capacity) } : {}),
   };
 }
 
@@ -102,6 +112,10 @@ export function eventFormProblems(form: EventForm): EventFormProblems {
     else if (!problems.local_start && body.local_end <= body.local_start) problems.local_end = "The end must be after the start.";
   }
   if (!body.timezone) problems.timezone = "Choose a time zone.";
+  const capacity = (form.capacity ?? "").trim();
+  if (capacity && (!/^\d{1,3}$/.test(capacity) || Number(capacity) < 1 || Number(capacity) > MAX_CAPACITY)) {
+    problems.capacity = `Enter a whole number from 1 to ${MAX_CAPACITY}, or leave it empty.`;
+  }
   return problems;
 }
 
@@ -116,7 +130,7 @@ export function sameBody(left: EventBody, right: EventBody) {
 export function formFromEvent(event: SpaceEvent): EventForm {
   return {
     title: event.title, description: event.description, location: event.location, timezone: event.timezone,
-    local_start: event.local_start, local_end: event.local_end ?? "",
+    local_start: event.local_start, local_end: event.local_end ?? "", capacity: event.capacity == null ? "" : String(event.capacity),
   };
 }
 
@@ -161,15 +175,18 @@ export async function createEvent(intent: CreateIntent) {
     method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
   });
   const event = checkEvent(result.data, { spaceId: intent.spaceId });
-  if (event.title !== intent.body.title || event.local_start !== intent.body.local_start || event.timezone !== intent.body.timezone) {
+  if (event.title !== intent.body.title || event.local_start !== intent.body.local_start || event.timezone !== intent.body.timezone
+    || event.capacity !== (intent.body.capacity ?? null)) {
     throw new ApiError(502, "INVALID_RESPONSE", "The created event does not match your form.");
   }
   return event;
 }
 
 export async function updateEvent(accountId: string, event: SpaceEvent, body: EventBody) {
+  // Emptying the field of an event that has a capacity removes it; the server keeps a capacity that is left out.
+  const sent = body.capacity === undefined && event.capacity != null ? { ...body, capacity: null } : body;
   const result = await api(`events/${event.id}`, eventSchema, {
-    method: "PATCH", accountId, body, headers: { "If-Match": event.etag ?? "" },
+    method: "PATCH", accountId, body: sent, headers: { "If-Match": event.etag ?? "" },
   });
   return checkEvent(result.data, { id: event.id, spaceId: event.space_id });
 }

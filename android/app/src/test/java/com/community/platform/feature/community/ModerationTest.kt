@@ -1,5 +1,6 @@
 package com.community.platform.feature.community
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -10,11 +11,15 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -284,6 +289,33 @@ class ModerationTest {
         assertNull(current.state.value.message)
     }
 
+    @Test fun aCancelledQueueReadCannotClearItsReplacementsLoadingState() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        withContext(Dispatchers.Default) {
+            val wire = Wire()
+            val current = ready(wire)
+            wire.holdPath = "/v1/moderation/queue"
+            withContext(Dispatchers.Main) { current.loadQueue() }
+            withTimeout(5000) { wire.holding.await() }
+            try {
+                val replaced = withContext(Dispatchers.Main) {
+                    val previous = requireNotNull(current.viewModelScope.coroutineContext[Job]).children.single()
+                    current.loadQueue()
+                    previous
+                }
+                withTimeout(5000) { replaced.join() }
+                assertTrue(current.state.value.queue.loading)
+                assertTrue(current.state.value.busy)
+            } finally {
+                wire.hold.countDown()
+            }
+            val settled = idle(current)
+            assertEquals(listOf(item), settled.queue.items)
+            assertTrue(settled.queue.loaded)
+            assertNull(settled.queue.error)
+        }
+    }
+
     @Test fun loadMoreSendsTheCursorAndAppendsWithoutDuplicates() = runBlocking {
         val second = item.copy(targetId = otherId)
         val wire = Wire().apply { nextCursor = "after-first"; more = listOf(item, second) }
@@ -488,6 +520,56 @@ class ModerationTest {
         assertEquals(ReportReviewState.WAITING, report.reviewState)
         assertEquals(ReportReviewState.ACTION_TAKEN, report.copy(status = "reviewed", outcome = "action_taken", action = "hide", reviewedAt = stamp).reviewState)
         assertEquals(ReportReviewState.NO_ACTION, report.copy(status = "reviewed", outcome = "no_action", action = "no_action", reviewedAt = stamp).reviewState)
+    }
+
+    private val pageItem = ModerationQueueDto("page", otherId, ModerationPreviewDto("active", name = "River Walkers", handle = "river-walkers"), null, 1,
+        listOf(ModerationReasonDto("spam", 1)), stamp)
+
+    @Test fun limitIsSentForAPageItem() = runBlocking {
+        val wire = Wire().apply { queue = listOf(pageItem) }
+        val current = ready(wire)
+        current.editDecision(pageItem, "limit", "spam", "")
+        current.recordDecision(pageItem); idle(current)
+        assertEquals("limit", JsonParser.parseString(wire.decisions().single().body).asJsonObject["action"].asString)
+        assertEquals("page", JsonParser.parseString(wire.decisions().single().body).asJsonObject["target_type"].asString)
+        assertEquals(ModerationMessage.DECISION_RECORDED, current.state.value.message)
+    }
+
+    @Test fun limitIsRefusedForPostsAndCommentsBeforeSending(): Unit = runBlocking {
+        val wire = Wire()
+        val current = ready(wire)
+        choose(current, action = "limit")
+        current.recordDecision(item); idle(current)
+        assertTrue(wire.decisions().isEmpty())
+        listOf("post", "comment").forEach { type ->
+            assertFalse(decisionActionAllowed("limit", type))
+            val intent = ModerationDecisionIntent(fixture.accountId, UUID.randomUUID().toString(), ModerationDecisionBodyDto(type, targetId, "limit", "spam", ""))
+            assertThrows(Exception::class.java) { runBlocking { wire.repository.decide(intent) } }
+        }
+        assertTrue(wire.decisions().isEmpty())
+        assertTrue(decisionActionAllowed("limit", "page"))
+    }
+
+    @Test fun limitAndItsRestoreAreAcceptedInNoticesAndReports() = runBlocking {
+        val limit = ModerationNoticeDto(decisionId, "page", targetId, "limit", "spam", stamp, null, null)
+        val lifted = ModerationNoticeDto(appealId, "page", targetId, "restore", "spam", stamp, null, decisionId)
+        val wire = Wire().apply {
+            notices = listOf(limit, lifted)
+            reports = listOf(MyReportDto(otherId, "page", targetId, "spam", "reviewed", "action_taken", "limit", stamp, stamp))
+        }
+        val current = ready(wire, safety = true)
+        assertEquals(listOf(limit, lifted), current.state.value.notices.items)
+        assertNull(current.state.value.notices.error)
+        assertTrue(current.state.value.notices.items[0].canAppeal)
+        assertFalse(current.state.value.notices.items[1].canAppeal)
+        assertEquals(ReportReviewState.ACTION_TAKEN, current.state.value.reports.items.single().reviewState)
+    }
+
+    @Test fun aLimitIsAppealedOnceLikeAHidingDecision() {
+        val notice = ModerationNoticeDto(decisionId, "page", targetId, "limit", "spam", stamp, null, null)
+        assertTrue(notice.canAppeal)
+        listOf("open", "upheld", "overturned").forEach { assertFalse(notice.copy(appealStatus = it).canAppeal) }
+        assertFalse(notice.copy(appealOf = decisionId).canAppeal)
     }
 
     @Test fun defaultReasonIsTheMostReportedReason() {

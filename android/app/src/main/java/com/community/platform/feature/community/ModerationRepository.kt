@@ -45,7 +45,7 @@ interface ModerationApi {
 @Singleton
 class ModerationRepository @Inject constructor(private val api: ModerationApi, private val accounts: AccountRepository) {
     private val targets = setOf("page", "post", "comment")
-    private val actions = setOf("no_action", "hide", "restore")
+    private val actions = setOf("no_action", "hide", "limit", "restore")
     private val appealStatuses = setOf("open", "upheld", "overturned")
 
     private fun invalid(): Nothing = throw IdentityFailure("INVALID_RESPONSE", "The service returned an unexpected community response.")
@@ -62,7 +62,7 @@ class ModerationRepository @Inject constructor(private val api: ModerationApi, p
 
     private fun decision(value: ModerationDecisionDto): ModerationDecisionDto = validate {
         identifier(value.id); target(value.targetType, value.targetId); identifier(value.decidedBy)
-        require(value.action in actions && value.reason in REPORT_REASONS)
+        require(value.action in actions && value.reason in REPORT_REASONS && (value.action != "limit" || value.targetType == "page"))
         note(value.note); Instant.parse(value.decidedAt); value.appealOf?.let(::identifier)
         value
     }
@@ -106,7 +106,7 @@ class ModerationRepository @Inject constructor(private val api: ModerationApi, p
     suspend fun decide(intent: ModerationDecisionIntent): ModerationDecisionDto = accounts.authorized(intent.accountId) {
         val body = intent.body
         target(body.targetType, body.targetId); identifier(intent.key); note(body.note)
-        require(body.action in setOf("hide", "no_action") && body.reason in REPORT_REASONS)
+        require(decisionActionAllowed(body.action, body.targetType) && body.reason in REPORT_REASONS)
         decision(accounts.result(api.decide(it, intent.key, body))).also { result ->
             if (result.targetType != body.targetType || result.targetId != body.targetId || result.action != body.action ||
                 result.reason != body.reason || result.note != body.note || result.decidedBy != intent.accountId || result.appealOf != null) invalid()

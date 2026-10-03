@@ -13,6 +13,7 @@ data class SpaceDto(
     @SerializedName("created_at") val createdAt: String,
     val description: String? = null,
     @SerializedName("member_invites") val memberInvites: Boolean = false,
+    @SerializedName("agent_enabled") val agentEnabled: Boolean = true,
 )
 
 val SpaceDto.canInvitePeople: Boolean get() =

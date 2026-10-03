@@ -190,12 +190,17 @@ private fun QueueItem(item: ModerationQueueDto, state: ModerationState, actions:
         Text(stringResource(R.string.moderation_first_reported, time.showModerationTime(item.firstReportedAt)), style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.moderation_decision), style = MaterialTheme.typography.titleSmall)
         Column(Modifier.selectableGroup()) {
-            listOf("hide" to R.string.moderation_hide, "no_action" to R.string.moderation_no_action).forEach { (action, label) ->
+            val choices = listOf("hide" to R.string.moderation_hide) +
+                (if (item.targetType == "page") listOf("limit" to R.string.moderation_limit) else emptyList()) + ("no_action" to R.string.moderation_no_action)
+            choices.forEach { (action, label) ->
                 Row(Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget)
                     .selectable(selected = draft.action == action, enabled = !state.working, role = Role.RadioButton) { actions.editDecision(item, action, draft.reason, draft.note) }
                     .testTag("moderation-${item.targetId}-$action"), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = draft.action == action, onClick = null, enabled = !state.working)
-                    Text(stringResource(label), Modifier.weight(1f).padding(start = DesignTokens.SpaceUnit * 2))
+                    Column(Modifier.weight(1f).padding(start = DesignTokens.SpaceUnit * 2)) {
+                        Text(stringResource(label))
+                        if (action == "limit") Text(stringResource(R.string.moderation_limit_explanation), style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -275,7 +280,6 @@ internal fun LazyListScope.moderationHistory(state: ModerationState, actions: Mo
             modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("moderation-open")) { Text(stringResource(R.string.moderation_queue)) }
     }
     state.accessError?.let { error -> item("moderation-access-error") { ModerationFailure(error, !state.busy, actions.reloadSafety) } }
-    state.message?.let { message -> item("moderation-message") { ModerationSuccess(message) } }
     item("moderation-notices-title") { Text(stringResource(R.string.moderation_notices_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
     if (state.notices.loading) item("moderation-notices-loading") { Text(stringResource(R.string.moderation_loading_notices)) }
     state.notices.error?.let { error -> item("moderation-notices-error") { ModerationFailure(error, !state.busy, actions.reloadSafety) } }
@@ -351,7 +355,7 @@ internal fun ModerationMark(mark: ModerationMarkDto?) {
 }
 
 @Composable
-private fun ModerationSuccess(message: ModerationMessage) {
+internal fun ModerationSuccess(message: ModerationMessage) {
     Text(stringResource(when (message) {
         ModerationMessage.DECISION_RECORDED -> R.string.moderation_decision_recorded
         ModerationMessage.APPEAL_RESOLVED -> R.string.moderation_appeal_resolved
@@ -367,6 +371,7 @@ private fun ModerationFailure(problem: ModerationProblem, enabled: Boolean = tru
         "CONFLICT_OF_INTEREST" -> if (problem.message == "Another moderator must review this appeal.") R.string.moderation_conflict_appeal else R.string.moderation_conflict_content
         "CONTENT_UNAVAILABLE", "NOT_FOUND" -> R.string.moderation_content_unavailable
         "CONTENT_ALREADY_HIDDEN" -> R.string.moderation_already_hidden
+        "PAGE_ALREADY_LIMITED" -> R.string.moderation_already_limited
         "CONTENT_AUTHOR_REQUIRED" -> R.string.moderation_author_required
         "APPEAL_UNAVAILABLE" -> R.string.moderation_appeal_unavailable
         "APPEAL_ALREADY_EXISTS" -> R.string.moderation_appeal_exists
@@ -392,12 +397,13 @@ private fun moderationTargetLabel(target: String): String = stringResource(when 
 @Composable
 private fun moderationActionLabel(action: String): String = stringResource(when (action) {
     "hide" -> R.string.moderation_hidden
+    "limit" -> R.string.moderation_limited
     "restore" -> R.string.moderation_restored
     else -> R.string.moderation_no_action
 })
 
 @Composable
-private fun moderationReasonLabel(reason: String): String = stringResource(when (reason) {
+internal fun moderationReasonLabel(reason: String): String = stringResource(when (reason) {
     "spam" -> R.string.moderation_reason_spam
     "harassment" -> R.string.moderation_reason_harassment
     "hate" -> R.string.moderation_reason_hate

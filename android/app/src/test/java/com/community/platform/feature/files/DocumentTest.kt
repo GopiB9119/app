@@ -1,5 +1,6 @@
 package com.community.platform.feature.files
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -9,6 +10,8 @@ import com.google.gson.Gson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -79,7 +82,17 @@ class DocumentTest {
     private var model: DocumentViewModel? = null
 
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null, null); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking {
+        try { finishTestWork() } finally { Dispatchers.resetMain() }
+    }
+
+    private suspend fun finishTestWork() {
+        model?.let { current ->
+            current.bind(null, null)
+            withTimeout(5000) { requireNotNull(current.viewModelScope.coroutineContext[Job]).cancelAndJoin() }
+        }
+    }
+
     private suspend fun idle(current: DocumentViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
     private suspend fun ready(): DocumentViewModel {
         val current = DocumentViewModel(repository); model = current
@@ -382,6 +395,28 @@ class DocumentTest {
         assertTrue(current.state.value.documents.isEmpty())
         assertNull(current.state.value.pendingDelete)
         assertEquals(DocumentIssue.UNAVAILABLE, current.state.value.issue)
+    }
+
+    @Test fun fixtureCleanupFinishesAnUnansweredCreateBeforeResettingMain() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<Unit>()
+        val delayed = object : DocumentApi by api {
+            override suspend fun create(authorization: String, spaceId: String, key: String, body: DocumentBodyDto): Response<EnvelopeDto<DocumentDto>> {
+                entered.complete(Unit)
+                response.await()
+                return api.create(authorization, spaceId, key, body)
+            }
+        }
+        val current = DocumentViewModel(DocumentRepository(delayed, fixture.accounts)); model = current
+        val scope = requireNotNull(current.viewModelScope.coroutineContext[Job])
+        current.bind(fixture.accountId, fixture.spaceId, "Morgan family"); idle(current)
+        current.choose(ChosenDocument("notes.md", content.toByteArray().size, content)); current.add()
+        withTimeout(5000) { entered.await() }
+        finishTestWork()
+        assertTrue(scope.isCompleted)
+        assertTrue(scope.children.none())
+        assertEquals(DocumentsState(), current.state.value)
+        assertFalse("Cleanup must cancel the request without releasing its answer.", response.isCompleted)
     }
 
     @Test fun accountChangeDiscardsLateCreateWithoutShowingPrivateData() = runBlocking {

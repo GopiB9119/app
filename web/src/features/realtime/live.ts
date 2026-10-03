@@ -52,7 +52,7 @@ export function createSseParser(listener: (frame: SseFrame) => void) {
 
 const changeSchema = z.discriminatedUnion("kind", [
   // "access": a membership ended (T86); "member_left": an erased account left the Space (T68). Both make an open chat read again.
-  z.object({ kind: z.literal("conversation"), conversation_id: z.string().uuid(), space_id: z.string().uuid(), reason: z.enum(["opened", "message", "deleted", "read", "access", "member_left"]) }),
+  z.object({ kind: z.literal("conversation"), conversation_id: z.string().uuid(), space_id: z.string().uuid(), reason: z.enum(["opened", "message", "deleted", "read", "access", "member_left", "changed"]) }),
   z.object({ kind: z.literal("notifications"), reason: z.enum(["delivered", "read", "acknowledge", "snoozed"]) }),
 ]);
 const readySchema = z.object({ heartbeat_seconds: z.number().int().positive(), max_seconds: z.number().int().positive() });

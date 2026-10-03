@@ -25,11 +25,14 @@ data class SpaceSettingsDto(
     val etag: String,
     val description: String? = null,
     @SerializedName("member_invites") val memberInvites: Boolean = false,
+    @SerializedName("agent_enabled") val agentEnabled: Boolean = true,
 )
 data class EditSpaceSettingsDto(val name: String, val description: String? = null)
 data class SpaceSettingsIntent(val accountId: String, val spaceId: String, val name: String, val etag: String, val key: String, val description: String? = null)
 data class InvitePolicyDto(@SerializedName("member_invites") val memberInvites: Boolean)
 data class InvitePolicyIntent(val accountId: String, val spaceId: String, val memberInvites: Boolean, val etag: String, val requestKey: String)
+data class AgentPolicyDto(@SerializedName("agent_enabled") val agentEnabled: Boolean)
+data class AgentPolicyIntent(val accountId: String, val spaceId: String, val agentEnabled: Boolean, val etag: String, val requestKey: String)
 
 interface SpaceSettingsApi {
     @GET("v1/spaces/{id}/settings")
@@ -44,6 +47,11 @@ interface SpaceSettingsApi {
     suspend fun invitePolicy(@Header("Authorization") authorization: String, @Path("id") spaceId: String,
         @Header("If-Match") etag: String, @Header("Idempotency-Key") key: String,
         @Body body: InvitePolicyDto): Response<EnvelopeDto<SpaceSettingsDto>>
+
+    @POST("v1/spaces/{id}/agent-policy")
+    suspend fun agentPolicy(@Header("Authorization") authorization: String, @Path("id") spaceId: String,
+        @Header("If-Match") etag: String, @Header("Idempotency-Key") key: String,
+        @Body body: AgentPolicyDto): Response<EnvelopeDto<SpaceSettingsDto>>
 }
 
 @Singleton
@@ -81,6 +89,12 @@ class SpaceSettingsRepository @Inject constructor(private val api: SpaceSettings
         if (result.spaceType !in setOf("family", "group") || result.memberInvites != intent.memberInvites) {
             throw IdentityFailure("INVALID_RESPONSE", "The Space settings could not be confirmed.")
         }
+        result
+    }
+
+    suspend fun changeAgentPolicy(intent: AgentPolicyIntent): SpaceSettingsDto = accounts.authorized(intent.accountId) {
+        val result = checked(api.agentPolicy(it, intent.spaceId, intent.etag, intent.requestKey, AgentPolicyDto(intent.agentEnabled)), intent.spaceId)
+        if (result.agentEnabled != intent.agentEnabled) throw IdentityFailure("INVALID_RESPONSE", "The Space settings could not be confirmed.")
         result
     }
 }

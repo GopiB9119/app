@@ -35,6 +35,12 @@ interface MessagingApi {
     @POST("v1/conversations/{id}/messages/{messageId}/delete")
     suspend fun delete(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: Map<String, String>): Response<EnvelopeDto<MessageDto>>
 
+    @POST("v1/conversations/{id}/messages/{messageId}/edit")
+    suspend fun edit(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: EditMessageDto): Response<EnvelopeDto<MessageDto>>
+
+    @POST("v1/conversations/{id}/messages/{messageId}/reactions")
+    suspend fun react(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: ReactDto): Response<EnvelopeDto<MessageDto>>
+
     @POST("v1/conversations/{id}/read")
     suspend fun markRead(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Body body: MarkReadDto): Response<EnvelopeDto<ConversationDto>>
 }
@@ -95,6 +101,21 @@ class MessagingRepository @Inject constructor(private val api: MessagingApi, pri
         value.body?.let { body -> require(body.isNotEmpty() && body.codePointCount(0, body.length) <= MAX_MESSAGE_CHARACTERS) }
         Instant.parse(value.createdAt)
         value.deletedAt?.let(Instant::parse)
+        value.editedAt?.let(Instant::parse)
+        // Each reaction once, in the fixed order, counted, and none on a deleted message (DEC-033).
+        val order = value.reactionList.map { REACTIONS.indexOf(it.reaction) }
+        require(order.all { it >= 0 } && order.zipWithNext().all { (left, right) -> left < right } && value.reactionList.all { it.count >= 1 })
+        require(value.status != "deleted" || value.reactionList.isEmpty())
+        value.replyTo?.let { reply ->
+            identifier(reply.messageId)
+            require(reply.messageId != value.id && reply.status in setOf("sent", "deleted", "unavailable"))
+            val outside = reply.status == "unavailable" && reply.position == null
+            require((reply.status == "sent") == (reply.excerpt != null))
+            require(if (outside) reply.senderName == null else reply.senderName != null && reply.position != null)
+            reply.position?.let { require(it.matches(position) && it != "0") }
+            reply.senderName?.let(::label)
+            reply.excerpt?.let { require(it.isNotEmpty() && it.codePointCount(0, it.length) <= REPLY_EXCERPT_CHARACTERS + 1) }
+        }
         value
     }
 
@@ -148,8 +169,23 @@ class MessagingRepository @Inject constructor(private val api: MessagingApi, pri
     }
 
     suspend fun send(intent: SendIntent): MessageDto = accounts.authorized(intent.accountId) {
-        val result = message(accounts.result(api.send(it, intent.conversationId, intent.key, SendMessageDto(intent.body))), intent.accountId, intent.conversationId)
-        if (!result.mine || result.clientMessageId != intent.key) invalid("The sent message could not be confirmed.")
+        val result = message(accounts.result(api.send(it, intent.conversationId, intent.key, SendMessageDto(intent.body, intent.replyTo))), intent.accountId, intent.conversationId)
+        if (!result.mine || result.clientMessageId != intent.key || result.replyTo?.messageId != intent.replyTo) invalid("The sent message could not be confirmed.")
+        result
+    }
+
+    /** The author changes the text of their message; the same text again changes nothing (DEC-033). */
+    suspend fun edit(accountId: String, conversationId: String, messageId: String, body: String): MessageDto = accounts.authorized(accountId) {
+        val result = message(accounts.result(api.edit(it, conversationId, messageId, EditMessageDto(body))), accountId, conversationId)
+        if (result.id != messageId || result.status != "sent" || !result.mine) invalid("The edit could not be confirmed.")
+        result
+    }
+
+    /** Adds or takes back one of this person's reactions; doing what is already done changes nothing. */
+    suspend fun react(accountId: String, conversationId: String, messageId: String, reaction: String, on: Boolean): MessageDto = accounts.authorized(accountId) {
+        require(reaction in REACTIONS)
+        val result = message(accounts.result(api.react(it, conversationId, messageId, ReactDto(reaction, on))), accountId, conversationId)
+        if (result.id != messageId || (result.reactionList.find { item -> item.reaction == reaction }?.mine ?: false) != on) invalid("The reaction could not be confirmed.")
         result
     }
 

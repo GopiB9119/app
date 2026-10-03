@@ -11,7 +11,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -36,16 +39,23 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
 import com.community.platform.feature.assertNotInList
+import com.community.platform.feature.assertNarrowScreen
+import com.community.platform.feature.assertTextNotClipped
+import com.community.platform.feature.spaces.DeviceFontScale
+import com.community.platform.feature.spaces.EmulatorFontScaleRule
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.RuleChain
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class CommunityScreenTest {
-    @get:Rule val compose = createComposeRule()
+    val compose = createComposeRule()
+    @get:Rule val rules: TestRule = RuleChain.outerRule(EmulatorFontScaleRule()).around(compose)
     private val accountId = "62f3da14-12e9-4575-9541-caf8b98e2dfd"
     private val pageId = "3d0f3b0e-5c5b-4a4e-9a51-0c4f3f2b1a01"
     private val postId = "4e1a4c1f-6d6c-4b5f-8b62-1d5a4a3c2b02"
@@ -169,7 +179,8 @@ class CommunityScreenTest {
         val followed = page.copy(following = true, followerCount = 1)
         state = state.copy(followedStatus = ListStatus.LOADED, followedError = null, error = null, followed = listOf(followed))
         reveal("unfollow-river-walkers")
-        compose.onNodeWithText("@river-walkers / hobbies / 1 follower").performScrollTo().assertIsDisplayed()
+        // T149: the topic shows as a word, not as its code.
+        compose.onNodeWithText("@river-walkers / Hobbies / 1 follower").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("unfollow-river-walkers").performScrollTo().assertIsDisplayed().performClick()
         assertEquals(listOf(followed), unfollowed)
     }
@@ -184,6 +195,42 @@ class CommunityScreenTest {
         compose.onNodeWithTag("save-${last.id}").performScrollTo().performClick()
         // Saving the last post failed: the message is the list's first item, far above the button that was pressed.
         compose.onNodeWithTag("community-error").assertIsDisplayed().assertTextContains("No connection. Nothing new is confirmed.")
+    }
+
+    @Test fun communityActionMessagesArePoliteLiveRegions() {
+        var state by mutableStateOf(CommunityState(accountId = accountId, error = "Synthetic change refused", notice = PAGE_EDIT_SAVED))
+        compose.setContent { CommunityTheme { CommunityScreen(state, CommunityActions(), "UTC", {}) } }
+        for (tag in listOf("community-error", "community-notice")) {
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        }
+        compose.runOnIdle {
+            state = CommunityState(accountId = accountId, destination = Destination.MyPages, ownedError = "Synthetic page-list failure")
+        }
+        reveal("owned-error")
+        compose.onNodeWithTag("owned-error").assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+    }
+
+    @DeviceFontScale(2f)
+    @Test fun followedLoadMoreFailureStaysBesideTheActionAtLargeText() {
+        assertNarrowScreen()
+        val followed = (1..20).map { page.copy(id = "synthetic-followed-$it", handle = "followed-$it", name = "Followed page $it", following = true) }
+        val error = "No connection. Nothing new is confirmed."
+        var state by mutableStateOf(CommunityState(accountId = accountId, destination = Destination.MyPages, ownedLoaded = true,
+            pages = (1..5).map { page.copy(id = "synthetic-owned-$it", handle = "owned-$it") },
+            followedStatus = ListStatus.LOADED, followed = followed, followedNextCursor = "synthetic-next"))
+        var attempts = 0
+        val fail = { attempts += 1; state = state.copy(error = error, followedError = error) }
+        compose.setContent { CommunityTheme { CommunityScreen(state, CommunityActions(more = fail, retryFollowing = fail), "UTC", {}) } }
+        reveal("followed-more")
+        compose.onNodeWithTag("followed-more").performScrollTo().performClick()
+        compose.onNodeWithTag("followed-error").assertIsDisplayed().assertTextContains(error)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        compose.assertTextNotClipped(hasTestTag("followed-error"))
+        compose.onNodeWithTag("followed-retry").assertIsDisplayed().assertIsEnabled().performClick()
+        compose.onNodeWithTag("followed-error").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(2, attempts); assertEquals(followed, state.followed) }
     }
 
     @Test fun largeTextNarrowPageEditorKeepsFieldsAndCommandsReachable() {
@@ -456,6 +503,16 @@ class CommunityScreenTest {
         compose.onAllNodesWithText("Archived, read only", substring = true).assertCountEquals(0)
     }
 
+    @Test fun reportReasonsShowTheirNamesNotTheirCodes() {
+        // T149: the dialog printed the code, so "self_harm" read "Self harm" in every language.
+        val state = CommunityState(accountId = accountId, posts = listOf(post.copy(pageStatus = "active")))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        compose.onNodeWithText("Report").performScrollTo().performClick()
+        compose.onNodeWithText("Spam or scam").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Self-harm").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Self harm").assertCountEquals(0)
+    }
+
     @Test fun readOnlyFeedPostKeepsUnlikeAndUnsave() {
         val archived = post.copy(pageStatus = "read_only", liked = true, saved = true, likeCount = 1)
         val likes = mutableListOf<PostDto>()
@@ -482,7 +539,7 @@ class CommunityScreenTest {
         compose.onNodeWithText("Count me in").assertIsDisplayed()
         compose.onAllNodesWithText("Reply").assertCountEquals(0)
         compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
-        compose.onNodeWithText("Block person").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("comment-block-${comment.id}").performScrollTo().assertIsDisplayed().assertTextContains("Block person")
         insideAndShown("comment-${reply.id}")
         compose.onNodeWithText("Bring water").assertIsDisplayed()
 
@@ -497,6 +554,47 @@ class CommunityScreenTest {
         compose.onAllNodesWithTag("reply-text").assertCountEquals(0)
         insideAndShown("post-read-only")
         compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
+    }
+
+    @Test fun limitedPageShowsAVisitorThePauseAndPostHasNoCommentBoxAtLargeText() {
+        val limitedPage = page.copy(limited = true)
+        val pageState = CommunityState(accountId = accountId, destination = Destination.Page("river-walkers"), page = limitedPage, posts = listOf(post.copy(pageLimited = true)))
+        var state by mutableStateOf(pageState)
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("page-limited")
+        compose.onNodeWithTag("page-limited").assertTextContains("New posts and comments are paused on this page.")
+        compose.onAllNodesWithTag("page-limited-owner").assertCountEquals(0)
+        insideAndShown("comments-paused-$postId", "like-$postId", "save-$postId")
+
+        val comment = CommentDto("5f2b5d20-7e7d-4c60-9c73-2e6b5b4d3c03", postId, null, "Sam", "Count me in", "visible", stamp, false, false)
+        state = CommunityState(accountId = accountId, destination = Destination.Post(postId), post = post.copy(pageLimited = true), comments = listOf(comment))
+        insideAndShown("post-comments-paused")
+        compose.onNodeWithTag("post-comments-paused").assertTextContains("Comments are paused on this page.")
+        compose.onAllNodesWithTag("comment-text").assertCountEquals(0)
+        insideAndShown("comment-${comment.id}")
+        compose.onAllNodesWithText("Reply").assertCountEquals(0)
+    }
+
+    @Test fun ownerOfALimitedPageSeesWhyAndNoPublishAtLargeText() {
+        val draft = post.copy(id = "2b3c4d5e-6f70-4b1c-9d2e-4f5a6b7c8d10", status = "draft", publishedAt = null, canManage = true, etag = "\"d1\"")
+        val owned = page.copy(canManage = true, etag = "\"p1\"", limited = true, limit = PageLimitDto("spam"))
+        val state = CommunityState(accountId = accountId, destination = Destination.Page("river-walkers"), page = owned, drafts = listOf(draft))
+        largeNarrow { CommunityScreen(state, CommunityActions(), "UTC", {}) }
+        insideAndShown("page-limited-owner")
+        compose.onNodeWithTag("page-limited-owner").assertTextContains("A platform moderator limited this page for", substring = true)
+            .assertTextContains("You can appeal in Safety.", substring = true)
+        insideAndShown("post-save-draft", "page-publish-paused", "edit-${draft.id}")
+        compose.onAllNodesWithTag("publish-${draft.id}").assertCountEquals(0)
+    }
+
+    @Test fun ownerOfAHiddenPageKeepsDraftsWithoutPublish() {
+        val draft = post.copy(id = "2b3c4d5e-6f70-4b1c-9d2e-4f5a6b7c8d10", status = "draft", publishedAt = null, canManage = true, etag = "\"d1\"")
+        val owned = page.copy(canManage = true, etag = "\"p1\"", moderation = ModerationMarkDto(true, "spam"))
+        compose.setContent { CommunityTheme { CommunityScreen(CommunityState(accountId = accountId, destination = Destination.Page("river-walkers"), page = owned, drafts = listOf(draft)), CommunityActions(), "UTC", {}) } }
+        reveal("page-publish-paused")
+        reveal("edit-${draft.id}")
+        compose.onAllNodesWithTag("publish-${draft.id}").assertCountEquals(0)
+        compose.onAllNodesWithTag("page-limited").assertCountEquals(0)
     }
 
     private fun capture(name: String) {

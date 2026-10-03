@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -23,6 +23,10 @@ const previewText = 'Preview <b>markup</b> with plain text.';
 const queueItem = {
   target_type: 'post', target_id: postId, preview: { title: 'Reported post', body: previewText, status: 'published' },
   page_name: 'Synthetic page', report_count: 3, reasons: [{ reason: 'spam', count: 1 }, { reason: 'privacy', count: 2 }], first_reported_at: created,
+};
+const pageQueueItem = {
+  ...queueItem, target_type: 'page', target_id: pageId, page_name: null,
+  preview: { name: 'Reported page', handle: 'synthetic-page', description: previewText, status: 'active' },
 };
 const appealReview = {
   appeal: { id: appealId, decision_id: appealedDecisionId, note: 'Please review <b>markup</b> again.', status: 'open', created_at: created, resolved_at: null },
@@ -49,10 +53,12 @@ let javascript;
 let css;
 
 before(async () => {
+  mkdirSync(path.join(root, '.local/screenshots'), { recursive: true });
   const bundled = await build({
     stdin: {
       contents: `import React from 'react';
         import { createRoot } from 'react-dom/client';
+        import { useQueryClient } from '@tanstack/react-query';
         import { Providers } from './src/app/providers';
         import ModerationPage from './src/app/app/moderation/page';
         import { SafetyScreen } from './src/features/community/safety-screen';
@@ -61,9 +67,14 @@ before(async () => {
         import { MyPagesScreen } from './src/features/community/pages-screen';
         import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
+        function QueryProbe() {
+          const queryClient = useQueryClient();
+          window.taxonomyQueryStatus = () => queryClient.getQueryState(['taxonomy'])?.status;
+          return null;
+        }
         window.renderModerationFixture = mode => {
           window.fixtureMode = mode;
-          root.render(<Providers>{mode === 'safety' ? <SafetyScreen /> : mode === 'post' ? <PostScreen postId="${postId}" />
+          root.render(<Providers><QueryProbe />{mode === 'safety' ? <SafetyScreen /> : mode === 'post' ? <PostScreen postId="${postId}" />
             : mode === 'page' ? <PublicPageScreen reference="synthetic-page" /> : mode === 'pages' ? <MyPagesScreen /> : <ModerationPage />}</Providers>);
         };`,
       resolveDir: web, sourcefile: 'offline-moderation.tsx', loader: 'tsx',
@@ -112,7 +123,8 @@ async function fixture(context, options = {}) {
       moderator: options.moderator ?? true, accessFailures: options.accessFailures ?? 0,
       queue: options.queue ?? [queueItem], queueFailures: options.queueFailures ?? 0, queueStartReads: 0, cursorReset: false,
       appeals: options.appeals ?? [appealReview], appealListFailures: options.appealListFailures ?? 0,
-      notices, reports, noticeFailures: options.noticeFailures ?? 0, reportFailures: options.reportFailures ?? 0,
+      notices: options.notices ?? notices, reports: options.reports ?? reports,
+      noticeFailures: options.noticeFailures ?? 0, reportFailures: options.reportFailures ?? 0,
       decisionLostAnswers: options.decisionLostAnswers ?? 0, appealLostAnswers: options.appealLostAnswers ?? 0,
       decisionError: options.decisionError ?? null, resolutionError: options.resolutionError ?? null,
       decisions: {}, appealReceipts: {},
@@ -126,6 +138,7 @@ async function fixture(context, options = {}) {
       publicPage: {
         id: pageId, handle: 'synthetic-page', name: 'Your hidden page', description: 'Page description.', rules: '', topic: 'community', status: 'active',
         follower_count: 0, created_at: created, updated_at: created, following: false, blocked: false, can_manage: true, etag: '"page-1"', purge_after: null,
+        classification: { interests: ['gardening'] },
         moderation: { hidden: true, reason: 'spam' },
       },
       comment: { id: commentId, post_id: postId, parent_id: null, author_name: 'Alex Morgan', body: 'Comment <b>markup</b> body.', status: 'visible',
@@ -154,6 +167,14 @@ async function fixture(context, options = {}) {
       } }), { headers: { 'Content-Type': 'text/event-stream' } });
       if (url.pathname === '/api/me' && method === 'GET') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       if (url.pathname === '/api/notifications' && method === 'GET') return reply([], 200, { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
+      if (url.pathname === '/api/taxonomy' && method === 'GET') {
+        if (options.taxonomyFailure === 'network') throw new TypeError('Synthetic vocabulary connection failure.');
+        if (options.taxonomyFailure) return failure('SERVICE_UNAVAILABLE', 'Vocabulary is temporarily unavailable.', 503);
+        return reply([
+          { dimension: 'topic', code: 'community', parent: null, sensitive: false, status: 'active', names: { en: 'Community', te: null, hi: null } },
+          { dimension: 'interest', code: 'gardening', parent: 'community', sensitive: false, status: 'active', names: { en: 'Gardening', te: null, hi: null } },
+        ]);
+      }
       if (url.pathname === '/api/me/moderator' && method === 'GET') {
         if (state.accessFailures-- > 0) return failure('SERVICE_UNAVAILABLE', 'Moderator access is temporarily unavailable.', 503);
         return reply({ moderator: state.moderator });
@@ -252,6 +273,167 @@ const commands = (result, path) => result.calls.filter(call => call.path === pat
 const reportCard = page => page.getByRole('article', { name: 'Post report', exact: true });
 const appealCard = page => page.getByRole('article', { name: 'Post appeal', exact: true });
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+test('T135 moderation: only page reports offer Limit page and submit the reviewed limiting decision', async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, { queue: [pageQueueItem, queueItem, { ...queueItem, target_type: 'comment', target_id: commentId }] });
+    const { page } = result;
+    const card = page.getByRole('article', { name: 'Page report', exact: true });
+    await card.getByRole('radio', { name: 'Limit page', exact: true }).waitFor();
+    assert.deepEqual(await card.getByRole('group', { name: 'Decision', exact: true }).locator('label').allTextContents(), ['Hide', 'No action', 'Limit page']);
+    for (const target of ['Post', 'Comment']) {
+      const other = page.getByRole('article', { name: `${target} report`, exact: true });
+      assert.equal(await other.getByRole('radio', { name: 'Limit page', exact: true }).count(), 0);
+      assert.deepEqual(await other.getByRole('group', { name: 'Decision', exact: true }).locator('label').allTextContents(), ['Hide', 'No action']);
+    }
+    const limit = card.getByRole('radio', { name: 'Limit page', exact: true });
+    assert.equal(await limit.isChecked(), false);
+    const hintId = await limit.getAttribute('aria-describedby');
+    assert.equal(await page.locator(`[id="${hintId}"]`).innerText(), 'The page leaves Discover, and new posts and comments are paused.');
+    await limit.check();
+    await card.getByRole('textbox', { name: 'Note for moderators (optional)', exact: true }).fill('  Pause while the owner reviews it.  ');
+    await card.getByRole('button', { name: 'Record decision', exact: true }).click();
+    await page.getByText('Decision recorded.', { exact: true }).waitFor();
+    const sent = commands(result, '/api/moderation/decisions');
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].body, { target_type: 'page', target_id: pageId, action: 'limit', reason: 'privacy', note: 'Pause while the owner reviews it.' });
+    assert.equal(sent[0].headers['x-account-id'], accountId);
+    assert.match(sent[0].headers['idempotency-key'], uuidPattern);
+    assert.equal(await card.count(), 0);
+    assert.equal(await page.getByRole('article').count(), 2);
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+test('T135 moderation: an already limited page keeps the report and the server explanation', async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, { queue: [pageQueueItem], decisionError: { code: 'PAGE_ALREADY_LIMITED', message: 'This page already has a limiting decision.' } });
+    const card = result.page.getByRole('article', { name: 'Page report', exact: true });
+    await card.getByRole('radio', { name: 'Limit page', exact: true }).check();
+    await card.getByRole('button', { name: 'Record decision', exact: true }).click();
+    await card.getByRole('alert').getByText('This page already has a limiting decision.', { exact: true }).waitFor();
+    assert.equal(commands(result, '/api/moderation/decisions').length, 1);
+    assert.equal(await card.count(), 1);
+    assert.equal(await result.page.getByText('Decision recorded.', { exact: true }).count(), 0);
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+const limitNotices = notices.map(item => ({ ...item, target_type: 'page', target_id: pageId, action: item.action === 'hide' ? 'limit' : item.action }));
+
+test('T135 safety: only an unappealed original limit offers Appeal and restoration stays readable', async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, { mode: 'safety', moderator: false, notices: limitNotices,
+      reports: [{ ...reports[1], target_type: 'page', target_id: pageId, action: 'limit' }] });
+    const { page } = result;
+    const decisions = page.getByRole('region', { name: 'Decisions about your content', exact: true });
+    await decisions.getByText('Page / Restored', { exact: true }).waitFor();
+    assert.equal(await decisions.getByText('Page / Limited', { exact: true }).count(), 5);
+    assert.equal(await decisions.getByText('Restored after appeal', { exact: true }).count(), 2);
+    assert.equal(await decisions.getByRole('button', { name: 'Appeal', exact: true }).count(), 1);
+    await page.getByRole('region', { name: 'Your reports', exact: true }).getByText('Reviewed: action taken', { exact: true }).waitFor();
+    await decisions.getByRole('button', { name: 'Appeal', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Appeal decision', exact: true });
+    await dialog.getByRole('textbox', { name: 'Note', exact: true }).fill('  Please lift the page limit.  ');
+    await dialog.getByRole('button', { name: 'Send appeal', exact: true }).click();
+    await page.getByText('Appeal sent.', { exact: true }).waitFor();
+    const sent = commands(result, `/api/moderation/decisions/${decisionId}/appeal`);
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].body, { note: 'Please lift the page limit.' });
+    assert.equal(sent[0].headers['x-account-id'], accountId);
+    assert.match(sent[0].headers['idempotency-key'], uuidPattern);
+    assert.equal(await decisions.getByRole('button', { name: 'Appeal', exact: true }).count(), 0);
+    assert.equal(await decisions.getByText('Appeal waiting', { exact: true }).count(), 2);
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+for (const mode of ['moderation', 'safety']) test(`T135 layout: ${mode} page limits fit 320px with measured 200% text`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, { mode, queue: [pageQueueItem], notices: [limitNotices[0]] });
+    const { page } = result;
+    const text = page.getByText(mode === 'moderation' ? 'The page leaves Discover, and new posts and comments are paused.' : 'Page / Limited', { exact: true });
+    await text.waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    await assertFits(page, `${mode} page limit at 1440px`);
+    await page.screenshot({ path: path.join(root, `.local/screenshots/t135-${mode}-desktop.png`), fullPage: true });
+    const normalSize = await text.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize));
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.addStyleTag({ content: 'html{font-size:200%}body{font-size:1rem}' });
+    assert.equal(await text.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize)), normalSize * 2);
+    await assertFits(page, `${mode} page limit at 320px and 200% text`);
+    await page.screenshot({ path: path.join(root, `.local/screenshots/t135-${mode}-320-large-text.png`), fullPage: true });
+    if (mode === 'safety') {
+      await page.getByRole('button', { name: 'Appeal', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Appeal decision', exact: true });
+      await dialog.getByRole('textbox', { name: 'Note', exact: true }).fill('Please review this page limit.');
+      await assertFits(page, 'Limit appeal at 320px and 200% text');
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+for (const [access, options] of [
+  ['granted', {}],
+  ['denied', { moderator: false }],
+  ['unavailable', { accessFailures: 1 }],
+]) test(`T150: moderation identifies its own page and links to Blocked when access is ${access}`, async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, options);
+    const { page } = result;
+    if (access === 'granted') await reportCard(page).waitFor();
+    else if (access === 'denied') await page.getByText('Only platform moderators can open this page.', { exact: true }).waitFor();
+    else await page.getByRole('alert').filter({ hasText: 'Moderator access is temporarily unavailable.' }).waitFor();
+    const navigation = page.getByRole('navigation', { name: 'Profile', exact: true });
+    assert.deepEqual(await navigation.locator('[aria-current="page"]').allTextContents(), ['Moderation']);
+    assert.equal(await navigation.getByRole('link', { name: 'Account', exact: true }).getAttribute('href'), '/app/settings/account');
+    const blocked = navigation.getByRole('link', { name: 'Blocked', exact: true });
+    assert.equal(await blocked.getAttribute('href'), '/app/safety');
+    assert.equal(await blocked.getAttribute('aria-current'), null);
+    if (access === 'granted') {
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: path.join(root, '.local/screenshots/t150-moderation-desktop.png'), fullPage: true });
+      await page.setViewportSize({ width: 320, height: 844 });
+      const normalSize = await blocked.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+      await page.evaluate(() => {
+        const sizes = [...document.querySelectorAll('body, body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+        for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+      });
+      assert.equal(await blocked.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), normalSize * 2);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Moderation fits at 320px and 200% text.');
+      const targets = await navigation.locator('a, [aria-current="page"]').evaluateAll(elements => elements.map(element => {
+        const bounds = element.getBoundingClientRect();
+        return { label: element.textContent, left: bounds.left, right: bounds.right, height: bounds.height };
+      }));
+      for (const target of targets) assert.ok(target.left >= 0 && target.right <= 320 && target.height >= 44, target.label);
+      await page.screenshot({ path: path.join(root, '.local/screenshots/t150-moderation-320-large-text.png'), fullPage: true });
+    } else {
+      assert.equal(result.calls.filter(call => call.path.startsWith('/api/moderation/')).length, 0);
+    }
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+test('T150: the Blocked screen retains its own current-page marker and moderator-only queue link', async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, { mode: 'safety' });
+    const { page } = result;
+    await page.getByRole('link', { name: 'Moderation queue', exact: true }).waitFor();
+    const navigation = page.getByRole('navigation', { name: 'Profile', exact: true });
+    assert.deepEqual(await navigation.locator('[aria-current="page"]').allTextContents(), ['Blocked']);
+    assert.equal(await navigation.getByRole('link', { name: 'Account', exact: true }).getAttribute('href'), '/app/settings/account');
+    assert.equal(await navigation.getByText('Moderation', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('link', { name: 'Moderation queue', exact: true }).getAttribute('href'), '/app/moderation');
+    assertClean(result);
+  } finally { await context.close(); }
+});
 
 test('moderation: a non-moderator sees only the refusal and never requests either review list', async () => {
   const context = await browser.newContext();
@@ -524,8 +706,51 @@ for (const mode of ['page', 'pages']) test(`authors: hidden page metadata is mar
   const context = await browser.newContext();
   try {
     const result = await fixture(context, { mode });
+    await result.page.waitForFunction(() => window.taxonomyQueryStatus() === 'success');
     await result.page.getByText('Hidden by moderators: Spam or scam. Only you can see it.', { exact: true }).waitFor();
-    if (mode === 'page') await result.page.getByText('Hidden by moderators: Shares private information. Only you can see it.', { exact: true }).waitFor();
+    if (mode === 'page') {
+      await result.page.getByText('Hidden by moderators: Shares private information. Only you can see it.', { exact: true }).waitFor();
+      const header = result.page.getByRole('heading', { name: 'Your hidden page', exact: true }).locator('..');
+      assert.equal(await header.getByText('Community', { exact: true }).count(), 1);
+      assert.equal(await result.page.getByText('Interests: Gardening', { exact: true }).count(), 1);
+      const composer = result.page.getByRole('form', { name: 'New post', exact: true });
+      await composer.locator('summary').click();
+      await composer.getByRole('checkbox', { name: 'Community', exact: true }).check();
+      assert.equal(await header.getByText('Community', { exact: true }).count(), 1);
+      assert.equal(await result.page.getByText('Interests: Gardening', { exact: true }).count(), 1);
+    } else {
+      const link = result.page.getByRole('link', { name: 'Your hidden page', exact: true });
+      assert.match(await link.locator('..').innerText(), /\bCommunity\b/);
+    }
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+for (const mode of ['page', 'pages']) for (const taxonomyFailure of ['service', 'network']) test(`authors: taxonomy ${taxonomyFailure} failure preserves hidden page content in the ${mode} view`, async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context, { mode, taxonomyFailure });
+    const { page } = result;
+    await page.waitForFunction(() => window.taxonomyQueryStatus() === 'error');
+    await page.getByText('Hidden by moderators: Spam or scam. Only you can see it.', { exact: true }).waitFor();
+    assert.ok(result.calls.some(call => call.path === '/api/taxonomy' && call.method === 'GET'));
+    if (mode === 'page') {
+      await page.getByRole('heading', { name: 'Your hidden page', exact: true }).waitFor();
+      await page.getByText('Page description.', { exact: true }).waitFor();
+      await page.getByText('Author <b>markup</b> body.', { exact: true }).waitFor();
+      await page.getByText('Hidden by moderators: Shares private information. Only you can see it.', { exact: true }).waitFor();
+      assert.equal(await page.getByText('community', { exact: true }).count(), 1);
+      assert.equal(await page.getByText('Interests: gardening', { exact: true }).count(), 1);
+      assert.equal(await page.getByRole('alert').count(), 0, 'Optional labels must not turn a readable page into an error.');
+    } else {
+      const link = page.getByRole('link', { name: 'Your hidden page', exact: true });
+      await link.waitFor();
+      assert.match(await link.locator('..').innerText(), /\bcommunity\b/);
+      const alert = page.getByRole('alert');
+      await alert.waitFor();
+      assert.equal(await alert.count(), 1);
+      assert.equal(await alert.evaluate(element => element.closest('form') !== null), true, 'Only the vocabulary-dependent creation form reports the outage.');
+    }
     assertClean(result);
   } finally { await context.close(); }
 });

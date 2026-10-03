@@ -28,7 +28,9 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
   const queryClient = useQueryClient();
   const [report, setReport] = useState<ReportTarget | null>(null);
   const [override, setOverride] = useState<PublicPost | null>(null);
-  const post = useQuery({ queryKey: ["public-post", postId, viewer?.id ?? null], queryFn: ({ signal }) => readPost(postId, viewer?.id, signal), networkMode: "always" });
+  const [pauseError, setPauseError] = useState<{ postId: string; message: string; suspended: boolean } | null>(null);
+  const postKey = ["public-post", postId, viewer?.id ?? null];
+  const post = useQuery({ queryKey: postKey, queryFn: ({ signal }) => readPost(postId, viewer?.id, signal), networkMode: "always" });
   const comments = useInfiniteQuery({
     queryKey: ["post-comments", postId, viewer?.id ?? null],
     queryFn: ({ pageParam, signal }) => postComments(postId, viewer?.id, pageParam, signal),
@@ -41,6 +43,11 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
     void queryClient.invalidateQueries({ queryKey: ["public-post", postId] });
     void queryClient.invalidateQueries({ queryKey: ["post-comments", postId] });
   }
+  function pauseComments(problem: ApiError) {
+    setPauseError({ postId, message: problemText(problem, t("community.commentFailed"), t), suspended: problem.code === "PAGE_SUSPENDED" });
+    if (problem.code === "PAGE_LIMITED") queryClient.setQueryData<PublicPost>(postKey, previous => previous ? { ...previous, page_limited: true } : previous);
+    refresh();
+  }
   if (post.isPending) return <CommunityFrame account={viewer} current={null}><p role="status" aria-busy="true">{t("community.loadingPostStatus")}</p></CommunityFrame>;
   if (!post.data) {
     const missing = post.error instanceof ApiError && post.error.status === 404;
@@ -49,28 +56,31 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
     </CommunityFrame>;
   }
   const current = override ?? post.data;
+  const pausedMessage = pauseError?.postId === postId ? pauseError.message : "";
+  const commentsPaused = current.page_limited || Boolean(pausedMessage && pauseError?.suspended);
   const all = comments.data?.pages.flatMap(page => page.items) ?? [];
   const topLevel = all.filter(item => item.parent_id === null);
   const replies = (id: string) => all.filter(item => item.parent_id === id);
   return <CommunityFrame account={viewer} current={null}>
     <div className={styles.heading}><h1>{t("community.postFrom", { name: current.page_name })}</h1></div>
-    <PostCard post={current} account={viewer} onChange={setOverride} onReport={setReport} linkTitle={false}>
+    <PostCard post={current} account={viewer} onChange={setOverride} onReport={setReport} linkTitle={false} commentsPaused={commentsPaused}>
       {current.moderation && <p className={styles.meta}>{t("community.hiddenByModerators", { reason: t(`community.reason.${current.moderation.reason}`) })}</p>}
       {current.can_manage && <p className={styles.meta}>{t("community.youOwnPageBefore")}<Link href={`/pages/${current.page_handle}`}>{t("community.editOnPage")}</Link>{t("community.sentenceEnd")}</p>}
     </PostCard>
+    {pausedMessage && commentsPaused && <div className="message error" role="alert">{pausedMessage}</div>}
     {current.status === "published" && <section className={styles.stack} aria-labelledby="comments-heading">
       <h2 id="comments-heading"><MessageCircle size={20} aria-hidden /> {t("community.comments")}</h2>
       {current.page_status !== "active" ? <p className={styles.notice} role="status">{t("community.manage.readOnly")}</p>
-        : viewer ? <CommentForm account={viewer} postId={current.id} onSaved={refresh} /> : <p className={styles.notice}><Link href="/login">{t("community.signIn")}</Link>{t("community.signInToCommentAfter")}</p>}
+        : !commentsPaused && (viewer ? <CommentForm account={viewer} postId={current.id} onSaved={refresh} onPaused={pauseComments} /> : <p className={styles.notice}><Link href="/login">{t("community.signIn")}</Link>{t("community.signInToCommentAfter")}</p>)}
       {comments.isPending && <p role="status" aria-busy="true">{t("community.loadingComments")}</p>}
       {comments.isError && !sessionLost(comments.error) && <Failure error={comments.error} retry={() => comments.refetch()} />}
       {!comments.isPending && !comments.isError && all.length === 0 && <p className={styles.empty}>{t("community.noComments")}</p>}
       <ul className={styles.comments} aria-label={t("community.comments")}>
         {topLevel.map(item => <li key={item.id}>
-          <CommentItem comment={item} account={viewer} postId={current.id} canReply={current.page_status === "active"} onChanged={refresh} onReport={setReport} />
+          <CommentItem comment={item} account={viewer} postId={current.id} canReply={current.page_status === "active" && !commentsPaused} onChanged={refresh} onPaused={pauseComments} onReport={setReport} />
           {replies(item.id).length > 0 && <ul className={styles.comments} aria-label={t("community.repliesTo", { name: item.author_name })}>
             {replies(item.id).map(reply => <li key={reply.id} className={styles.reply}>
-              <CommentItem comment={reply} account={viewer} postId={current.id} canReply={false} onChanged={refresh} onReport={setReport} />
+              <CommentItem comment={reply} account={viewer} postId={current.id} canReply={false} onChanged={refresh} onPaused={pauseComments} onReport={setReport} />
             </li>)}
           </ul>}
         </li>)}
@@ -81,14 +91,15 @@ function PostView({ viewer, postId }: { viewer: Account | null; postId: string }
   </CommunityFrame>;
 }
 
-function CommentItem({ comment, account, postId, canReply, onChanged, onReport }: {
-  comment: PostComment; account: Account | null; postId: string; canReply: boolean; onChanged: () => void; onReport: (target: ReportTarget) => void;
+function CommentItem({ comment, account, postId, canReply, onChanged, onPaused, onReport }: {
+  comment: PostComment; account: Account | null; postId: string; canReply: boolean; onChanged: () => void; onPaused: (problem: ApiError) => void; onReport: (target: ReportTarget) => void;
 }) {
   const t = useText();
   const time = useCommunityTime();
   const [mode, setMode] = useState<"idle" | "reply" | "remove" | "block">("idle");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => { if (!canReply && mode === "reply") setMode("idle"); }, [canReply, mode]);
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setError("");
@@ -113,7 +124,7 @@ function CommentItem({ comment, account, postId, canReply, onChanged, onReport }
       {!comment.mine && <button className="text-button" onClick={() => setMode("block")}><Ban size={16} aria-hidden />{t("community.blockAuthor")}</button>}
       {!comment.mine && <button className="text-button" onClick={() => onReport({ type: "comment", id: comment.id, label: t("community.commentBy", { name: comment.author_name }) })}><Flag size={16} aria-hidden />{t("community.report")}</button>}
     </div>}
-    {mode === "reply" && account && <CommentForm account={account} postId={postId} parent={comment} onSaved={() => { setMode("idle"); onChanged(); }} onCancel={() => setMode("idle")} />}
+    {mode === "reply" && canReply && account && <CommentForm account={account} postId={postId} parent={comment} onSaved={() => { setMode("idle"); onChanged(); }} onPaused={onPaused} onCancel={() => setMode("idle")} />}
     {mode === "remove" && account && <div className={styles.notice} role="group" aria-label={t("community.confirmCommentRemoval")}>
       <p>{t(comment.mine ? "community.deleteCommentQuestion" : "community.removeCommentQuestion")}</p>
       <div className={styles.actions}>
@@ -132,7 +143,7 @@ function CommentItem({ comment, account, postId, canReply, onChanged, onReport }
   </article>;
 }
 
-function CommentForm({ account, postId, parent, onSaved, onCancel }: { account: Account; postId: string; parent?: PostComment; onSaved: () => void; onCancel?: () => void }) {
+function CommentForm({ account, postId, parent, onSaved, onPaused, onCancel }: { account: Account; postId: string; parent?: PostComment; onSaved: () => void; onPaused: (problem: ApiError) => void; onCancel?: () => void }) {
   const t = useText();
   const textProblem = useTextProblem();
   const [text, setText] = useState("");
@@ -149,6 +160,7 @@ function CommentForm({ account, postId, parent, onSaved, onCancel }: { account: 
       if (sessionLost(problem)) { window.location.reload(); return; }
       if (isUnknown(problem)) { setState("unknown"); setError(problemText(problem, t("community.commentUnknown"), t)); return; }
       setIntent(null); setState("idle"); setError(problemText(problem, t("community.commentFailed"), t));
+      if (problem instanceof ApiError && problem.status === 409 && (problem.code === "PAGE_LIMITED" || problem.code === "PAGE_SUSPENDED")) onPaused(problem);
     }
   }
   const label = parent ? t("community.replyTo", { name: parent.author_name }) : t("community.writeComment");

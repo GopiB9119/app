@@ -325,4 +325,37 @@ class EventsScreenTest {
         compose.assertReachable("events-content", "event-title")
         compose.assertReachable("events-content", "event-save")
     }
+
+    @DeviceFontScale(2f)
+    @Test fun capacityPlacesAndTheLineStayReadableAt320DpAnd200PercentText() {
+        assertNarrowScreen()
+        // T154: all three places are taken, two people wait, and the viewer is second in line.
+        val full = event.copy(capacity = 3, going = 3, waitlisted = 2, myResponse = "going", myWaitlistPosition = 2, attendees = listOf(
+            AttendeeDto("Sam Example", "going", "2026-10-01T11:00:00Z", false, false),
+            AttendeeDto("Riya Example", "going", "2026-10-01T11:05:00Z", false, false, waitlistPosition = 1),
+            AttendeeDto("Alex Example", "going", "2026-10-01T11:10:00Z", false, true, waitlistPosition = 2),
+        ))
+        var current by mutableStateOf(state().copy(events = listOf(full)))
+        compose.setContent { CommunityTheme { EventsScreen(current, EventsActions(), "Morgan family") } }
+        compose.assertReachable("events-content", "event-row")
+        compose.onNodeWithTag("event-places", useUnmergedTree = true).assertTextEquals("3 of 3 places taken · Waiting in line: 2")
+        compose.assertTextNotClipped(hasTestTag("event-places"))
+        compose.assertTextNotClipped(hasTestTag("event-your-place"))
+        compose.onRoot().saveEvidence("events-capacity-list-large-text.png")
+
+        compose.runOnIdle { current = current.copy(mode = EventMode.DETAIL, selected = full) }
+        for (tag in listOf("event-places", "event-your-place")) {
+            compose.assertReachable("events-content", tag)
+            compose.assertTextNotClipped(hasTestTag(tag))
+        }
+        val waiting = hasText("You: waiting, number 2")
+        compose.assertReachable("events-content", waiting)
+        compose.assertTextNotClipped(waiting)
+        compose.onRoot().saveEvidence("events-capacity-detail-large-text.png")
+
+        compose.runOnIdle { current = current.copy(mode = EventMode.CREATE, selected = null, draft = EventDraft("Picnic", "2026-10-10", "10:00", "12:00", "Asia/Kolkata", capacity = "12")) }
+        compose.assertReachable("events-content", "event-capacity")
+        compose.assertTextNotClipped(hasText("The most people who can be going. Leave it empty for no limit. When it is full, people who answer Going wait in line."))
+        compose.assertReachable("events-content", "event-save")
+    }
 }
