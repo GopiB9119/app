@@ -67,11 +67,18 @@ async function fixture(context, options = {}) {
   page.on('pageerror', error => errors.push(error.message));
   await page.setContent('<html><head><title>Offline Home</title></head><body><div id="root"></div></body></html>');
   await page.addStyleTag({ content: css });
-  await page.evaluate(({ accountId, familyId, groupId, taskId, failing }) => {
+  await page.evaluate(({ accountId, familyId, groupId, taskId, failing, delayed }) => {
     const today = new Date().toISOString().slice(0, 10);
     const later = new Date(Date.now() + 86400000 * 3).toISOString();
     const created = '2026-09-19T10:00:00Z';
     const state = window.homeFixture = { calls: [], unexpected: [], failing: new Set(failing) };
+    const held = new Set(delayed);
+    const waiting = new Map();
+    state.release = pathname => {
+      held.delete(pathname);
+      for (const resolve of waiting.get(pathname) ?? []) resolve();
+      waiting.delete(pathname);
+    };
     const spaces = [
       { id: familyId, name: 'Morgan family', description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: created },
       { id: groupId, name: 'Garden club', description: '', space_type: 'group', visibility: 'public', status: 'active', role: 'owner', version: '1', created_at: created },
@@ -122,6 +129,9 @@ async function fixture(context, options = {}) {
         return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
       }
       state.calls.push(`${method} ${url.pathname}`);
+      if (held.has(url.pathname)) await new Promise(resolve => {
+        waiting.set(url.pathname, [...(waiting.get(url.pathname) ?? []), resolve]);
+      });
       if (url.pathname === '/api/me' && method === 'GET') {
         return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       }
@@ -129,16 +139,89 @@ async function fixture(context, options = {}) {
       if (!source) { state.unexpected.push(`${method} ${url.pathname}`); throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`); }
       return state.failing.has(url.pathname) ? unavailable() : source(url);
     };
-  }, { accountId, familyId, groupId, taskId, failing: options.failing ?? [] });
+  }, { accountId, familyId, groupId, taskId, failing: options.failing ?? [], delayed: options.delayed ?? [] });
   await page.addScriptTag({ content: javascript });
   await page.evaluate(() => window.renderHomeFixture());
-  await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
-  await page.waitForFunction(() => !document.querySelector('main [aria-busy="true"]'));
+  if (options.waitForData !== false) {
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('main [aria-busy="true"]'));
+  }
   return { page, outbound, errors };
 }
 
 const section = (page, name) => page.getByRole('region', { name, exact: true });
 const rows = async (page, name) => (await section(page, name).getByRole('listitem').allInnerTexts()).map(text => text.replace(/\s+/g, ' ').trim());
+
+test('Home loading reserves content space, respects reduced motion, and resolves sections independently', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce', timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { delayed: ['/api/me', '/api/feed'], waitForData: false });
+    await page.locator('main [role="status"]').waitFor();
+    assert.ok(await page.locator('main [data-slot="skeleton"]').count() >= 6);
+    assert.equal(await page.locator('main [data-slot="skeleton"]').first().evaluate(element => getComputedStyle(element).animationName), 'none');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.evaluate(() => window.homeFixture.release('/api/me'));
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
+    const pages = section(page, 'From pages you follow');
+    await pages.getByRole('status').waitFor();
+    await section(page, 'Your Spaces').getByRole('listitem').filter({ hasText: 'Morgan family' }).waitFor();
+    assert.equal(await pages.locator('[data-slot="skeleton"]').count(), 6);
+    await page.evaluate(() => window.homeFixture.release('/api/feed'));
+    await pages.getByRole('link', { name: 'Read Planting day 1', exact: true }).waitFor();
+    assert.equal(await pages.getByRole('status').count(), 0);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('shared UI: navigation menu supports keyboard focus, Escape, and small screens without making writes', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    const trigger = page.getByRole('button', { name: 'More', exact: true });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const menu = page.getByRole('menu');
+    await menu.waitFor();
+    const items = menu.getByRole('menuitem');
+    assert.deepEqual(await items.allTextContents(), ['Calendar', 'Tasks', 'Events', 'Reminders', 'Documents', 'Medicines']);
+    assert.equal(await items.first().evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await items.nth(1).evaluate(element => element === document.activeElement), true);
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].every(element => {
+      const box = element.getBoundingClientRect();
+      return box.x >= 0 && box.right <= innerWidth && box.height >= 44;
+    }));
+    for (const item of await items.all()) {
+      const box = await item.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.height >= 44, JSON.stringify(box));
+    }
+    assert.equal(await items.nth(1).getAttribute('href'), '/app/tasks');
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('shared UI: header icons have keyboard tooltips and a working skip link', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    const search = page.getByRole('link', { name: 'Search', exact: true });
+    await search.focus();
+    await page.getByRole('tooltip', { name: 'Search', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('tooltip').waitFor({ state: 'hidden' });
+    const skip = page.getByRole('link', { name: 'Skip to content', exact: true });
+    await skip.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#app-content').evaluate(element => element === document.activeElement), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 test('Home shows each section from its own source, and one failing source leaves the others in place', async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, timezoneId: 'UTC' });
@@ -198,9 +281,22 @@ test('without the Spaces list Home still shows the other sections, and it fits a
     assert.equal(await page.evaluate(() => Number.parseFloat(getComputedStyle(document.body).fontSize)), normal * 2);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Home at 320px and 200% text');
     const main = page.getByRole('navigation', { name: 'Main', exact: true });
+    const doubled = await main.locator('span').evaluateAll(elements => {
+      const sizes = elements.map(element => Number.parseFloat(getComputedStyle(element).fontSize));
+      elements.forEach((element, index) => { element.style.fontSize = `${sizes[index] * 2}px`; });
+      return elements.every((element, index) => Number.parseFloat(getComputedStyle(element).fontSize) === sizes[index] * 2);
+    });
+    assert.equal(doubled, true, 'Navigation labels must actually use 200% text');
     for (const label of ['Home', 'Spaces', 'Messages', 'Discover', 'Profile']) {
-      const box = await main.getByRole('link', { name: label, exact: true }).boundingBox();
+      const link = main.getByRole('link', { name: label, exact: true });
+      const box = await link.boundingBox();
       assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.height >= 44, `${label} fits and is at least 44 px tall`);
+      const lines = await link.locator('span').evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      });
+      assert.equal(lines, 1, `${label} must not split a word across lines`);
     }
     await page.screenshot({ path: path.join(root, '.local/screenshots/home-offline-320-large.png'), fullPage: true });
     assert.deepEqual(await page.evaluate(() => window.homeFixture.unexpected), []);

@@ -113,14 +113,17 @@ class Outbox(
 
 /** The app's session store: signing out, an ended session and a different account delete every kept message. */
 class OutboxSessionStore(private val inner: SessionStore, private val outbox: Outbox) : SessionStore {
-    override fun load(): Credentials? = inner.load()
+    @Synchronized
+    override fun load(): Credentials? = inner.load().also { if (it == null) outbox.clear() }
 
+    @Synchronized
     override fun save(credentials: Credentials) {
         if (inner.load()?.accountId != credentials.accountId) outbox.clear()
         inner.save(credentials)
     }
 
     // Kept messages go first, so a failure leaves the person signed in to try again.
+    @Synchronized
     override fun clear() {
         outbox.clear()
         inner.clear()

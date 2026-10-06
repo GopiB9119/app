@@ -5,6 +5,7 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import and_, false, func, select
 
 from app.errors import DomainError
+from app.modules.discovery.live import announce_task
 from app.modules.identity.models import OutboxEvent, User
 from app.modules.planning.models import Task, TaskAccess, TaskAudit, TaskCommand
 from app.modules.planning.schemas import AssigneeView, TaskCursor, TaskListItem, TaskPermissions, TaskView
@@ -145,6 +146,9 @@ class TaskService:
             OutboxEvent(id=identifier, event_type=action, actor_id=member.account_id,
                         aggregate_id=task.id, schema_version=1, created_at=now),
         ])
+        # Ticking a checklist item changes nothing a search can find.
+        if action != "task.checklist_check":
+            announce_task(database, task.id, task.space_id)
         return identifier
 
     def create(self, token, body, key):

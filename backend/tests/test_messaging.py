@@ -93,6 +93,81 @@ def family(client, app):
     return owner, member, space_id
 
 
+def test_unread_marker_changes_for_a_new_message_at_the_same_count_but_not_an_own_send(client, app):
+    owner, member, space_id = family(client, app)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    assert send(client, member, chat["id"], "First unread").status_code == 201
+    first = client.get("/v1/conversations", headers=auth(owner)).json()
+    assert first["unread_count"] == 1
+    marker = first.get("unread_marker")
+    assert isinstance(marker, str) and len(marker) == 64
+    assert all(character in "0123456789abcdef" for character in marker)
+    assert send(client, owner, chat["id"], "Own answer").status_code == 201
+    unchanged = client.get("/v1/conversations", headers=auth(owner)).json()
+    assert (unchanged["unread_count"], unchanged["unread_marker"]) == (1, marker)
+    assert client.post(f"/v1/conversations/{chat['id']}/read", headers=auth(owner), json={"through_position": "2"}).status_code == 200
+    assert send(client, member, chat["id"], "Different unread").status_code == 201
+    again = client.get("/v1/conversations", headers=auth(owner)).json()
+    assert again["unread_count"] == 1
+    assert again["unread_marker"] != marker
+    assert client.get("/v1/conversations", headers=auth(owner)).json()["unread_marker"] == again["unread_marker"]
+
+
+def test_unread_marker_covers_all_authorized_conversations_regardless_of_paging(client, app, monkeypatch):
+    owner, member, space_id = family(client, app)
+    chat = open_chat(client, owner, space_id).json()["data"]
+    assert send(client, member, chat["id"], "Unread in an older conversation").status_code == 201
+    advance(app, seconds=1)
+    second_space = create_space(client, owner, "Second family").json()["data"]["id"]
+    latest = open_chat(client, owner, second_space).json()["data"]
+
+    def forbid_message_body(*args, **kwargs):
+        raise AssertionError("Unread metadata must not decrypt messages")
+
+    monkeypatch.setattr(app.state.messaging.cipher, "open", forbid_message_body)
+    page = client.get("/v1/conversations?limit=1", headers=auth(owner)).json()
+    assert [item["id"] for item in page["data"]] == [latest["id"]]
+    assert page["data"][0]["unread_count"] == 0 and page["unread_count"] == 1
+    cursor = page["pagination"]["next_cursor"]
+    assert cursor is not None
+    for query in ({}, {"cursor": cursor}, {"space_id": second_space}):
+        snapshot = client.get("/v1/conversations", headers=auth(owner), params=query).json()
+        assert (snapshot["unread_count"], snapshot["unread_marker"]) == (1, page["unread_marker"])
+
+
+def test_unread_marker_excludes_private_deleted_and_pre_admission_messages(client, app):
+    owner = account(client, app)
+    member = account(client, app, "marker-member@example.test")
+    space_id = create_space(client, owner).json()["data"]["id"]
+    chat = open_chat(client, owner, space_id).json()["data"]
+    baseline = client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"]
+    assert send(client, owner, chat["id"], "Before joining").status_code == 201
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == baseline
+    admit(client, owner, space_id, member)
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == baseline
+    visible = send(client, owner, chat["id"], "After joining").json()["data"]
+    marker = client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"]
+    assert marker != baseline
+    private_space = create_space(client, owner, "Private elsewhere").json()["data"]["id"]
+    private_chat = open_chat(client, owner, private_space).json()["data"]
+    assert send(client, owner, private_chat["id"], "Not visible to the member").status_code == 201
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == marker
+    removed = client.post(f"/v1/conversations/{chat['id']}/messages/{visible['id']}/delete", headers=auth(owner), json={})
+    assert removed.status_code == 200, removed.text
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == baseline
+    reviewed = roster_entry(client, owner, space_id, member["user"]["id"])
+    removed = client.post(
+        f"/v1/spaces/{space_id}/members/{member['user']['id']}/remove",
+        headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]}, json={},
+    )
+    assert removed.status_code == 200, removed.text
+    assert send(client, owner, chat["id"], "After removal").status_code == 201
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == baseline
+    admit(client, owner, space_id, member)
+    assert client.get("/v1/conversations", headers=auth(member)).json()["unread_marker"] == baseline
+    assert client.get("/v1/conversations", headers=auth(owner)).json()["unread_marker"] != baseline
+
+
 def test_space_chat_is_shared_by_current_members_from_their_admission(client, app):
     owner = account(client, app)
     member = account(client, app, "chat-member@example.test")

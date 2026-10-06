@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { TimezoneListProblem } from "@/features/identity/timezone-list-problem";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { translate, type Language } from "@/features/i18n/messages";
@@ -27,8 +28,9 @@ export { displayInstant, protectedReminderError, ReminderDialog, useReminderAcco
 export function ReminderScreen({ taskId = "" }: { taskId?: string }) {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useReminderAccountGuard(profile.error);
-  if (profile.isPending) return <Shell account><main className="account-loading"><LoaderCircle className="spin" aria-hidden />{t("reminders.loading")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading"><LoaderCircle className="spin" aria-hidden />{t("reminders.loading")}</main></Shell>;
   if (profile.isError || !profile.data) return <Shell account><main className={styles.main}><h1>{t("reminders.unavailable")}</h1><p className="message error" role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} />{t("reminders.retry")}</button></main></Shell>;
   return <ReminderWorkspace key={profile.data.data.id} user={profile.data.data} taskId={taskId} />;
 }

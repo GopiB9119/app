@@ -9,6 +9,12 @@ val REACTIONS = listOf("like", "love", "laugh", "wow", "sad", "thanks")
 const val REPLY_EXCERPT_CHARACTERS = 120
 const val EDIT_WINDOW_MILLISECONDS = 15L * 60 * 1000
 
+/** What became of an @agent request, as its author sees it (DEC-046). */
+val AGENT_REQUEST_STATUSES = setOf("answered", "private", "waiting", "pending", "off", "limited", "too_long", "failed")
+
+/** A request made with @agent in a chat message; [runId] names the agent's request once the agent received it. */
+data class AgentRequestDto(val status: String, @SerializedName("run_id") val runId: String?)
+
 /** The message a reply answers, as this person may see it. */
 data class ReplyDto(
     @SerializedName("message_id") val messageId: String,
@@ -58,6 +64,9 @@ data class MessageDto(
     @SerializedName("reply_to") val replyTo: ReplyDto? = null,
     val reactions: List<ReactionDto>? = null,
     val revision: Int = 1,
+    // Servers from before @agent (DEC-046) leave these out.
+    @SerializedName("from_agent") val fromAgent: Boolean = false,
+    @SerializedName("agent_request") val agentRequest: AgentRequestDto? = null,
 ) {
     val reactionList: List<ReactionDto> get() = reactions.orEmpty()
     /** A missing revision counts as the first. */
@@ -71,7 +80,7 @@ data class EditMessageDto(val body: String)
 data class ReactDto(val reaction: String, val on: Boolean)
 data class MarkReadDto(@SerializedName("through_position") val throughPosition: String)
 
-data class ConversationPage(val items: List<ConversationDto>, val nextCursor: String?, val unreadCount: Int)
+data class ConversationPage(val items: List<ConversationDto>, val nextCursor: String?, val unreadCount: Int, val unreadMarker: String? = null)
 data class MessagePage(val items: List<MessageDto>, val nextCursor: String?)
 
 /** One send attempt identity. A retry reuses this exact key, body and answered message so the server returns the original. */
@@ -80,6 +89,11 @@ data class SendIntent(val accountId: String, val conversationId: String, val key
 enum class MessageProblem { EMPTY, TOO_LONG, CONTROL }
 
 fun normalizeMessage(value: String): String = value.replace("\r\n", "\n").trim()
+
+private val AGENT_MENTION = Regex("(?<![\\p{L}\\p{N}_@.])@agent(?![\\p{L}\\p{N}_])", RegexOption.IGNORE_CASE)
+
+/** Whether a message asks the agent: "@agent" as a word of its own, as the server reads it (DEC-046). */
+fun mentionsAgent(value: String): Boolean = AGENT_MENTION.containsMatchIn(value)
 
 /**
  * Local copy of the definite server rules. Unassigned code points are left to the server because newer

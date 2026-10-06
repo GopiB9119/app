@@ -16,8 +16,11 @@ interface AgentApi {
         @Body body: AgentAskDto): Response<EnvelopeDto<AgentRunDto>>
 
     @GET("v1/agent-runs")
-    suspend fun runs(@Header("Authorization") authorization: String, @Query("space_id") spaceId: String,
+    suspend fun runs(@Header("Authorization") authorization: String, @Query("space_id") spaceId: String?,
         @Query("cursor") cursor: String?, @Query("limit") limit: Int = AGENT_PAGE_SIZE): Response<EnvelopeDto<List<AgentRunDto>>>
+
+    @GET("v1/agent-runs/{run}")
+    suspend fun getRun(@Header("Authorization") authorization: String, @Path("run") runId: String): Response<EnvelopeDto<AgentRunDto>>
 
     @POST("v1/agent-runs/{run}/resume")
     suspend fun answer(@Header("Authorization") authorization: String, @Path("run") runId: String,

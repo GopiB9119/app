@@ -94,6 +94,7 @@ class ConversationView(BaseModel):
 class ConversationPage(Envelope[list[ConversationView]]):
     pagination: Pagination
     unread_count: int = Field(ge=0)
+    unread_marker: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ConversationCursor(Input):
@@ -121,6 +122,18 @@ class ReactionView(BaseModel):
     mine: bool
 
 
+class AgentRequestView(BaseModel):
+    """What became of the viewer's own message that asked the agent with @agent (DEC-046).
+
+    `answered`: the agent replied in the chat. `private`: the reply only says the answer is in the asker's Agent
+    screen, because not everyone in the chat may see it. `waiting`: the agent needs the asker's answer or approval
+    there. `pending`, `failed`: no reply yet, and asking again is allowed. `off`, `limited`, `too_long`: the agent was
+    turned off in the Space, the day's limit was reached, or the request was longer than 500 characters."""
+
+    status: Literal["answered", "private", "waiting", "pending", "off", "limited", "too_long", "failed"]
+    run_id: str | None
+
+
 class MessageView(BaseModel):
     id: str
     conversation_id: str
@@ -137,6 +150,10 @@ class MessageView(BaseModel):
     reply_to: ReplyView | None = None
     reactions: list[ReactionView] = Field(default_factory=list)
     revision: int = Field(default=1, ge=1)
+    # The agent's replies (DEC-046) come from the Space's agent, never from a member: one stable identifier per Space
+    # that is no account, and the name "Agent".
+    from_agent: bool = False
+    agent_request: AgentRequestView | None = None
 
 
 class MessagePage(Envelope[list[MessageView]]):

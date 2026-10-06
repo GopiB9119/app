@@ -137,7 +137,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
     LaunchedEffect(viewKey) { listState.scrollToItem(0) }
     // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
     // so after an action further down, such as saving the editor, bring it into view to be seen and announced.
-    LaunchedEffect(state.error, state.notice, state.messageId) { if (state.error != null || state.notice != null) listState.scrollToItem(0) }
+    LaunchedEffect(state.error, state.notice, state.messageId, state.searchItemGone) { if (state.error != null || state.notice != null || state.searchItemGone) listState.scrollToItem(0) }
     val back: () -> Unit = {
         if (!state.busy) {
             when {
@@ -179,6 +179,9 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                         }
                     }
                     if (state.notice != null) item("notice") { TaskMessage(state.notice, false) }
+                    if (state.searchItemGone) item("search-gone") {
+                        Text(stringResource(R.string.tasks_from_search_gone), modifier = Modifier.fillMaxWidth().testTag("task-search-gone").semantics { liveRegion = LiveRegionMode.Polite })
+                    }
                     if (state.pendingCommand != null && !state.busy) item("unconfirmed") {
                         Column(verticalArrangement = Arrangement.spacedBy(unit * 2)) {
                             Text(stringResource(R.string.tasks_save_unconfirmed), style = MaterialTheme.typography.titleMedium)
@@ -230,7 +233,7 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
                             }
                             if (!state.busy && state.spaces.isEmpty() && state.error == null) item("no-spaces") { Text(stringResource(R.string.tasks_no_spaces), style = MaterialTheme.typography.bodyLarge) }
                             if (!state.busy && state.selectedSpace != null && state.tasks.isEmpty() && state.error == null) item("no-tasks") { Text(stringResource(R.string.tasks_none), style = MaterialTheme.typography.bodyLarge) }
-                            items(state.tasks, key = { "task-${it.task.id}" }) { record -> TaskRow(record, !state.busy, actions.open) }
+                            items(state.tasks, key = { "task-${it.task.id}" }) { record -> TaskRow(record, !state.busy, actions.open, state.openedFromSearchId == record.task.id) }
                             if (state.nextCursor != null) item("load-more") { OutlinedButton(onClick = actions.loadMore, enabled = !state.busy, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(DesignTokens.ControlRadius)) { Text(stringResource(R.string.tasks_load_more)) } }
                         }
                     }
@@ -269,8 +272,9 @@ fun TaskScreen(state: TaskWorkspaceState, actions: TaskActions, onBack: () -> Un
 }
 
 @Composable
-private fun TaskRow(record: TaskRecord, enabled: Boolean, open: (TaskRecord) -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button) { open(record) }.padding(vertical = unit * 2).testTag("task-row-${record.task.id}"), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+private fun TaskRow(record: TaskRecord, enabled: Boolean, open: (TaskRecord) -> Unit, fromSearch: Boolean = false) {
+    Column(Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).clickable(enabled = enabled, role = Role.Button) { open(record) }.padding(vertical = unit * 2).testTag("task-row-${record.task.id}"), verticalArrangement = Arrangement.spacedBy(unit * 2)) {
+        if (fromSearch) Text(stringResource(R.string.tasks_from_search), style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("task-from-search"))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(unit * 3)) {
             Text(record.task.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.primary)
@@ -289,6 +293,7 @@ private fun TaskDetail(record: TaskRecord, state: TaskWorkspaceState, actions: T
     val task = record.task
     val enabled = !state.busy && state.pendingCommand == null && !state.conflict
     Column(verticalArrangement = Arrangement.spacedBy(unit * 5)) {
+        if (state.openedFromSearchId == task.id) Text(stringResource(R.string.tasks_from_search), style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("task-from-search"))
         Text(task.title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Text(stringResource(statusLabel(task.status)), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         TaskPriorityLabel(task)

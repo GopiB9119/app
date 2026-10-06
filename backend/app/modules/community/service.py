@@ -346,6 +346,7 @@ class CommunityService:
             etag=self.page_etag(page) if manager else None,
             moderation=self.moderation_mark(database, page, viewer),
             limited=page.moderation_limited_at is not None, limit=self.limit_mark(database, page, viewer),
+            help_open=page.help_open,
         )
 
     def page_views(self, database, pages, viewer):
@@ -1003,6 +1004,22 @@ class CommunityService:
             next_cursor = self.seal_cursor("comments", viewer, post.id, rows[-1][0].id, after_time=rows[-1][0].created_at) if more else None
             moderator = viewer is not None and self.active_moderator(database, viewer, page.id) is not None
             return [self.comment_view(database, comment, author, viewer, page, moderator) for comment, author in rows], Pagination(next_cursor=next_cursor, has_more=more)
+
+    def read_comment(self, token, comment_id, lock=False):
+        with self.sessions() as database:
+            viewer = self.viewer(database, token)
+            located = database.get(PostComment, comment_id)
+            if located is None:
+                raise not_found("Comment")
+            post, page = self.visible_post(database, viewer, located.post_id, lock=lock)
+            if lock:
+                database.refresh(located, with_for_update=True)
+            if post.status != "published" or located.status != "visible" or not self.can_view_moderated(located, viewer):
+                raise not_found("Comment")
+            if located.author_id in self.blocked(database, viewer, "account"):
+                raise not_found("Comment")
+            author = database.get(User, located.author_id)
+            return self.comment_view(database, located, author, viewer, page)
 
     def create_comment(self, token, post_id, body, key):
         parent_id = str(body.parent_id) if body.parent_id else None

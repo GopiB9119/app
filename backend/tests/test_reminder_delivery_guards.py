@@ -1051,3 +1051,12 @@ def test_the_inbox_lists_the_newest_reminder_first_across_pages(client, app):
     assert second.status_code == 200, second.text
     assert [row["reminder_id"] for row in second.json()["data"]] == [delivered[0]]
     assert second.json()["pagination"] == {"next_cursor": None, "has_more": False}
+
+
+def test_request_reads_plan_their_joins_in_the_written_order_only_while_they_run(app):
+    # Nine joins made PostgreSQL spend about 200 ms planning every request list, so visible() is read in its written order.
+    service = app.state.reminder_requests
+    with app.state.sessions() as database:
+        during = service.read(database, select(func.current_setting("join_collapse_limit")))
+        assert [tuple(row) for row in during] == [("1",)]
+        assert database.scalar(text("SHOW join_collapse_limit")) != "1"

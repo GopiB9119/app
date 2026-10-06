@@ -62,6 +62,10 @@ def app():
     clock = Clock()
     application = create_app(settings, clock)
     application.state.clock = clock
+    # Tests never call a real model: a scripted one answers, and agent runs work in the calling thread.
+    from tests.agent_support import install
+
+    install(application)
     with application.state.engine.begin() as connection:
         # Reference data (the shared vocabulary) comes from the migrations, so emptying it would leave nothing to choose.
         tables = [table for table in Base.metadata.sorted_tables if not table.info.get("reference_data")]

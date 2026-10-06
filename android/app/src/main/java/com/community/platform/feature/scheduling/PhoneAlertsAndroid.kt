@@ -58,9 +58,11 @@ class SharedAlertPrefs(context: Context) : AlertPrefs {
     override val primed: Boolean get() = file.getBoolean("primed", false)
     override val alerted: List<String> get() = file.getString("alerted", "").orEmpty().split(',').filter { it.isNotEmpty() }
     override val unread: Int get() = file.getInt("unread", 0)
+    override val unreadMarker: String? get() = file.getString("unread_marker", null)
     override fun turnOn(accountId: String) { file.edit().clear().putString("account", accountId).commit() }
-    override fun record(primed: Boolean, alerted: List<String>, unread: Int) {
-        file.edit().putBoolean("primed", primed).putString("alerted", alerted.joinToString(",")).putInt("unread", unread).commit()
+    override fun record(primed: Boolean, alerted: List<String>, unread: Int, unreadMarker: String?) {
+        file.edit().putBoolean("primed", primed).putString("alerted", alerted.joinToString(",")).putInt("unread", unread)
+            .putString("unread_marker", unreadMarker).commit()
     }
     override fun clear() { file.edit().clear().commit() }
 }
@@ -142,7 +144,9 @@ class WorkManagerAlertSchedule(private val context: Context) : AlertSchedule {
 
 class RepositoryAlertSource(private val reminders: ReminderRepository, private val messaging: MessagingRepository) : AlertSource {
     override suspend fun inbox(accountId: String): List<InboxNotificationDto> = reminders.inbox(accountId).items
-    override suspend fun unreadMessages(accountId: String): Int = messaging.conversations(accountId).unreadCount
+    override suspend fun unreadMessages(accountId: String): UnreadMessages = messaging.conversations(accountId).let {
+        UnreadMessages(it.unreadCount, it.unreadMarker)
+    }
 }
 
 @Module

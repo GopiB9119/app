@@ -22,7 +22,7 @@ function loadSource(relative, fetch, dependencies = {}) {
   const compiled = typescript.transpileModule(source, { compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.CommonJS } });
   const exports = {};
   runInNewContext(compiled.outputText, {
-    exports, require: name => dependencies[name] ?? require(name), fetch, URL, URLSearchParams, Buffer, AbortSignal, DOMException, Intl, Date, TextEncoder,
+    exports, require: name => dependencies[name] ?? require(name), fetch, URL, URLSearchParams, Buffer, AbortSignal, DOMException, Intl, Date, TextEncoder, crypto, Headers,
     process: { env: { COMMUNITY_API_URL: 'https://backend.example.test', COMMUNITY_WEB_ORIGINS: origin } },
   }, { filename: relative });
   return exports;
@@ -78,10 +78,56 @@ const memory = (overrides = {}) => ({
   source_run_id: runId, created_at: '2026-09-19T10:00:00Z', ...overrides,
 });
 
+test('Web sources retain provenance and only matching YouTube IDs can be embedded', () => {
+  const client = load();
+  const source = { title: 'A cooking video', url: 'https://www.youtube.com/watch?v=pKtweGSC2FU', read: false, video_id: 'pKtweGSC2FU' };
+  const result = client.runSchema.parse(run({ sources: [source] }));
+  assert.deepEqual(JSON.parse(JSON.stringify(result.sources)), [source]);
+  assert.deepEqual(JSON.parse(JSON.stringify(client.runSchema.parse(run()).sources)), []);
+  for (const unsafe of [
+    { ...source, url: 'javascript:alert(1)' },
+    { ...source, url: 'https://youtube.com.attacker.example/watch?v=pKtweGSC2FU' },
+    { ...source, url: 'https://user:secret@www.youtube.com/watch?v=pKtweGSC2FU' },
+    { ...source, video_id: 'different11' },
+    { ...source, video_id: '../script' },
+  ]) assert.equal(client.runSchema.safeParse(run({ sources: [unsafe] })).success, false);
+  for (const url of ['https://youtu.be/pKtweGSC2FU', 'https://www.youtube.com/shorts/pKtweGSC2FU']) {
+    assert.equal(client.runSchema.safeParse(run({ sources: [{ ...source, url }] })).success, true);
+  }
+  const middleware = loadSource('proxy.ts', async () => { throw new Error('No network expected'); });
+  const response = middleware.proxy(new NextRequest(`${origin}/app/agent`));
+  assert.match(response.headers.get('Content-Security-Policy'), /(?:^|; )frame-src https:\/\/www\.youtube-nocookie\.com(?:;|$)/);
+  assert.match(response.headers.get('Content-Security-Policy'), /object-src 'none'/);
+  assert.match(response.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+});
+
+test('Saved web text is bounded, read-only and tied to its requested run', async () => {
+  const item = { source: { title: 'Transit report', url: 'https://news.example.org/transit', read: true, video_id: null },
+    text: 'Service begins October 9.', offset: 0, partial: false };
+  const preview = { run_id: runId, sources: [item] };
+  const network = recorder(() => Response.json({ data: preview }));
+  const client = load(network.fetch);
+  const actual = await client.readWebText(accountId, runId);
+  assert.deepEqual(JSON.parse(JSON.stringify(actual)), preview);
+  assert.equal(network.calls[0].url, `/api/agent-runs/${runId}/web-text`);
+  assert.equal(network.calls[0].options.method, 'GET');
+  assert.equal(network.calls[0].options.headers['X-Account-ID'], accountId);
+  for (const malformed of [
+    { ...preview, sources: [item, item] },
+    { ...preview, sources: [{ ...item, text: 'x'.repeat(2601) }] },
+    { ...preview, sources: [{ ...item, offset: -1 }] },
+    { ...preview, sources: [{ ...item, offset: 200 }] },
+    { ...preview, sources: [{ ...item, source: { ...item.source, read: false } }] },
+    { ...preview, sources: [{ ...item, source: { ...item.source, url: 'javascript:alert(1)' } }] },
+  ]) assert.equal(client.webTextSchema.safeParse(malformed).success, false);
+  const wrongRun = load(async () => Response.json({ data: { ...preview, run_id: spaceId } }));
+  await assert.rejects(wrongRun.readWebText(accountId, runId), error => error.code === 'INVALID_RESPONSE');
+});
+
 test('Agent routes pass the BFF only with reviewed methods and parameters', async () => {
   for (const [method, route] of [
     ['POST', 'agent-runs'], ['GET', `agent-runs?space_id=${spaceId}&limit=20`], ['GET', `agent-runs?space_id=${spaceId}&cursor=c`],
-    ['GET', `agent-runs/${runId}`], ['POST', `agent-runs/${runId}/resume`], ['POST', `agent-runs/${runId}/cancel`],
+    ['GET', `agent-runs/${runId}`], ['GET', `agent-runs/${runId}/web-text`], ['POST', `agent-runs/${runId}/resume`], ['POST', `agent-runs/${runId}/cancel`],
     ['POST', `agent-approvals/${approvalId}/approve`], ['POST', `agent-approvals/${approvalId}/reject`],
     ['GET', 'agent-memories'], ['DELETE', `agent-memories/${memoryId}`], ['GET', 'agent-tools'],
   ]) {
@@ -96,7 +142,10 @@ test('Agent routes pass the BFF only with reviewed methods and parameters', asyn
     ['DELETE', `agent-runs/${runId}`], ['PATCH', `agent-runs/${runId}`], ['GET', `agent-runs/${runId}/resume`],
     ['POST', `agent-approvals/${approvalId}`], ['GET', `agent-approvals/${approvalId}/approve`], ['POST', `agent-approvals/${approvalId}/edit`],
     ['POST', 'agent-memories'], ['PATCH', `agent-memories/${memoryId}`], ['GET', `agent-memories/${memoryId}`], ['POST', 'agent-tools'],
-    ['GET', 'agent-runs/not-a-uuid'],
+    ['GET', 'agent-runs/not-a-uuid'], ['GET', 'agent-runs/not-a-uuid/web-text'], ['POST', `agent-runs/${runId}/web-text`],
+    ['GET', 'agent-web-fetches'], ['POST', 'agent-web-fetches'], ['GET', `agent-web-fetches/${runId}`],
+    ['POST', `agent-web-fetches/${runId}`], ['GET', 'agent-web-fetches/not-a-uuid'],
+    ['POST', 'agent-web-fetches?force=1'], ['GET', `agent-web-fetches/${runId}?account_id=${accountId}`],
   ]) {
     const proxy = bff();
     assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);
@@ -106,6 +155,7 @@ test('Agent routes pass the BFF only with reviewed methods and parameters', asyn
     ['GET', `agent-runs?account_id=${accountId}`], ['GET', `agent-runs?space_id=${spaceId}&space_id=${spaceId}`],
     ['GET', `agent-runs/${runId}?space_id=${spaceId}`], ['GET', 'agent-memories?limit=5'], ['POST', `agent-runs?space_id=${spaceId}`],
     ['POST', `agent-approvals/${approvalId}/approve?force=1`], ['DELETE', `agent-memories/${memoryId}?all=1`],
+    ['GET', `agent-runs/${runId}/web-text?url=https://news.example.org/transit`],
   ]) {
     assert.equal((await bff().request(method, route)).status, 400, `${method} ${route}`);
   }
@@ -132,6 +182,92 @@ test('Agent responses must be consistent before the screen uses them', () => {
   for (const message of ['', '   ', 'x'.repeat(501), 'line one\nline two']) {
     assert.equal(client.messageSchema.safeParse(message).success, false, JSON.stringify(message));
   }
+});
+
+for (const kind of ['event', 'document', 'page', 'space', 'interests']) {
+  test(`Read-only agent ${kind} evidence survives answers and request history`, async () => {
+    const reference = kind === 'interests' ? 'topic:environment' : spaceId;
+    const result = run({
+      status: 'completed', outcome: 'answered', approval: null, intent: `list_${kind}s`,
+      answer: 'Here is the information you can see.', finished_at: '2026-09-19T10:00:01Z',
+      evidence: [{ kind, ref: reference, label: `Visible ${kind}` }],
+    });
+    const network = recorder(url => Response.json({
+      data: url.includes('?') ? [result] : result,
+      pagination: { next_cursor: null, has_more: false }, request_id: 'r',
+    }));
+    const client = load(network.fetch);
+    const answer = await client.askAgent({ accountId, spaceId, message: 'Show me what I can see', key });
+    const history = await client.runPage(accountId, spaceId, null);
+    assert.equal(answer.evidence[0].kind, kind);
+    assert.equal(answer.evidence[0].ref, reference);
+    assert.equal(history.data[0].evidence[0].label, `Visible ${kind}`);
+    assert.equal(client.runSchema.safeParse({
+      ...result, evidence: [{ kind: 'unregistered', ref: spaceId, label: 'Unknown source' }],
+    }).success, false);
+  });
+}
+
+for (const kind of ['post', 'comment', 'report', 'message']) {
+  test(`Reviewed public ${kind} results survive decisions and history`, async () => {
+    const result = run({
+      status: 'completed', outcome: 'action_completed', intent: 'public_action', answer: 'Approved action completed.',
+      finished_at: '2026-09-19T10:00:01Z',
+      approval: approval({ status: 'approved', decided_at: '2026-09-19T10:00:01Z', result_ref: memoryId }),
+      evidence: [{ kind, ref: memoryId, label: `Reviewed ${kind}` }],
+    });
+    const network = recorder(url => Response.json({
+      data: url.includes('?') ? [result] : result,
+      pagination: { next_cursor: null, has_more: false }, request_id: 'r',
+    }));
+    const client = load(network.fetch);
+    const decided = await client.decide({ accountId, approval: approval(), action: 'approve', key });
+    const history = await client.runPage(accountId, spaceId, null);
+    assert.equal(decided.evidence[0].kind, kind);
+    assert.equal(history.data[0].approval.result_ref, memoryId);
+    assert.equal(network.calls[0].options.headers['Idempotency-Key'], key);
+    assert.equal(network.calls[0].options.headers['If-Match'], etag);
+  });
+}
+
+test('Agent run plan, evidence, action result references and timestamped events survive create and history parsing', async () => {
+  const resultRef = '5b7c9d11-2468-4ace-8bdf-13579bdf2468';
+  const createdAt = '2026-09-19T10:00:01Z';
+  const record = run({
+    status: 'completed', outcome: 'answered', approval: null, answer: 'Here is the information you can see.',
+    finished_at: createdAt,
+    plan: [{ id: 'check', label: 'Check the selected Space', kind: 'check', tool: null, status: 'done' }],
+    tool_calls: [{ id: runId, sequence: 1, tool_name: 'family.events.list', tool_version: '1', effect: 'read', risk: 'low',
+      status: 'succeeded', summary: 'Read the authorized events.', result_ref: resultRef, error_code: null, approval_id: null, created_at: createdAt }],
+    evidence: [{ kind: 'event', ref: spaceId, label: 'Upcoming events' }],
+    events: [{ sequence: 2, event_type: 'run.completed', summary: 'The request finished.', created_at: createdAt }],
+  });
+  const network = recorder(url => Response.json({
+    data: url.includes('?') ? [record] : record,
+    pagination: { next_cursor: null, has_more: false }, request_id: 'r',
+  }));
+  const client = load(network.fetch);
+  const created = await client.askAgent({ accountId, spaceId, message: 'Show upcoming events', key });
+  const history = await client.runPage(accountId, spaceId, null);
+  for (const parsed of [created, history.data[0]]) {
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.plan)), record.plan);
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.evidence)), record.evidence);
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.tool_calls)), record.tool_calls);
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.events)), record.events);
+  }
+});
+
+test('A private Agent request is read by its existing run ID route', async () => {
+  const record = run({ answer: 'The private answer.', plan: [{ id: 'step-1', label: 'Read task 12', kind: 'tool', tool: 'tasks.list', status: 'done' }] });
+  const network = recorder(() => Response.json({ data: record, request_id: 'r' }));
+  const client = load(network.fetch);
+  const actual = await client.readRun(accountId, runId);
+  assert.equal(actual.id, runId);
+  assert.equal(actual.answer, 'The private answer.');
+  assert.equal(actual.plan[0].label, 'Read task 12');
+  assert.equal(network.calls[0].url, `/api/agent-runs/${runId}`);
+  assert.equal(network.calls[0].options.headers['X-Account-ID'], accountId);
+  assert.equal(network.calls[0].options.method, 'GET');
 });
 
 test('Asking, answering and deciding send the exact reviewed request', async () => {

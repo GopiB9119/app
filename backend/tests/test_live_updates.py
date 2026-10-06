@@ -4,16 +4,32 @@ import queue
 import socket
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
+import anyio
 import pytest
+from alembic import command
+from alembic.config import Config
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import OperationalError
 
 from app.errors import DomainError
+from app.modules.identity.models import AccountSession, User
+from app.modules.realtime.api import LiveResponse
+from app.modules.realtime.api import live as live_route
+from app.modules.realtime import database as live_database
 from app.modules.realtime.hub import signal
+from app.modules.realtime import leases as lease_module
+from app.modules.realtime.models import LiveConnectionLease
 from tests.test_identity import account, auth
 from tests.test_messaging import admit, family, open_chat, send
 from tests.test_reminder_delivery_guards import schedule_reminder
@@ -137,13 +153,19 @@ def test_ending_a_membership_tells_each_chat_it_changes_at_once(client, app):
     removed = leave_or_remove(client, owner, space_id, member, "remove")
     assert removed.status_code == 200, removed.text
     by_id = lambda items: sorted(items, key=lambda item: item["conversation_id"])
-    assert by_id(hints["member"].since_last()) == by_id([change(chat, "access"), change(direct, "access"), change(between, "access")])
+    lost = {"kind": "search", "space_id": space_id, "reason": "access"}
+
+    def chats_and_searches(items):
+        """The chat hints in a fixed order, and the search hints: whoever loses the place also hears that what they could search there ended (DEC-051)."""
+        return by_id([item for item in items if item["kind"] == "conversation"]), [item for item in items if item["kind"] == "search"]
+
+    assert chats_and_searches(hints["member"].since_last()) == (by_id([change(chat, "access"), change(direct, "access"), change(between, "access")]), [lost])
     assert hints["owner"].since_last() == [change(direct, "access")]
     assert hints["third"].since_last() == [change(between, "access")]
 
     left = leave_or_remove(client, third, space_id, third, "leave")
     assert left.status_code == 200, left.text
-    assert by_id(hints["third"].since_last()) == by_id([change(chat, "access"), change(others, "access"), change(between, "access")])
+    assert chats_and_searches(hints["third"].since_last()) == (by_id([change(chat, "access"), change(others, "access"), change(between, "access")]), [lost])
     assert hints["owner"].since_last() == [change(others, "access")]
     # The former member is no longer told anything about this Space, even about a chat they were in.
     assert hints["member"].since_last() == []
@@ -340,3 +362,554 @@ def test_a_closed_stream_frees_its_place_at_once_on_a_real_server(client, app):
         finally:
             for stream in streams:
                 stream.close()
+
+
+def test_live_connection_quota_is_shared_across_real_server_processes(client, app):
+    """T106 part 5: five streams share one account limit across independent API processes."""
+    app.state.clock.now = datetime.now(timezone.utc)
+    person = account(client, app)
+    other = account(client, app, "other-live@example.test")
+    assert app.state.live.per_account == 5
+    responses = []
+
+    def opened(http, actor=person):
+        response = http.send(http.build_request("GET", "/v1/live", headers=auth(actor)), stream=True)
+        responses.append(response)
+        if response.status_code == 200:
+            response.lines = response.iter_lines()
+            for line in response.lines:
+                if line.startswith("event:"):
+                    assert line == "event: ready"
+                    break
+            else:
+                raise AssertionError("The admitted stream closed before ready.")
+        return response
+
+    def refused(response):
+        assert response.status_code == 429, (
+            "Five ready streams across two API processes must refuse a sixth before ready; "
+            f"received HTTP {response.status_code}."
+        )
+        response.read()
+        assert response.json()["error"]["code"] == "LIVE_LIMIT_REACHED"
+        assert response.headers["retry-after"] == "30"
+        assert "event: ready" not in response.text
+        response.close()
+
+    with real_server(app, max_seconds=600) as first, real_server(app, max_seconds=600) as second:
+        try:
+            streams = [opened(first) for _ in range(3)] + [opened(second) for _ in range(2)]
+            assert [stream.status_code for stream in streams] == [200] * 5
+            assert opened(second, other).status_code == 200, "Another account shared this account's quota."
+            refused(opened(second))
+
+            streams[0].close()
+            deadline = time.monotonic() + 5
+            while True:
+                replacement = opened(second)
+                if replacement.status_code == 200:
+                    break
+                refused(replacement)
+                assert time.monotonic() < deadline, "Disconnect did not free a slot on the other API process."
+                time.sleep(0.1)
+            refused(opened(first))
+        finally:
+            for response in responses:
+                response.close()
+            assert all(response.is_closed for response in responses)
+
+
+def lease_count(app):
+    with app.state.sessions() as database:
+        return database.scalar(select(func.count()).select_from(LiveConnectionLease))
+
+
+def test_live_leases_serialize_the_concurrent_final_slot(client, app):
+    person = account(client, app)
+    service = app.state.live
+    held = [service.acquire(person["session_token"]) for _ in range(4)]
+    barrier = threading.Barrier(2)
+
+    def acquire():
+        barrier.wait(timeout=10)
+        try:
+            return service.acquire(person["session_token"])
+        except DomainError as error:
+            return error
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(lambda _index: acquire(), range(2)))
+        admitted = [result for result in results if not isinstance(result, DomainError)]
+        refused = [result for result in results if isinstance(result, DomainError)]
+        held.extend(admitted)
+        assert len(admitted) == len(refused) == 1
+        assert refused[0].status == 429 and refused[0].retry_after == 30
+        assert lease_count(app) == 5
+    finally:
+        for reservation in held:
+            service.leases.release(reservation)
+    assert lease_count(app) == 0
+
+
+def wait_for_live_lock(app, query_fragment):
+    deadline = time.monotonic() + 5
+    while True:
+        with app.state.sessions() as observer:
+            waiting = observer.scalar(text(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks AS locks JOIN pg_stat_activity AS activity USING (pid) "
+                "WHERE activity.datname = current_database() AND locks.granted = false "
+                "AND activity.query LIKE :query)"
+            ), {"query": f"%{query_fragment}%"})
+        if waiting:
+            return
+        assert time.monotonic() < deadline, "The operation never appeared as waiting in pg_locks."
+
+
+@pytest.mark.parametrize("ending", ["revoked", "expired"])
+def test_live_admission_rechecks_revocation_after_a_proven_account_lock_wait(client, app, ending):
+    person = account(client, app)
+    service = app.state.live
+    with app.state.sessions.begin() as locked:
+        locked.execute(select(User).where(User.id == person["user"]["id"]).with_for_update())
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            future = worker.submit(service.acquire, person["session_token"])
+            try:
+                wait_for_live_lock(app, "account_sessions%FOR UPDATE")
+                values = {"revoked_at": app.state.clock()} if ending == "revoked" else {"expires_at": app.state.clock()}
+                locked.execute(update(AccountSession).where(
+                    AccountSession.account_id == person["user"]["id"],
+                ).values(**values))
+                locked.commit()
+                with pytest.raises(DomainError) as refused:
+                    future.result(timeout=10)
+                assert refused.value.status == 401
+            finally:
+                locked.rollback()
+    assert lease_count(app) == 0
+
+
+@pytest.mark.parametrize("ending", ["before_start", "start_error", "send_error", "disconnect", "cancel_send", "timeout", "revoked", "stalled_send", "expired_before_start", "expired_after_start"])
+def test_live_response_owns_and_releases_its_reservation(client, app, ending):
+    person = account(client, app)
+    service = app.state.live
+    service.heartbeat_seconds = 0.01
+    service.recheck_seconds = 0
+    service.max_seconds = 0.03
+    service.leases.renew_seconds = 0.25
+    service.leases.lease_seconds = 3
+    reservation = service.acquire(person["session_token"])
+    pool = app.state.engine.pool
+    assert pool.checkedout() == 0
+
+    async def scenario():
+        response = LiveResponse(service, person["session_token"], reservation)
+        frames = []
+        blocked = asyncio.Event()
+        if ending == "expired_before_start":
+            reservation.deadline = time.monotonic() - 1
+        if ending == "before_start":
+            async def never_started(_send):
+                blocked.set()
+                await asyncio.Event().wait()
+            response.stream_response = never_started
+        if ending == "revoked":
+            assert client.post("/v1/auth/logout", headers=auth(person)).status_code == 200
+
+        async def receive():
+            if ending == "before_start":
+                await blocked.wait()
+                return {"type": "http.disconnect"}
+            if ending == "disconnect":
+                await blocked.wait()
+                return {"type": "http.disconnect"}
+            await asyncio.Event().wait()
+
+        async def send_frame(message):
+            frames.append(message)
+            if ending == "expired_after_start" and message["type"] == "http.response.start":
+                reservation.deadline = time.monotonic() - 1
+            if ending == "start_error" and message["type"] == "http.response.start":
+                raise OSError("synthetic start failure")
+            if message["type"] == "http.response.body":
+                blocked.set()
+                if ending == "send_error":
+                    raise OSError("synthetic write failure")
+                if ending in ("cancel_send", "stalled_send"):
+                    await asyncio.Event().wait()
+
+        task = asyncio.create_task(response({}, receive, send_frame))
+        if ending == "cancel_send":
+            await blocked.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        elif ending in ("start_error", "send_error"):
+            with pytest.raises(OSError):
+                await task
+        elif ending == "expired_before_start":
+            with pytest.raises(DomainError) as refused:
+                await task
+            assert refused.value.status == 503
+            assert frames == []
+        else:
+            await asyncio.wait_for(task, timeout=5)
+        body = b"".join(message.get("body", b"") for message in frames)
+        if ending == "timeout":
+            assert b'"reason":"time_limit"' in body
+        if ending == "revoked":
+            assert b'"reason":"signed_out"' in body
+        if ending == "stalled_send":
+            assert b"event: end" not in body
+        if ending == "expired_after_start":
+            assert body == b"", "Expired ownership sent a pending frame."
+
+    asyncio.run(scenario())
+    assert app.state.live_hub.count(person["user"]["id"]) == 0
+    assert lease_count(app) == 0
+    assert pool.checkedout() == 0
+
+
+def test_live_expired_ownership_cannot_renew_or_release_its_replacement(client, app):
+    person = account(client, app)
+    leases = app.state.live.leases
+    stale = app.state.live.acquire(person["session_token"])
+    with app.state.sessions.begin() as database:
+        database.execute(update(LiveConnectionLease).where(LiveConnectionLease.id == stale.id).values(
+            expires_at=func.clock_timestamp() - timedelta(seconds=1),
+        ))
+    with pytest.raises(DomainError) as refused:
+        leases.renew(stale)
+    assert refused.value.status == 503
+    replacement = app.state.live.acquire(person["session_token"])
+    leases.release(stale)
+    leases.release(stale)
+    leases.renew(replacement)
+    with app.state.sessions() as database:
+        assert database.get(LiveConnectionLease, replacement.id) is not None
+        assert database.get(LiveConnectionLease, stale.id) is None
+    with pytest.raises(DomainError):
+        leases.renew(stale)
+    leases.release(replacement)
+    assert lease_count(app) == 0
+
+
+def test_live_expired_dead_account_leases_are_reclaimed_in_bounded_batches(client, app):
+    person = account(client, app)
+    leases = app.state.live.leases
+    with app.state.sessions.begin() as database:
+        database.add_all([LiveConnectionLease(
+            id=str(uuid4()), account_id=person["user"]["id"],
+            expires_at=func.clock_timestamp() - timedelta(seconds=1),
+        ) for _index in range(leases.cleanup_limit + 1)])
+    leases.cleanup()
+    assert lease_count(app) == 1
+    leases.cleanup()
+    assert lease_count(app) == 0
+    abandoned = app.state.live.acquire(person["session_token"])
+    with app.state.sessions.begin() as database:
+        database.execute(update(LiveConnectionLease).where(LiveConnectionLease.id == abandoned.id).values(
+            expires_at=func.clock_timestamp() - timedelta(seconds=1),
+        ))
+    deadline = time.monotonic() + leases.renew_seconds + 5
+    while lease_count(app):
+        assert time.monotonic() < deadline, "The reaper required this account to reconnect."
+    with pytest.raises(DomainError):
+        leases.renew(abandoned)
+
+
+@pytest.mark.parametrize("failure", ["authentication", "admission", "renewal", "subscription"])
+def test_live_coordination_failure_never_falls_back_to_local_quota(client, app, monkeypatch, failure):
+    person = account(client, app)
+    service = app.state.live
+
+    def unavailable(*_args, **_kwargs):
+        raise OperationalError("synthetic coordination outage", {}, Exception())
+
+    if failure in ("authentication", "admission"):
+        if failure == "authentication":
+            monkeypatch.setattr(service.identity, "authenticate", unavailable)
+        else:
+            monkeypatch.setattr(service.leases, "count", unavailable)
+        response = client.get("/v1/live", headers=auth(person))
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "SERVICE_UNAVAILABLE"
+        assert "event: ready" not in response.text
+    else:
+        reservation = service.acquire(person["session_token"])
+        if failure == "renewal":
+            configure = service.leases.configure
+
+            def fail_once(database):
+                monkeypatch.setattr(service.leases, "configure", configure)
+                unavailable()
+
+            monkeypatch.setattr(service.leases, "configure", fail_once)
+        else:
+            monkeypatch.setattr(service.hub, "subscribe", unavailable)
+
+        async def scenario():
+            stream = service.stream(person["session_token"], person["user"]["id"], reservation)
+            with pytest.raises(DomainError) as refused:
+                await anext(stream)
+            assert refused.value.status == 503
+            await stream.aclose()
+
+        asyncio.run(scenario())
+    assert lease_count(app) == 0
+    assert service.hub.count(person["user"]["id"]) == 0
+
+
+def test_live_renewal_does_not_change_the_heartbeat_cadence(client, app):
+    person = account(client, app)
+    service = app.state.live
+    service.heartbeat_seconds = 0.3
+    service.leases.renew_seconds = 0.03
+
+    async def scenario():
+        stream = service.stream(person["session_token"], person["user"]["id"])
+        try:
+            assert await anext(stream) == "retry: 5000\n\n"
+            assert (await anext(stream)).startswith("event: ready")
+            started = time.monotonic()
+            assert await anext(stream) == ": keep-alive\n\n"
+            assert time.monotonic() - started >= 0.28, "Lease maintenance emitted an early heartbeat."
+        finally:
+            await stream.aclose()
+
+    asyncio.run(scenario())
+    assert lease_count(app) == 0
+
+
+@pytest.mark.parametrize("failure", ["renewal", "authentication"])
+def test_live_coordination_loss_after_ready_closes_without_a_completion(client, app, monkeypatch, failure):
+    person = account(client, app)
+    service = app.state.live
+    service.heartbeat_seconds = service.leases.renew_seconds = 0.01
+    service.recheck_seconds = 0
+
+    async def scenario():
+        stream = service.stream(person["session_token"], person["user"]["id"])
+        assert await anext(stream) == "retry: 5000\n\n"
+        assert (await anext(stream)).startswith("event: ready")
+        configure = service.leases.configure
+
+        def fail_once(database):
+            monkeypatch.setattr(service.leases, "configure", configure)
+            raise OperationalError("synthetic lost coordination", {}, Exception())
+
+        if failure == "renewal":
+            monkeypatch.setattr(service.leases, "configure", fail_once)
+        else:
+            def fail_authentication(*_args, **_kwargs):
+                raise OperationalError("synthetic unavailable session check", {}, Exception())
+
+            monkeypatch.setattr(service.identity, "authenticate", fail_authentication)
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        await stream.aclose()
+
+    asyncio.run(scenario())
+    assert lease_count(app) == 0
+
+
+def test_live_reaper_cleans_a_dead_process_without_new_admissions(client, app):
+    person = account(client, app)
+    with app.state.sessions.begin() as database:
+        database.add(LiveConnectionLease(
+            id=str(uuid4()), account_id=person["user"]["id"],
+            expires_at=func.clock_timestamp() - timedelta(seconds=1),
+        ))
+    deadline = time.monotonic() + app.state.live.leases.renew_seconds + 5
+    while lease_count(app):
+        assert time.monotonic() < deadline, "Idle API processes did not reclaim dead-process leases."
+
+
+def test_live_admission_lock_wait_is_finite_and_leaves_no_reservation(client, app):
+    person = account(client, app)
+    with app.state.sessions.begin() as locked:
+        locked.execute(select(User).where(User.id == person["user"]["id"]).with_for_update())
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            started = time.monotonic()
+            future = worker.submit(app.state.live.acquire, person["session_token"])
+            wait_for_live_lock(app, "account_sessions%FOR UPDATE")
+            with pytest.raises(DomainError) as refused:
+                future.result(timeout=5)
+            assert refused.value.status == 503
+            assert time.monotonic() - started < 5
+    assert lease_count(app) == 0
+    assert app.state.engine.pool.checkedout() == 0
+
+
+def test_live_renewal_rechecks_database_expiry_after_a_proven_lock_wait(client, app):
+    person = account(client, app)
+    service = app.state.live
+    reservation = service.acquire(person["session_token"])
+    try:
+        with app.state.sessions.begin() as locked:
+            locked.execute(select(LiveConnectionLease).where(LiveConnectionLease.id == reservation.id).with_for_update())
+            with ThreadPoolExecutor(max_workers=1) as worker:
+                future = worker.submit(service.leases.renew, reservation)
+                try:
+                    wait_for_live_lock(app, "live_connection_leases%FOR UPDATE")
+                    locked.execute(update(LiveConnectionLease).where(LiveConnectionLease.id == reservation.id).values(
+                        expires_at=func.clock_timestamp() - timedelta(seconds=1),
+                    ))
+                    locked.commit()
+                    with pytest.raises(DomainError) as refused:
+                        future.result(timeout=5)
+                    assert refused.value.status == 503
+                finally:
+                    locked.rollback()
+        with app.state.sessions() as database:
+            assert database.scalar(select(LiveConnectionLease.expires_at <= func.clock_timestamp()).where(
+                LiveConnectionLease.id == reservation.id,
+            ))
+    finally:
+        service.leases.release(reservation)
+
+
+def test_live_renewal_rejects_unchanged_row_expiry_without_persisting_extension(client, app):
+    person = account(client, app)
+    service = app.state.live
+    reservation = service.acquire(person["session_token"])
+    try:
+        with app.state.sessions.begin() as database:
+            expiry = database.scalar(update(LiveConnectionLease).where(
+                LiveConnectionLease.id == reservation.id,
+            ).values(expires_at=func.clock_timestamp() + timedelta(seconds=0.5)).returning(LiveConnectionLease.expires_at))
+        reservation.deadline = time.monotonic() + 0.5
+        with app.state.sessions.begin() as locked, ThreadPoolExecutor(max_workers=1) as worker:
+            locked.execute(select(LiveConnectionLease).where(LiveConnectionLease.id == reservation.id).with_for_update())
+            future = worker.submit(service.leases.renew, reservation)
+            try:
+                wait_for_live_lock(app, "live_connection_leases%")
+                while True:
+                    with app.state.sessions() as observer:
+                        expired = observer.scalar(select(func.clock_timestamp() >= expiry))
+                    if expired and time.monotonic() >= reservation.deadline:
+                        break
+                locked.commit()
+                with pytest.raises(DomainError) as refused:
+                    future.result(timeout=5)
+                assert refused.value.status == 503
+            finally:
+                locked.rollback()
+        with app.state.sessions() as database:
+            assert database.scalar(select(LiveConnectionLease.expires_at).where(
+                LiveConnectionLease.id == reservation.id,
+            )) == expiry, "A refused late renewal committed an extension."
+    finally:
+        service.leases.release(reservation)
+
+
+def test_live_release_pool_exhaustion_is_bounded_and_returns_every_checkout(client, app, monkeypatch):
+    person = account(client, app)
+    leases = app.state.live.leases
+    reservation = app.state.live.acquire(person["session_token"])
+    engine = getattr(leases, "engine", app.state.engine)
+    capacity = engine.pool.size() + engine.pool._max_overflow
+    monkeypatch.setattr(engine.pool, "_timeout", 0.8 if engine is app.state.engine else engine.pool.timeout())
+    held = [engine.connect() for _index in range(capacity)]
+    try:
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            started = time.monotonic()
+            worker.submit(leases.release, reservation).result(timeout=2)
+            assert time.monotonic() - started < 0.65, "Release waited on the general-purpose pool."
+    finally:
+        for connection in held:
+            connection.close()
+        leases.release(reservation)
+    assert engine.pool.checkedout() == 0
+    assert app.state.engine.pool.checkedout() == 0
+    assert lease_count(app) == 0
+
+
+def test_live_route_cancellation_during_acquire_releases_before_response_handoff(client, app, monkeypatch):
+    person = account(client, app)
+    service = app.state.live
+    entered, proceed = threading.Event(), threading.Event()
+    held, responses = [], []
+    acquire = service.acquire
+
+    def paused(token):
+        reservation = acquire(token)
+        held.append(reservation)
+        entered.set()
+        assert proceed.wait(timeout=5)
+        return reservation
+
+    monkeypatch.setattr(service, "acquire", paused)
+
+    async def scenario():
+        async with anyio.create_task_group() as group:
+            scopes = []
+
+            async def request():
+                with anyio.CancelScope() as scope:
+                    scopes.append(scope)
+                    responses.append(await live_route(Request({
+                        "type": "http", "app": app,
+                        "headers": [(b"authorization", ("Bearer " + person["session_token"]).encode())],
+                    })))
+
+            group.start_soon(request)
+            assert await anyio.to_thread.run_sync(lambda: entered.wait(timeout=5))
+            scopes[0].cancel()
+            proceed.set()
+
+    try:
+        anyio.run(scenario)
+        assert responses == [], "A cancelled request handed off an unowned response."
+        assert lease_count(app) == 0
+        assert service.hub.count(person["user"]["id"]) == 0
+        assert service.leases.engine.pool.checkedout() == 0
+    finally:
+        proceed.set()
+        for reservation in held:
+            service.leases.release(reservation)
+
+
+def test_live_lease_deadlines_include_elapsed_database_call_time(client, app, monkeypatch):
+    person = account(client, app)
+    leases = app.state.live.leases
+    ticks = iter([100.0, 101.0, 102.0, 103.0])
+    monkeypatch.setattr(lease_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    reservation = app.state.live.acquire(person["session_token"])
+    try:
+        assert reservation.deadline == pytest.approx(100 + leases.lease_seconds - 0.1)
+        leases.renew(reservation)
+        assert reservation.deadline == pytest.approx(102 + leases.lease_seconds - 0.1)
+    finally:
+        leases.release(reservation)
+
+
+def test_live_lease_migration_preserves_identity_and_refuses_active_downgrade(client, app):
+    person = account(client, app)
+    service = app.state.live
+    reservation = service.acquire(person["session_token"])
+    config = Config("alembic.ini")
+    try:
+        with pytest.raises(RuntimeError, match="Live connections must expire"):
+            command.downgrade(config, "0046")
+        assert lease_count(app) == 1
+        assert client.get("/v1/me", headers=auth(person)).status_code == 200
+    finally:
+        service.leases.release(reservation)
+    try:
+        command.downgrade(config, "0046")
+        assert client.get("/v1/me", headers=auth(person)).json()["data"]["id"] == person["user"]["id"]
+    finally:
+        command.upgrade(config, "head")
+    from tests.test_migrations import test_migrated_schema_matches_models
+    test_migrated_schema_matches_models(app)
+
+
+def test_live_reaper_is_owned_by_the_serving_application_lifespan(app):
+    leases = app.state.live.leases
+    assert leases.thread is None, "Constructing an application started database cleanup."
+    with TestClient(app):
+        worker = leases.thread
+        assert worker is not None and worker.is_alive()
+    assert not worker.is_alive()
+    assert app.state.engine.pool.checkedout() == 0

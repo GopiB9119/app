@@ -3,8 +3,8 @@
     <style name="Base.Theme.CommunityPlatform" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F6F8F6</item>
-        <item name="android:navigationBarColor">#18362F</item>
+        <item name="android:statusBarColor">#F2F2F7</item>
+        <item name="android:navigationBarColor">#1C1C1E</item>
     </style>
     <style name="Theme.CommunityPlatform" parent="Base.Theme.CommunityPlatform" />
 </resources>

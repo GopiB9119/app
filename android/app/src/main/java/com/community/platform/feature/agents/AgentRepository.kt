@@ -14,6 +14,7 @@ private val APPROVAL_STATUSES = setOf("pending", "approved", "rejected", "expire
 private val OUTCOMES = setOf("answered", "refused", "action_completed")
 private val ETAG = Regex("\"[a-f0-9]{64}\"")
 private val VERSION = Regex("[1-9][0-9]*")
+private val SPACE_TYPES = setOf("family", "couple", "group", "solo")
 
 @Singleton
 class AgentRepository @Inject constructor(private val api: AgentApi, private val accounts: AccountRepository) {
@@ -26,13 +27,35 @@ class AgentRepository @Inject constructor(private val api: AgentApi, private val
     private fun identifier(value: String) = require(UUID.fromString(value).toString().equals(value, ignoreCase = true))
     private fun text(value: String, limit: Int) = require(value.isNotBlank() && value.codePointCount(0, value.length) <= limit)
 
-    fun run(value: AgentRunDto, spaceId: String): AgentRunDto = validate {
-        identifier(value.id); identifier(value.spaceId)
+    /** [spaceId] null means the person's Main Agent, whose runs name no Space. */
+    fun run(value: AgentRunDto, spaceId: String?): AgentRunDto = validate {
+        identifier(value.id); value.spaceId?.let(::identifier)
         require(value.spaceId == spaceId)
+        require(value.agentKind == null || value.agentKind == if (spaceId == null) "main" else "space")
+        value.handoffs?.let { handoffs ->
+            require(handoffs.size <= 6 && handoffs.map { it.spaceId }.distinct().size == handoffs.size)
+            handoffs.forEach { identifier(it.spaceId); text(it.name, 200); require(it.spaceType in SPACE_TYPES) }
+        }
         text(value.message, AGENT_MESSAGE_LIMIT)
         require(value.status in RUN_STATUSES && (value.outcome == null || value.outcome in OUTCOMES))
         require(VERSION.matches(value.version))
         Instant.parse(value.createdAt); Instant.parse(value.updatedAt); value.finishedAt?.let(Instant::parse)
+        value.plan.forEach { step ->
+            require(step.id.isNotBlank() && step.label.isNotBlank() && (step.tool == null || step.tool.isNotBlank()))
+            require(step.kind in AgentPlanKind.values() && step.status in AgentPlanStatus.values())
+        }
+        value.evidence.forEach { evidence ->
+            require(evidence.label.isNotBlank() && evidence.kind in AgentEvidenceKind.values())
+        }
+        value.toolCalls.forEach { call ->
+            require(call.id.isNotBlank() && call.toolName.isNotBlank() && call.toolVersion.isNotBlank() && call.summary.isNotBlank())
+            require(call.effect in AgentToolEffect.values() && call.risk in AgentToolRisk.values() && call.status in AgentToolStatus.values())
+            Instant.parse(call.createdAt)
+        }
+        value.events.forEach { event ->
+            require(event.eventType.isNotBlank() && event.summary.isNotBlank())
+            Instant.parse(event.createdAt)
+        }
         val question = value.question
         require((value.status == "waiting_for_user") == (question != null))
         question?.let { identifier(it.id); text(it.text, 2000); Instant.parse(it.expiresAt) }
@@ -60,7 +83,7 @@ class AgentRepository @Inject constructor(private val api: AgentApi, private val
         value
     }
 
-    suspend fun runs(accountId: String, spaceId: String, cursor: String?, seenIds: Set<String> = emptySet(),
+    suspend fun runs(accountId: String, spaceId: String?, cursor: String?, seenIds: Set<String> = emptySet(),
         seenCursors: Set<String> = emptySet()): AgentRunPage = accounts.authorized(accountId) { authorization ->
         val response = api.runs(authorization, spaceId, cursor)
         val items = accounts.result(response)
@@ -73,6 +96,14 @@ class AgentRepository @Inject constructor(private val api: AgentApi, private val
             pagination.nextCursor?.let { require(it.isNotBlank() && it.length <= 2048 && it != cursor && it !in seenCursors && runs.isNotEmpty()) }
         }
         AgentRunPage(runs, pagination.nextCursor)
+    }
+
+    suspend fun getRun(accountId: String, runId: String, spaceId: String?): AgentRunDto = accounts.authorized(accountId) { authorization ->
+        identifier(runId)
+        spaceId?.let(::identifier)
+        run(accounts.result(api.getRun(authorization, runId)), spaceId).also { value ->
+            if (value.id != runId) invalid()
+        }
     }
 
     suspend fun ask(command: AgentCommand.Ask): AgentRunDto = accounts.authorized(command.accountId) {

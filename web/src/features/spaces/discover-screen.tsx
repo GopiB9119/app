@@ -8,6 +8,7 @@ import { ArrowLeft, Check, Globe, LoaderCircle, RefreshCw, Search, Send, UndoDot
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId, MessageValues } from "@/features/i18n/messages";
 import { askToJoin, cancelJoinRequest, characters, findGroups, lengthProblem, myJoinRequests } from "./client";
@@ -23,10 +24,11 @@ const statusLabels: Record<JoinRequest["status"], MessageId> = {
 export function DiscoverScreen() {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) window.location.replace("/login");
   }, [profile.error]);
-  if (profile.isPending) {
+  if (!hydrated || profile.isPending) {
     return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("spaces.groups.loadingScreen")}</main></Shell>;
   }
   if (!profile.data || profile.isError) {

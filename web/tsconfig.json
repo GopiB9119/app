@@ -60,7 +60,9 @@
     ".local/build-local-web/types/**/*.ts",
     ".local/build-local-web/dev/types/**/*.ts",
     ".local/build-checklists-20260928/types/**/*.ts",
-    ".local/build-checklists-20260928/dev/types/**/*.ts"
+    ".local/build-checklists-20260928/dev/types/**/*.ts",
+    ".local/build-verify-agent-20261004/types/**/*.ts",
+    ".local/build-verify-agent-20261004/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

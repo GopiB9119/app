@@ -2,7 +2,7 @@ package com.community.platform.feature.identity
 
 import com.google.gson.annotations.SerializedName
 
-data class EnvelopeDto<Value>(val data: Value?, val error: ErrorDto?, val pagination: PaginationDto? = null, @SerializedName("unread_count") val unreadCount: Int? = null)
+data class EnvelopeDto<Value>(val data: Value?, val error: ErrorDto?, val pagination: PaginationDto? = null, @SerializedName("unread_count") val unreadCount: Int? = null, @SerializedName("unread_marker") val unreadMarker: String? = null)
 data class PaginationDto(@SerializedName("next_cursor") val nextCursor: String?, @SerializedName("has_more") val hasMore: Boolean)
 data class ErrorDto(val code: String?, val message: String?, val details: Map<String, String>? = null)
 data class UserDto(

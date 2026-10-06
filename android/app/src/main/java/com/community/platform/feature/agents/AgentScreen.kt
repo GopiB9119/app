@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -64,6 +65,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -79,23 +81,25 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 data class AgentActions(
-    val back: () -> Unit = {}, val show: (AgentView) -> Unit = {}, val chooseSpace: (String) -> Unit = {},
+    val back: () -> Unit = {}, val show: (AgentView) -> Unit = {}, val chooseSpace: (String?) -> Unit = {},
     val reloadSpaces: () -> Unit = {}, val reload: () -> Unit = {}, val more: () -> Unit = {}, val reloadMemories: () -> Unit = {},
     val message: (String) -> Unit = {}, val ask: () -> Unit = {}, val reply: (String, String) -> Unit = { _, _ -> },
     val answer: (String) -> Unit = {}, val decide: (String, Boolean) -> Unit = { _, _ -> }, val stop: (String) -> Unit = {},
     val askForget: (AgentMemoryDto) -> Unit = {}, val keep: () -> Unit = {}, val forget: () -> Unit = {},
-    val retry: () -> Unit = {}, val discard: () -> Unit = {},
+    val retry: () -> Unit = {}, val discard: () -> Unit = {}, val openSpaceChat: (String) -> Unit = {},
 )
 
 @Composable
-fun AgentRoute(viewModel: AgentViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit) {
+fun AgentRoute(viewModel: AgentViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit,
+    onOpenSpaceChat: (String) -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
     if (state.accountId == accountId) AgentScreen(state, AgentActions(back = onBack, show = viewModel::show, chooseSpace = viewModel::chooseSpace,
         reloadSpaces = viewModel::reloadSpaces, reload = { viewModel.reload() }, more = { viewModel.reload(more = true) },
         reloadMemories = viewModel::reloadMemories, message = viewModel::message, ask = viewModel::ask, reply = viewModel::reply,
         answer = viewModel::answer, decide = viewModel::decide, stop = viewModel::stop, askForget = viewModel::askForget,
-        keep = viewModel::keepMemory, forget = viewModel::forget, retry = viewModel::retry, discard = viewModel::discard), timezone)
+        keep = viewModel::keepMemory, forget = viewModel::forget, retry = viewModel::retry, discard = viewModel::discard,
+        openSpaceChat = onOpenSpaceChat), timezone)
 }
 
 private fun moment(value: String, zone: ZoneId): String = try {
@@ -103,16 +107,18 @@ private fun moment(value: String, zone: ZoneId): String = try {
 } catch (_error: DateTimeException) { value }
 
 @Composable
-private fun statusLabel(status: String): String = stringResource(when (status) {
-    "queued" -> R.string.agent_status_queued
-    "running" -> R.string.agent_status_running
-    "waiting_for_approval" -> R.string.agent_status_approval
-    "waiting_for_user" -> R.string.agent_status_question
-    "verifying" -> R.string.agent_status_verifying
-    "completed" -> R.string.agent_status_completed
-    "failed" -> R.string.agent_status_failed
-    "cancelled" -> R.string.agent_status_cancelled
-    "timed_out" -> R.string.agent_status_timed_out
+internal fun statusLabel(run: AgentRunDto): String = stringResource(when {
+    run.status == "completed" && run.outcome == "refused" -> R.string.agent_status_refused
+    run.status == "completed" && run.intent == "unknown" -> R.string.agent_status_not_understood
+    run.status == "queued" -> R.string.agent_status_queued
+    run.status == "running" -> R.string.agent_status_running
+    run.status == "waiting_for_approval" -> R.string.agent_status_approval
+    run.status == "waiting_for_user" -> R.string.agent_status_question
+    run.status == "verifying" -> R.string.agent_status_verifying
+    run.status == "completed" -> R.string.agent_status_completed
+    run.status == "failed" -> R.string.agent_status_failed
+    run.status == "cancelled" -> R.string.agent_status_cancelled
+    run.status == "timed_out" -> R.string.agent_status_timed_out
     else -> R.string.agent_status_expired
 })
 
@@ -149,7 +155,7 @@ fun AgentScreen(state: AgentState, actions: AgentActions, timezone: String = "UT
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.agent_back))
                 }
                 Text(stringResource(R.string.agent_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).semantics { heading() })
-                if (state.view == AgentView.REQUESTS && state.spaceId != null) IconButton(onClick = actions.reload,
+                if (state.view == AgentView.REQUESTS) IconButton(onClick = actions.reload,
                     enabled = !state.busy && !state.uncertain, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-refresh")) {
                     Icon(Icons.Default.Refresh, stringResource(R.string.agent_refresh))
                 }
@@ -198,10 +204,6 @@ private fun AgentViews(state: AgentState, actions: AgentActions) {
 }
 
 private fun LazyListScope.requests(state: AgentState, actions: AgentActions, zone: ZoneId) {
-    if (state.spacesLoaded && state.spaces.isEmpty()) {
-        item("no-spaces") { Text(stringResource(R.string.agent_no_spaces), modifier = Modifier.testTag("agent-no-spaces")) }
-        return
-    }
     if (!state.spacesLoaded) {
         item("spaces-messages") {
             Column(verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
@@ -234,14 +236,18 @@ private fun AgentComposer(state: AgentState, actions: AgentActions) {
         Box(Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { choosingSpace = true }, enabled = !state.busy && !state.uncertain && !state.requiresSignIn,
                 shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("agent-space")) {
-                Text(state.space?.name.orEmpty(), Modifier.weight(1f))
+                Text(if (state.spaceId == null) stringResource(R.string.agent_main) else state.space?.name.orEmpty(), Modifier.weight(1f))
                 Icon(Icons.Default.ArrowDropDown, null)
             }
             DropdownMenu(expanded = choosingSpace, onDismissRequest = { choosingSpace = false }, modifier = Modifier.widthIn(max = width)) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.agent_main)) }, onClick = { choosingSpace = false; actions.chooseSpace(null) },
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-choose-main"))
                 state.spaces.forEach { space -> DropdownMenuItem(text = { Text(space.name) }, onClick = { choosingSpace = false; actions.chooseSpace(space.id) },
                     modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget)) }
             }
         }
+        if (state.spaceId == null) Text(stringResource(R.string.agent_main_hint), style = MaterialTheme.typography.bodySmall,
+            color = DesignTokens.Muted, modifier = Modifier.testTag("agent-main-hint"))
         if (state.space?.agentEnabled == false && asking == null) {
             Text(stringResource(R.string.agent_off_in_space), style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("agent-off"))
@@ -266,6 +272,130 @@ private fun AgentComposer(state: AgentState, actions: AgentActions) {
     }
 }
 
+@Composable
+private fun planKindLabel(kind: AgentPlanKind): String = stringResource(when (kind) {
+    AgentPlanKind.CHECK -> R.string.agent_plan_kind_check
+    AgentPlanKind.TOOL -> R.string.agent_plan_kind_tool
+    AgentPlanKind.APPROVAL -> R.string.agent_plan_kind_approval
+    AgentPlanKind.RESPONSE -> R.string.agent_plan_kind_response
+})
+
+@Composable
+private fun planStatusLabel(status: AgentPlanStatus): String = stringResource(when (status) {
+    AgentPlanStatus.PENDING -> R.string.agent_plan_status_pending
+    AgentPlanStatus.DONE -> R.string.agent_plan_status_done
+    AgentPlanStatus.SKIPPED -> R.string.agent_plan_status_skipped
+    AgentPlanStatus.FAILED -> R.string.agent_tool_status_failed
+})
+
+@Composable
+private fun evidenceKindLabel(kind: AgentEvidenceKind): String = stringResource(when (kind) {
+    AgentEvidenceKind.TASK -> R.string.agent_evidence_task
+    AgentEvidenceKind.REMINDER -> R.string.agent_evidence_reminder
+    AgentEvidenceKind.MEMORY -> R.string.agent_evidence_memory
+    AgentEvidenceKind.ROSTER -> R.string.agent_evidence_roster
+    AgentEvidenceKind.POLICY -> R.string.agent_evidence_policy
+    AgentEvidenceKind.EVENT -> R.string.agent_evidence_event
+    AgentEvidenceKind.DOCUMENT -> R.string.agent_evidence_document
+    AgentEvidenceKind.PAGE -> R.string.agent_evidence_page
+    AgentEvidenceKind.POST -> R.string.agent_evidence_post
+    AgentEvidenceKind.COMMENT -> R.string.agent_evidence_comment
+    AgentEvidenceKind.REPORT -> R.string.agent_evidence_report
+    AgentEvidenceKind.MESSAGE -> R.string.agent_evidence_message
+    AgentEvidenceKind.SPACE -> R.string.agent_evidence_space
+    AgentEvidenceKind.INTERESTS -> R.string.agent_evidence_interests
+})
+
+@Composable
+private fun toolStatusLabel(status: AgentToolStatus): String = stringResource(when (status) {
+    AgentToolStatus.SUCCEEDED -> R.string.agent_tool_status_succeeded
+    AgentToolStatus.FAILED -> R.string.agent_tool_status_failed
+})
+
+@Composable
+private fun AgentRecordSection(title: String, tag: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+        content()
+    }
+}
+
+@Composable
+internal fun AgentExecutionRecords(run: AgentRunDto, zone: ZoneId) {
+    var expanded by remember(run.id) { mutableStateOf(false) }
+    val stateLabel = stringResource(if (expanded) R.string.agent_details_expanded else R.string.agent_details_collapsed)
+    Column(Modifier.fillMaxWidth()) {
+        TextButton(onClick = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget)
+                .semantics { stateDescription = stateLabel }.testTag("agent-records-toggle-${run.id}")) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(if (expanded) R.string.agent_hide_request_details else R.string.agent_request_details),
+                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                Icon(Icons.Default.ArrowDropDown, null)
+            }
+        }
+        if (expanded) {
+            Column(Modifier.fillMaxWidth().padding(start = DesignTokens.SpaceUnit * 2),
+                verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3)) {
+                HorizontalDivider(color = DesignTokens.Border)
+                AgentRecordSection(stringResource(R.string.agent_records_plan), "agent-records-plan-${run.id}") {
+                    if (run.plan.isEmpty()) Text(stringResource(R.string.agent_records_empty_plan), color = DesignTokens.Muted)
+                    run.plan.forEachIndexed { index, step ->
+                        Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("agent-plan-step-${run.id}-$index"),
+                            verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+                            Text(step.label, style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.agent_record_plan_meta, planKindLabel(step.kind), planStatusLabel(step.status)),
+                                style = MaterialTheme.typography.bodySmall, color = DesignTokens.Muted)
+                            step.tool?.let { Text(stringResource(R.string.agent_record_tool, it), style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
+                }
+                AgentRecordSection(stringResource(R.string.agent_records_sources), "agent-records-sources-${run.id}") {
+                    if (run.evidence.isEmpty()) Text(stringResource(R.string.agent_records_empty_sources), color = DesignTokens.Muted)
+                    run.evidence.forEachIndexed { index, source ->
+                        Text(stringResource(R.string.agent_record_source, evidenceKindLabel(source.kind), source.label),
+                            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().testTag("agent-source-${run.id}-$index"))
+                    }
+                }
+                AgentRecordSection(stringResource(R.string.agent_records_actions), "agent-records-actions-${run.id}") {
+                    if (run.toolCalls.isEmpty()) Text(stringResource(R.string.agent_records_empty_actions), color = DesignTokens.Muted)
+                    run.toolCalls.forEachIndexed { index, call ->
+                        Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("agent-action-${run.id}-$index"),
+                            verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+                            Text(stringResource(R.string.agent_record_tool_version, call.toolName, call.toolVersion),
+                                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text(stringResource(R.string.agent_record_action_meta,
+                                stringResource(if (call.effect == AgentToolEffect.READ) R.string.agent_tool_effect_read else R.string.agent_tool_effect_write),
+                                stringResource(if (call.risk == AgentToolRisk.LOW) R.string.agent_tool_risk_low else R.string.agent_tool_risk_medium),
+                                toolStatusLabel(call.status)), style = MaterialTheme.typography.bodySmall, color = DesignTokens.Muted)
+                            Text(call.summary, style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.agent_record_time, moment(call.createdAt, zone)), style = MaterialTheme.typography.bodySmall,
+                                color = DesignTokens.Muted, modifier = Modifier.testTag("agent-record-time-${run.id}-$index"))
+                        }
+                    }
+                }
+                AgentRecordSection(stringResource(R.string.agent_records_activity), "agent-records-activity-${run.id}") {
+                    Text(stringResource(R.string.agent_record_updated, moment(run.updatedAt, zone)), style = MaterialTheme.typography.bodySmall,
+                        color = DesignTokens.Muted, modifier = Modifier.testTag("agent-run-updated-${run.id}"))
+                    run.finishedAt?.let { Text(stringResource(R.string.agent_record_finished, moment(it, zone)), style = MaterialTheme.typography.bodySmall,
+                        color = DesignTokens.Muted, modifier = Modifier.testTag("agent-run-finished-${run.id}")) }
+                    if (run.events.isEmpty()) Text(stringResource(R.string.agent_records_empty_activity), color = DesignTokens.Muted)
+                    run.events.forEachIndexed { index, event ->
+                        Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("agent-event-${run.id}-$index"),
+                            verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+                            Text(event.eventType.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                                style = MaterialTheme.typography.labelLarge)
+                            Text(event.summary, style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.agent_record_time, moment(event.createdAt, zone)), style = MaterialTheme.typography.bodySmall,
+                                color = DesignTokens.Muted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AgentRunCard(run: AgentRunDto, state: AgentState, actions: AgentActions, zone: ZoneId) {
@@ -276,8 +406,14 @@ private fun AgentRunCard(run: AgentRunDto, state: AgentState, actions: AgentActi
         Column(Modifier.padding(DesignTokens.SpaceUnit * 4), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
             Text(run.message, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(moment(run.createdAt, zone), style = MaterialTheme.typography.bodySmall, color = DesignTokens.Muted)
-            Text(statusLabel(run.status), style = MaterialTheme.typography.labelLarge, color = DesignTokens.Primary, modifier = Modifier.testTag("agent-status-${run.id}"))
+            Text(statusLabel(run), style = MaterialTheme.typography.labelLarge, color = DesignTokens.Primary, modifier = Modifier.testTag("agent-status-${run.id}"))
             run.answer?.let { Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("agent-answer-text-${run.id}")) }
+            run.handoffs?.forEach { handoff ->
+                OutlinedButton(onClick = { actions.openSpaceChat(handoff.spaceId) }, shape = RoundedCornerShape(DesignTokens.ControlRadius),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag("agent-handoff-${handoff.spaceId}")) {
+                    Text(stringResource(R.string.agent_open_space_chat, handoff.name))
+                }
+            }
             run.question?.let { question ->
                 HorizontalDivider(color = DesignTokens.Border)
                 Text(question.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("agent-question-${run.id}"))
@@ -329,6 +465,7 @@ private fun AgentRunCard(run: AgentRunDto, state: AgentState, actions: AgentActi
                     }
                 }
             }
+            AgentExecutionRecords(run, zone)
             if (state.at == run.id) AgentMessages(state, "agent-run-${run.id}")
             if (pending != null) TextButton(onClick = actions.discard, enabled = !state.busy,
                 modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-discard-${run.id}")) { Text(stringResource(R.string.agent_check_again)) }

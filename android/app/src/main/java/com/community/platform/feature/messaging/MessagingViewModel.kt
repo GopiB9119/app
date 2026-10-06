@@ -2,6 +2,13 @@ package com.community.platform.feature.messaging
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.community.platform.feature.agents.AgentCommand
+import com.community.platform.feature.agents.AgentIssue
+import com.community.platform.feature.agents.agentMessageProblem
+import com.community.platform.feature.agents.AgentRepository
+import com.community.platform.feature.agents.AgentRunDto
+import com.community.platform.feature.agents.normalizedAgentMessage
+import com.community.platform.feature.agents.runId
 import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.realtime.LiveEvent
 import com.community.platform.feature.realtime.LiveSignals
@@ -30,6 +37,21 @@ enum class SendState { SENDING, UNKNOWN, FAILED }
 /** [kept]: also kept sealed on the phone (DEC-021), so leaving the chat or closing the app does not lose it. */
 data class PendingSend(val intent: SendIntent, val state: SendState, val error: String? = null, val kept: Boolean = false)
 
+data class AgentReviewState(
+    val sourceMessageId: String,
+    val runId: String,
+    val run: AgentRunDto? = null,
+    val answer: String = "",
+    val command: AgentCommand? = null,
+    val loading: Boolean = false,
+    val working: Boolean = false,
+    val refreshQueued: Boolean = false,
+    val issue: AgentIssue? = null,
+    val error: String? = null,
+)
+
+private data class RetainedAgentCommand(val command: AgentCommand, val conversationId: String, val sourceMessageId: String)
+
 data class ChatState(
     val conversation: ConversationDto,
     val messages: List<MessageDto> = emptyList(),
@@ -50,10 +72,12 @@ data class ChatState(
     val editing: String? = null,
     val editDraft: String = "",
     val acting: String? = null,
+    val agentReview: AgentReviewState? = null,
 ) {
     /** Leaving loses the retry identity of these sends: the ones not kept on the phone. */
-    val unconfirmed: Boolean get() = pending.any { it.state != SendState.FAILED && !it.kept }
-    val working: Boolean get() = loading || polling || loadingEarlier || deleting != null || acting != null || pending.any { it.state == SendState.SENDING }
+    val unconfirmed: Boolean get() = pending.any { it.state != SendState.FAILED && !it.kept } || agentReview?.command != null
+    val working: Boolean get() = loading || polling || loadingEarlier || deleting != null || acting != null || pending.any { it.state == SendState.SENDING } ||
+        agentReview?.let { it.loading || it.working } == true
 }
 
 data class MessagingState(
@@ -91,6 +115,7 @@ class MessagingViewModel @Inject constructor(
     private val spaces: SpaceRepository,
     private val live: LiveSignals = LiveSignals.None,
     private val outbox: MessageOutbox = MessageOutbox.None,
+    private val agentRuns: AgentRepository,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(MessagingState())
     val state = mutableState.asStateFlow()
@@ -105,7 +130,10 @@ class MessagingViewModel @Inject constructor(
     private var entryOpened = false
     private var markedThrough = 0L
     private var hintPollChat = -1L
+    private var rereadChat = -1L
     private var hintRefresh = -1L
+    private var agentReviewGeneration = 0L
+    private val agentCommands = mutableMapOf<String, RetainedAgentCommand>()
 
     private fun accountScope() = CoroutineScope(viewModelScope.coroutineContext + accountJob)
     private fun chatScope() = CoroutineScope(viewModelScope.coroutineContext + chatJob)
@@ -114,11 +142,12 @@ class MessagingViewModel @Inject constructor(
         val entry = if (accountId == null) null else entrySpaceId
         val current = mutableState.value
         if (current.accountId == accountId && current.entrySpaceId == entry) return
-        generation += 1; chatGeneration += 1
+        generation += 1; chatGeneration += 1; agentReviewGeneration += 1
         accountJob.cancel(); chatJob.cancel()
         accountJob = SupervisorJob(viewModelScope.coroutineContext[Job])
         chatJob = SupervisorJob(accountJob)
         listJob = null; pollLoop = null; entryOpened = false; markedThrough = 0
+        agentCommands.clear()
         mutableState.value = MessagingState(accountId = accountId, entrySpaceId = entry, selectedSpaceId = entry)
         if (accountId != null) {
             refreshList()
@@ -129,7 +158,7 @@ class MessagingViewModel @Inject constructor(
     }
 
     /** Polling runs only while the screen is visible, so a hidden chat is not marked read. */
-    fun resume() { visible = true; startPolling(); refreshList(quiet = true); mutableState.value.chat?.let { if (!it.denied) pollNow() } }
+    fun resume() { visible = true; startPolling(); refreshList(quiet = true); pollForHint(reread = true); refreshAgentReview() }
     fun pause() { visible = false; pollLoop?.cancel(); pollLoop = null }
 
     private fun startPolling() {
@@ -145,7 +174,7 @@ class MessagingViewModel @Inject constructor(
                 if (withTimeoutOrNull(interval) { live.connected.first { it != connected } } != null) { tick = 0; continue }
                 tick += 1
                 val chat = mutableState.value.chat
-                if (chat != null) { if (!chat.denied) poll(first = false) }
+                if (chat != null) { if (!chat.denied) poll(first = false, reread = true) }
                 else if (tick % 3 == 0) refreshList(quiet = true)
             }
         }
@@ -161,10 +190,16 @@ class MessagingViewModel @Inject constructor(
                 when (event) {
                     is LiveEvent.Change -> if (event.kind == "conversation") {
                         val open = mutableState.value.chat?.conversation?.id
-                        if (open != null && open.equals(event.conversationId, ignoreCase = true)) pollForHint()
+                        if (open != null && open.equals(event.conversationId, ignoreCase = true)) {
+                            pollForHint(reread = event.reason in setOf("deleted", "changed", "member_left"))
+                        }
                         refreshForHint()
+                    } else if (event.kind == "agent") {
+                        val openChat = mutableState.value.chat
+                        val panel = openChat?.agentReview
+                        if (panel != null && event.spaceId == openChat.conversation.spaceId && event.runId == panel.runId) refreshAgentReview()
                     }
-                    LiveEvent.Ready, LiveEvent.Resync -> { pollForHint(); refreshForHint() }
+                    LiveEvent.Ready, LiveEvent.Resync -> { pollForHint(reread = true); refreshForHint(); refreshAgentReview() }
                     is LiveEvent.End -> Unit
                 }
             }
@@ -172,10 +207,12 @@ class MessagingViewModel @Inject constructor(
     }
 
     /** Polls the open chat now, or exactly once more after the poll that is running; polls never overlap. */
-    private fun pollForHint() {
+    private fun pollForHint(reread: Boolean = false) {
         val chat = mutableState.value.chat ?: return
         val expectedChat = chatGeneration
-        if (chat.denied || hintPollChat == expectedChat) return
+        if (chat.denied) return
+        if (reread) rereadChat = expectedChat
+        if (hintPollChat == expectedChat) return
         hintPollChat = expectedChat
         chatScope().launch(start = CoroutineStart.UNDISPATCHED) {
             try {
@@ -208,8 +245,9 @@ class MessagingViewModel @Inject constructor(
     private fun lose(expected: Long) {
         if (generation != expected) return
         val account = mutableState.value.accountId
-        generation += 1; chatGeneration += 1
+        generation += 1; chatGeneration += 1; agentReviewGeneration += 1
         accountJob.cancel(); chatJob.cancel()
+        agentCommands.clear()
         accountJob = SupervisorJob(viewModelScope.coroutineContext[Job])
         chatJob = SupervisorJob(accountJob)
         mutableState.value = MessagingState(accountId = account, requiresSignIn = true)
@@ -383,7 +421,7 @@ class MessagingViewModel @Inject constructor(
     }
 
     private fun show(conversation: ConversationDto) {
-        chatGeneration += 1
+        chatGeneration += 1; agentReviewGeneration += 1
         chatJob.cancel(); chatJob = SupervisorJob(accountJob)
         markedThrough = conversation.readPosition.toLong()
         mutableState.update { it.copy(chat = ChatState(conversation)) }
@@ -405,7 +443,7 @@ class MessagingViewModel @Inject constructor(
 
     fun closeChat() {
         if (mutableState.value.chat == null) return
-        chatGeneration += 1
+        chatGeneration += 1; agentReviewGeneration += 1
         chatJob.cancel(); chatJob = SupervisorJob(accountJob)
         mutableState.update { it.copy(chat = null) }
         refreshList(quiet = true)
@@ -413,20 +451,24 @@ class MessagingViewModel @Inject constructor(
 
     fun pollNow(first: Boolean = false) { chatScope().launch { poll(first) } }
 
-    private suspend fun poll(first: Boolean) {
+    private suspend fun poll(first: Boolean, reread: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
         val chat = current.chat ?: return
         if (chat.denied || chat.polling) return
         val expected = generation
         val expectedChat = chatGeneration
+        val refreshEarlier = reread || rereadChat == expectedChat
+        if (rereadChat == expectedChat) rereadChat = -1
         val conversationId = chat.conversation.id
         updateChat(expectedChat) { it.copy(polling = true) }
         try {
             val view = repository.read(account, conversationId)
             val latest = repository.messages(account, conversationId)
             var incoming = latest.items
-            val known = mutableState.value.chat?.messages?.lastOrNull()?.position?.toLong()
+            if (chatGeneration != expectedChat) return
+            val loaded = mutableState.value.chat?.messages.orEmpty()
+            val known = loaded.lastOrNull()?.position?.toLong()
             // More than one page may have arrived since the previous poll; fetch the gap forward. Until the gap is closed,
             // only messages that follow on without a hole are shown, so none is skipped or marked read unseen (as T41 on the web).
             if (known != null && latest.items.isNotEmpty() && latest.items.first().position.toLong() > known + 1) {
@@ -443,6 +485,22 @@ class MessagingViewModel @Inject constructor(
                     page += 1
                 }
                 incoming = if (closed) gap + latest.items else gap
+            }
+            val oldest = loaded.firstOrNull()?.position?.toLong()
+            if (refreshEarlier && known != null && oldest != null && latest.items.isNotEmpty()) {
+                val through = minOf(known, latest.items.first().position.toLong() - 1)
+                if (oldest <= through) {
+                    val refreshed = mutableListOf<MessageDto>()
+                    var after = (oldest - 1).toString()
+                    for (page in 0 until (loaded.size + 29) / 30) {
+                        val next = repository.messages(account, conversationId, after = after)
+                        refreshed += next.items.takeWhile { it.position.toLong() <= through }
+                        val last = next.items.lastOrNull()?.position?.toLong() ?: break
+                        if (last >= through || last <= after.toLong()) break
+                        after = next.nextCursor ?: break
+                    }
+                    incoming = refreshed + incoming
+                }
             }
             if (chatGeneration != expectedChat) return
             absorb(expectedChat, incoming)
@@ -461,8 +519,13 @@ class MessagingViewModel @Inject constructor(
                     throw error
                 }
             }
-        } catch (error: CancellationException) { throw error }
-        catch (error: Exception) { chatFailure(expected, expectedChat, error, "Messages could not be loaded.") }
+        } catch (error: CancellationException) {
+            if (refreshEarlier && chatGeneration == expectedChat) rereadChat = expectedChat
+            throw error
+        } catch (error: Exception) {
+            if (refreshEarlier && chatGeneration == expectedChat) rereadChat = expectedChat
+            chatFailure(expected, expectedChat, error, "Messages could not be loaded.")
+        }
         finally { updateChat(expectedChat) { it.copy(polling = false, loading = false) } }
     }
 
@@ -471,6 +534,10 @@ class MessagingViewModel @Inject constructor(
         if ((error as? IdentityFailure)?.status == 404) {
             // Access ended: drop every private message, draft and pending send for this conversation, also those kept on the phone.
             val conversationId = mutableState.value.chat?.conversation?.id?.takeIf { chatGeneration == expectedChat }
+            if (conversationId != null) {
+                agentCommands.filterValues { it.conversationId == conversationId }.keys.toList().forEach(agentCommands::remove)
+            }
+            agentReviewGeneration += 1
             updateChat(expectedChat) { ChatState(it.conversation.copy(unreadCount = 0), loading = false, denied = true, error = "You no longer have access to this conversation.") }
             conversationId?.let(::forgetConversation)
             listChanged()
@@ -489,6 +556,13 @@ class MessagingViewModel @Inject constructor(
                 pending = chat.pending.filterNot { it.intent.key in confirmed && it.state != SendState.SENDING },
             )
         }
+        val panel = mutableState.value.chat?.agentReview
+        if (panel != null && incoming.any { item -> item.id == panel.sourceMessageId &&
+                (!item.mine || item.status != "sent" || item.agentRequest?.runId != panel.runId) }) {
+            clearAgentReview(expectedChat, clearCommand = true)
+        }
+        incoming.filter { item -> item.status != "sent" || !item.mine || item.agentRequest?.runId == null }
+            .forEach { item -> agentCommands.filterValues { it.sourceMessageId == item.id }.keys.toList().forEach(agentCommands::remove) }
         forgetKept(settled.map { it.intent.key })
     }
 
@@ -564,8 +638,200 @@ class MessagingViewModel @Inject constructor(
         command(message.id) { account, conversationId -> repository.react(account, conversationId, message.id, reaction, on) }
     }
 
+    /** Asks again about the person's own @agent message that got no answer; the agent's reply then arrives with a poll (DEC-046). */
+    fun askAgentAgain(message: MessageDto) {
+        val known = mutableState.value.chat?.messages?.firstOrNull { it.id == message.id } ?: return
+        if (!known.mine || known.status != "sent" || known.agentRequest?.status !in setOf("pending", "failed")) return
+        command(known.id, after = ::pollForHint) { account, conversationId -> repository.askAgentAgain(account, conversationId, known.id) }
+    }
+
+    /** Shows the person's own private agent answer to everyone; the agent's earlier reply changes, so the chat is read again (DEC-061). */
+    fun shareAgentAnswer(message: MessageDto) {
+        val known = mutableState.value.chat?.messages?.firstOrNull { it.id == message.id } ?: return
+        if (!known.mine || known.status != "sent" || known.agentRequest?.status != "private") return
+        command(known.id, after = { pollForHint(reread = true) }) { account, conversationId -> repository.shareAgentAnswer(account, conversationId, known.id) }
+    }
+
+    private fun agentCommandKey(runId: String): String = "${mutableState.value.accountId}/$runId"
+
+    private fun sourceMessage(sourceMessageId: String, runId: String): MessageDto? = mutableState.value.chat?.messages?.firstOrNull { message ->
+        val request = message.agentRequest
+        message.id == sourceMessageId && message.mine && message.status == "sent" && request?.runId == runId && request.status in setOf("private", "waiting")
+    }
+
+    fun openAgentReview(sourceMessageId: String) {
+        val chat = mutableState.value.chat ?: return
+        if (chat.denied || chat.conversation.kind != "space") return
+        val source = chat.messages.firstOrNull { it.id == sourceMessageId && it.mine && it.status == "sent" } ?: return
+        val request = source.agentRequest ?: return
+        val runId = request.runId?.takeIf { request.status in setOf("private", "waiting") } ?: return
+        agentReviewGeneration += 1
+        updateChat(chatGeneration) {
+            it.copy(agentReview = AgentReviewState(source.id, runId, command = agentCommands[agentCommandKey(runId)]?.command))
+        }
+        refreshAgentReview()
+    }
+
+    fun closeAgentReview() {
+        clearAgentReview(chatGeneration, clearCommand = false)
+    }
+
+    fun agentReviewAnswer(value: String) {
+        val panel = mutableState.value.chat?.agentReview ?: return
+        if (panel.loading || panel.working || panel.command != null || panel.run?.question == null) return
+        updateChat(chatGeneration) { state -> state.copy(agentReview = state.agentReview?.copy(answer = value, error = null, issue = null)) }
+    }
+
+    fun refreshAgentReview() {
+        val current = mutableState.value
+        val account = current.accountId ?: return
+        val chat = current.chat ?: return
+        val panel = chat.agentReview ?: return
+        if (chat.denied || sourceMessage(panel.sourceMessageId, panel.runId) == null) {
+            clearAgentReview(chatGeneration, clearCommand = true)
+            return
+        }
+        if (panel.loading || panel.working) {
+            updateChat(chatGeneration) { state -> state.copy(agentReview = state.agentReview?.copy(refreshQueued = true)) }
+            return
+        }
+        val expected = generation
+        val expectedChat = chatGeneration
+        val expectedPanel = agentReviewGeneration
+        val spaceId = chat.conversation.spaceId
+        updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(loading = true, refreshQueued = false, error = null, issue = null)) }
+        chatScope().launch {
+            try {
+                val run = agentRuns.getRun(account, panel.runId, spaceId)
+                if (generation != expected || chatGeneration != expectedChat || agentReviewGeneration != expectedPanel) return@launch
+                if (sourceMessage(panel.sourceMessageId, panel.runId) == null) {
+                    clearAgentReview(expectedChat, clearCommand = true)
+                    return@launch
+                }
+                val key = agentCommandKey(run.id)
+                val retained = agentCommands[key]
+                val pending = retained?.command
+                val unresolved = pending?.let { command ->
+                    when (command) {
+                        is AgentCommand.Answer -> run.question?.id == command.questionId
+                        is AgentCommand.Decide -> run.approval?.let { approval -> approval.id == command.approvalId && approval.status == "pending" } == true
+                        else -> false
+                    }
+                } == true
+                if (pending != null && !unresolved) agentCommands.remove(key)
+                updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(
+                    run = run, command = pending.takeIf { unresolved }, loading = false, error = null, issue = null,
+                )) }
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (generation != expected || chatGeneration != expectedChat || agentReviewGeneration != expectedPanel) return@launch
+                if (sessionLost(error)) { lose(expected); return@launch }
+                if ((error as? IdentityFailure)?.status == 404) {
+                    clearAgentReview(expectedChat, clearCommand = true)
+                    return@launch
+                }
+                updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(
+                    loading = false, issue = if (error is IOException) AgentIssue.CONNECTION else AgentIssue.RESPONSE,
+                    error = describe(error, "The request could not be loaded."),
+                )) }
+            } finally {
+                if (generation == expected && chatGeneration == expectedChat && agentReviewGeneration == expectedPanel) {
+                    val queued = mutableState.value.chat?.agentReview?.refreshQueued == true
+                    updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(loading = false)) }
+                    if (queued) refreshAgentReview()
+                }
+            }
+        }
+    }
+
+    fun answerAgentReview() {
+        val panel = mutableState.value.chat?.agentReview ?: return
+        val run = panel.run ?: return
+        val question = run.question ?: return
+        if (panel.command != null) return
+        val answer = normalizedAgentMessage(panel.answer)
+        if (agentMessageProblem(answer) != null) return
+        val account = mutableState.value.accountId ?: return
+        submitAgentCommand(AgentCommand.Answer(account, run.spaceId, run.id, question.id, answer))
+    }
+
+    fun decideAgentReview(approve: Boolean) {
+        val panel = mutableState.value.chat?.agentReview ?: return
+        val run = panel.run ?: return
+        val approval = run.approval?.takeIf { run.awaitingApproval } ?: return
+        if (panel.command != null) return
+        val account = mutableState.value.accountId ?: return
+        submitAgentCommand(AgentCommand.Decide(account, run.spaceId, run.id, approval.id, approval.etag, approve, UUID.randomUUID().toString()))
+    }
+
+    fun retryAgentReview() {
+        mutableState.value.chat?.agentReview?.command?.let(::submitAgentCommand)
+    }
+
+    private fun submitAgentCommand(command: AgentCommand) {
+        val current = mutableState.value
+        val chat = current.chat ?: return
+        val panel = chat.agentReview ?: return
+        val account = current.accountId ?: return
+        val run = panel.run ?: return
+        if (chat.denied || panel.loading || panel.working || account != command.accountId || run.id != command.runId ||
+            sourceMessage(panel.sourceMessageId, panel.runId) == null) return
+        if (panel.command != null && panel.command != command) return
+        val key = agentCommandKey(run.id)
+        agentCommands[key] = RetainedAgentCommand(command, chat.conversation.id, panel.sourceMessageId)
+        val expected = generation
+        val expectedChat = chatGeneration
+        val expectedPanel = agentReviewGeneration
+        updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(command = command, working = true, error = null, issue = null)) }
+        chatScope().launch {
+            var refreshAfter = false
+            try {
+                val changed = when (command) {
+                    is AgentCommand.Answer -> agentRuns.answer(command)
+                    is AgentCommand.Decide -> agentRuns.decide(command)
+                    else -> return@launch
+                }
+                if (generation == expected && chatGeneration == expectedChat && agentReviewGeneration == expectedPanel && sourceMessage(panel.sourceMessageId, panel.runId) != null) {
+                    agentCommands.remove(key)
+                    val active = mutableState.value.chat?.agentReview
+                    refreshAfter = active?.refreshQueued == true
+                    updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(
+                        run = changed, answer = if (command is AgentCommand.Answer) "" else state.agentReview?.answer.orEmpty(),
+                        command = null, working = false, error = null, issue = null,
+                    )) }
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (generation != expected || chatGeneration != expectedChat || agentReviewGeneration != expectedPanel) return@launch
+                if (sessionLost(error)) { lose(expected); return@launch }
+                val status = (error as? IdentityFailure)?.status
+                val uncertain = status == null || status == 0 || status >= 500 || status == 408
+                if (!uncertain) agentCommands.remove(key)
+                val active = mutableState.value.chat?.agentReview
+                refreshAfter = !uncertain || active?.refreshQueued == true
+                updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(
+                    command = if (uncertain) command else null, working = false,
+                    issue = if (uncertain) AgentIssue.UNCERTAIN else null,
+                    error = if (uncertain) "The result was not confirmed. Reload the request before choosing again." else describe(error, "The request was refused."),
+                )) }
+            } finally {
+                if (generation == expected && chatGeneration == expectedChat && agentReviewGeneration == expectedPanel) {
+                    updateChat(expectedChat) { state -> state.copy(agentReview = state.agentReview?.copy(working = false)) }
+                    if (refreshAfter) refreshAgentReview()
+                }
+            }
+        }
+    }
+
+    private fun clearAgentReview(expectedChat: Long, clearCommand: Boolean) {
+        val panel = mutableState.value.chat?.agentReview ?: return
+        agentReviewGeneration += 1
+        if (clearCommand) agentCommands.remove(agentCommandKey(panel.runId))
+        updateChat(expectedChat) { it.copy(agentReview = null) }
+    }
+
     /** An edit or a reaction names the change itself, so trying again is safe; one runs at a time. */
-    private fun command(messageId: String, call: suspend (String, String) -> MessageDto) {
+    private fun command(messageId: String, after: () -> Unit = {}, call: suspend (String, String) -> MessageDto) {
         val current = mutableState.value
         val account = current.accountId ?: return
         val chat = current.chat ?: return
@@ -577,6 +843,7 @@ class MessagingViewModel @Inject constructor(
             try {
                 absorb(expectedChat, listOf(call(account, chat.conversation.id)))
                 updateChat(expectedChat) { if (it.editing == messageId) it.copy(editing = null, editDraft = "") else it }
+                if (chatGeneration == expectedChat) after()
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
                 val failure = error as? IdentityFailure
@@ -613,6 +880,9 @@ class MessagingViewModel @Inject constructor(
                 val message = repository.send(intent)
                 forgetKept(listOf(intent.key))
                 absorb(expectedChat, listOf(message))
+                // The agent answers before the send returns, so its reply is already there to fetch (DEC-046). The poll starts
+                // before the send stops counting as work, so the chat never looks settled without the reply.
+                if (message.agentRequest != null && chatGeneration == expectedChat) pollForHint()
                 updateChat(expectedChat) { chat -> chat.copy(pending = chat.pending.filterNot { it.intent.key == intent.key }) }
                 listChanged()
             } catch (error: CancellationException) {
@@ -621,6 +891,7 @@ class MessagingViewModel @Inject constructor(
                 throw error
             } catch (error: Exception) {
                 val failure = error as? IdentityFailure
+                if (sessionLost(error)) forgetKept(listOf(intent.key))
                 if (sessionLost(error) || failure?.status == 404) { chatFailure(expected, expectedChat, error, "The message was not confirmed."); return@launch }
                 val definite = failure != null && failure.status in 400..499 && failure.status != 408
                 // A refused message stays on screen to edit but is no longer kept; any other failure is retried in the background.

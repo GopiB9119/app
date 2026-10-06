@@ -195,6 +195,19 @@ test('Conversation lists require a validated unread total and non-repeating curs
   }
 });
 
+test('Conversation unread marker metadata stays compatible with the existing web client', async () => {
+  for (const marker of [undefined, 'a'.repeat(64)]) {
+    const client = messagingClient(async () => Response.json({
+      data: [conversation()], pagination: { next_cursor: null, has_more: false }, unread_count: 1,
+      unread_marker: marker,
+    }));
+    const page = await client.conversationPage(accountId);
+    assert.equal(page.unreadCount, 1);
+    assert.equal(page.data[0].id, conversationId);
+    assert.equal(page.pagination.has_more, false);
+  }
+});
+
 test('Composer rules and message merging match the server contract', () => {
   const client = messagingClient();
   assert.equal(client.bodyProblem('   '), 'Write a message first.');

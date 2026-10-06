@@ -6,6 +6,11 @@ from sqlalchemy import delete, func, select, text, update
 
 from app.modules.community.models import (
     CommunityAuditEvent,
+    HelpPost,
+    HelpReply,
+    HelpReport,
+    PageEvent,
+    PageEventResponse,
     PageFollow,
     PageHandover,
     PageModerator,
@@ -60,7 +65,23 @@ class PageLifecycleService:
             database.execute(delete(PostReaction).where(PostReaction.post_id.in_(posts)))
             database.execute(delete(SavedPost).where(SavedPost.post_id.in_(posts)))
             database.execute(delete(PostTerm).where(PostTerm.post_id.in_(posts)))
+            database.execute(update(HelpReply).where(
+                HelpReply.post_id.in_(select(HelpPost.id).where(HelpPost.page_id == page.id)), HelpReply.status == "active",
+            ).values(status="removed", body=None, ended_at=now))
+            database.execute(update(HelpReport).where(
+                HelpReport.post_id.in_(select(HelpPost.id).where(HelpPost.page_id == page.id)), HelpReport.status == "received",
+            ).values(status="closed", outcome="deleted", closed_at=now))
+            database.execute(update(HelpPost).where(HelpPost.page_id == page.id, HelpPost.status != "deleted").values(
+                status="deleted", title=None, details=None, place=None, need_by=None, helped_reply_id=None, reply_count=0,
+                ended_at=func.coalesce(HelpPost.ended_at, now), updated_at=now, version=HelpPost.version + 1,
+            ))
             database.execute(delete(PageFollow).where(PageFollow.page_id == page.id))
+            database.execute(delete(PageEventResponse).where(
+                PageEventResponse.event_id.in_(select(PageEvent.id).where(PageEvent.page_id == page.id)),
+            ))
+            database.execute(update(PageEvent).where(PageEvent.page_id == page.id, PageEvent.status != "deleted").values(
+                status="deleted", title=None, details=None, venue=None, going_count=0, updated_at=now, version=PageEvent.version + 1,
+            ))
             database.execute(delete(PageModerator).where(PageModerator.page_id == page.id))
             database.execute(delete(PageHandover).where(PageHandover.page_id == page.id))
             database.execute(delete(PageTerm).where(PageTerm.page_id == page.id))
@@ -69,6 +90,7 @@ class PageLifecycleService:
             page.topic = "other"
             page.description = ""
             page.rules = ""
+            page.help_open = False
             page.follower_count = 0
             page.purge_after = None
             page.pre_delete_status = None

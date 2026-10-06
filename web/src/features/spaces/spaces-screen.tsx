@@ -8,6 +8,7 @@ import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCirc
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
 import { characters, lengthProblem, readMembers, spaceSchema, spacesSchema } from "./client";
@@ -52,6 +53,7 @@ export function SpacesScreen() {
     queryKey: ["me"],
     queryFn: ({ signal }) => api("me", userSchema, { signal }),
   });
+  const hydrated = useHydrated();
 
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) {
@@ -59,7 +61,7 @@ export function SpacesScreen() {
     }
   }, [profile.error]);
 
-  if (profile.isPending) {
+  if (!hydrated || profile.isPending) {
     return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("spaces.loadingYours")}</main></Shell>;
   }
   if (!profile.data || profile.isError) {
@@ -183,14 +185,14 @@ function FamilySpaces({ user }: { user: Account }) {
               {space.description && <p className={styles.description}>{space.description}</p>}</div>
             <span className={styles.rowPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden className={styles.publicMark} />{t("spaces.public")}</> : <><LockKeyhole size={14} aria-hidden />{t("spaces.private")}</>}</span>
             <div className={styles.spaceActions}>
-              <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={t("spaces.tasksFor", { name: space.name })} aria-label={t("spaces.tasksFor", { name: space.name })}><ClipboardList size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/messages?space_id=${space.id}`} title={t("spaces.chatFor", { name: space.name })} aria-label={t("spaces.chatFor", { name: space.name })}><MessageSquare size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/events?space_id=${space.id}`} title={t("spaces.eventsFor", { name: space.name })} aria-label={t("spaces.eventsFor", { name: space.name })}><CalendarClock size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={t("spaces.documentsFor", { name: space.name })} aria-label={t("spaces.documentsFor", { name: space.name })}><FileText size={18} aria-hidden /></Link>
-              {space.role === "owner" && <button className="icon-button" title={t("spaces.settingsFor", { name: space.name })} aria-label={t("spaces.settingsFor", { name: space.name })} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /></button>}
-              {space.space_type !== "solo" && <button className="icon-button" title={t("spaces.membersOf", { name: space.name })} aria-label={t("spaces.membersOf", { name: space.name })} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /></button>}
-              {canInvite(space) && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
-              {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={t("spaces.joinRequestsFor", { name: space.name })} aria-label={t("spaces.joinRequestsFor", { name: space.name })} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /></button>}
+              <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={t("spaces.tasksFor", { name: space.name })} aria-label={t("spaces.tasksFor", { name: space.name })}><ClipboardList size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.tasks")}</span></Link>
+              <Link className="icon-button" href={`/app/messages?space_id=${space.id}`} title={t("spaces.chatFor", { name: space.name })} aria-label={t("spaces.chatFor", { name: space.name })}><MessageSquare size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.chat")}</span></Link>
+              <Link className="icon-button" href={`/app/events?space_id=${space.id}`} title={t("spaces.eventsFor", { name: space.name })} aria-label={t("spaces.eventsFor", { name: space.name })}><CalendarClock size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.events")}</span></Link>
+              <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={t("spaces.documentsFor", { name: space.name })} aria-label={t("spaces.documentsFor", { name: space.name })}><FileText size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.documents")}</span></Link>
+              {space.role === "owner" && <button className="icon-button" title={t("spaces.settingsFor", { name: space.name })} aria-label={t("spaces.settingsFor", { name: space.name })} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.settings")}</span></button>}
+              {space.space_type !== "solo" && <button className="icon-button" title={t("spaces.membersOf", { name: space.name })} aria-label={t("spaces.membersOf", { name: space.name })} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.members")}</span></button>}
+              {canInvite(space) && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.invitations")}</span></button>}
+              {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={t("spaces.joinRequestsFor", { name: space.name })} aria-label={t("spaces.joinRequestsFor", { name: space.name })} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.requests")}</span></button>}
             </div>
           </li>)}</ul>}
         </section>

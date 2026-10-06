@@ -4,7 +4,10 @@ import { ApiError, api } from "@/features/identity/client";
 const uuid = z.string().uuid();
 const timestamp = z.string().datetime({ offset: true });
 export const MAX_QUERY = 200;
+// Each kind shows this many results at first; "Show more" asks for PAGE_STEP more, up to MAX_RESULTS (DEC-051).
 export const FIRST_PAGE = 20;
+export const PAGE_STEP = 20;
+export const MAX_RESULTS = 100;
 export const TASK_LABELS = { open: "Open", in_progress: "In progress", completed: "Completed", cancelled: "Cancelled" } as const;
 export const EVENT_LABELS = { scheduled: "Scheduled", cancelled: "Cancelled" } as const;
 const text = z.string().max(2000);
@@ -16,6 +19,7 @@ export const documentHitSchema = z.object({
 }).refine(hit => hit.end_line >= hit.start_line, { message: "Inconsistent lines." });
 export const taskHitSchema = z.object({
   task_id: uuid, space_id: uuid, space_name: z.string().min(1).max(200), title: z.string().min(1).max(400), excerpt: text,
+  excerpt_in: z.enum(["notes", "checklist"]).default("notes"),
   status: z.enum(["open", "in_progress", "completed", "cancelled"]), due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
 });
 export const eventHitSchema = z.object({
@@ -23,11 +27,14 @@ export const eventHitSchema = z.object({
   status: z.enum(["scheduled", "cancelled"]), starts_at: timestamp, timezone: z.string().min(1).max(64),
   local_start: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/),
 });
+// A kind that has more results than the limit shows exactly the limit; no kind shows more.
+const fits = (items: unknown[], limit: number, more: boolean) => items.length <= limit && (!more || items.length === limit);
 export const searchSchema = z.object({
-  query: z.string().max(MAX_QUERY * 2), space_id: uuid.nullable(),
-  documents: z.array(documentHitSchema).max(FIRST_PAGE), tasks: z.array(taskHitSchema).max(FIRST_PAGE), events: z.array(eventHitSchema).max(FIRST_PAGE),
+  query: z.string().max(MAX_QUERY * 2), space_id: uuid.nullable(), limit: z.number().int().min(1).max(MAX_RESULTS).default(FIRST_PAGE),
+  documents: z.array(documentHitSchema).max(MAX_RESULTS), tasks: z.array(taskHitSchema).max(MAX_RESULTS), events: z.array(eventHitSchema).max(MAX_RESULTS),
   more_documents: z.boolean(), more_tasks: z.boolean(), more_events: z.boolean(),
-});
+}).refine(result => fits(result.documents, result.limit, result.more_documents) && fits(result.tasks, result.limit, result.more_tasks)
+  && fits(result.events, result.limit, result.more_events), { message: "Inconsistent results." });
 export type SearchResults = z.infer<typeof searchSchema>;
 
 export function normalizeQuery(value: string) {
@@ -41,12 +48,13 @@ export function queryProblem(value: string) {
   return null;
 }
 
-export async function searchSpaces(accountId: string, value: string, spaceId: string, signal?: AbortSignal) {
+export async function searchSpaces(accountId: string, value: string, spaceId: string, signal?: AbortSignal, limit = FIRST_PAGE) {
   const parameters = new URLSearchParams({ q: normalizeQuery(value) });
   if (spaceId) parameters.set("space_id", spaceId);
+  if (limit !== FIRST_PAGE) parameters.set("limit", String(limit));
   const result = (await api(`search?${parameters}`, searchSchema, { accountId, signal })).data;
   const wrongSpace = (hit: { space_id: string }) => Boolean(spaceId) && hit.space_id !== spaceId;
-  if ((spaceId && result.space_id !== spaceId) || [...result.documents, ...result.tasks, ...result.events].some(wrongSpace)) {
+  if (result.limit !== limit || (spaceId && result.space_id !== spaceId) || [...result.documents, ...result.tasks, ...result.events].some(wrongSpace)) {
     throw new ApiError(502, "INVALID_RESPONSE", "The results do not match your search.");
   }
   return result;
@@ -57,18 +65,22 @@ export function documentLink(hit: { space_id: string; document_id: string; start
   return `/app/documents?${query}`;
 }
 
-export const taskLink = (hit: { space_id: string }) => `/app/tasks?${new URLSearchParams({ space_id: hit.space_id })}`;
-export const eventLink = (hit: { space_id: string }) => `/app/events?${new URLSearchParams({ space_id: hit.space_id })}`;
+// A task or event result opens that very task or event, not just its Space.
+export const taskLink = (hit: { space_id: string; task_id: string }) => `/app/tasks?${new URLSearchParams({ space_id: hit.space_id, task_id: hit.task_id })}`;
+export const eventLink = (hit: { space_id: string; event_id: string }) => `/app/events?${new URLSearchParams({ space_id: hit.space_id, event_id: hit.event_id })}`;
+
+// Words are letters, marks and digits, as in the search: file names, e-mail addresses and dates break into their parts.
+const WORD = /[\p{L}\p{M}\p{N}]+/gu;
 
 export function searchWords(value: string) {
-  return [...new Set((value.toLowerCase().match(/[\p{L}\p{M}\p{N}_]+/gu) ?? []))].sort((left, right) => right.length - left.length);
+  return [...new Set((value.toLowerCase().match(WORD) ?? []))].sort((left, right) => right.length - left.length);
 }
 
 // Splits text into plain and marked pieces. Words match from their beginning, like the search itself.
 export function highlight(value: string, words: string[]) {
   const pieces: { text: string; marked: boolean }[] = [];
   let last = 0;
-  for (const token of value.matchAll(/[\p{L}\p{M}\p{N}_]+/gu)) {
+  for (const token of value.matchAll(WORD)) {
     const lowered = token[0].toLowerCase();
     const word = words.find(candidate => lowered.startsWith(candidate));
     if (!word) continue;

@@ -25,7 +25,7 @@ before(async () => {
         import { Providers } from './src/app/providers';
         import { TaskScreen } from './src/features/planning/task-screen';
         import './src/app/globals.css';
-        createRoot(document.getElementById('root')).render(<Providers><TaskScreen /></Providers>);`,
+        createRoot(document.getElementById('root')).render(<Providers><TaskScreen initialSpaceId={window.taskProps?.spaceId ?? ''} initialTaskId={window.taskProps?.taskId ?? ''} /></Providers>);`,
       resolveDir: web, loader: 'tsx', sourcefile: 'offline-task-fixture.tsx',
     },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
@@ -77,6 +77,13 @@ async function fixture(context, options = {}) {
       };
     }
     if (options.seed) tasks.push(makeTask({ title: options.title ?? 'Buy groceries' }));
+    // A task a search result names can lie beyond the pages the list has read; the fixture keeps it out of the list, not out of reach.
+    const unlisted = new Set();
+    if (options.unlistedTask) {
+      tasks.push(makeTask({ id: options.unlistedTask, title: 'Pay the water bill', status: 'completed', completed_by_account_id: accountId, completed_at: '2026-09-20T09:00:00Z' }));
+      unlisted.add(options.unlistedTask);
+    }
+    window.taskProps = options.open ? { spaceId, taskId: options.open } : undefined;
     window.taskFixture = { calls: [], tasks, failCreate: !!options.failCreate, failStatus: !!options.failStatus, conflict: false, denied: false };
     const result = (data, task) => new Response(JSON.stringify({ data, request_id: 'offline-task', ...(Array.isArray(data) ? { pagination: { next_cursor: null, has_more: false } } : {}) }), { status: 200, headers: task ? { ETag: etag(task) } : {} });
     const failure = (status, code, message) => new Response(JSON.stringify({ error: { code, message }, request_id: 'offline-task' }), { status });
@@ -92,7 +99,7 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/spaces') return result([{ id: spaceId, name: 'Test family', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: '2026-09-19T10:00:00Z' }]);
       if (state.denied) return failure(404, 'NOT_FOUND', 'Task access is unavailable.');
       if (url.pathname === '/api/tasks/assignees') return result([{ account_id: accountId, display_name: 'Alex Morgan' }, { account_id: memberId, display_name: 'Blair Morgan' }]);
-      if (url.pathname === '/api/tasks' && method === 'GET') return result(tasks.filter(task => !url.searchParams.get('status') || task.status === url.searchParams.get('status')).map(project));
+      if (url.pathname === '/api/tasks' && method === 'GET') return result(tasks.filter(task => !unlisted.has(task.id) && (!url.searchParams.get('status') || task.status === url.searchParams.get('status'))).map(project));
       const key = `${method}:${url.pathname}:${headers['idempotency-key']}`;
       if (receipts.has(key)) { const task = tasks.find(item => item.id === receipts.get(key)); return result(project(task), task); }
       if (url.pathname === '/api/tasks' && method === 'POST') {
@@ -103,6 +110,7 @@ async function fixture(context, options = {}) {
       }
       const task = tasks.find(item => url.pathname === `/api/tasks/${item.id}` || url.pathname === `/api/tasks/${item.id}/status`);
       if (task && method === 'GET') return result(project(task), task);
+      if (!task && method === 'GET' && /^\/api\/tasks\/[0-9a-f-]{36}$/.test(url.pathname)) return failure(404, 'NOT_FOUND', 'Task not found.');
       if (task && state.conflict && method === 'PATCH') {
         state.conflict = false; task.title = 'Remote revision'; task.version = String(Number(task.version) + 1);
         return failure(412, 'PRECONDITION_FAILED', 'This task changed. Reload and review.');
@@ -241,6 +249,42 @@ test('offline task layout supports long titles and desktop/mobile screenshots wi
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(root, '.local/screenshots/tasks-offline-mobile.png'), fullPage: true });
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// DEC-051: a task result of the Space search opens that very task, even one the list has not read yet.
+test('offline tasks open the task a search result names above the list, mark it and put focus on it', async () => {
+  const pinned = '9d3a6a1e-4c2f-4a37-8f21-5b7f0d9c1e44';
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, unlistedTask: pinned, open: pinned });
+    const row = page.locator(`#task-${pinned}`);
+    await row.waitFor();
+    assert.equal(await row.getAttribute('aria-current'), 'location');
+    assert.equal(await row.getByText('Opened from search', { exact: true }).count(), 1);
+    assert.equal(await row.getByRole('heading', { name: 'Pay the water bill', exact: true }).count(), 1);
+    await page.waitForFunction(id => document.activeElement?.closest('li')?.id === `task-${id}`, pinned);
+    // It comes first, and the tasks the list read are still there and not marked.
+    assert.equal((await page.locator('li[id^="task-"]').evaluateAll(items => items.map(item => item.id)))[0], `task-${pinned}`);
+    await page.getByRole('heading', { name: 'Buy groceries', exact: true }).waitFor();
+    assert.equal(await page.locator('li[aria-current="location"]').count(), 1);
+    assert.equal(await page.getByRole('alert').filter({ hasText: 'no longer available' }).count(), 0);
+    // The one task was read by its own address in the same Space, and nothing was written.
+    const reads = await page.evaluate(() => window.taskFixture.calls.filter(call => call.route.startsWith('/api/tasks/') && call.route !== '/api/tasks/assignees'));
+    assert.deepEqual(reads.map(call => `${call.method} ${call.route}`), [`GET /api/tasks/${pinned}`]);
+    assert.equal(await page.evaluate(() => window.taskFixture.calls.filter(call => call.method !== 'GET').length), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline tasks say so when the task a search result named is no longer available', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, open: '9d3a6a1e-4c2f-4a37-8f21-5b7f0d9c1e55' });
+    await page.getByRole('alert').filter({ hasText: 'That task is no longer available to you.' }).waitFor();
+    assert.equal(await page.locator('li[aria-current="location"]').count(), 0);
+    await page.getByRole('heading', { name: 'Buy groceries', exact: true }).waitFor();
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

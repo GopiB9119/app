@@ -69,7 +69,7 @@ function serverFormProblems(error: unknown): EventFormProblems {
   return problems;
 }
 
-export function EventsScreen({ initialSpaceId }: { initialSpaceId: string }) {
+export function EventsScreen({ initialSpaceId, initialEventId = "" }: { initialSpaceId: string; initialEventId?: string }) {
   const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
@@ -79,17 +79,17 @@ export function EventsScreen({ initialSpaceId }: { initialSpaceId: string }) {
   if (!viewer.account) {
     return <Shell account><main className={styles.main}><h1>{t("events.unavailable")}</h1><p role="alert">{problemText(viewer.error, t("events.loadProblem"), t)}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />{t("events.retry")}</button></main></Shell>;
   }
-  return <Events key={viewer.account.id} user={viewer.account} initialSpaceId={initialSpaceId} />;
+  return <Events key={viewer.account.id} user={viewer.account} initialSpaceId={initialSpaceId} initialEventId={initialEventId} />;
 }
 
-function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: string }) {
+function Events({ user, initialSpaceId, initialEventId }: { user: Account; initialSpaceId: string; initialEventId: string }) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
   const zone = useMemo(browserZone, []);
   const [chosenSpace, setChosenSpace] = useState(initialSpaceId);
   const [when, setWhen] = useState<When>("upcoming");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialEventId || null);
   const [creating, setCreating] = useState(false);
   const [editorGuard, setEditorGuard] = useState<EditorGuard | null>(null);
   const spaces = useQuery({
@@ -162,7 +162,7 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
         </div>
       </div>}
       {creating && spaceId && <EventEditor user={user} spaceId={spaceId} zone={zone} onGuard={setEditorGuard} onClose={() => { setCreating(false); refresh(); }} onSaved={event => { setCreating(false); setWhen("upcoming"); setSelectedId(event.id); refresh(); }} />}
-      {selectedId && spaceId && <EventPanel key={selectedId} user={user} eventId={selectedId} zone={zone} onGuard={setEditorGuard} onClose={() => setSelectedId(null)} onChanged={refresh} />}
+      {selectedId && spaceId && <EventPanel key={selectedId} user={user} eventId={selectedId} zone={zone} focusOnOpen={Boolean(initialEventId) && selectedId === initialEventId} onGuard={setEditorGuard} onClose={() => setSelectedId(null)} onChanged={refresh} />}
       {spaceId && <section aria-labelledby="event-list-title">
         <h2 id="event-list-title" className={styles.listTitle}>{when === "upcoming" ? t("events.upcomingTitle") : t("events.pastTitle")}</h2>
         {list.isPending && <p aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("events.loading")}</p>}
@@ -193,11 +193,12 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   </Shell>;
 }
 
-function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user: Account; eventId: string; zone: string; onClose: () => void; onChanged: () => void; onGuard: GuardChange }) {
+function EventPanel({ user, eventId, zone, focusOnOpen = false, onClose, onChanged, onGuard }: { user: Account; eventId: string; zone: string; focusOnOpen?: boolean; onClose: () => void; onChanged: () => void; onGuard: GuardChange }) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
   const titleId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
   const [editing, setEditing] = useState<SpaceEvent | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const detail = useQuery({ queryKey: ["event", user.id, eventId], queryFn: ({ signal }) => readEvent(user.id, eventId, signal) });
@@ -217,6 +218,13 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
     const problem = detail.error ?? respond.error ?? cancel.error;
     if (sessionLost(problem)) { queryClient.clear(); window.location.replace("/login"); }
   }, [detail.error, respond.error, cancel.error, queryClient]);
+  // Opened from a search result: bring the event into view and put the reader on it once it has loaded (DEC-051).
+  const loaded = detail.isSuccess;
+  useEffect(() => {
+    if (!focusOnOpen || !loaded) return;
+    heading.current?.scrollIntoView({ block: "start" });
+    heading.current?.focus();
+  }, [focusOnOpen, loaded]);
   if (editing && (!detail.isError || isUnknown(detail.error))) {
     return <EventEditor user={user} spaceId={editing.space_id} zone={zone} existing={editing} onGuard={onGuard} readError={detail.error}
       onClose={() => setEditing(null)} onReload={() => { setEditing(null); void detail.refetch(); }}
@@ -235,7 +243,7 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
   const counts = { going: event.going, maybe: event.maybe, notGoing: event.not_going };
   return <section className={styles.panel} aria-labelledby={titleId}>
     <div className={styles.panelHeader}>
-      <h2 id={titleId}>{event.title}</h2>
+      <h2 id={titleId} ref={heading} tabIndex={-1}>{event.title}</h2>
       <button className="icon-button" aria-label={t("events.closeEvent")} title={t("events.closeEvent")} onClick={onClose}><X size={18} aria-hidden /></button>
     </div>
     {event.status === "cancelled" && <p className={styles.notice} role="status">{t("events.cancelledNotice")}</p>}

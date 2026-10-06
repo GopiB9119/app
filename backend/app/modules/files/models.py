@@ -22,6 +22,11 @@ from app.modules.spaces.models import Space
 MEDIA_TYPES = ("text/plain", "text/markdown", "text/csv")
 # Fields that exist only while a document is active; deletion clears every one of them.
 CONTENT_FIELDS = ("name", "media_type", "size_bytes", "line_count", "sha256", "content")
+# PostgreSQL joins file names, e-mail addresses, paths, dates, versions and phone numbers into single words. Search reads
+# these characters as spaces, in the index and in every query, so each part of such a word is a word (DEC-051).
+SEARCH_SEPARATORS = "._/\\@:-+&<>,"
+SEARCH_BLANKS = " " * len(SEARCH_SEPARATORS)
+SEARCH_VECTOR = f"to_tsvector('simple'::regconfig, translate(content, '{SEARCH_SEPARATORS}', '{SEARCH_BLANKS}'))"
 
 
 class SpaceDocument(Base):
@@ -94,6 +99,4 @@ class SpaceDocumentChunk(Base):
     start_offset: Mapped[int] = mapped_column(Integer)
     end_offset: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
-    search_vector: Mapped[str] = mapped_column(
-        TSVECTOR, Computed("to_tsvector('simple'::regconfig, content)", persisted=True),
-    )
+    search_vector: Mapped[str] = mapped_column(TSVECTOR, Computed(SEARCH_VECTOR, persisted=True))

@@ -13,6 +13,7 @@ import type { DiscoverFilters, PublicPage, PublicPost, ReportTarget, SuggestedPa
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useViewer } from "./shared";
 import { FeedControlFeedback, FeedMenu, PostFeedMenu, useFeedControlActions } from "./feed-controls";
 import type { FeedControlActions } from "./feed-controls";
+import { DiscoverEvents } from "./page-events";
 import { TaxonomyStatus, TopicSelect, useTaxonomy } from "./taxonomy-controls";
 import styles from "./community.module.css";
 
@@ -129,6 +130,7 @@ function Discover({ viewer }: { viewer: ReturnType<typeof useViewer>["account"] 
     </>}
     {kind === "pages" && <>
       {error && <div className="message error" role="alert">{error}</div>}
+      <DiscoverEvents viewer={viewer} />
       {viewer && <section className={styles.stack} aria-labelledby="suggested-pages-heading">
         <div className={styles.heading}><h2 id="suggested-pages-heading">{t("community.interests.suggested")}</h2>
           <Link className="text-button" href="/app/settings/interests">{t("community.interests.choose")}</Link>

@@ -1,5 +1,6 @@
 package com.community.platform.feature.messaging
 
+import com.community.platform.feature.agents.AgentRepository
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.realtime.LiveEvent
 import com.community.platform.feature.realtime.LiveSignals
@@ -22,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Live hints and the polling interval of [MessagingViewModel]; the poll loop runs on virtual time. */
@@ -80,7 +82,8 @@ class MessagingLiveTest {
     private suspend fun until(condition: () -> Boolean) = withTimeout(5000) { while (!condition()) delay(5) }
 
     private suspend fun openChat(): MessagingViewModel {
-        val current = MessagingViewModel(MessagingRepository(api, fixture.accounts), fixture.repository, live); model = current
+        val current = MessagingViewModel(MessagingRepository(api, fixture.accounts), fixture.repository, live,
+            agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId)
         current.resume()
         idle(current)
@@ -88,7 +91,115 @@ class MessagingLiveTest {
         return current
     }
 
-    private fun change(conversationId: String) = LiveEvent.Change("conversation", conversationId, fixture.spaceId, "message")
+    private fun change(conversationId: String, reason: String = "message") = LiveEvent.Change("conversation", conversationId, fixture.spaceId, reason)
+
+    private suspend fun loadedHistory(): MessagingViewModel {
+        for (position in 1..65) fake.add(MessageDto(
+            UUID(7, position.toLong()).toString(), fake.conversation.id, position.toString(),
+            fixture.recipientId, "Sam", false, null, "sent", "Message $position", "2026-09-19T10:00:00Z", null,
+        ))
+        val current = openChat()
+        assertEquals((36..65).map(Int::toString), current.state.value.chat!!.messages.map { it.position })
+        repeat(2) { current.loadEarlier(); settle(current) }
+        assertEquals((1..65).map(Int::toString), current.state.value.chat!!.messages.map { it.position })
+        return current
+    }
+
+    @Test fun olderLoadedMessagesRefreshForDeletionEditsReactionsAndErasure() = runBlocking {
+        val current = loadedHistory()
+        val changes = listOf(
+            "deleted" to fake.stored[2].copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", revision = 2),
+            "changed" to fake.stored[3].copy(body = "Corrected message", editedAt = "2026-09-19T10:01:00Z", revision = 2),
+            "changed" to fake.stored[4].copy(reactions = listOf(ReactionDto("like", 1, false)), revision = 2),
+            "member_left" to fake.stored[5].copy(senderName = "Deleted account", status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", revision = 2),
+        )
+        for ((reason, message) in changes) {
+            fake.stored[message.position.toInt() - 1] = message
+            val before = fake.pages.size
+            live.events.emit(change(fake.conversation.id, reason)); settle(current)
+            assertEquals(reason, message, current.state.value.chat!!.messages.single { it.id == message.id })
+            assertEquals(listOf(null to null, null to "0", null to "30"), fake.pages.drop(before))
+        }
+        val before = fake.pages.size
+        live.events.emit(change(fake.conversation.id)); settle(current)
+        assertEquals(listOf(null to null), fake.pages.drop(before))
+        assertEquals(listOf("65"), fake.reads)
+        assertEquals(65, current.state.value.chat!!.messages.size)
+    }
+
+    @Test fun reconnectRefreshesEveryLoadedPage() = runBlocking {
+        val current = loadedHistory()
+        for ((index, event) in listOf(LiveEvent.Ready, LiveEvent.Resync).withIndex()) {
+            val message = fake.stored[index].copy(body = "Changed during disconnection", revision = 2)
+            fake.stored[index] = message
+            live.events.emit(event); settle(current)
+            assertEquals(message, current.state.value.chat!!.messages.single { it.id == message.id })
+        }
+    }
+
+    @Test fun anOlderPageHintDuringAPollSurvivesLaterNewMessageHints() = runBlocking {
+        val current = loadedHistory()
+        val reads = api.reads.get()
+        val gate = CompletableDeferred<Unit>()
+        api.gate = gate
+        live.events.emit(change(fake.conversation.id))
+        until { api.reads.get() == reads + 1 }
+        val deleted = fake.stored[2].copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", revision = 2)
+        fake.stored[2] = deleted
+        live.events.emit(change(fake.conversation.id, "deleted"))
+        repeat(3) { live.events.emit(change(fake.conversation.id)) }
+        api.gate = null
+        gate.complete(Unit)
+        until { api.reads.get() >= reads + 2 }
+        settle(current)
+        assertEquals(reads + 2, api.reads.get())
+        assertEquals(deleted, current.state.value.chat!!.messages.single { it.id == deleted.id })
+    }
+
+    @Test fun theFallbackTimerRefreshesOlderMessagesWhenAHintIsMissed() = runBlocking {
+        val current = loadedHistory()
+        live.connected.value = true
+        val changed = fake.stored[2].copy(body = "Changed without a hint", revision = 2)
+        fake.stored[2] = changed
+        scheduler.advanceTimeBy(30_001); settle(current)
+        assertEquals(changed, current.state.value.chat!!.messages.single { it.id == changed.id })
+    }
+
+    @Test fun resumingRefreshesOlderMessagesWhoseHintsWereIgnored() = runBlocking {
+        val current = loadedHistory()
+        current.pause()
+        val deleted = fake.stored[2].copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", revision = 2)
+        fake.stored[2] = deleted
+        live.events.emit(change(fake.conversation.id, "deleted")); settle(current)
+        assertEquals("Message 3", current.state.value.chat!!.messages.single { it.id == deleted.id }.body)
+        current.resume(); settle(current)
+        assertEquals(deleted, current.state.value.chat!!.messages.single { it.id == deleted.id })
+    }
+
+    @Test fun aFailedOlderPageRefreshRemainsPendingOnTheNextPoll() = runBlocking {
+        val current = loadedHistory()
+        val changed = fake.stored[2].copy(body = "Changed during an outage", revision = 2)
+        fake.stored[2] = changed
+        fake.readFailure = 503
+        live.events.emit(change(fake.conversation.id, "changed")); settle(current)
+        assertEquals("Message 3", current.state.value.chat!!.messages.single { it.id == changed.id }.body)
+        fake.readFailure = 0
+        live.events.emit(change(fake.conversation.id)); settle(current)
+        assertEquals(changed, current.state.value.chat!!.messages.single { it.id == changed.id })
+    }
+
+    @Test fun refreshingLoadedHistoryDoesNotMarkAnUnfetchedGapRead() = runBlocking {
+        val current = loadedHistory()
+        for (position in 66..465) fake.add(fake.stored.last().copy(
+            id = UUID(7, position.toLong()).toString(), position = position.toString(), body = "Message $position",
+        ))
+        val deleted = fake.stored[2].copy(status = "deleted", body = null, deletedAt = "2026-09-19T11:00:00Z", revision = 2)
+        fake.stored[2] = deleted
+        live.events.emit(LiveEvent.Resync); settle(current)
+        assertEquals((1..365).map(Int::toString), current.state.value.chat!!.messages.map { it.position })
+        assertEquals(listOf("65", "365"), fake.reads)
+        assertEquals(deleted, current.state.value.chat!!.messages.single { it.id == deleted.id })
+    }
 
     @Test fun hintForTheOpenChatPollsAtOnceAndAnotherConversationOnlyReadsTheList() = runBlocking {
         val current = openChat()
@@ -165,7 +276,8 @@ class MessagingLiveTest {
     }
 
     @Test fun theListRefreshesEveryNinetySecondsWhileConnected() = runBlocking {
-        val current = MessagingViewModel(MessagingRepository(api, fixture.accounts), fixture.repository, live); model = current
+        val current = MessagingViewModel(MessagingRepository(api, fixture.accounts), fixture.repository, live,
+            agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId)
         current.resume(); settle(current)
         live.connected.value = true

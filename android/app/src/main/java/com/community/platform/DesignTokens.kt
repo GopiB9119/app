@@ -6,23 +6,27 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object DesignTokens {
-    val Ink = Color(0xFF18362F)
-    val Muted = Color(0xFF5A6E67)
-    val Primary = Color(0xFF17634F)
-    val PrimaryHover = Color(0xFF104F3E)
-    val PrimarySurface = Color(0xFFE8F2ED)
-    val Background = Color(0xFFF6F8F6)
+    val Ink = Color(0xFF1C1C1E)
+    val Muted = Color(0xFF636366)
+    val Primary = Color(0xFF0068D6)
+    val PrimaryHover = Color(0xFF005ABA)
+    val PrimarySurface = Color(0xFFE8F1FF)
+    val Background = Color(0xFFF2F2F7)
     val Surface = Color(0xFFFFFFFF)
-    val Border = Color(0xFFDCE4DF)
-    val ControlBorder = Color(0xFF7D8E85)
-    val Placeholder = Color(0xFF66786F)
-    val Accent = Color(0xFFB4553D)
-    val Danger = Color(0xFFA53032)
-    val DangerSurface = Color(0xFFFFF0ED)
-    val WarningSurface = Color(0xFFFFF7E0)
+    val Border = Color(0xFFE5E5EA)
+    val ControlBorder = Color(0xFF86868B)
+    val Placeholder = Color(0xFF6E6E73)
+    val Accent = Color(0xFFB84900)
+    val Danger = Color(0xFFD60012)
+    val DangerSurface = Color(0xFFFFECEB)
+    val WarningSurface = Color(0xFFFFF4D6)
+    val Success = Color(0xFF1F7A39)
+    val SuccessSurface = Color(0xFFE7F6EC)
+    val Fill = Color(0xFFE9E9EE)
     val LetterSpacing = 0.sp
     val SpaceUnit = 4.dp
-    val ControlRadius = 6.dp
-    val DialogRadius = 8.dp
+    val ControlRadius = 12.dp
+    val DialogRadius = 16.dp
+    val PillRadius = 96.dp
     val MinimumTarget = 48.dp
 }

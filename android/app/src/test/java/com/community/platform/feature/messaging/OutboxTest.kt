@@ -1,9 +1,13 @@
 package com.community.platform.feature.messaging
 
+import com.community.platform.feature.agents.AgentRepository
+import com.community.platform.feature.identity.AccountRepository
 import com.community.platform.feature.identity.AccountRepositoryTest
 import com.community.platform.feature.identity.Credentials
 import com.community.platform.feature.identity.EnvelopeDto
+import com.community.platform.feature.identity.SessionStore
 import com.community.platform.feature.spaces.SpaceRepositoryTest
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -21,6 +25,10 @@ import org.junit.Before
 import org.junit.Test
 import retrofit2.Response
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** Unsent chat messages kept sealed on the phone (DEC-021), with fakes for the store, the sealer and WorkManager. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -77,8 +85,9 @@ class OutboxTest {
 
     private suspend fun idle(current: MessagingViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
 
-    private suspend fun openChat(): MessagingViewModel {
-        val current = MessagingViewModel(repository, fixture.repository, outbox = outbox).also { models += it }
+    private suspend fun openChat(messageRepository: MessagingRepository = repository): MessagingViewModel {
+        val current = MessagingViewModel(messageRepository, fixture.repository, outbox = outbox,
+            agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)).also { models += it }
         current.bind(fixture.accountId)
         current.resume()
         idle(current)
@@ -91,6 +100,96 @@ class OutboxTest {
         current.draft(text)
         current.send()
         idle(current)
+    }
+
+    @Test fun aSendAfterSignOutLeavesNoKeptMessage() = runBlocking {
+        val sessions = OutboxSessionStore(fixture.store, outbox)
+        val accounts = AccountRepository(AccountRepositoryTest.FakeApi(fixture.user, fixture.token), sessions, Gson())
+        val current = openChat(MessagingRepository(api, accounts))
+        sessions.clear()
+        send(current, "Typed after the session ended")
+        assertTrue(current.state.value.requiresSignIn)
+        assertTrue(fake.sends.isEmpty())
+        assertTrue("A rejected signed-out send must leave no message on the phone.", store.rows.isEmpty())
+    }
+
+    @Test fun aStaleChatCannotKeepItsSendAfterAnotherAccountSignsIn() = runBlocking {
+        val sessions = OutboxSessionStore(fixture.store, outbox)
+        val accounts = AccountRepository(AccountRepositoryTest.FakeApi(fixture.user, fixture.token), sessions, Gson())
+        val current = openChat(MessagingRepository(api, accounts))
+        sessions.save(Credentials("new-account-token", fixture.recipientId))
+        assertTrue(outbox.keep(SendIntent(fixture.recipientId, "new-chat", "new-account-message", "Keep the new account's message")))
+        send(current, "Old screen still open")
+        assertTrue(current.state.value.requiresSignIn)
+        assertTrue(fake.sends.isEmpty())
+        assertEquals("Only the replacement account's message remains.", setOf("new-account-message"), store.rows.keys)
+        assertEquals(fixture.recipientId, sessions.load()?.accountId)
+    }
+
+    @Test fun anUnreadableSessionAlsoErasesItsKeptMessages() = runBlocking {
+        val unreadable = object : SessionStore by fixture.store {
+            override fun load(): Credentials? { fixture.store.clear(); return null }
+        }
+        val sessions = OutboxSessionStore(unreadable, outbox)
+        assertTrue(outbox.keep(SendIntent(fixture.accountId, "c1", "k1", "Previously kept")))
+        assertEquals(null, sessions.load())
+        assertTrue("A session that cleared itself must not leave its outbox behind.", store.rows.isEmpty())
+        assertEquals(1, work.cancelled)
+    }
+
+    @Test fun aMissingSessionClearsQueuedMessagesBeforeTheWorkerReturns() = runBlocking {
+        val sessions = OutboxSessionStore(fixture.store, outbox)
+        sessions.clear()
+        assertTrue(outbox.keep(SendIntent(fixture.accountId, "c1", "k1", "Kept by an old screen")))
+        assertFalse(OutboxSender(outbox, repository, sessions).send(fixture.accountId))
+        assertTrue(fake.sends.isEmpty())
+        assertTrue("The worker must leave no private outbox while signed out.", store.rows.isEmpty())
+    }
+
+    @Test fun missingSessionCleanupCannotEraseAReplacementSessionsMessages() = runBlocking {
+        fixture.store.clear()
+        val readStarted = CountDownLatch(1)
+        val releaseRead = CountDownLatch(1)
+        val saveStarted = CountDownLatch(1)
+        val holdRead = AtomicBoolean(true)
+        val failure = AtomicReference<Throwable>()
+        val inner = object : SessionStore by fixture.store {
+            override fun load(): Credentials? {
+                val captured = fixture.store.load()
+                if (holdRead.compareAndSet(true, false)) {
+                    readStarted.countDown()
+                    check(releaseRead.await(10, TimeUnit.SECONDS))
+                }
+                return captured
+            }
+        }
+        val sessions = OutboxSessionStore(inner, outbox)
+        val reader = Thread { try { sessions.load() } catch (error: Throwable) { failure.set(error) } }
+        val writer = Thread {
+            try {
+                saveStarted.countDown()
+                sessions.save(Credentials("replacement-token", fixture.accountId))
+                runBlocking { outbox.keep(SendIntent(fixture.accountId, "c1", "replacement", "Keep this new message")) }
+            } catch (error: Throwable) { failure.set(error) }
+        }
+        try {
+            reader.start()
+            assertTrue(readStarted.await(5, TimeUnit.SECONDS))
+            writer.start()
+            assertTrue(saveStarted.await(5, TimeUnit.SECONDS))
+            withTimeout(5000) {
+                while (writer.isAlive && writer.state != Thread.State.BLOCKED) kotlinx.coroutines.delay(5)
+            }
+            assertEquals("Saving must wait for the missing-session cleanup lock.", Thread.State.BLOCKED, writer.state)
+        } finally {
+            releaseRead.countDown()
+            reader.join(5000)
+            writer.join(5000)
+        }
+        assertFalse(reader.isAlive || writer.isAlive)
+        assertEquals(null, failure.get())
+        assertEquals("replacement-token", sessions.load()?.token)
+        assertEquals(setOf("replacement"), store.rows.keys)
     }
 
     /** A software AES key in place of the Keystore, which can fail once as the Keystore sometimes does. */

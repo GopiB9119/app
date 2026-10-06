@@ -40,6 +40,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -712,5 +713,82 @@ class AccountJourneyTest {
         waitForText("Nothing saved.")
         assertEquals(0, getJson("http://10.0.2.2:8000/v1/agent-memories", owner.token).getAsJsonArray("data").size())
         assertEquals(1, tasks().size())
+    }
+
+    // DEC-043, T205: the shopping request uses the real model; direct financial requests stop before it.
+    // Exact approval and refusals still decide, and every model call counts towards the owner's limits (Q44).
+    @Test fun nativeAgentWithTheTestModelReadsNaturalRequestsButStillNeedsApproval() {
+        assumeTrue("Needs the API started with the owner's test model (DEC-043).",
+            InstrumentationRegistry.getArguments().getString("community_agent_model") == "true")
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "A disposable emulator is required." }
+        check(InstrumentationRegistry.getArguments().getString("community_local_integration") == "true") { "Explicit local integration authorization is required." }
+        val owner = account("Model Owner")
+        val spaceName = "Model family ${System.currentTimeMillis()}"
+        val spaceId = postApi("/v1/spaces", payload("name" to spaceName, "space_type" to "family"), owner.token, UUID.randomUUID().toString())["id"].asString
+        fun newest() = getJson("http://10.0.2.2:8000/v1/agent-runs?space_id=$spaceId", owner.token).getAsJsonArray("data").first().asJsonObject
+        fun tasks() = getJson("http://10.0.2.2:8000/v1/tasks?space_id=$spaceId", owner.token).getAsJsonArray("data")
+        fun ask(message: String, modelSummary: String? = "Read your request with the test model."): JsonObject {
+            reveal("agent-content", "agent-message")
+            compose.onNodeWithTag("agent-message").performTextInput(message)
+            compose.onNodeWithTag("agent-ask").performScrollTo().performClick()
+            compose.waitUntil(20000) { compose.onAllNodes(hasTestTag("agent-message") and hasText(message)).fetchSemanticsNodes().isEmpty() }
+            val run = newest()
+            assertEquals(message, run["message"].asString)
+            val understood = run.getAsJsonArray("events").map { it.asJsonObject }.filter { it["event_type"].asString == "run.understood" }
+            val expected = listOfNotNull(modelSummary)
+            assertEquals(expected, understood.map { it["summary"].asString })
+            return run
+        }
+
+        signIn(owner)
+        compose.onNodeWithTag("account-agent").performScrollTo().performClick()
+        waitForEnabled(hasTestTag("agent-message"))
+        compose.onNodeWithTag("agent-space").assertTextContains(spaceName)
+
+        val recipeQuestion = "i want make chiken curry i dont what are ingreadions to buy can you tell me"
+        for (message in listOf("hi", recipeQuestion)) {
+            val replied = ask(message, modelSummary = "The test model wrote a reply.")
+            assertEquals("reply", replied["intent"].asString)
+            assertEquals("completed", replied["status"].asString)
+            assertEquals("answered", replied["outcome"].asString)
+            assertTrue(replied["approval"].isJsonNull)
+            assertEquals(0, replied.getAsJsonArray("tool_calls").size())
+            val answer = replied["answer"].asString
+            assertTrue(answer.contains("Written by the test model, not checked."))
+            if (message == recipeQuestion) {
+                assertTrue(answer, answer.contains("chicken", ignoreCase = true))
+                assertTrue(answer, Regex("onion|garlic|ginger|tomato|spice|turmeric|coconut|yogurt|oil", RegexOption.IGNORE_CASE).findAll(answer).count() >= 2)
+            }
+            reveal("agent-content", "agent-status-${replied["id"].asString}")
+            waitForText(answer)
+            assertEquals(0, tasks().size())
+            assertEquals(0, getJson("http://10.0.2.2:8000/v1/agent-memories", owner.token).getAsJsonArray("data").size())
+            assertEquals(0, getJson("http://10.0.2.2:8000/v1/spaces/$spaceId/events", owner.token).getAsJsonArray("data").size())
+        }
+
+        val milk = ask("put milk on the shopping list for tomorrow")
+        assertEquals("waiting_for_approval", milk["status"].asString)
+        val fields = milk.getAsJsonObject("approval").getAsJsonArray("fields").map { it.asJsonObject }
+            .associate { it["label"].asString to it["value"].asString }
+        val title = fields.getValue("Title")
+        assertTrue(title, title.contains("milk", ignoreCase = true))
+        assertEquals(0, tasks().size())
+        reveal("agent-content", "agent-approve-${milk["id"].asString}")
+        compose.onNodeWithTag("agent-approve-${milk["id"].asString}").performClick()
+        waitForText("Done. Created \u201c$title\u201d.")
+        val created = tasks().single().asJsonObject
+        assertEquals(title, created["title"].asString)
+        assertEquals(LocalDate.now(ZoneOffset.UTC).plusDays(1).toString(), created["due_date"].asString)
+
+        val refused = ask("settle the electricity bill from my account", modelSummary = null)
+        assertEquals("refused", refused["outcome"].asString)
+        assertTrue(refused["approval"].isJsonNull)
+        waitForText("I can't buy, pay, order or book anything.")
+        compose.onNodeWithTag("agent-status-${refused["id"].asString}").performScrollTo().assertIsDisplayed().assertTextContains("Can't do that")
+        assertEquals(1, tasks().size())
+        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        val evidence = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir("test-evidence"), "agent-model-native-live.png")
+        evidence.outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        assertTrue(evidence.length() > 1000)
     }
 }

@@ -35,10 +35,10 @@ def list_conversations(
     request: Request, space_id: UUID | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048),
 ):
-    data, pagination, unread = request.app.state.messaging.list_conversations(
+    data, pagination, unread, marker = request.app.state.messaging.list_conversations(
         token(request), limit, cursor, str(space_id) if space_id else None,
     )
-    return {**envelope(request, data), "pagination": pagination, "unread_count": unread}
+    return {**envelope(request, data), "pagination": pagination, "unread_count": unread, "unread_marker": marker}
 
 
 @router.get("/conversations/{conversation_id}", response_model=Envelope[ConversationView])
@@ -56,9 +56,40 @@ def list_messages(
     return {**envelope(request, data), "pagination": pagination}
 
 
-@router.post("/conversations/{conversation_id}/messages", response_model=Envelope[MessageView], status_code=201)
+@router.post(
+    "/conversations/{conversation_id}/messages", response_model=Envelope[MessageView], status_code=201,
+    description="Sends a message. A message that mentions `@agent` is also the sender's own agent request in the "
+                "conversation's Space (DEC-046): the agent answers before this returns, and `agent_request` says what "
+                "became of it. The message stays sent whatever the agent does.",
+)
 def send_message(request: Request, conversation_id: UUID, body: SendMessage, idempotency_key: UUID = Header()):
-    return envelope(request, request.app.state.messaging.send(token(request), str(conversation_id), body, str(idempotency_key)))
+    caller = token(request)
+    view = request.app.state.messaging.send(caller, str(conversation_id), body, str(idempotency_key))
+    if view.agent_request is not None and view.agent_request.status == "pending":
+        view = request.app.state.mentions.after_send(caller, str(conversation_id), view)
+    return envelope(request, view)
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/agent", response_model=Envelope[MessageView],
+    description="The author of a message that mentions `@agent` asks the agent again when no answer came "
+                "(`agent_request.status` `pending` or `failed`). Once the agent has replied, or the request stopped for "
+                "good, asking again changes nothing.",
+)
+def ask_agent_again(request: Request, conversation_id: UUID, message_id: UUID, body: MessageAction):
+    return envelope(request, request.app.state.mentions.answer(token(request), str(conversation_id), str(message_id)))
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/agent/share", response_model=Envelope[MessageView],
+    description="The author of a message that mentions `@agent` shows the agent's private answer to everyone in the chat "
+                "(DEC-061): the agent's reply becomes the answer and `agent_request.status` becomes `answered`. Refused "
+                "with `AGENT_ANSWER_NOT_SHARED` when someone who reads the chat may not see everything the answer names, "
+                "`AGENT_ANSWER_PERSONAL` for answers about the author alone, and `AGENT_ANSWER_NOT_READY` before the "
+                "answer is finished. Sharing again changes nothing.",
+)
+def share_agent_answer(request: Request, conversation_id: UUID, message_id: UUID, body: MessageAction):
+    return envelope(request, request.app.state.mentions.share(token(request), str(conversation_id), str(message_id)))
 
 
 @router.post("/conversations/{conversation_id}/messages/{message_id}/delete", response_model=Envelope[MessageView])

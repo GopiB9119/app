@@ -11,10 +11,15 @@
 .results h2:focus { outline: none; }
 .group { display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
 .groupTitle { margin: 0; font-size: 1.1rem; }
+.groupTitle:focus { outline: none; }
+.group > button { justify-self: start; }
+.status { min-height: calc(var(--space-unit) * 6); display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); color: var(--color-muted); overflow-wrap: anywhere; }
+.status span { display: inline-flex; align-items: center; gap: calc(var(--space-unit) * 2); }
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(var(--space-unit) * 3); }
 .card { border: 1px solid var(--color-border); border-radius: var(--radius-dialog); padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 4); background: var(--color-surface); min-width: 0; display: grid; gap: calc(var(--space-unit) * 1); }
 .cardLink { font-weight: 700; overflow-wrap: anywhere; display: inline-flex; align-items: center; min-height: var(--target-minimum); }
 .meta { margin: 0; color: var(--color-muted); overflow-wrap: anywhere; }
 .excerpt { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
-.excerpt mark { background: var(--color-primary-surface); color: var(--color-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; border-radius: var(--radius-control); }
+.excerptLabel { font-weight: 700; color: var(--color-muted); }
+.excerpt mark, .cardLink mark { background: var(--color-primary-surface); color: var(--color-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; border-radius: var(--radius-control); }
 .empty { color: var(--color-muted); margin: 0; }

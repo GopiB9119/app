@@ -74,6 +74,58 @@ class TaskViewModelTest {
 
     private suspend fun settled(model: TaskViewModel): TaskWorkspaceState = withTimeout(5000) { model.state.first { !it.busy } }
 
+    @Test fun searchEntryReadsTheNamedTaskOutsideThePageAndShowsItFirst() = runBlocking {
+        val target = task.copy(id = "81a09cbf-901e-470c-a905-27d565be91ae", title = "Search target")
+        val reads = mutableListOf<String>()
+        val api = object : TaskApi by fake {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<FamilyTaskDto>> {
+                reads += taskId
+                return Response.success(EnvelopeDto(target, null), okhttp3.Headers.Companion.headersOf("ETag", "\"original-etag\""))
+            }
+        }
+        val current = TaskViewModel(TaskRepository(api, accounts)); viewModel = current
+        current.bind(accountId, spaceId, target.id)
+        var state = settled(current)
+        assertEquals(listOf(target.id), reads)
+        assertEquals(listOf(target.id, taskId), state.tasks.map { it.task.id })
+        assertEquals(target.id, state.openedFromSearchId)
+        assertNull(state.detail)
+        current.refresh(); state = settled(current)
+        assertEquals(target.id, state.tasks.first().task.id)
+        current.bind(accountId, spaceId)
+        state = settled(current)
+        assertEquals(listOf(taskId), state.tasks.map { it.task.id })
+        assertNull(state.openedFromSearchId)
+    }
+
+    @Test fun missingSearchTaskKeepsTheSpacesTaskList() = runBlocking {
+        val api = object : TaskApi by fake {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<FamilyTaskDto>> {
+                throw com.community.platform.feature.identity.IdentityFailure("NOT_FOUND", "Synthetic missing task", 404)
+            }
+        }
+        val current = TaskViewModel(TaskRepository(api, accounts)); viewModel = current
+        current.bind(accountId, spaceId, "81a09cbf-901e-470c-a905-27d565be91ae")
+        val state = settled(current)
+        assertEquals(spaceId, state.selectedSpace?.id)
+        assertEquals(listOf(taskId), state.tasks.map { it.task.id })
+        assertTrue(state.searchItemGone)
+        assertNull(state.openedFromSearchId)
+        assertNull(state.error)
+    }
+
+    @Test fun searchTaskInThePageDoesNotNeedAnExtraRead() = runBlocking {
+        val api = object : TaskApi by fake {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<FamilyTaskDto>> = error("Already in the loaded page")
+        }
+        val current = TaskViewModel(TaskRepository(api, accounts)); viewModel = current
+        current.bind(accountId, spaceId, taskId)
+        val state = settled(current)
+        assertEquals(taskId, state.openedFromSearchId)
+        assertEquals(listOf(taskId), state.tasks.map { it.task.id })
+        assertNull(state.error)
+    }
+
     @Test fun calendarMonthZoneAndRefreshFailureNeverRetainVisibleRows() = runBlocking {
         var failure = false
         val queries = mutableListOf<Pair<String, String>>()

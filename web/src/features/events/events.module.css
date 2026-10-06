@@ -24,6 +24,7 @@
 .panel { border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: calc(var(--space-unit) * 4); background: var(--color-surface); display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
 .panelHeader { display: flex; justify-content: space-between; gap: calc(var(--space-unit) * 3); align-items: flex-start; }
 .panelHeader h2 { margin: 0; overflow-wrap: anywhere; }
+.panelHeader h2:focus { outline: none; }
 .panel h3 { margin: calc(var(--space-unit) * 2) 0 0; font-size: 1rem; }
 .description { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-unit) 0; }
 .notice { margin: 0; padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); border-radius: var(--radius-control); background: var(--color-warning-surface); }
@@ -32,7 +33,7 @@
 .actions { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 3); }
 .confirm { display: grid; gap: calc(var(--space-unit) * 3); padding: calc(var(--space-unit) * 3); border: 1px solid var(--color-danger); border-radius: var(--radius-control); background: var(--color-surface); }
 .confirm p { margin: 0; }
-.empty { color: var(--color-muted); }
+.empty { padding: calc(var(--space-unit) * 4); border-radius: var(--radius-dialog); background: var(--color-surface); color: var(--color-muted); }
 .budget { display: grid; gap: calc(var(--space-unit) * 3); border-top: 1px solid var(--color-border); padding-top: calc(var(--space-unit) * 3); min-width: 0; }
 /* A text field's built-in width grows with the text size; at 200% it would push the budget past a 320px screen. */
 .budget > *, .budget form, .budget .row, .budget input, .budget select { min-width: 0; }

@@ -202,8 +202,12 @@ function Invoke-Suite([string]$Name) {
             $batch = Join-Path $Output "$Name.cmd"
             # A batch file keeps the command exactly as written; PowerShell 5 rewrites quotes in native arguments.
             [IO.File]::WriteAllText($batch, "@echo off`r`ncd /d `"$root`"`r`ncall $command > `"$part`" 2>&1`r`nexit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
-            & cmd.exe /d /c $batch | Out-Null
-            $code = $LASTEXITCODE
+            # Wait for cmd.exe itself, not the end of an output pipe: a process the command leaves behind,
+            # such as a Gradle daemon, inherits that pipe and keeps it open for hours (T207).
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', "`"$batch`"") -NoNewWindow -PassThru
+            $null = $process.Handle
+            $process.WaitForExit()
+            $code = $process.ExitCode
             $text = [IO.File]::ReadAllText($part, [Text.Encoding]::UTF8)
             [IO.File]::AppendAllText($log, "> $command`r`n$text`r`n> exit code $code`r`n`r`n", $utf8)
             Remove-Item -LiteralPath $part, $batch

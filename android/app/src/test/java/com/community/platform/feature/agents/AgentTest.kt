@@ -65,6 +65,7 @@ class AgentTest {
         val effects = mutableListOf<String>()
         val memories = mutableListOf(memory())
         val forgets = mutableListOf<String>()
+        val runReads = mutableListOf<String>()
         var lose = 0
         var failure = 0
         var askRefusal: String? = null
@@ -99,12 +100,18 @@ class AgentTest {
             return applied(created)
         }
 
-        override suspend fun runs(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<AgentRunDto>>> {
+        override suspend fun runs(authorization: String, spaceId: String?, cursor: String?, limit: Int): Response<EnvelopeDto<List<AgentRunDto>>> {
             runsCalls += 1
             val mine = runs.filter { it.spaceId == spaceId }
             val start = cursor?.removePrefix("after-")?.toInt() ?: 0
             val more = start + pageSize < mine.size
             return reply(mine.drop(start).take(pageSize), PaginationDto(if (more) "after-${start + pageSize}" else null, more))
+        }
+
+        override suspend fun getRun(authorization: String, runId: String): Response<EnvelopeDto<AgentRunDto>> {
+            runReads += runId
+            val result = runs.firstOrNull { it.id == runId } ?: return refuse(404, "NOT_FOUND")
+            return reply(result)
         }
 
         override suspend fun answer(authorization: String, runId: String, body: AgentAnswerDto): Response<EnvelopeDto<AgentRunDto>> {
@@ -166,6 +173,7 @@ class AgentTest {
     private suspend fun ready(): AgentViewModel {
         val current = AgentViewModel(repository, fixture.repository); model = current
         current.bind(fixture.accountId); settle(current)
+        current.chooseSpace(fixture.spaceId); settle(current)
         return current
     }
     private suspend fun asked(current: AgentViewModel, message: String): AgentRunDto {
@@ -190,6 +198,91 @@ class AgentTest {
         for (value in invalid) assertThrows(IdentityFailure::class.java) { repository.run(value, fixture.spaceId) }
         assertThrows(IdentityFailure::class.java) { repository.memory(memory().copy(kind = "secret")) }
         assertThrows(IdentityFailure::class.java) { repository.memory(memory(content = "x".repeat(201))) }
+    }
+
+    @Test fun taskTitleClarificationAndTaskUpdateRecordsKeepTheirServerFields(): Unit = runBlocking {
+        val clarification = run("Change the task title", "waiting_for_user").copy(
+            question = AgentQuestionDto(id(), "What should the task be called?", "2026-10-02T09:00:00Z"),
+        )
+        assertEquals("What should the task be called?", repository.run(clarification, fixture.spaceId).question?.text)
+
+        val approval = proposal(clarification.id, listOf(
+            AgentFieldDto("Task", "Water the plants"), AgentFieldDto("Title", "Water the garden"),
+            AgentFieldDto("Due date", "2 October 2026"), AgentFieldDto("Assigned to", "Nobody"),
+        ), tool = "tasks.update", summary = "Update only the task title.")
+        val reviewed = run(clarification.message, "waiting_for_approval").copy(id = clarification.id, approval = approval)
+        val decoded = repository.run(reviewed, fixture.spaceId)
+        assertEquals("tasks.update", decoded.approval?.toolName)
+        assertEquals("Update only the task title.", decoded.approval?.summary)
+        assertEquals(listOf("Task", "Title", "Due date", "Assigned to"), decoded.approval?.fields?.map { it.label })
+        assertEquals("Water the garden", decoded.approval?.fields?.get(1)?.value)
+    }
+
+    @Test fun readOnlyAnswersWithSourceEvidenceSurviveDecodingAndHistory(): Unit = runBlocking {
+        val gson = Gson()
+        for (kind in listOf("event", "document", "page", "space", "interests", "post", "comment", "report", "message")) {
+            val expected = run("Show my $kind information", "completed").copy(
+                outcome = "answered", answer = "1. Visible $kind source\nPicnic instructions (lines 1-3)", finishedAt = at(),
+                evidence = listOf(AgentEvidenceDto(AgentEvidenceKind.valueOf(kind.uppercase()), fixture.spaceId, "Visible source")),
+            )
+            val response = gson.toJsonTree(expected).asJsonObject.apply {
+                add("evidence", gson.toJsonTree(listOf(mapOf("kind" to kind, "ref" to fixture.spaceId, "label" to "Visible source"))))
+                add("plan", gson.toJsonTree(emptyList<String>()))
+                add("tool_calls", gson.toJsonTree(emptyList<String>()))
+                add("events", gson.toJsonTree(emptyList<String>()))
+            }
+            val decoded = repository.run(gson.fromJson(response, AgentRunDto::class.java), fixture.spaceId)
+            assertEquals(expected, decoded)
+            assertFalse(decoded.awaitingApproval)
+            assertNull(decoded.approval)
+            api.runs.add(0, decoded)
+            val history = repository.runs(fixture.accountId, fixture.spaceId, null)
+            assertEquals(expected.answer, history.items.first().answer)
+        }
+        assertTrue(api.effects.isEmpty())
+        assertTrue(api.decisions.isEmpty())
+    }
+
+    @Test fun executionRecordsDecodeAsTypedServerFieldsAndStayInRequestState(): Unit = runBlocking {
+        val gson = Gson()
+        val expected = run("Show my current tasks", "completed").copy(
+            outcome = "answered", intent = "unknown", answer = "One current task is visible.", finishedAt = "2026-10-01T09:05:00Z",
+            plan = listOf(AgentPlanStepDto("read-tasks", "Read current tasks", AgentPlanKind.CHECK, null, AgentPlanStatus.DONE)),
+            evidence = listOf(AgentEvidenceDto(AgentEvidenceKind.TASK, fixture.spaceId, "Water the plants")),
+            toolCalls = listOf(AgentToolCallDto(id(), 1, "tasks.list", "1", AgentToolEffect.READ, AgentToolRisk.LOW,
+                AgentToolStatus.SUCCEEDED, "Found one current task.", id(), null, null, "2026-10-01T09:03:00Z")),
+            events = listOf(AgentEventDto(1, "run_started", "Request accepted", "2026-10-01T09:00:01Z")),
+        )
+        val response = gson.toJsonTree(expected).asJsonObject.apply {
+            add("plan", gson.toJsonTree(listOf(mapOf("id" to "read-tasks", "label" to "Read current tasks", "kind" to "check",
+                "tool" to null, "status" to "done"))))
+            add("evidence", gson.toJsonTree(listOf(mapOf("kind" to "task", "ref" to fixture.spaceId, "label" to "Water the plants"))))
+            add("tool_calls", gson.toJsonTree(listOf(mapOf("id" to expected.toolCalls.single().id, "sequence" to 1,
+                "tool_name" to "tasks.list", "tool_version" to "1", "effect" to "read", "risk" to "low", "status" to "succeeded",
+                "summary" to "Found one current task.", "result_ref" to expected.toolCalls.single().resultRef,
+                "error_code" to null, "approval_id" to null, "created_at" to "2026-10-01T09:03:00Z"))))
+            add("events", gson.toJsonTree(listOf(mapOf("sequence" to 1, "event_type" to "run_started", "summary" to "Request accepted",
+                "created_at" to "2026-10-01T09:00:01Z"))))
+        }
+        val decoded = repository.run(gson.fromJson(response, AgentRunDto::class.java), fixture.spaceId)
+        assertEquals(expected.plan, decoded.plan)
+        assertEquals(expected.evidence, decoded.evidence)
+        assertEquals(expected.toolCalls, decoded.toolCalls)
+        assertEquals(expected.events, decoded.events)
+        val unknownStatus = response.deepCopy().asJsonObject.apply {
+            getAsJsonArray("plan")[0].asJsonObject.addProperty("status", "unverified")
+        }
+        assertThrows(IdentityFailure::class.java) {
+            repository.run(gson.fromJson(unknownStatus, AgentRunDto::class.java), fixture.spaceId)
+        }
+        api.runs += decoded
+
+        val current = ready()
+        val visible = current.state.value.runs.single()
+        assertEquals(expected.plan, visible.plan)
+        assertEquals(expected.evidence, visible.evidence)
+        assertEquals(expected.toolCalls, visible.toolCalls)
+        assertEquals(expected.events, visible.events)
     }
 
     @Test fun messageRulesMatchTheService() {
@@ -219,13 +312,30 @@ class AgentTest {
         assertThrows(IdentityFailure::class.java) { runBlocking { repository.runs(fixture.accountId, fixture.spaceId, null) } }
     }
 
+    @Test fun aRunCanBeReadByItsExactIdAndMustBelongToTheRequestedSpace(): Unit = runBlocking {
+        val expected = run("Update the task title", "waiting_for_approval").copy(
+            approval = proposal(id(), listOf(AgentFieldDto("Task", "Water the plants"), AgentFieldDto("Title", "Water the garden")),
+                tool = "tasks.update", summary = "Update only the task title."),
+        ).let { value -> value.copy(approval = value.approval!!.copy(runId = value.id)) }
+        api.runs += expected
+
+        assertEquals(expected, repository.getRun(fixture.accountId, expected.id, fixture.spaceId))
+        assertEquals(listOf(expected.id), api.runReads)
+        assertThrows(IdentityFailure::class.java) {
+            runBlocking { repository.getRun(fixture.accountId, expected.id, fixture.invitationId) }
+        }
+        assertThrows(IdentityFailure::class.java) {
+            runBlocking { repository.getRun(fixture.accountId, id(), fixture.spaceId) }
+        }
+    }
+
     // Without the app-wide request lock (T82), a read sent beside a request could answer after it and hide that request.
     @Test fun aRefreshWhileARequestIsUnansweredIsNotSent(): Unit = runBlocking {
         val reached = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val reads = AtomicInteger()
         val held = object : AgentApi by api {
-            override suspend fun runs(authorization: String, spaceId: String, cursor: String?, limit: Int): Response<EnvelopeDto<List<AgentRunDto>>> {
+            override suspend fun runs(authorization: String, spaceId: String?, cursor: String?, limit: Int): Response<EnvelopeDto<List<AgentRunDto>>> {
                 reads.incrementAndGet(); return api.runs(authorization, spaceId, cursor, limit)
             }
             override suspend fun memories(authorization: String): Response<EnvelopeDto<List<AgentMemoryDto>>> {
@@ -237,6 +347,7 @@ class AgentTest {
         }
         val current = AgentViewModel(AgentRepository(held, fixture.accounts), fixture.repository); model = current
         current.bind(fixture.accountId); settle(current)
+        current.chooseSpace(fixture.spaceId); settle(current)
         val before = reads.get()
         current.message("Add a task to water the plants tomorrow"); current.ask()
         withTimeout(5000) { reached.await() }
@@ -412,6 +523,35 @@ class AgentTest {
         assertTrue(state.runs.isEmpty() && state.memories.isEmpty() && state.spaces.isEmpty())
         current.message("Anything"); current.ask()
         assertEquals("", current.state.value.message)
+    }
+
+    // DEC-046: a chat's @agent request that waits for its author opens the agent on that chat's Space.
+    @Test fun anEntrySpaceOpensTheAgentThereUntilThePersonChoosesAnother(): Unit = runBlocking {
+        val second = fixture.space.copy(id = "3a1f6c2e-8d4b-4e7a-9c5d-2b6e8f0a1c3d", name = "Garden club")
+        fixture.api.listedSpaces = listOf(fixture.space, second)
+        val current = AgentViewModel(repository, fixture.repository); model = current
+        current.bind(fixture.accountId, second.id); settle(current)
+        assertEquals(second.id, current.state.value.spaceId)
+        current.chooseSpace(fixture.spaceId); settle(current)
+        current.bind(fixture.accountId, second.id); settle(current)
+        assertEquals(fixture.spaceId, current.state.value.spaceId)
+        current.bind(null)
+        current.bind(fixture.accountId, "4b2a7d3f-9e5c-4f8b-8d6e-3c7f9a1b2d4e"); settle(current)
+        assertNull(current.state.value.spaceId)
+    }
+
+    // DEC-060: without an entry Space the screen asks the person's Main Agent, whose runs name no Space.
+    @Test fun withoutAnEntrySpaceTheMainAgentIsAskedAndItsRunsNameNoSpace(): Unit = runBlocking {
+        val current = AgentViewModel(repository, fixture.repository); model = current
+        current.bind(fixture.accountId); settle(current)
+        assertNull(current.state.value.spaceId)
+        assertTrue(current.state.value.runsLoaded)
+        val main = AgentRunDto(id(), null, "Find walking groups", "completed", "answered", null, "Here are two.", null, null, at(), at(), at(), "1",
+            agentKind = "main", handoffs = listOf(AgentHandoffDto(fixture.spaceId, "Family", "family")))
+        assertEquals(main, repository.run(main, null))
+        assertThrows(IdentityFailure::class.java) { repository.run(main, fixture.spaceId) }
+        assertThrows(IdentityFailure::class.java) { repository.run(main.copy(agentKind = "space"), null) }
+        assertThrows(IdentityFailure::class.java) { repository.run(main.copy(handoffs = listOf(AgentHandoffDto("x", "Family", "family"))), null) }
     }
 
     @Test fun wireRequestsCarryTheReviewedPathsHeadersAndBodies(): Unit = runBlocking {

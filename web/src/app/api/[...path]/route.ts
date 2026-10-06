@@ -33,18 +33,21 @@ const allowed = new Set([
   "GET me/notification-preferences", "PATCH me/notification-preferences",
 ]);
 const uuidPart = "[a-f0-9-]{36}";
-const communityWrite = new RegExp(`^(PUT me/interests|POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts|archive|restore|delete|moderators)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove|POST pages/${uuidPart}/moderators/${uuidPart}/(accept|decline|withdraw|remove|step-down)|POST pages/${uuidPart}/handover|POST pages/${uuidPart}/handover/${uuidPart}/(accept|decline|cancel))$`);
-const communityRead = new RegExp(`^GET (me/interests|me/suggested-pages|me/interest-posts|me/pages|me/following|me/saved-posts|me/blocks|me/moderator-roles|me/handover-offers|feed|pages/${uuidPart}/drafts|pages/${uuidPart}/moderators|pages/${uuidPart}/handover)$`);
+const communityWrite = new RegExp(`^(PUT me/interests|POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts|archive|restore|delete|moderators)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove|POST pages/${uuidPart}/moderators/${uuidPart}/(accept|decline|withdraw|remove|step-down)|POST pages/${uuidPart}/handover|POST pages/${uuidPart}/handover/${uuidPart}/(accept|decline|cancel)|POST pages/${uuidPart}/help-posts|POST help-posts/${uuidPart}/(resolve|delete|remove|replies|report|keep|approve)|POST pages/${uuidPart}/events|PUT page-events/${uuidPart}|POST page-events/${uuidPart}/(cancel|going|not-going)|POST help-replies/${uuidPart}/end)$`);
+const communityRead = new RegExp(`^GET (me/interests|me/suggested-pages|me/interest-posts|me/pages|me/following|me/saved-posts|me/blocks|me/moderator-roles|me/handover-offers|me/help-posts|me/help-review|help-posts/${uuidPart}/replies|help-posts/${uuidPart}/reports|me/page-events|page-events/${uuidPart}/attendees|feed|pages/${uuidPart}/drafts|pages/${uuidPart}/moderators|pages/${uuidPart}/handover)$`);
 const feedControlRoute = /^(?:(GET|POST) me\/feed-controls|POST me\/feed-controls\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/remove)$/;
 const pageInsightsRead = /^GET pages\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/insights$/;
 // Public pages and posts can be read signed out; a bound session adds the viewer's own follow/like/save/block state.
-const publicRead = new RegExp(`^GET (taxonomy|pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts)|posts/${uuidPart}|posts/${uuidPart}/comments|discover/pages|discover/posts)$`);
+const publicRead = new RegExp(`^GET (taxonomy|pages/[A-Za-z0-9-]{3,36}|pages/[A-Za-z0-9-]{3,36}/(posts|pinned-posts|help-posts|events)|posts/${uuidPart}|posts/${uuidPart}/comments|help-posts/${uuidPart}|page-events/${uuidPart}|discover/pages|discover/posts|discover/events)$`);
 
 function communityParameters(route: string) {
   if (route === "discover/pages") return ["q", "topic", "interest", "language", "place", "community_type", "audience", "activity", "content_kind", "limit", "cursor"];
   if (route === "me/suggested-pages") return ["limit"];
   if (route === "discover/posts") return ["q", "limit", "cursor"];
-  return /^(me\/following|me\/saved-posts|me\/interest-posts|feed|pages\/[^/]+\/posts|posts\/[^/]+\/comments)$/.test(route) ? ["limit", "cursor"] : [];
+  if (/^pages\/[^/]+\/help-posts$/.test(route)) return ["state", "kind", "limit", "cursor"];
+  if (/^pages\/[^/]+\/events$/.test(route)) return ["when"];
+  if (route === "discover/events") return ["limit"];
+  return /^(me\/following|me\/saved-posts|me\/interest-posts|me\/help-posts|feed|pages\/[^/]+\/posts|posts\/[^/]+\/comments)$/.test(route) ? ["limit", "cursor"] : [];
 }
 
 function failure(status: number, code: string, message: string) {
@@ -117,14 +120,14 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const notificationAction = request.method === "POST" && /^notifications\/[a-f0-9-]{36}\/(read|acknowledge|snooze)$/.test(route);
   const reminderSeries = new RegExp(`^GET reminder-series/${uuidPart}$|^POST reminder-series/${uuidPart}/(pause|resume|skip|cancel|move|replace)$`).test(`${request.method} ${route}`);
   const alerts = new RegExp(`^GET me/alerts$|^POST me/alerts/dismiss$|^(GET|PATCH) me/quiet-hours$|^GET me/care-alerts$|^(GET|POST) events/${uuidPart}/alert$|^POST care/instructions/${uuidPart}/alerts$|^(GET|POST) reminder-backups$|^GET reminder-backups/contacts$|^POST reminder-backups/${uuidPart}/(accept|decline|cancel)$`).test(`${request.method} ${route}`);
-  const messaging = /^(POST spaces\/[a-f0-9-]{36}\/conversations|GET conversations|GET conversations\/[a-f0-9-]{36}(\/messages)?|POST conversations\/[a-f0-9-]{36}\/(messages|read)|POST conversations\/[a-f0-9-]{36}\/messages\/[a-f0-9-]{36}\/(delete|edit|reactions))$/.test(`${request.method} ${route}`);
+  const messaging = /^(POST spaces\/[a-f0-9-]{36}\/conversations|GET conversations|GET conversations\/[a-f0-9-]{36}(\/messages)?|POST conversations\/[a-f0-9-]{36}\/(messages|read)|POST conversations\/[a-f0-9-]{36}\/messages\/[a-f0-9-]{36}\/(delete|edit|reactions|agent))$/.test(`${request.method} ${route}`);
   const community = communityWrite.test(`${request.method} ${route}`) || communityRead.test(`${request.method} ${route}`) || feedControlRoute.test(`${request.method} ${route}`) || pageInsightsRead.test(`${request.method} ${route}`);
   const events = /^((GET|POST) spaces\/[a-f0-9-]{36}\/events|(GET|PATCH) events\/[a-f0-9-]{36}|POST events\/[a-f0-9-]{36}\/(cancel|attendance)|(GET|PUT) events\/[a-f0-9-]{36}\/budget|(PUT|DELETE) events\/[a-f0-9-]{36}\/budget\/split|POST events\/[a-f0-9-]{36}\/expenses|DELETE events\/[a-f0-9-]{36}\/expenses\/[a-f0-9-]{36}|POST events\/[a-f0-9-]{36}\/contributions|(PUT|DELETE) events\/[a-f0-9-]{36}\/contributions\/[a-f0-9-]{36})$/.test(`${request.method} ${route}`);
   const care = new RegExp(`^(GET|POST) care/instructions$|^GET care/instructions/${uuidPart}$|^POST care/instructions/${uuidPart}/(stop|reports)$|^GET care/day$`).test(`${request.method} ${route}`);
   const publicCommunity = publicRead.test(`${request.method} ${route}`);
   const groupSearch = request.method === "GET" && route === "discover/spaces";
   const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/(visibility|invite-policy|agent-policy)$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
-  const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^DELETE agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
+  const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}(/web-text)?$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^DELETE agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
   const documentAdd = request.method === "POST" && new RegExp(`^spaces/${uuidPart}/documents$`).test(route);
   const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));
   const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
@@ -234,7 +237,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       }
     }
     if (documentRead) {
-      const parameters = route === "search" ? ["q", "space_id"] : route.endsWith("/documents") ? ["limit", "cursor"] : [];
+      const parameters = route === "search" ? ["q", "space_id", "limit"] : route.endsWith("/documents") ? ["limit", "cursor"] : [];
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid document parameters.");
         upstreamUrl.searchParams.set(name, value);

@@ -180,6 +180,12 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/pages/garden-club' && method === 'GET') return reply(state.publicPage);
       if (url.pathname === `/api/pages/${pageId}/posts` && method === 'GET') return paged([state.post]);
       if (url.pathname === `/api/pages/${pageId}/pinned-posts` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/help-posts` && method === 'GET') return paged([]);
+      if (url.pathname === '/api/me/help-posts' && method === 'GET') return paged([]);
+      if (url.pathname === `/api/pages/${pageId}/events` && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/page-events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/discover/events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/help-review' && method === 'GET') return reply([]);
       if (url.pathname === `/api/pages/${pageId}/drafts` && method === 'GET') return reply([]);
       if (url.pathname === `/api/pages/${pageId}` && method === 'PATCH') { Object.assign(state.publicPage, body); return reply(state.publicPage); }
       if (url.pathname === '/api/me/pages' && method === 'GET') return reply([{ ...state.publicPage, can_manage: true, etag: '"page-1"' }]);

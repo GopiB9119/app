@@ -1,5 +1,6 @@
 package com.community.platform.feature.planning
 
+import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
@@ -9,6 +10,9 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -50,7 +54,11 @@ class ChecklistTest {
     private val repository = ChecklistRepository(api, fixture.accounts)
     private var model: ChecklistViewModel? = null
     @Before fun setup() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
-    @After fun cleanup() { model?.bind(null, null, null); Dispatchers.resetMain() }
+    @After fun cleanup(): Unit = runBlocking { try { finishTestWork() } finally { Dispatchers.resetMain() } }
+    private suspend fun finishTestWork() {
+        model?.bind(null, null, null)
+        withTimeout(5000) { model?.viewModelScope?.coroutineContext?.get(Job)?.cancelAndJoin() }
+    }
     private suspend fun idle(current: ChecklistViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
     private suspend fun ready(): ChecklistViewModel {
         val current = ChecklistViewModel(repository); model = current
@@ -135,6 +143,25 @@ class ChecklistTest {
         withTimeout(5000) { entered.await() }
         current.bind(null, null, null); release.complete(Unit)
         assertEquals(ChecklistState(), current.state.value)
+    }
+
+    // T206: a cancelled read that finishes after Main is reset fails on Main inside the next test class.
+    @Test fun cleanupAwaitsCancelledChecklistWork() = runBlocking {
+        val entered = CompletableDeferred<Unit>(); val finished = CompletableDeferred<Unit>()
+        val held = object : ChecklistApi by api {
+            override suspend fun read(authorization: String, taskId: String): Response<EnvelopeDto<ChecklistDto>> {
+                entered.complete(Unit)
+                try { awaitCancellation() } finally { finished.complete(Unit) }
+            }
+        }
+        val current = ChecklistViewModel(ChecklistRepository(held, fixture.accounts)); model = current
+        current.bind(fixture.accountId, taskId, fixture.spaceId)
+        withTimeout(5000) { entered.await() }
+
+        finishTestWork()
+
+        assertTrue(finished.isCompleted)
+        assertTrue(current.viewModelScope.coroutineContext[Job]!!.isCompleted)
     }
 
     // Without the app-wide request lock (T82), a read sent beside a change could answer after it and undo it on screen.

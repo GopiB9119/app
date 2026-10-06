@@ -29,6 +29,7 @@ data class EventsState(
     val events: List<EventDto> = emptyList(),
     val nextCursor: String? = null,
     val selected: EventDto? = null,
+    val searchItemGone: Boolean = false,
     val draft: EventDraft = EventDraft(),
     val problem: EventProblem? = null,
     val pending: EventCreateIntent? = null,
@@ -52,13 +53,18 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
     private var loadJob: Job? = null
     private var loadingMore = false
     private var loads = 0L
+    private var entryEventId: String? = null
+    private var pendingEntryEventId: String? = null
 
-    fun bind(accountId: String?, spaceId: String?, timezone: String) {
+    fun bind(accountId: String?, spaceId: String?, timezone: String, initialEventId: String? = null) {
         zone = timezone
         val current = mutableState.value
-        if (current.accountId == accountId && current.spaceId == spaceId) return
+        val requestedEventId = if (accountId == null) null else initialEventId
+        if (current.accountId == accountId && current.spaceId == spaceId && entryEventId == requestedEventId) return
         generation += 1
         loadJob?.cancel()
+        entryEventId = requestedEventId
+        pendingEntryEventId = requestedEventId
         mutableState.value = EventsState(accountId = accountId, spaceId = spaceId, draft = EventDraft(timezone = timezone))
         if (accountId != null && spaceId != null) reload()
     }
@@ -136,9 +142,28 @@ class EventsViewModel @Inject constructor(private val repository: EventsReposito
                 if (generation == expected && mutableState.value.past == past) mutableState.update {
                     it.copy(events = if (more) (it.events + page.items).distinctBy(EventDto::id) else page.items, nextCursor = page.nextCursor)
                 }
+                if (generation == expected && loads == sequence) openEntry(account, space, expected)
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected) }
             finally { mutableState.update { if (generation == expected && loads == sequence) it.copy(loading = false) else it } }
+        }
+    }
+
+    private suspend fun openEntry(account: String, space: String, expected: Long) {
+        val target = pendingEntryEventId ?: return
+        try {
+            val detail = repository.read(account, target)
+            repository.event(detail, spaceId = space, detail = true)
+            if (generation == expected) {
+                pendingEntryEventId = null
+                mutableState.update { it.copy(mode = EventMode.DETAIL, selected = detail, searchItemGone = false) }
+            }
+        } catch (error: IdentityFailure) {
+            if (error.status !in setOf(403, 404)) throw error
+            if (generation == expected) {
+                pendingEntryEventId = null
+                mutableState.update { it.copy(mode = EventMode.LIST, selected = null, searchItemGone = true) }
+            }
         }
     }
 

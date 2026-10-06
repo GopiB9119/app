@@ -5,6 +5,7 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import and_, delete, func, or_, select
 
 from app.errors import DomainError
+from app.modules.discovery.live import announce_history
 from app.modules.files.models import CONTENT_FIELDS, SpaceDocument, SpaceDocumentChunk
 from app.modules.files.schemas import DocumentCursor, DocumentDetail, DocumentOutcome, DocumentView
 from app.modules.files.text import passages, prepare
@@ -82,6 +83,7 @@ class DocumentService:
         database.add(OutboxEvent(
             id=identifier, event_type=action, actor_id=actor_id, aggregate_id=document.id, schema_version=1, created_at=now,
         ))
+        announce_history(database, document.space_id, document.admissions_before, "document")
 
     def add(self, token, space_id, body, key):
         with self.identity.signed_in_write(token) as (database, caller):

@@ -107,6 +107,7 @@ export const pageSchema = z.object({
   moderation: z.object({ hidden: z.literal(true), reason: z.enum(REPORT_REASONS) }).optional(),
   limited: z.boolean().default(false),
   limit: z.object({ reason: z.enum(REPORT_REASONS) }).optional(),
+  help_open: z.boolean().default(false),
 }).refine(value => value.can_manage === (value.etag !== null) && !(value.following && value.blocked));
 export type PublicPage = z.infer<typeof pageSchema>;
 

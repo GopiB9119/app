@@ -14,6 +14,8 @@
     "test:records": "node --test scripts/records-check.test.mjs",
     "check:openapi": "node scripts/check-openapi.mjs",
     "test:openapi": "docker compose -f infra/compose.yaml --profile test run --rm --pull never tests pytest -q --tb=short -p no:cacheprovider tests/test_openapi.py",
+    "golden": "node scripts/agent-golden.mjs",
+    "test:golden": "node --test scripts/agent-golden.test.mjs",
     "verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1"
   },
   "engines": { "node": ">=22" }

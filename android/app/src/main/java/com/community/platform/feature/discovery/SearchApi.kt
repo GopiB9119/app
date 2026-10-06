@@ -9,5 +9,5 @@ import retrofit2.http.Query
 interface SearchApi {
     @GET("v1/search")
     suspend fun search(@Header("Authorization") authorization: String, @Query("q") query: String,
-        @Query("space_id") spaceId: String?): Response<EnvelopeDto<SearchResultsDto>>
+        @Query("space_id") spaceId: String?, @Query("limit") limit: Int? = null): Response<EnvelopeDto<SearchResultsDto>>
 }

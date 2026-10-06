@@ -92,21 +92,28 @@ async function fixture(context, options = {}) {
     const state = window.documentsFixture = {
       calls: [], documents: options.seed ? [makeDocument()] : [], address,
       failAdd: !!options.failAdd, emptySearch: !!options.emptySearch, unexpected: [],
+      documentTotal: options.documentTotal ?? null, checklistTask: !!options.checklistTask, searchGate: null, openGate: null, live: null, spaces: [],
     };
     const receipts = new Map();
     window.history.pushState = (_data, _unused, next) => { state.address = String(next); };
+    window.history.replaceState = (_data, _unused, next) => { state.address = String(next); };
     const space = {
       id: spaceId, name: spaceName, description: '', space_type: 'family', visibility: 'private', status: 'active',
       role: 'owner', version: '1', created_at: addedAt,
     };
+    state.spaces = [space];
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-documents', ...extra }), { status: 200 });
     const paged = data => reply(data, { pagination: { next_cursor: null, has_more: false } });
     window.fetch = async (input, config = {}) => {
       const url = new URL(String(input), 'https://offline.invalid');
       const method = config.method ?? 'GET';
       if (url.pathname === '/api/live' && method === 'GET') {
-        // The live connection every signed-in page opens (DEC-019) stays open without hints and closes when the page aborts it.
-        return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+        // The live connection every signed-in page opens (DEC-019) stays open until a test sends it a frame, and closes when the page aborts it.
+        return new Response(new ReadableStream({ start(controller) {
+          const encoder = new TextEncoder();
+          state.live = frame => controller.enqueue(encoder.encode(frame));
+          config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} });
+        } }), { headers: { 'Content-Type': 'text/event-stream' } });
       }
       const body = config.body ? JSON.parse(config.body) : null;
       const headers = Object.fromEntries(new Headers(config.headers));
@@ -114,7 +121,7 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/me' && method === 'GET') return reply({
         id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1,
       });
-      if (url.pathname === '/api/spaces' && method === 'GET') return paged([space]);
+      if (url.pathname === '/api/spaces' && method === 'GET') return paged(state.spaces);
       // Every signed-in header shows the inbox's unread count on its bell (DEC-014, T38).
       if (url.pathname === '/api/notifications' && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false }, unread_count: 0 });
       if (url.pathname === `/api/spaces/${spaceId}/documents` && method === 'GET') return paged(state.documents);
@@ -133,22 +140,32 @@ async function fixture(context, options = {}) {
         return reply({ id: documentId, space_id: spaceId, status: 'deleted', deleted_at: '2026-10-01T11:00:00Z' });
       }
       if (url.pathname === '/api/search' && method === 'GET') {
+        if (state.searchGate) await state.searchGate;
         const empty = state.emptySearch;
+        const limit = Number(url.searchParams.get('limit') ?? 20);
+        const total = state.documentTotal;
+        const listed = state.documents.map(item => ({
+          document_id: item.id, space_id: spaceId, space_name: spaceName, name: item.name, media_type: item.media_type,
+          start_line: 3, end_line: 4, excerpt: 'Picnic <img src="https://external.invalid/search.png"> blankets by the gate.', added_at: addedAt,
+        }));
+        // With a total, the fixture holds that many documents and answers like the service: the first `limit` of them and whether more exist.
+        const counted = Array.from({ length: Math.min(limit, total ?? 0) }, (_, index) => ({
+          document_id: `00000000-0000-4000-9000-${String(index + 1).padStart(12, '0')}`, space_id: spaceId, space_name: spaceName,
+          name: `picnic-${index + 1}.md`, media_type: 'text/markdown', start_line: 1, end_line: 1, excerpt: `Picnic note ${index + 1}.`, added_at: addedAt,
+        }));
         return reply({
-          query: url.searchParams.get('q'), space_id: url.searchParams.get('space_id'),
-          documents: empty ? [] : state.documents.map(item => ({
-            document_id: item.id, space_id: spaceId, space_name: spaceName, name: item.name, media_type: item.media_type,
-            start_line: 3, end_line: 4, excerpt: 'Picnic <img src="https://external.invalid/search.png"> blankets by the gate.', added_at: addedAt,
-          })),
+          query: url.searchParams.get('q'), space_id: url.searchParams.get('space_id'), limit,
+          documents: empty ? [] : total === null ? listed : counted,
           tasks: empty ? [] : [{
             task_id: taskId, space_id: spaceId, space_name: spaceName, title: 'Picnic shopping',
-            excerpt: 'Picnic food to bring.', status: 'open', due_date: '2026-10-10',
+            excerpt: state.checklistTask ? 'Buy picnic blankets' : 'Picnic food to bring.', excerpt_in: state.checklistTask ? 'checklist' : 'notes',
+            status: 'open', due_date: '2026-10-10',
           }],
           events: empty ? [] : [{
             event_id: eventId, space_id: spaceId, space_name: spaceName, title: 'Picnic in the park',
             excerpt: 'Picnic at noon.', status: 'scheduled', starts_at: '2026-10-10T12:00:00Z', timezone: 'UTC', local_start: '2026-10-10T12:00',
           }],
-          more_documents: false, more_tasks: false, more_events: false,
+          more_documents: !empty && total !== null && total > limit, more_tasks: false, more_events: false,
         });
       }
       state.unexpected.push(`${method} ${url.pathname}`);
@@ -285,9 +302,10 @@ test('offline Space search groups links and plain-text highlights and explains e
     const tasks = page.getByRole('region', { name: 'Tasks (1)', exact: true });
     const events = page.getByRole('region', { name: 'Events (1)', exact: true });
     assert.equal(await documents.getByRole('link', { name: documentName, exact: true }).getAttribute('href'), `/app/documents?space_id=${spaceId}&id=${documentId}&line=3&end=4`);
-    assert.equal(await tasks.getByRole('link', { name: 'Picnic shopping', exact: true }).getAttribute('href'), `/app/tasks?space_id=${spaceId}`);
-    assert.equal(await events.getByRole('link', { name: 'Picnic in the park', exact: true }).getAttribute('href'), `/app/events?space_id=${spaceId}`);
-    assert.deepEqual(await page.locator('main mark').allTextContents(), ['Picnic', 'Picnic', 'Picnic']);
+    assert.equal(await tasks.getByRole('link', { name: 'Picnic shopping', exact: true }).getAttribute('href'), `/app/tasks?space_id=${spaceId}&task_id=${taskId}`);
+    assert.equal(await events.getByRole('link', { name: 'Picnic in the park', exact: true }).getAttribute('href'), `/app/events?space_id=${spaceId}&event_id=${eventId}`);
+    // Titles and names are marked as well as the excerpts (DEC-051).
+    assert.deepEqual(await page.locator('main mark').allTextContents(), ['picnic', 'Picnic', 'Picnic', 'Picnic', 'Picnic', 'Picnic']);
     assert.match(await documents.innerText(), /<img src="https:\/\/external\.invalid\/search\.png">/);
     assert.equal(await page.locator('main img').count(), 0);
     assert.equal(await page.getByRole('link', { name: 'Search', exact: true }).getAttribute('href'), '/app/search');
@@ -302,6 +320,167 @@ test('offline Space search groups links and plain-text highlights and explains e
     assert.equal(query.get('space_id'), spaceId);
     assert.equal(await page.evaluate(() => window.documentsFixture.address), `/app/search?q=nothing&space_id=${spaceId}`);
     assert.deepEqual(await page.evaluate(() => window.documentsFixture.unexpected), []);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+const strangerSpaceId = '7c1a4b9e-2d44-4f0a-9b55-0e5e1a3d9f11';
+const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const searchCalls = page => page.evaluate(() => window.documentsFixture.calls.filter(call => call.route === '/api/search'));
+const waitForSearches = (page, count) => page.waitForFunction(wanted => window.documentsFixture.calls.filter(call => call.route === '/api/search').length >= wanted, count);
+async function sendLive(page, text) {
+  await page.waitForFunction(() => window.documentsFixture.live !== null);
+  await page.evaluate(value => window.documentsFixture.live(value), text);
+}
+
+test('offline search keeps its results and your place while live hints refresh it, and says when something changed', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, address: `/app/search?q=picnic&space_id=${spaceId}` });
+    const field = page.getByLabel('Search your Spaces', { exact: true });
+    const documents = page.getByRole('region', { name: 'Documents (1)', exact: true });
+    await documents.getByRole('link', { name: documentName, exact: true }).waitFor();
+    await field.focus();
+    assert.equal((await searchCalls(page)).length, 1);
+    const placeIsKept = () => page.evaluate(() => document.activeElement?.id.endsWith('-q') === true);
+
+    // A reconnect cannot tell what was missed, so the open search is read once more; nothing changed, so nothing is announced.
+    await sendLive(page, frame('ready', { heartbeat_seconds: 20, max_seconds: 600 }));
+    await waitForSearches(page, 2);
+    await page.waitForFunction(() => !document.body.innerText.includes('Updating results'));
+    assert.equal(await page.getByText('Results updated.', { exact: true }).count(), 0);
+    assert.equal(await placeIsKept(), true);
+
+    // A change in this Space: the results stay on screen while they are read again, and focus stays where it was.
+    await page.evaluate(() => {
+      window.documentsFixture.searchGate = new Promise(resolve => { window.documentsFixture.openGate = resolve; });
+      window.documentsFixture.documents[0].name = 'picnic-renamed.md';
+    });
+    await sendLive(page, frame('change', { kind: 'search', space_id: spaceId, reason: 'document' }));
+    await waitForSearches(page, 3);
+    await page.getByText('Updating results', { exact: true }).waitFor();
+    await documents.getByRole('link', { name: documentName, exact: true }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: /^Results for /, level: 2 }).count(), 1);
+    assert.equal(await placeIsKept(), true);
+    await page.evaluate(() => window.documentsFixture.openGate());
+    await documents.getByRole('link', { name: 'picnic-renamed.md', exact: true }).waitFor();
+    await page.locator('[role="status"]').filter({ hasText: 'Results updated.' }).waitFor();
+    assert.equal(await placeIsKept(), true);
+    assert.equal(await documents.getByRole('link', { name: documentName, exact: true }).count(), 0);
+
+    // Other Spaces and hints this screen does not know change nothing; a burst of hints is read once.
+    const settled = (await searchCalls(page)).length;
+    await sendLive(page, frame('change', { kind: 'search', space_id: strangerSpaceId, reason: 'task' }));
+    await sendLive(page, frame('change', { kind: 'search', space_id: spaceId, reason: 'something-else' }));
+    await sendLive(page, frame('change', { kind: 'conversation', conversation_id: strangerSpaceId, space_id: spaceId, reason: 'message' }));
+    await page.waitForTimeout(900);
+    assert.equal((await searchCalls(page)).length, settled);
+    for (const reason of ['document', 'task', 'event']) await sendLive(page, frame('change', { kind: 'search', space_id: spaceId, reason }));
+    await waitForSearches(page, settled + 1);
+    await page.waitForTimeout(900);
+    assert.equal((await searchCalls(page)).length, settled + 1);
+    // The hints carried no words of the search, and the reads kept to the open search.
+    for (const call of await searchCalls(page)) {
+      const query = new URLSearchParams(call.query);
+      assert.equal(query.get('q'), 'picnic');
+      assert.equal(query.get('space_id'), spaceId);
+      assert.equal(query.has('limit'), false);
+    }
+    assert.deepEqual(await page.evaluate(() => window.documentsFixture.unexpected), []);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline search shows more of one kind at a time up to 100 and says when that is all it shows', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { documentTotal: 150, address: `/app/search?q=picnic&space_id=${spaceId}` });
+    await page.getByRole('heading', { name: 'Documents (20+)', exact: true, level: 3 }).waitFor();
+    const more = page.getByRole('button', { name: 'Show more documents', exact: true });
+    assert.equal(await page.getByRole('region', { name: 'Documents (20+)', exact: true }).getByRole('listitem').count(), 20);
+    assert.equal(await page.getByRole('button', { name: /^Show more (tasks|events)$/ }).count(), 0);
+
+    // The first twenty stay on screen while the next twenty are read, and the person is told.
+    await page.evaluate(() => { window.documentsFixture.searchGate = new Promise(resolve => { window.documentsFixture.openGate = resolve; }); });
+    await more.click();
+    await page.getByText('Loading more results', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('region', { name: 'Documents (20+)', exact: true }).getByRole('listitem').count(), 20);
+    assert.equal(await more.isDisabled(), true);
+    await page.evaluate(() => window.documentsFixture.openGate());
+    await page.getByRole('heading', { name: 'Documents (40+)', exact: true, level: 3 }).waitFor();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Show more documents');
+    for (const shown of [60, 80, 100]) {
+      await more.click();
+      await page.getByRole('heading', { name: `Documents (${shown}+)`, exact: true, level: 3 }).waitFor();
+    }
+    assert.deepEqual((await searchCalls(page)).map(call => new URLSearchParams(call.query).get('limit')), [null, '40', '60', '80', '100']);
+    // At the most it shows, the button gives way to a line saying so, and focus moves to the group.
+    await page.getByText('Showing the first 100. Add words to narrow the results.', { exact: true }).waitFor();
+    assert.equal(await more.count(), 0);
+    assert.equal(await page.getByRole('region', { name: 'Documents (100+)', exact: true }).getByRole('listitem').count(), 100);
+    await page.waitForFunction(() => document.activeElement?.tagName === 'H3' && document.activeElement.textContent === 'Documents (100+)');
+    // Searching again starts from the first page.
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('heading', { name: 'Documents (20+)', exact: true, level: 3 }).waitFor();
+    assert.equal(new URLSearchParams((await searchCalls(page)).at(-1).query).has('limit'), false);
+    assert.deepEqual(await page.evaluate(() => window.documentsFixture.unexpected), []);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline search drops a Space the person lost, says so and searches the rest', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, address: `/app/search?q=picnic&space_id=${spaceId}` });
+    await page.getByRole('region', { name: 'Documents (1)', exact: true }).waitFor();
+    await page.evaluate(other => {
+      window.documentsFixture.spaces = [{ ...window.documentsFixture.spaces[0], id: other, name: 'Neighbours' }];
+    }, strangerSpaceId);
+    await sendLive(page, frame('change', { kind: 'search', space_id: spaceId, reason: 'access' }));
+    await page.getByText('That Space is no longer available to you. Showing all your Spaces.', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Space', { exact: true }).inputValue(), '');
+    const last = (await searchCalls(page)).at(-1);
+    assert.equal(new URLSearchParams(last.query).get('q'), 'picnic');
+    assert.equal(new URLSearchParams(last.query).has('space_id'), false);
+    assert.equal(await page.evaluate(() => window.documentsFixture.address), '/app/search?q=picnic');
+    // Nothing was asked of the Space that is gone.
+    assert.equal((await searchCalls(page)).filter(call => new URLSearchParams(call.query).get('space_id') === spaceId).length, 1);
+    assert.deepEqual(await page.evaluate(() => window.documentsFixture.unexpected), []);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline search says when a task excerpt comes from the checklist', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, checklistTask: true, address: `/app/search?q=picnic&space_id=${spaceId}` });
+    const tasks = page.getByRole('region', { name: 'Tasks (1)', exact: true });
+    await tasks.waitFor();
+    assert.equal(await tasks.locator('p', { hasText: 'In the checklist:' }).innerText(), 'In the checklist: Buy picnic blankets');
+    assert.deepEqual(await tasks.locator('mark').allTextContents(), ['Picnic', 'picnic']);
+    const events = page.getByRole('region', { name: 'Events (1)', exact: true });
+    assert.equal(await events.getByText('In the checklist:').count(), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline search with more results and a notice fits 320px at doubled text', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { documentTotal: 45, checklistTask: true, address: `/app/search?q=picnic&space_id=${spaceId}` });
+    await page.getByRole('button', { name: 'Show more documents', exact: true }).waitFor();
+    await page.evaluate(other => {
+      window.documentsFixture.spaces = [{ ...window.documentsFixture.spaces[0], id: other, name: 'Neighbours' }];
+    }, strangerSpaceId);
+    await sendLive(page, frame('change', { kind: 'search', space_id: spaceId, reason: 'access' }));
+    await page.getByText('That Space is no longer available to you. Showing all your Spaces.', { exact: true }).waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'at 320px');
+    const normalSize = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+    await page.evaluate(size => { document.documentElement.style.fontSize = `${size * 2}px`; }, normalSize);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'at 320px and 200% text');
+    const button = await page.getByRole('button', { name: 'Show more documents', exact: true }).boundingBox();
+    assert.ok(button.width >= 44 && button.height >= 44, 'the button keeps a usable target');
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

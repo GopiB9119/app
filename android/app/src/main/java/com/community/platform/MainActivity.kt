@@ -121,6 +121,7 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
     var reminderTaskId by rememberSaveable { mutableStateOf<String?>(null) }
     var reminderSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
     var taskEntrySpaceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var taskEntryId by rememberSaveable { mutableStateOf<String?>(null) }
     var taskReturnScreen by rememberSaveable { mutableStateOf("account") }
     var reminderReturnScreen by rememberSaveable { mutableStateOf("account") }
     var settingsSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -128,7 +129,11 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
     var checklistSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
     var messagesSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
     var messagesReturnScreen by rememberSaveable { mutableStateOf("account") }
+    // A chat's @agent request opens the Agent on the chat's Space and comes back to the chat (DEC-046).
+    var agentSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var agentReturnScreen by rememberSaveable { mutableStateOf("account") }
     var eventsSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var eventsEntryId by rememberSaveable { mutableStateOf<String?>(null) }
     var eventsSpaceName by rememberSaveable { mutableStateOf("") }
     var eventsReturnScreen by rememberSaveable { mutableStateOf("spaces") }
     var groupSpaceId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -155,8 +160,8 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         else mainBar(screen, account.profile != null, account.busy, spacesState.value, messagingState.value,
             communityState.value.copy(working = communityState.value.working || moderationState.value.working))
     } }
-    LaunchedEffect(accountId, screen, reminderTaskId, reminderSpaceId, taskEntrySpaceId, settingsSpaceId, checklistTaskId, checklistSpaceId, messagesSpaceId, eventsSpaceId, groupSpaceId,
-        documentSearchAccountId, documentsSpaceId, documentsSpaceName, documentEntryId, documentFirstLine, documentLastLine, documentsReturnScreen, communityEntry) {
+    LaunchedEffect(accountId, screen, reminderTaskId, reminderSpaceId, taskEntrySpaceId, taskEntryId, settingsSpaceId, checklistTaskId, checklistSpaceId, messagesSpaceId, eventsSpaceId, eventsEntryId, groupSpaceId,
+        documentSearchAccountId, documentsSpaceId, documentsSpaceName, documentEntryId, documentFirstLine, documentLastLine, documentsReturnScreen, communityEntry, agentSpaceId) {
         val searchContext = screen == "search" || screen == "documents" && documentsReturnScreen == "search" ||
             screen in setOf("tasks", "checklist", "reminders") && taskReturnScreen == "search" || screen == "events" && eventsReturnScreen == "search"
         if (documentSearchAccountId != accountId && (screen == "documents" || searchContext)) {
@@ -168,7 +173,10 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             if (documentContext) documentsSpaceName else "", if (documentContext) documentEntryId else null,
             if (documentContext && documentFirstLine != null && documentLastLine != null) DocumentLineRange(documentFirstLine!!, documentLastLine!!) else null)
         search.bind(if (searchContext && documentSearchAccountId == accountId) accountId else null)
-        tasks.bind(if (screen == "tasks" || screen == "checklist" || screen == "reminders" && reminderTaskId != null) accountId else null, taskEntrySpaceId)
+        val taskContext = screen == "tasks" || screen == "checklist" || screen == "reminders" && reminderTaskId != null
+        if (!taskContext || taskReturnScreen != "search" || accountId == null) taskEntryId = null
+        if (screen != "events" || eventsReturnScreen != "search" || accountId == null) eventsEntryId = null
+        tasks.bind(if (taskContext) accountId else null, taskEntrySpaceId, taskEntryId)
         checklist.bind(if (screen == "checklist") accountId else null, checklistTaskId, checklistSpaceId)
         reminders.bind(if (screen == "reminders") accountId else null, if (screen == "reminders") reminderTaskId else null, if (screen == "reminders") reminderSpaceId else null, account.profile?.user?.timezone ?: "UTC")
         spaces.bind(if (screen == "spaces" || screen == "space-settings" || screen == "documents" && documentsReturnScreen == "spaces") accountId else null)
@@ -188,10 +196,10 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             }
             communityEntry = null
         }
-        events.bind(if (screen == "events") accountId else null, eventsSpaceId, account.profile?.user?.timezone ?: "UTC")
+        events.bind(if (screen == "events") accountId else null, eventsSpaceId, account.profile?.user?.timezone ?: "UTC", eventsEntryId)
         if (screen != "events") budget.bind(null, null)
         care.bind(if (screen == "care") accountId else null, account.profile?.user?.timezone ?: "UTC")
-        agent.bind(if (screen == "agent") accountId else null)
+        agent.bind(if (screen == "agent") accountId else null, agentSpaceId)
         privacy.bind(if (screen == "privacy") accountId else null)
         home.bind(if (screen == "home") accountId else null, account.profile?.user?.timezone ?: "UTC")
     }
@@ -230,8 +238,8 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             SearchRoute(search, accountId, onBack = { screen = "home" }, onSessionLost = { screen = "account"; identity.refresh() }, onOpenDocument = { hit ->
                 documentsSpaceId = hit.spaceId; documentsSpaceName = hit.spaceName; documentEntryId = hit.documentId
                 documentFirstLine = hit.startLine; documentLastLine = hit.endLine; documentsReturnScreen = "search"; screen = "documents"
-            }, onOpenTasks = { hit -> taskEntrySpaceId = hit.spaceId; taskReturnScreen = "search"; screen = "tasks" },
-                onOpenEvents = { hit -> eventsSpaceId = hit.spaceId; eventsSpaceName = hit.spaceName; eventsReturnScreen = "search"; screen = "events" })
+            }, onOpenTasks = { hit -> taskEntrySpaceId = hit.spaceId; taskEntryId = hit.taskId; taskReturnScreen = "search"; screen = "tasks" },
+                onOpenEvents = { hit -> eventsSpaceId = hit.spaceId; eventsEntryId = hit.eventId; eventsSpaceName = hit.spaceName; eventsReturnScreen = "search"; screen = "events" })
         } else if (screen == "documents" && accountId != null && documentSearchAccountId == accountId && documentsSpaceId != null) {
             DocumentRoute(documents, accountId, documentsSpaceId!!, onBack = { screen = documentsReturnScreen },
                 onSessionLost = { screen = "account"; identity.refresh() },
@@ -239,7 +247,8 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         } else if (screen == "care" && accountId != null) {
             CareRoute(care, accountId, onBack = { screen = "home" }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "agent" && accountId != null) {
-            AgentRoute(agent, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
+            AgentRoute(agent, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = agentReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() },
+                onOpenSpaceChat = { spaceId -> messagesSpaceId = spaceId; messagesReturnScreen = "agent"; screen = "messages" })
         } else if (screen == "privacy" && accountId != null) {
             PrivacyRoute(privacy, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() })
         } else if (screen == "events" && accountId != null && eventsSpaceId != null) {
@@ -247,7 +256,8 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
         } else if (screen == "community" && accountId != null) {
             CommunityRoute(community, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onSessionLost = { screen = "account"; identity.refresh() }, moderation = moderation)
         } else if (screen == "messages" && accountId != null) {
-            MessagingRoute(messaging, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = messagesReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() })
+            MessagingRoute(messaging, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = messagesReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() },
+                onOpenAgent = { spaceId -> agentSpaceId = spaceId; agentReturnScreen = "messages"; screen = "agent" })
         } else if (screen == "spaces" && accountId != null) {
             SpaceRoute(spaces, accountId, account.profile?.user?.timezone ?: "UTC", onBack = { screen = "account" }, onOpenTasks = { selected -> taskEntrySpaceId = selected.id; taskReturnScreen = "spaces"; screen = "tasks" }, onSessionLost = { screen = "account"; identity.refresh() }, onOpenSettings = { selected -> settingsSpaceId = selected.id; screen = "space-settings" }, onOpenChat = { selected -> messagesSpaceId = selected.id; messagesReturnScreen = "spaces"; screen = "messages" }, onOpenEvents = { selected -> eventsSpaceId = selected.id; eventsSpaceName = selected.name; eventsReturnScreen = "spaces"; screen = "events" },
                 onFindGroups = { screen = "groups" }, onOpenGroupAccess = { selected -> groupSpaceId = selected.id; screen = "group-access" }, onOpenDocuments = { selected ->
@@ -272,7 +282,7 @@ private fun AccountWorkspace(identity: IdentityViewModel, tasks: TaskViewModel, 
             TaskRoute(tasks, accountId, onBack = { screen = taskReturnScreen }, onSessionLost = { screen = "account"; identity.refresh() }, onRemind = { record -> reminderTaskId = record.task.id; reminderSpaceId = record.task.spaceId; reminderReturnScreen = "tasks"; screen = "reminders" }, onChecklist = { record -> checklistTaskId = record.task.id; checklistSpaceId = record.task.spaceId; screen = "checklist" })
         } else {
             IdentityRoute(identity, onOpenTasks = { taskEntrySpaceId = null; taskReturnScreen = "account"; screen = "tasks" }, onOpenInbox = { reminderTaskId = null; reminderSpaceId = null; reminderReturnScreen = "account"; screen = "reminders" },
-                onOpenAgent = { screen = "agent" }, onOpenBlocked = { communityEntry = "blocked"; screen = "community" },
+                onOpenAgent = { agentSpaceId = null; agentReturnScreen = "account"; screen = "agent" }, onOpenBlocked = { communityEntry = "blocked"; screen = "community" },
                 onOpenInterests = { communityEntry = "interests"; screen = "community" },
                 onOpenPrivacy = { screen = "privacy" })
         }

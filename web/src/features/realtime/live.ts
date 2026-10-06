@@ -51,9 +51,13 @@ export function createSseParser(listener: (frame: SseFrame) => void) {
 }
 
 const changeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("agent"), space_id: z.string().uuid(), run_id: z.string().uuid(), reason: z.literal("changed") }),
   // "access": a membership ended (T86); "member_left": an erased account left the Space (T68). Both make an open chat read again.
   z.object({ kind: z.literal("conversation"), conversation_id: z.string().uuid(), space_id: z.string().uuid(), reason: z.enum(["opened", "message", "deleted", "read", "access", "member_left", "changed"]) }),
   z.object({ kind: z.literal("notifications"), reason: z.enum(["delivered", "read", "acknowledge", "snoozed"]) }),
+  // A document, task, event or the name of a Space changed, or a place in a Space ended (DEC-051). The search screen
+  // reads its results again; the hint names no content.
+  z.object({ kind: z.literal("search"), space_id: z.string().uuid(), reason: z.enum(["document", "task", "event", "space", "access"]) }),
 ]);
 const readySchema = z.object({ heartbeat_seconds: z.number().int().positive(), max_seconds: z.number().int().positive() });
 const endSchema = z.object({ reason: z.enum(["time_limit", "signed_out", "too_many_connections"]) });
@@ -154,7 +158,10 @@ async function alertReminders(owner: Connection) {
 function update(owner: Connection, event: LiveUpdate) {
   if (!current(owner)) return;
   const keys = event.kind === "conversation" ? ["conversations"]
-    : event.kind === "notifications" ? ["notifications", "home"] : ["conversations", "notifications", "home"];
+    : event.kind === "notifications" ? ["notifications", "home"]
+      : event.kind === "agent" ? ["agentRuns", "agentMessageRun", "agentMemories"]
+      // Search results are read again by the open search screen itself, after a short wait that joins bursts of hints.
+      : event.kind === "search" ? [] : ["conversations", "notifications", "home", "agentRuns", "agentMessageRun", "agentMemories"];
   owner.clients.forEach((_references, client) => {
     keys.forEach(key => { void client.invalidateQueries({ queryKey: [key, owner.accountId] }).catch(() => undefined); });
   });
@@ -290,6 +297,14 @@ function retain(accountId: string, client: QueryClient) {
     if (references) owner.clients.set(client, references); else owner.clients.delete(client);
     if (!owner.references) dispose(owner);
   };
+}
+
+export function resumeLiveUpdates(accountId: string) {
+  const owner = connection;
+  if (!owner || owner.accountId !== accountId || !owner.terminal || owner.references <= 0) return;
+  owner.terminal = false;
+  owner.attempt = 0;
+  void connect(owner);
 }
 
 export function useLiveUpdates(accountId: string | undefined) {

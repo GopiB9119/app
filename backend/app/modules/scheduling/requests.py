@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
@@ -118,6 +118,13 @@ class ReminderRequestService:
             statement = statement.with_for_update(of=(ReminderRequest, Task, requester_member, recipient_member, requester_access, recipient_access))
         return statement
 
+    def read(self, database, statement):
+        # Nine joins made PostgreSQL spend about 200 ms planning each read, so the order written in visible() is kept for this statement only.
+        database.execute(text("SET LOCAL join_collapse_limit = 1"))
+        rows = database.execute(statement).all()
+        database.execute(text("SET LOCAL join_collapse_limit = DEFAULT"))
+        return rows
+
     def status(self, row):
         proposal, task, _requester, _recipient, requester_member, _recipient_member = row
         if proposal.status != "pending":
@@ -161,7 +168,8 @@ class ReminderRequestService:
             digest = self.security.digest("reminder_request.create", body.preview_token)
             existing = database.scalar(select(ReminderRequest).where(ReminderRequest.requested_by_id == caller.id, ReminderRequest.request_key == key))
             if existing:
-                row = database.execute(self.visible(caller.id).where(ReminderRequest.id == existing.id)).first()
+                rows = self.read(database, self.visible(caller.id).where(ReminderRequest.id == existing.id))
+                row = rows[0] if rows else None
                 if row is None:
                     raise DomainError(404, "NOT_FOUND", "Reminder request not found.")
                 if existing.request_digest != digest:
@@ -211,7 +219,8 @@ class ReminderRequestService:
         if lock:
             caller, _accounts = self.tasks.spaces.lock_accounts(database, token, [candidate.requested_by_id, candidate.recipient_account_id])
             self.tasks.spaces.lock_space(database, candidate.space_id)
-        row = database.execute(self.visible(caller.id, lock=lock).where(ReminderRequest.id == identifier)).first()
+        rows = self.read(database, self.visible(caller.id, lock=lock).where(ReminderRequest.id == identifier))
+        row = rows[0] if rows else None
         if row is None:
             raise DomainError(404, "NOT_FOUND", "Reminder request not found.")
         if lock:
@@ -300,7 +309,7 @@ class ReminderRequestService:
                 if position.expires_at <= self.clock():
                     raise DomainError(410, "CURSOR_EXPIRED", "Reload reminder requests.")
                 statement = statement.where(ReminderRequest.id > str(position.after_id))
-            rows = database.execute(statement.order_by(ReminderRequest.id).limit(limit + 1)).all()
+            rows = self.read(database, statement.order_by(ReminderRequest.id).limit(limit + 1))
             page = rows[:limit]
             has_more = len(rows) > limit
             next_cursor = None

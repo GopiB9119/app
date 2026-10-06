@@ -6,6 +6,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
+from app.modules.agents.registry import provision as provision_space_agent
+from app.modules.discovery.live import announce_access, announce_members
 from app.modules.identity.models import AccountSession, OutboxEvent, User
 from app.modules.messaging.models import Conversation
 from app.modules.realtime.hub import signal
@@ -155,6 +157,8 @@ class SpaceService:
                             aggregate_id=identifier, schema_version=1, created_at=self.clock()),
             ])
             database.flush()
+            if action == "space.renamed":
+                announce_members(database, identifier, "space")
             database.add(SpaceSettingsCommand(id=event_id, space_id=identifier, actor_id=caller.id,
                 actor_admission_id=member.admission_id, request_key=key, request_digest=digest))
             return self.settings_view(space, member)
@@ -345,6 +349,7 @@ class SpaceService:
             ])
             database.flush()
             self.announce_lost_access(database, space.id, target.account_id, target.admission_id)
+            announce_access(database, space.id, [target.account_id])
             database.add(SpaceMembershipCommand(id=identifier, space_id=space.id, actor_id=caller.id,
                 actor_admission_id=actor.admission_id, target_id=target.account_id,
                 target_admission_id=target.admission_id, action=action, request_key=key, request_digest=digest))
@@ -518,6 +523,8 @@ class SpaceService:
             )
             database.add(space)
             database.flush()
+            # DEC-049: the Space's agent binding is created with the Space, so both commit or neither does.
+            provision_space_agent(database, space.id, space.space_type, now)
             membership = SpaceMembership(
                 space_id=space.id,
                 account_id=user.id,

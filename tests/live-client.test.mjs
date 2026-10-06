@@ -11,8 +11,8 @@ const origin = 'https://client.example.test';
 const accountId = '4d7dff75-e4b8-4686-b779-744cdb8d09fb';
 const otherId = '359bd05a-c95c-4975-b061-d647e82a6958';
 
-function loadSource(relative, fetch, dependencies = {}, globals = {}) {
-  const source = readFileSync(new URL(`../web/src/${relative}`, import.meta.url), 'utf8');
+function loadSource(relative, fetch, dependencies = {}, globals = {}, transform = source => source) {
+  const source = transform(readFileSync(new URL(`../web/src/${relative}`, import.meta.url), 'utf8'));
   const compiled = typescript.transpileModule(source, {
     compilerOptions: { target: typescript.ScriptTarget.ES2022, module: typescript.ModuleKind.CommonJS },
   });
@@ -142,6 +142,27 @@ const conversationId = '5f0c8a0e-9f67-4c55-8a29-1f1f7d6f1a01';
 const spaceId = '463aa3d5-a47c-4560-8fe9-70da2f866a2e';
 const conversationHint = { kind: 'conversation', conversation_id: conversationId, space_id: spaceId, reason: 'message' };
 
+test('Agent change hints refresh private run queries without exposing content or sending actions', async () => {
+  const fixture = liveClient();
+  try {
+    fixture.client.useLiveUpdates(accountId);
+    await flush();
+    const received = [];
+    const unsubscribe = fixture.client.subscribeLive(event => received.push({ ...event }));
+    const hint = { kind: 'agent', space_id: spaceId, run_id: otherId, reason: 'changed' };
+    fixture.streams[0].send('change', hint);
+    await flush();
+    assert.deepEqual(received, [{ ...hint, accountId }]);
+    assert.ok(fixture.invalidations.some(key => key[0] === 'agentRuns' && key[1] === accountId));
+    assert.ok(fixture.invalidations.some(key => key[0] === 'agentMessageRun' && key[1] === accountId));
+    assert.equal(fixture.calls.length, 1, 'The hint does not send any command.');
+    fixture.streams[0].send('change', { ...hint, run_id: 'not-an-id' });
+    await flush();
+    assert.equal(received.length, 1, 'Invalid run references are not accepted.');
+    unsubscribe();
+  } finally { fixture.cleanup(); }
+});
+
 function liveClient(options = {}) {
   const effects = [];
   const calls = [];
@@ -183,7 +204,7 @@ function liveClient(options = {}) {
     react: { useEffect(effect) { effects.push(effect()); }, useSyncExternalStore(_subscribe, snapshot) { return snapshot(); } },
     '@tanstack/react-query': { useQueryClient: () => ({ invalidateQueries({ queryKey }) { invalidations.push(Array.from(queryKey)); return Promise.resolve(); } }) },
     '@/features/scheduling/client': { notificationPage: options.notificationPage ?? (async () => ({ data: [], unreadCount: 0 })) },
-  }, { window, navigator, document, Date: Clock, Math: Object.assign(Object.create(Math), { random: () => 0.4 }) });
+  }, { window, navigator, document, Date: Clock, Math: Object.assign(Object.create(Math), { random: () => 0.4 }) }, options.transform);
   return {
     client, calls, streams, effects, timers, invalidations, storage, alerts, Notification, navigator, document, navigations,
     focuses: () => focuses,
@@ -253,8 +274,53 @@ test('Live hooks share one account-bound stream and stop only after the last ref
   assert.equal(fixture.timers.size, 0);
 });
 
+async function checkSessionRecovery(fixture) {
+  try {
+    fixture.client.useLiveUpdates(accountId);
+    await flush();
+    fixture.streams[0].send('ready', ready);
+    await flush();
+    fixture.client.resumeLiveUpdates(accountId);
+    await flush();
+    assert.equal(fixture.calls.length, 1, 'A healthy stream must stay open');
+    fixture.streams[0].send('end', { reason: 'signed_out' });
+    await flush();
+    assert.equal(fixture.calls[0].config.signal.aborted, true);
+    assert.equal(fixture.timers.size, 0, 'Signing out must not start a retry loop');
+    fixture.client.resumeLiveUpdates(otherId);
+    await flush();
+    assert.equal(fixture.calls.length, 1, 'Another account must not reopen the old stream');
+    fixture.client.resumeLiveUpdates(accountId);
+    await flush();
+    assert.equal(fixture.calls.length, 2, 'A confirmed sign-in must reopen its stream');
+    assert.equal(fixture.calls[1].config.headers['X-Account-ID'], accountId);
+    fixture.client.resumeLiveUpdates(accountId);
+    await flush();
+    assert.equal(fixture.calls.length, 2, 'Repeated confirmation must not duplicate an opening stream');
+    fixture.streams[1].send('ready', ready);
+    await flush();
+    assert.equal(fixture.client.useLiveConnected(), true);
+  } finally { fixture.cleanup(); }
+  fixture.client.resumeLiveUpdates(accountId);
+  await flush();
+  assert.equal(fixture.calls.length, 2, 'An unmounted app must stay disconnected');
+  assert.equal(fixture.timers.size, 0);
+}
+
+test('Live session recovery requires the same confirmed account and retains a healthy stream', async () => {
+  await checkSessionRecovery(liveClient());
+});
+
+test('Live session recovery regression catches a connection left permanently halted', async () => {
+  await assert.rejects(() => checkSessionRecovery(liveClient({ transform(source) {
+    assert.ok(source.includes('owner.terminal = false;'));
+    return source.replace('owner.terminal = false;', '');
+  } })), error => error.code === 'ERR_ASSERTION' && error.message.includes('A confirmed sign-in must reopen its stream'));
+});
+
 test('Ready and resync re-read all keys; conversation and notification hints invalidate only their prefixes', async () => {
   const fixture = liveClient();
+  const allKeys = ['conversations', 'notifications', 'home', 'agentRuns', 'agentMessageRun', 'agentMemories'].map(key => [key, accountId]);
   const events = [];
   const unsubscribe = fixture.client.subscribeLive(event => events.push({ ...event }));
   try {
@@ -263,7 +329,7 @@ test('Ready and resync re-read all keys; conversation and notification hints inv
     const stream = fixture.streams[0];
     stream.send('ready', ready); await flush();
     assert.equal(fixture.client.useLiveConnected(), true);
-    assert.deepEqual(fixture.invalidations.splice(0), [['conversations', accountId], ['notifications', accountId], ['home', accountId]]);
+    assert.deepEqual(fixture.invalidations.splice(0), allKeys);
     assert.deepEqual(events.splice(0), [{ kind: 'resync', accountId }]);
     stream.send('change', conversationHint); await flush();
     assert.deepEqual(fixture.invalidations.splice(0), [['conversations', accountId]]);
@@ -282,7 +348,7 @@ test('Ready and resync re-read all keys; conversation and notification hints inv
     stream.send('change', { kind: 'notifications', reason: 'unknown' }); await flush();
     assert.deepEqual(fixture.invalidations, []); assert.deepEqual(events, []);
     stream.send('resync', {}); await flush();
-    assert.deepEqual(fixture.invalidations, [['conversations', accountId], ['notifications', accountId], ['home', accountId]]);
+    assert.deepEqual(fixture.invalidations, allKeys);
     assert.deepEqual(events, [{ kind: 'resync', accountId }]);
   } finally { unsubscribe(); fixture.cleanup(); }
 });

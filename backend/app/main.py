@@ -17,12 +17,22 @@ from app.config import Settings
 from app.db import database
 from app.errors import DomainError, authentication_required
 from app.modules.agents.api import router as agent_router
+from app.modules.agents.metrics import render as render_agents
+from app.modules.agents.llm import ChatModel
 from app.modules.agents.service import AgentService
+from app.modules.agents.web import WebLookup
 from app.modules.care.api import router as care_router
 from app.modules.care.service import CareService
 from app.modules.community.api import public_router as community_public_router
 from app.modules.community.api import router as community_router
+from app.modules.community.help import HelpService
+from app.modules.community.help_api import public_router as help_public_router
+from app.modules.community.help_api import router as help_router
+from app.modules.community.help_metrics import render as render_help
 from app.modules.community.lifecycle import PageLifecycleService
+from app.modules.community.page_events import PageEventService
+from app.modules.community.page_events_api import public_router as page_events_public_router
+from app.modules.community.page_events_api import router as page_events_router
 from app.modules.community.service import CommunityService
 from app.modules.discovery.api import router as search_router
 from app.modules.discovery.service import PrivateSearchService
@@ -38,6 +48,7 @@ from app.modules.identity.security import Security
 from app.modules.identity.service import IdentityService, utcnow
 from app.modules.messaging.api import router as messaging_router
 from app.modules.messaging.cipher import MessageCipher
+from app.modules.messaging.mentions import AgentMentionService
 from app.modules.messaging.service import MessagingService
 from app.modules.notifications.alerts import AlertService
 from app.modules.notifications.api import router as notification_router
@@ -164,6 +175,7 @@ def create_app(settings=None, clock=utcnow):
     @asynccontextmanager
     async def lifespan(_app):
         yield
+        _app.state.agents.close()
         live_hub.close()
         engine.dispose()
 
@@ -193,6 +205,8 @@ def create_app(settings=None, clock=utcnow):
     application.state.notifications = NotificationService(application.state.reminders)
     application.state.messaging = MessagingService(application.state.spaces, MessageCipher(keyring))
     application.state.community = CommunityService(application.state.identity)
+    application.state.help = HelpService(application.state.identity)
+    application.state.page_events = PageEventService(application.state.identity)
     application.state.page_lifecycle = PageLifecycleService(application.state.identity)
     application.state.events = EventService(application.state.spaces)
     application.state.budgets = BudgetService(application.state.events)
@@ -200,7 +214,13 @@ def create_app(settings=None, clock=utcnow):
     application.state.search = PrivateSearchService(application.state.spaces)
     application.state.care = CareService(application.state.identity)
     application.state.alerts = AlertService(application.state.reminders, application.state.events, application.state.care)
-    application.state.agents = AgentService(application.state.tasks, application.state.reminders)
+    application.state.agents = AgentService(
+        application.state.tasks, application.state.reminders, ChatModel.from_settings(settings),
+        application.state.events, documents=application.state.documents, search=application.state.search,
+        community=application.state.community, web=WebLookup.from_settings(settings), messages=application.state.messaging,
+    )
+    # @agent in a chat message (DEC-046): the author's own agent request, answered in the chat.
+    application.state.mentions = AgentMentionService(application.state.messaging, application.state.agents)
     application.state.live_hub = live_hub
     application.state.live = LiveService(application.state.identity, live_hub)
     application.state.settings = settings
@@ -287,8 +307,10 @@ def create_app(settings=None, clock=utcnow):
             raise DomainError(404, "NOT_FOUND", "Request could not be completed.")
         if not hmac.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {key}".encode()):
             raise authentication_required()
+        now = clock()
         return PlainTextResponse(
-            request.app.state.metrics.render() + render_work(engine, clock()), media_type="text/plain; version=0.0.4",
+            request.app.state.metrics.render() + render_work(engine, now) + render_agents(engine, now) + render_help(engine),
+            media_type="text/plain; version=0.0.4",
         )
 
     application.include_router(router)
@@ -306,6 +328,10 @@ def create_app(settings=None, clock=utcnow):
     application.include_router(messaging_router)
     application.include_router(community_router)
     application.include_router(community_public_router)
+    application.include_router(help_router)
+    application.include_router(help_public_router)
+    application.include_router(page_events_router)
+    application.include_router(page_events_public_router)
     application.include_router(safety_router)
     application.include_router(events_router)
     application.include_router(document_router)

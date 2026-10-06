@@ -1,4 +1,4 @@
-from datetime import timedelta
+﻿from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -7,12 +7,12 @@ from sqlalchemy import func, select, text
 
 from app.db import Base
 from app.modules.identity import deletion
-from app.modules.community.models import PageHandover, PageModerator
+from app.modules.community.models import HelpReport, PageEvent, PageHandover, PageModerator
 from app.modules.identity.models import AccountSession, User
 from app.modules.scheduling.models import Reminder, ReminderSeries
 from app.modules.safety.models import ModerationAppeal
 from app.modules.spaces.models import Space
-from tests.test_agents import approve, ask, rename
+from tests.agent_support import approve, ask, rename
 from tests.test_care import create_instruction
 from tests.test_community import comment, create_page, published
 from tests.test_documents import add as add_document
@@ -39,6 +39,7 @@ GONE = (
     "Alex private task 4471", "Alex diary 4471", "Alex group 4471", "Alex group story 4471",
     "Alex expense 4471", "Alex category 4471", "Alex solo expense 4471",
     "Alex gift 4471", "Alex promise 4471", "Alex solo gift 4471",
+    "Alex help 4471", "Alex boxes 4471", "Alex reply 4471", "Alex flag 4471", "Alex meetup 4471", "Alex street 4471",
 )
 
 
@@ -122,9 +123,36 @@ def lived_in_account(client, app):
     for action in ("like", "save"):
         assert client.post(f"/v1/posts/{sam_post['id']}/{action}", headers=auth(alex), json={}).status_code == 200
     assert client.post(f"/v1/pages/{sam_page['id']}/follow", headers=auth(alex), json={}).status_code == 200
+    # Help posts (D3): Alex's offer on Sam's page and Alex's private reply to Sam's request go with the account.
+    reviewed = client.get(f"/v1/pages/{sam_page['id']}", headers=auth(sam)).json()["data"]
+    opened = client.patch(f"/v1/pages/{sam_page['id']}", headers={**auth(sam), "If-Match": reviewed["etag"]}, json={"help_open": True})
+    assert opened.status_code == 200, opened.text
+    offer = client.post(f"/v1/pages/{sam_page['id']}/help-posts", headers={**auth(alex), "Idempotency-Key": str(uuid4())},
+                        json={"kind": "offer", "title": "Alex help 4471", "details": "Alex boxes 4471"})
+    assert offer.status_code == 201, offer.text
+    need = client.post(f"/v1/pages/{sam_page['id']}/help-posts", headers={**auth(sam), "Idempotency-Key": str(uuid4())},
+                       json={"kind": "request", "title": "Sam needs a ladder 5582"})
+    assert need.status_code == 201, need.text
+    answer = client.post(f"/v1/help-posts/{need.json()['data']['id']}/replies", headers={**auth(alex), "Idempotency-Key": str(uuid4())},
+                         json={"body": "Alex reply 4471"})
+    assert answer.status_code == 201, answer.text
+    # Alex's report of Sam's request loses its note; Sam's report of Alex's offer keeps Sam's words and is closed.
+    flagged = client.post(f"/v1/help-posts/{need.json()['data']['id']}/report", headers=auth(alex), json={"reason": "spam", "details": "Alex flag 4471"})
+    assert flagged.status_code == 201, flagged.text
+    flagging = client.post(f"/v1/help-posts/{offer.json()['data']['id']}/report", headers=auth(sam), json={"reason": "scam", "details": "Sam flag 5582"})
+    assert flagging.status_code == 201, flagging.text
     reported = client.post("/v1/reports", headers=auth(alex),
                            json={"target_type": "post", "target_id": sam_post["id"], "reason": "spam", "details": "Alex report 4471"})
     assert reported.status_code == 201, reported.text
+    # Page events (D4): Alex's own event goes; Alex's going answer leaves Sam's event and its count.
+    timing = {"timezone": "Asia/Kolkata", "local_start": "2026-09-25T18:30"}
+    mine = client.post(f"/v1/pages/{page['id']}/events", headers={**auth(alex), "Idempotency-Key": str(uuid4())},
+                       json={"title": "Alex meetup 4471", "location": "Alex street 4471", **timing})
+    assert mine.status_code == 201, mine.text
+    fair = client.post(f"/v1/pages/{sam_page['id']}/events", headers={**auth(sam), "Idempotency-Key": str(uuid4())},
+                       json={"title": "Sam fair 5582", **timing})
+    assert fair.status_code == 201, fair.text
+    assert client.post(f"/v1/page-events/{fair.json()['data']['id']}/going", headers=auth(alex), json={}).status_code == 200
     # A public group only Alex is in, which Sam asked to join: the request keeps a copy of the group's name.
     alone_group = group(client, alex, name="Alex group 4471", description="Alex group story 4471")
     assert alone_group.status_code == 201, alone_group.text
@@ -230,13 +258,15 @@ def test_purge_erases_the_account_and_keeps_what_others_share(client, app):
     assert [value for value in GONE if value in after] == []
     assert password_hash not in after
     for kept in ("Sam stays 5582", "Kept chore 5582", "Sam picnic 5582", "Sam post 5582", "Shared family", "Sam asks 5582",
-                 "Sam venue 5582", "Sam expense 5582", "Sam gift 5582"):
+                 "Sam venue 5582", "Sam expense 5582", "Sam gift 5582", "Sam needs a ladder 5582", "Sam flag 5582", "Sam fair 5582"):
         assert kept in after, kept
     with app.state.sessions() as database:
         user = database.get(User, alex["user"]["id"])
         assert (user.status, user.display_name, user.email_cipher, user.password_hash) == ("deleted", "Deleted account", None, None)
         solo = database.get(Space, ids["solo"])
         assert (solo.status, solo.name) == ("archived", "Deleted Space")
+        assert database.execute(select(HelpReport.status, HelpReport.outcome).where(HelpReport.details == "Sam flag 5582")).one() == ("closed", "deleted")
+        assert database.scalar(select(PageEvent.going_count).where(PageEvent.title == "Sam fair 5582")) == 0
 
     # A week has passed, so Sam signs in again.
     sam = login(client, "sam@example.test").json()["data"]

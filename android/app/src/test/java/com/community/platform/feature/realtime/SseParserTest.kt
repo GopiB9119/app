@@ -7,8 +7,21 @@ import org.junit.Test
 class SseParserTest {
     private val conversationId = "5f0c8a0e-9f67-4c55-8a29-1f1f7d6f1a01"
     private val spaceId = "c2937183-70fb-4d7a-b0b6-b1bc9c499444"
+    private val runId = "6d8e4f2a-1b3c-5d7e-9f0a-2b4c6d8e0f1a"
 
     private fun SseParser.events(vararg lines: String): List<LiveEvent> = lines.mapNotNull { feed(it) }
+
+    @Test fun searchChangesDoNotRequireAConversationId() {
+        for (reason in listOf("document", "task", "event", "space", "access")) {
+            assertEquals(listOf(LiveEvent.Change("search", null, spaceId, reason)),
+                SseParser().events("event: change", """data: {"kind":"search","space_id":"$spaceId","reason":"$reason"}""", ""))
+        }
+    }
+
+    @Test fun agentChangeRetainsItsPrivateRunId() {
+        assertEquals(listOf(LiveEvent.Change("agent", null, spaceId, "changed", runId)),
+            SseParser().events("event: change", """data: {"kind":"agent","space_id":"$spaceId","run_id":"$runId","reason":"changed"}""", ""))
+    }
 
     @Test fun framesSplitAcrossLinesDispatchOnlyOnTheBlankLine() {
         val parser = SseParser()

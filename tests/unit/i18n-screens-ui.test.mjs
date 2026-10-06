@@ -198,10 +198,10 @@ async function fixture(context, mode, language, options = {}) {
       if (url.pathname === `/api/documents/${documentId}/delete` && method === 'POST') { state.documents = []; return reply({ id: documentId, space_id: spaceId, status: 'deleted', deleted_at: created }); }
       if (url.pathname === '/api/search' && method === 'GET') {
         if (state.failReads) return refusal();
-        return reply({ query: url.searchParams.get('q'), space_id: url.searchParams.get('space_id'),
+        return reply({ query: url.searchParams.get('q'), space_id: url.searchParams.get('space_id'), limit: Number(url.searchParams.get('limit') ?? 20),
           documents: state.emptySearch ? [] : [{ document_id: documentId, space_id: spaceId, space_name: spaceName, name: documentName,
             media_type: 'text/markdown', start_line: 1, end_line: 1, excerpt: body, added_at: created }],
-          tasks: state.emptySearch ? [] : [{ task_id: taskId, space_id: spaceId, space_name: spaceName, title, excerpt: body, status: 'open', due_date: '2026-10-10' }],
+          tasks: state.emptySearch ? [] : [{ task_id: taskId, space_id: spaceId, space_name: spaceName, title, excerpt: body, excerpt_in: 'notes', status: 'open', due_date: '2026-10-10' }],
           events: [], more_documents: false, more_tasks: false, more_events: false });
       }
       if (url.pathname === '/api/invitations' && method === 'GET') return paged([]);

@@ -32,13 +32,13 @@ export function MainNavigation() {
   const t = useText();
   const current = currentSection(usePathname() ?? "");
   return <nav className="main-nav" aria-label={t("nav.main")}>
-    {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} aria-current={current === label ? "page" : undefined}>
+    {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} title={t(sectionMessages[label])} aria-current={current === label ? "page" : undefined}>
       <Icon size={20} aria-hidden /><span>{t(sectionMessages[label])}</span>
     </Link>)}
   </nav>;
 }
 
-/** Signed-in pages: the main navigation is a bar under the header on narrow screens and a column at the side on wide ones. */
-export function MainFrame({ children }: { children: React.ReactNode }) {
-  return <div className="app-frame"><MainNavigation /><div className="app-content">{children}</div></div>;
+/** Signed-in pages: the main navigation is a tab bar at the bottom on narrow screens and a column at the side on wide ones. The footer scrolls with the page, above the tab bar. */
+export function MainFrame({ children, footer }: { children: React.ReactNode; footer?: React.ReactNode }) {
+  return <div className="app-frame"><MainNavigation /><div className="app-content" id="app-content" tabIndex={-1}>{children}{footer}</div></div>;
 }

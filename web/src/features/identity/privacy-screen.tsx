@@ -8,6 +8,7 @@ import { z } from "zod";
 import { Account, ApiError, api, eventSchema, userSchema } from "./client";
 import { eventLabel } from "./account-screen";
 import { Shell } from "./shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { Language } from "@/features/i18n/messages";
 import { forgetMemory, readMemories } from "@/features/agents/client";
@@ -50,10 +51,11 @@ export async function standingRequests(accountId: string, signal?: AbortSignal) 
 export function PrivacyScreen() {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) window.location.replace("/login");
   }, [profile.error]);
-  if (profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("privacy.loading")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("privacy.loading")}</main></Shell>;
   if (!profile.data) return <Shell account><main className="auth-main"><h1>{t("privacy.title")}</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />{t("privacy.retry")}</button></main></Shell>;
   return <PrivacyDetails key={profile.data.data.id} user={profile.data.data} />;
 }

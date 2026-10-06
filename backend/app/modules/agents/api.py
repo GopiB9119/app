@@ -8,6 +8,7 @@ from app.modules.agents.schemas import (
     AgentMemoryView,
     AgentRunPage,
     AgentRunView,
+    AgentRunWebTextView,
     AgentToolView,
     CreateAgentRun,
     DeletedMemory,
@@ -29,8 +30,9 @@ def create_run(request: Request, body: CreateAgentRun, idempotency_key: UUID = H
 
 
 @router.get("/agent-runs", response_model=AgentRunPage)
-def list_runs(request: Request, space_id: UUID, limit: int = Query(default=20, ge=1, le=50),
+def list_runs(request: Request, space_id: UUID | None = None, limit: int = Query(default=20, ge=1, le=50),
               cursor: str | None = Query(default=None, max_length=2048)):
+    # Without a Space: the person's Main Agent requests (DEC-060).
     data, pagination = request.app.state.agents.list_runs(token(request), space_id, limit, cursor)
     return {**envelope(request, data), "pagination": pagination}
 
@@ -38,6 +40,11 @@ def list_runs(request: Request, space_id: UUID, limit: int = Query(default=20, g
 @router.get("/agent-runs/{run_id}", response_model=Envelope[AgentRunView])
 def read_run(request: Request, run_id: UUID):
     return envelope(request, request.app.state.agents.read_run(token(request), run_id))
+
+
+@router.get("/agent-runs/{run_id}/web-text", response_model=Envelope[AgentRunWebTextView])
+def read_web_text(request: Request, run_id: UUID):
+    return envelope(request, request.app.state.agents.read_web_text(token(request), run_id))
 
 
 @router.post("/agent-runs/{run_id}/resume", response_model=Envelope[AgentRunView])

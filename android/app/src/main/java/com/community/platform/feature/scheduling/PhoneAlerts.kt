@@ -26,8 +26,9 @@ interface AlertPrefs {
     val alerted: List<String>
     /** The unread message count last shown, or 0. */
     val unread: Int
+    val unreadMarker: String?
     fun turnOn(accountId: String)
-    fun record(primed: Boolean, alerted: List<String>, unread: Int)
+    fun record(primed: Boolean, alerted: List<String>, unread: Int, unreadMarker: String?)
     fun clear()
 }
 
@@ -49,8 +50,10 @@ interface AlertSchedule {
 /** What a check reads from the server: the first inbox page and the total of unread messages. */
 interface AlertSource {
     suspend fun inbox(accountId: String): List<InboxNotificationDto>
-    suspend fun unreadMessages(accountId: String): Int
+    suspend fun unreadMessages(accountId: String): UnreadMessages
 }
+
+data class UnreadMessages(val count: Int, val marker: String? = null)
 
 /** Turns phone alerts on and off for one account (DEC-020). */
 class AlertSwitch(private val prefs: AlertPrefs, private val schedule: AlertSchedule, private val notifier: Notifier) {
@@ -109,7 +112,7 @@ class AlertChecker(
         if (signedIn() != account) { alerts.turnOff(); return }
         if (!notifier.allowed()) return
         val items: List<InboxNotificationDto>
-        val unread: Int
+        val unread: UnreadMessages
         try {
             items = source.inbox(account)
             unread = source.unreadMessages(account)
@@ -133,7 +136,7 @@ class AlertChecker(
             if (!prefs.primed) {
                 // What was already there when alerts were turned on is not alerted.
                 alerted += fresh.map { it.id }.filterNot { it in alerted }
-                prefs.record(true, alerted.takeLast(MAX_ALERTED), unread)
+                prefs.record(true, alerted.takeLast(MAX_ALERTED), unread.count, unread.marker)
                 return
             }
             for (item in fresh) {
@@ -141,9 +144,10 @@ class AlertChecker(
                 notifier.reminder(item.id, item.taskTitle)
                 alerted += item.id
             }
-            if (unread > 0 && unread != prefs.unread) notifier.messages(unread)
-            if (unread == 0 && prefs.unread != 0) notifier.cancelMessages()
-            prefs.record(true, alerted.takeLast(MAX_ALERTED), unread)
+            val changed = unread.marker != null && prefs.unreadMarker != null && unread.marker != prefs.unreadMarker
+            if (unread.count > 0 && (unread.count != prefs.unread || changed)) notifier.messages(unread.count)
+            if (unread.count == 0 && prefs.unread != 0) notifier.cancelMessages()
+            prefs.record(true, alerted.takeLast(MAX_ALERTED), unread.count, unread.marker)
         }
     }
 

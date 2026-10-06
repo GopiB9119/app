@@ -27,7 +27,7 @@ before(async () => {
         import { EventsScreen } from './src/features/events/events-screen';
         import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
-        window.renderEventsFixture = spaceId => root.render(<Providers><EventsScreen initialSpaceId={spaceId} /></Providers>);`,
+        window.renderEventsFixture = (spaceId, eventId = '') => root.render(<Providers><EventsScreen initialSpaceId={spaceId} initialEventId={eventId} /></Providers>);`,
       resolveDir: web, sourcefile: 'offline-events.tsx', loader: 'tsx',
     },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
@@ -78,8 +78,13 @@ async function fixture(context, options = {}) {
       can_manage: true, can_respond: true, etag: '"event-1"',
       ...options.event,
     };
+    // An event a search result names can be one the upcoming list does not show.
+    const past = options.pastEvent ? {
+      ...event, id: options.pastEvent, title: 'Autumn lunch', local_start: '2026-09-01T12:00', starts_at: '2026-09-01T12:00:00Z',
+      ended: true, past: true, can_respond: false, etag: '"event-past-1"',
+    } : null;
     const state = window.eventsFixture = {
-      calls: [], servedDetail: null, event, events: [event], byKey: {}, loseCreates: options.loseCreates ?? 0,
+      calls: [], servedDetail: null, event, events: past ? [event, past] : [event], byKey: {}, loseCreates: options.loseCreates ?? 0,
       holdNextDetail: false, held: null, heldSettled: false,
       holdSaves: options.holdSaves ?? false, releaseSave: null, failDetail: false,
       createError: options.createError ?? null, patchError: options.patchError ?? null, attendees: null,
@@ -158,7 +163,7 @@ async function fixture(context, options = {}) {
       }
       const list = url.pathname.match(/^\/api\/spaces\/([^/]+)\/events$/);
       if (list && method === 'GET') {
-        return paged(url.searchParams.get('when') === 'upcoming' ? state.events.filter(item => item.space_id === list[1]) : []);
+        return paged(url.searchParams.get('when') === 'upcoming' ? state.events.filter(item => item.space_id === list[1] && !item.past) : []);
       }
       if (list && method === 'POST') {
         if (state.createError) return failed(state.createError.status, state.createError.code, state.createError.message, state.createError.details);
@@ -178,6 +183,7 @@ async function fixture(context, options = {}) {
       }
       const detail = url.pathname.match(/^\/api\/events\/([^/]+)(\/alert)?$/);
       const found = detail && state.events.find(item => item.id === detail[1]);
+      if (detail && !found && !detail[2] && method === 'GET') return failed(404, 'NOT_FOUND', 'Event not found.');
       if (found && !detail[2] && method === 'GET') {
         if (state.failDetail) return options.denyDetail
           ? failed(404, 'NOT_FOUND', 'Event not found.') : failed(503, 'UNAVAILABLE', 'Synthetic detail outage.');
@@ -277,7 +283,7 @@ async function fixture(context, options = {}) {
     };
   }, { accountId, spaceId, clubId, eventId, options });
   await page.addScriptTag({ content: javascript });
-  await page.evaluate(id => window.renderEventsFixture(id), options.initialSpaceId ?? spaceId);
+  await page.evaluate(([id, opened]) => window.renderEventsFixture(id, opened), [options.initialSpaceId ?? spaceId, options.initialEventId ?? '']);
   await page.getByRole('button', { name: 'Picnic', exact: true }).waitFor();
   return { page, outbound, errors };
 }
@@ -1360,6 +1366,35 @@ test('event split: a member sees how the cost is divided and only their own shar
     await page.evaluate(id => { const stored = window.eventsFixture.budgets[id].split; stored.people = stored.people.filter(item => !item.mine); }, eventId);
     await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
     await section.getByText('You are not part of this split.', { exact: true }).waitFor();
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+// DEC-051: an event result of the Space search opens that very event, even one the upcoming list does not show.
+test('event deep link: a search result opens that very event, even a past one, and puts focus on it', async () => {
+  const pastId = '9d3a6a1e-4c2f-4a37-8f21-5b7f0d9c1e33';
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { pastEvent: pastId, initialEventId: pastId });
+    await page.getByRole('heading', { name: 'Autumn lunch', exact: true, level: 2 }).waitFor();
+    await page.waitForFunction(() => document.activeElement?.tagName === 'H2' && document.activeElement.textContent === 'Autumn lunch');
+    // The list below still shows the upcoming event, and only the named event was read.
+    assert.equal(await page.getByRole('button', { name: 'Picnic', exact: true }).count(), 1);
+    const reads = await page.evaluate(() => window.eventsFixture.calls.filter(call => /^\/api\/events\/[^/]+$/.test(call.route)).map(call => `${call.method} ${call.route}`));
+    assert.deepEqual(reads, [`GET /api/events/${pastId}`]);
+    assert.equal(await page.evaluate(() => window.eventsFixture.calls.filter(call => call.method !== 'GET').length), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event deep link: an event that is gone says so and leaves the list usable', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { initialEventId: '9d3a6a1e-4c2f-4a37-8f21-5b7f0d9c1e99' });
+    await page.getByRole('alert').filter({ hasText: 'Event not found.' }).waitFor();
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    assert.equal(await page.getByRole('alert').count(), 0);
+    await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+    await page.getByRole('heading', { name: 'Picnic', exact: true, level: 2 }).waitFor();
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

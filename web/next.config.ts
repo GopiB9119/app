@@ -10,13 +10,17 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
   async headers() {
-    return [{ source: "/:path*", headers: [
-      { key: "Cache-Control", value: "no-store" },
-      { key: "X-Content-Type-Options", value: "nosniff" },
-      { key: "X-Frame-Options", value: "DENY" },
-      { key: "Referrer-Policy", value: "no-referrer" },
-      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-    ] }];
+    return [
+      { source: "/:path*", headers: [
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      ] },
+      // Pages and API answers can hold private data, so none is stored. The fingerprinted files under /_next/static are public and
+      // never change, so they keep Next's own long-lived cache header; a blanket no-store would reload every script on each visit.
+      { source: "/((?!_next/static|_next/image|favicon.ico).*)", headers: [{ key: "Cache-Control", value: "no-store" }] },
+    ];
   },
 };
 

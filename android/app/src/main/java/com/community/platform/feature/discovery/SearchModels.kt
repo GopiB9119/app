@@ -22,6 +22,7 @@ data class SearchTaskDto(
     val excerpt: String,
     val status: String,
     @SerializedName("due_date") val dueDate: String?,
+    @SerializedName("excerpt_in") val excerptIn: String? = null,
 )
 
 data class SearchEventDto(
@@ -45,6 +46,7 @@ data class SearchResultsDto(
     @SerializedName("more_documents") val moreDocuments: Boolean?,
     @SerializedName("more_tasks") val moreTasks: Boolean?,
     @SerializedName("more_events") val moreEvents: Boolean?,
+    val limit: Int? = null,
 ) {
     val empty: Boolean get() = documents.isEmpty() && tasks.isEmpty() && events.isEmpty()
 }

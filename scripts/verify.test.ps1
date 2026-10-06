@@ -70,9 +70,26 @@ try {
     Assert-Equal $entry.result 'failed' 'Ordinary JUnit failures still fail'
     Assert-Equal $entry.tally.failed 1 'Ordinary failures retain their count'
 
-    Write-Output '# tests 6'
-    Write-Output '# pass 6'
+    # T207: a command can leave a process running, as Gradle leaves its daemon, that holds the command's output handle for hours.
+    $suites['helper'] = @{ Title = 'Synthetic helper'; Kind = 'node'; Commands = @('start "" /b powershell -NoProfile -Command "Set-Content -LiteralPath helper.pid -Value $PID; Start-Sleep -Seconds 30" & echo Synthetic helper left running') }
+    $entry = Invoke-Suite 'helper'
+    $deadline = (Get-Date).AddSeconds(10)
+    while (-not $helperId -and (Get-Date) -lt $deadline) {
+        $helperId = [int](Get-Content -LiteralPath (Join-Path $root 'helper.pid') -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if (-not $helperId) { Start-Sleep -Milliseconds 100 }
+    }
+    if (-not $helperId) { throw 'The synthetic helper did not start.' }
+    if (-not (Get-Process -Id $helperId -ErrorAction SilentlyContinue)) { throw 'The runner waited for a process the command left running.' }
+    Assert-Equal $entry.result 'passed' 'A command that leaves a process running still reports its own result'
+    if ([IO.File]::ReadAllText($entry.log) -notmatch 'Synthetic helper left running') { throw 'The command output was not kept.' }
+
+    Write-Output '# tests 7'
+    Write-Output '# pass 7'
     Write-Output '# fail 0'
 } finally {
+    if ($helperId) {
+        Stop-Process -Id $helperId -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $helperId -Timeout 10 -ErrorAction SilentlyContinue
+    }
     Remove-Item -LiteralPath $root -Recurse -Force
 }

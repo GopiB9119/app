@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.keys import Keyring
@@ -32,6 +33,22 @@ class Settings(BaseSettings):
     live_heartbeat_seconds: int = 15
     live_recheck_seconds: int = 60
     live_max_seconds: int = 1800
+    # The owner's Azure model behind the LLM agent (DEC-059): off while the URL, name or key is empty.
+    agent_model_url: str = ""
+    agent_model_name: str = ""
+    agent_model_key: SecretStr = SecretStr("")
+    # Extra JSON request fields the chosen model needs, for example {"temperature": 0}.
+    agent_model_options: str = "{}"
+    # Runs work in the background, so one model call may take longer than a page waits.
+    agent_model_timeout_seconds: float = 45.0
+    # Q44: the most one model call may use.
+    agent_model_call_tokens: int = 10_000
+    # Q44: the owner's total for all live use of the model, counted in this folder; no count while it is empty.
+    agent_model_usage_dir: str = ""
+    agent_model_token_limit: int = 2_000_000
+    # The owner's TinyFish key for the agent's web lookups (DEC-058): off while it is empty. Testing only.
+    agent_web_key: SecretStr = SecretStr("")
+    agent_web_daily_limit: int = 20
 
     def load_key(self) -> bytes:
         if self.secret_key:

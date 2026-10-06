@@ -15,8 +15,9 @@
 .wrap { flex-wrap: wrap; }
 
 .section {
-  padding-block: calc(var(--space-unit) * 6);
-  border-bottom: 1px solid var(--color-border);
+  padding: calc(var(--space-unit) * 5);
+  border-radius: var(--radius-dialog);
+  background: var(--color-surface);
 }
 .intro { max-width: 70ch; margin-block: calc(var(--space-unit) * 4); }
 .choices {

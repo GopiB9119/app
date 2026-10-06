@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, FilePlus2, LoaderCircle, RefreshCw, Trash2, X } from "lucide-react";
 
@@ -46,11 +47,20 @@ function viewFromAddress(): View {
   return { spaceId: query.get("space_id") ?? "", documentId: query.get("id") ?? "", line: query.get("line") ?? "", end: query.get("end") ?? "" };
 }
 
+// The same checks the page applies to its address, for an address the router already shows.
+const idIn = (value: string | null | undefined) => value && /^[0-9a-f-]{36}$/.test(value) ? value : "";
+const digitsIn = (value: string | null | undefined) => value && /^\d{1,7}$/.test(value) ? value : "";
+
 export function DocumentsScreen({ initialSpaceId, initialDocumentId, initialLine, initialEnd }: {
   initialSpaceId: string; initialDocumentId: string; initialLine: string; initialEnd: string;
 }) {
   const t = useText();
   const viewer = useViewer();
+  // Back from another page can bring this page back as it was first rendered, while the address names the document the person had
+  // open. The address comes first; the page's own values cover an address without a Space or document.
+  const address = useSearchParams();
+  const named: View = { spaceId: idIn(address?.get("space_id")), documentId: idIn(address?.get("id")), line: digitsIn(address?.get("line")), end: digitsIn(address?.get("end")) };
+  const initial: View = named.spaceId || named.documentId ? named : { spaceId: initialSpaceId, documentId: initialDocumentId, line: initialLine, end: initialEnd };
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
   if (viewer.pending || viewer.signedOut) {
     return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("documents.loading")}</main></Shell>;
@@ -58,7 +68,7 @@ export function DocumentsScreen({ initialSpaceId, initialDocumentId, initialLine
   if (!viewer.account) {
     return <Shell account><main className={styles.main}><h1>{t("documents.unavailable")}</h1><p role="alert">{problemText(viewer.error, t("documents.loadError"))}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />{t("documents.retry")}</button></main></Shell>;
   }
-  return <Documents key={viewer.account.id} user={viewer.account} initial={{ spaceId: initialSpaceId, documentId: initialDocumentId, line: initialLine, end: initialEnd }} />;
+  return <Documents key={viewer.account.id} user={viewer.account} initial={initial} />;
 }
 
 function Documents({ user, initial }: { user: Account; initial: View }) {

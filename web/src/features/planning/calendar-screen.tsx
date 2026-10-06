@@ -8,6 +8,7 @@ import { ArrowLeft, ArrowRight, Bell, CalendarClock, CalendarDays, ClipboardList
 import { api, ApiError, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { spacesSchema } from "@/features/spaces/client";
 import { adjacentMonth, calendarFile, calendarRange, calendarRangePage, calendarSource, calendarSources, compareCalendarEntries, dateInZone, shiftDate, viewRange } from "./calendar-client";
@@ -37,8 +38,9 @@ function useCalendarAccountGuard(error: Error | null) {
 export function CalendarScreen({ initialSpaceId = "" }: { initialSpaceId?: string }) {
   const t = useText();
   const account = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useCalendarAccountGuard(account.error);
-  if (account.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.calendarLoadingScreen")}</main></Shell>;
+  if (!hydrated || account.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.calendarLoadingScreen")}</main></Shell>;
   if (account.isError) return <Shell account><main className={styles.main}><h1>{t("tasks.calendarUnavailable")}</h1><p className="message error" role="alert">{account.error.message}</p><button className="secondary-button" onClick={() => account.refetch()}><RefreshCw size={18} aria-hidden />{t("tasks.retry")}</button></main></Shell>;
   return <CalendarWorkspace key={account.data.data.id} user={account.data.data} initialSpaceId={initialSpaceId} />;
 }
