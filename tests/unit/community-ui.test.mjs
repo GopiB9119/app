@@ -1668,6 +1668,8 @@ test('on an archived page the feed offers no new Like or Save, keeps undoing the
     await kept.getByRole('button', { name: /^Like/ }).click();
     await page.waitForFunction(() => window.archivedFixture.calls.some(call => call.method === 'POST'));
     await kept.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+    // The request leaves before its answer is shown; under load the screen can still be catching up.
+    await kept.getByRole('button', { name: /^Like/ }).waitFor({ state: 'detached' });
     assert.equal(await kept.getByRole('button', { name: /^Like/ }).count(), 0, 'With the like undone, a read-only post offers no new Like.');
     const commands = await page.evaluate(() => window.archivedFixture.calls.filter(call => call.method === 'POST').map(call => [call.route, call.body]));
     assert.deepEqual(commands, [[`/api/posts/${archivedIds.kept}/unlike`, {}]]);

@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const web = path.join(root, 'web');
 let browser;
 let componentBundle;
+let componentStyles;
 
 before(async () => {
   const result = await build({
@@ -19,6 +20,7 @@ before(async () => {
       contents: `import React from 'react';
         import { createRoot } from 'react-dom/client';
         import { AuthScreen } from './src/features/identity/auth-screen';
+        import './src/app/globals.css';
         const root = createRoot(document.getElementById('root'));
         window.renderAccountForm = (mode) => root.render(<AuthScreen key={mode} mode={mode} />);`,
       resolveDir: web,
@@ -30,8 +32,9 @@ before(async () => {
     platform: 'browser',
     format: 'iife',
     jsx: 'automatic',
-    // The form's shell imports CSS modules, and esbuild writes their CSS beside this path; the tests use only the script.
+    // The form's shell imports CSS modules, and esbuild writes their CSS beside this path.
     outfile: path.join(root, '.local/offline-account-fixture.js'),
+    loader: { '.otf': 'dataurl' },
     define: { 'process.env.NODE_ENV': '"development"' },
     plugins: [{
       name: 'offline-next-link',
@@ -42,10 +45,12 @@ before(async () => {
           resolveDir: web,
           loader: 'jsx',
         }));
+        builder.onResolve({ filter: /^\/fonts\// }, args => ({ path: path.join(web, 'public', args.path.slice(1)) }));
       },
     }],
   });
   componentBundle = result.outputFiles.find(file => file.path.endsWith('.js')).text;
+  componentStyles = result.outputFiles.find(file => file.path.endsWith('.css')).text;
   const executable = process.env.COMMUNITY_CHROMIUM_PATH;
   if (executable) assert.ok(existsSync(executable), 'The selected isolated Chromium executable must exist.');
   browser = await chromium.launch({ executablePath: executable, headless: true });
@@ -63,13 +68,14 @@ async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolk
   const page = await context.newPage();
   page.on('pageerror', error => consoleErrors.push(error.message));
   await page.setContent('<html><head><title>Offline account component</title></head><body><div id="root"></div></body></html>');
+  await page.addStyleTag({ content: componentStyles });
   await page.evaluate(({ zones, failures }) => {
     let sequence = 0;
     Object.defineProperty(crypto, 'randomUUID', {
       value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`,
       configurable: true,
     });
-    window.componentApi = { calls: [], failures };
+    window.componentApi = { calls: [], failures, holdTimezones: false, releaseTimezones: null };
     window.fetch = async (input, options = {}) => {
       const route = String(input);
       const request = {
@@ -83,6 +89,11 @@ async function fixture(context, mode = 'recover', timezones = ['UTC', 'Asia/Kolk
       if (failure?.remaining > 0) {
         failure.remaining -= 1;
         return new Response(JSON.stringify({ error: { code: failure.code, message: failure.message, details: {} }, request_id: 'offline-fixture' }), { status: failure.status });
+      }
+      if (route === '/api/timezones' && window.componentApi.holdTimezones) {
+        await new Promise(resolve => {
+          window.componentApi.releaseTimezones = () => { window.componentApi.holdTimezones = false; resolve(); };
+        });
       }
       let data;
       switch (route) {
@@ -122,6 +133,8 @@ test('offline recovery component requests a code and confirms password reset', a
     const calls = await page.evaluate(() => window.componentApi.calls);
     const started = calls.find(call => call.route === '/api/auth/recover');
     const reset = calls.find(call => call.route === '/api/auth/reset-password');
+    assert.equal(calls.filter(call => call.route === '/api/timezones').length, 0,
+      'Password recovery must not request registration-only timezone metadata.');
     assert.equal(started.body.email, 'alex@example.test');
     assert.equal(reset.body.code, '123456');
     assert.equal(reset.body.password, 'Synthetic-password-42!');
@@ -202,7 +215,7 @@ test(`offline registration in ${browserZone} starts in ${expected} and sends it`
 }
 
 test('offline registration says when the timezone list did not load and retries it', async () => {
-  const context = await browser.newContext({ timezoneId: 'Europe/Berlin' });
+  const context = await browser.newContext({ timezoneId: 'Europe/Berlin', viewport: { width: 320, height: 900 } });
   try {
     const unavailable = { remaining: 1, status: 503, code: 'SERVICE_UNAVAILABLE', message: 'Service is temporarily unavailable.' };
     const { page, outbound, consoleErrors } = await fixture(context, 'register', ['UTC', 'Asia/Kolkata', 'Europe/Berlin'], { '/api/timezones': unavailable });
@@ -211,9 +224,27 @@ test('offline registration says when the timezone list did not load and retries 
     await page.getByRole('heading', { name: 'Complete your account' }).waitFor();
     const problem = page.getByRole('alert').filter({ hasText: 'The list of timezones did not load' });
     await problem.waitFor();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      const sizes = [...document.querySelectorAll('body, body *')].filter(element => element instanceof HTMLElement)
+        .map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.setProperty('font-size', `${size * 2}px`, 'important');
+    });
     // Berlin is not among the few zones offered before the list arrives.
     assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'UTC');
+    await page.evaluate(() => { window.componentApi.holdTimezones = true; });
     await problem.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.waitForFunction(() => window.componentApi.releaseTimezones !== null);
+    assert.equal(await problem.count(), 1, 'The timezone failure must remain visible until the retry returns its list');
+    assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'UTC');
+    const bounds = await problem.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      const retry = element.querySelector('button').getBoundingClientRect();
+      return { left: box.left, right: box.right, retryLeft: retry.left, retryRight: retry.right, font: parseFloat(getComputedStyle(element).fontSize) };
+    });
+    assert.ok(bounds.font >= 28, JSON.stringify(bounds));
+    assert.ok(bounds.left >= 0 && bounds.right <= 320 && bounds.retryLeft >= 0 && bounds.retryRight <= 320, JSON.stringify(bounds));
+    await page.evaluate(() => window.componentApi.releaseTimezones());
     await problem.waitFor({ state: 'detached' });
     assert.equal(await page.getByLabel('Timezone', { exact: true }).inputValue(), 'Europe/Berlin');
     const calls = await page.evaluate(() => window.componentApi.calls);
@@ -223,6 +254,47 @@ test('offline registration says when the timezone list did not load and retries 
     assert.deepEqual(consoleErrors, []);
   } finally { await context.close(); }
 });
+
+for (const selected of ['UTC', 'Asia/Kolkata']) {
+test(`offline registration keeps an intentional ${selected} choice when a timezone retry finishes`, async () => {
+  const context = await browser.newContext({ timezoneId: 'Europe/Berlin' });
+  try {
+    const unavailable = { remaining: 1, status: 503, code: 'SERVICE_UNAVAILABLE', message: 'Service is temporarily unavailable.' };
+    const { page, outbound, consoleErrors } = await fixture(context, 'register', ['UTC', 'Asia/Kolkata', 'Europe/Berlin'], { '/api/timezones': unavailable });
+    await page.locator('input[name="email"]').fill('alex@example.test');
+    await page.getByRole('button', { name: 'Send verification code' }).click();
+    await page.getByRole('heading', { name: 'Complete your account' }).waitFor();
+    const problem = page.getByRole('alert').filter({ hasText: 'The list of timezones did not load' });
+    await problem.waitFor();
+    await page.evaluate(() => { window.componentApi.holdTimezones = true; });
+    await problem.getByRole('button', { name: 'Retry', exact: true }).click();
+    await page.waitForFunction(() => window.componentApi.releaseTimezones !== null);
+    const timezone = page.getByLabel('Timezone', { exact: true });
+    await timezone.selectOption('Asia/Kolkata');
+    await timezone.selectOption(selected);
+    await page.evaluate(() => window.componentApi.releaseTimezones());
+    await timezone.getByRole('option', { name: 'Europe/Berlin', exact: true }).waitFor({ state: 'attached' });
+    await problem.waitFor({ state: 'detached' });
+    assert.equal(await timezone.inputValue(), selected, 'Loading the list must not overwrite an intentional timezone choice, even the initial fallback');
+    const calls = await page.evaluate(() => window.componentApi.calls);
+    assert.equal(calls.filter(call => call.route === '/api/timezones').length, 2);
+    assert.equal(calls.filter(call => call.route === '/api/auth/verify-email').length, 0);
+    await page.evaluate(() => {
+      window.componentApi.failures['/api/auth/verify-email'] = { remaining: 1, status: 400, code: 'CHALLENGE_INVALID', message: 'Synthetic stop before the account exists.' };
+    });
+    await page.locator('input[name="code"]').fill('123456');
+    await page.getByLabel('Display name', { exact: true }).fill('Alex Morgan');
+    await page.getByLabel('New password', { exact: true }).fill('Synthetic-password-42!');
+    await page.getByRole('button', { name: 'Verify and create account' }).click();
+    await page.getByRole('alert').filter({ hasText: 'Synthetic stop before the account exists.' }).waitFor();
+    const verified = await page.evaluate(() => window.componentApi.calls.filter(call => call.route === '/api/auth/verify-email'));
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].body.timezone, selected);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(consoleErrors, []);
+  } finally { await context.close(); }
+});
+}
 
 for (const mode of ['register', 'recover']) {
   test(`offline ${mode} retry keeps its key until the requested email changes`, async () => {

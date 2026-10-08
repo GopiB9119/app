@@ -18,7 +18,9 @@ function loadSource(relative, fetch, dependencies = {}, globals = {}, transform 
   });
   const exports = {};
   runInNewContext(compiled.outputText, {
-    exports, require: name => dependencies[name] ?? require(name), fetch, URL, URLSearchParams, Buffer,
+    exports, require: name => dependencies[name] ?? (name === '@/features/messaging/client'
+      ? loadSource('features/messaging/client.ts', fetch, { '@/features/identity/client': loadSource('features/identity/client.ts', fetch) })
+      : require(name)), fetch, URL, URLSearchParams, Buffer,
     AbortSignal, AbortController, DOMException, Response, TextDecoder, TextEncoder,
     process: { env: { COMMUNITY_API_URL: 'https://backend.example.test', COMMUNITY_WEB_ORIGINS: origin } },
     ...globals,
@@ -142,6 +144,39 @@ const conversationId = '5f0c8a0e-9f67-4c55-8a29-1f1f7d6f1a01';
 const spaceId = '463aa3d5-a47c-4560-8fe9-70da2f866a2e';
 const conversationHint = { kind: 'conversation', conversation_id: conversationId, space_id: spaceId, reason: 'message' };
 
+test('Typing hints reach subscribers without invalidating messages, creating alerts or accepting invalid metadata', async () => {
+  const fixture = liveClient();
+  try {
+    fixture.client.useLiveUpdates(accountId);
+    await flush();
+    const received = [];
+    const unsubscribe = fixture.client.subscribeLive(event => received.push(JSON.parse(JSON.stringify(event))));
+    const hint = {
+      kind: 'typing', conversation_id: conversationId, space_id: spaceId, account_id: otherId,
+      client_id: conversationId, sequence: 1, is_typing: true, mentioned_account_ids: [accountId], mentions_agent: true,
+      expires_at: '2026-10-02T13:00:36Z',
+    };
+    fixture.streams[0].send('change', { ...hint, body: 'This must not be propagated' });
+    await flush();
+    assert.deepEqual(received, [{ ...hint, accountId }]);
+    assert.deepEqual(fixture.invalidations, []);
+    assert.deepEqual(fixture.alerts, []);
+    assert.equal(fixture.calls.length, 1);
+    for (const invalid of [
+      { ...hint, account_id: 'bad' }, { ...hint, sequence: -1 }, { ...hint, is_typing: false },
+      { ...hint, mentioned_account_ids: [accountId, accountId] }, { ...hint, expires_at: 'bad' },
+    ]) fixture.streams[0].send('change', invalid);
+    await flush();
+    assert.equal(received.length, 1);
+    const stopped = { ...hint, sequence: 2, is_typing: false, mentioned_account_ids: [], mentions_agent: false };
+    fixture.streams[0].send('change', stopped);
+    await flush();
+    assert.deepEqual(received.at(-1), { ...stopped, accountId });
+    assert.deepEqual(fixture.invalidations, []);
+    unsubscribe();
+  } finally { fixture.cleanup(); }
+});
+
 test('Agent change hints refresh private run queries without exposing content or sending actions', async () => {
   const fixture = liveClient();
   try {
@@ -159,6 +194,38 @@ test('Agent change hints refresh private run queries without exposing content or
     fixture.streams[0].send('change', { ...hint, run_id: 'not-an-id' });
     await flush();
     assert.equal(received.length, 1, 'Invalid run references are not accepted.');
+    const mainHint = { ...hint, space_id: null };
+    fixture.streams[0].send('change', mainHint);
+    await flush();
+    assert.deepEqual(received.at(-1), { ...mainHint, accountId }, 'A Main Agent run names no Space.');
+    const { space_id: _omitted, ...withoutSpace } = hint;
+    fixture.streams[0].send('change', withoutSpace);
+    await flush();
+    assert.equal(received.length, 2, 'An Agent hint must say whether it names a Space.');
+    unsubscribe();
+  } finally { fixture.cleanup(); }
+});
+
+test('Poll change hints refresh only the Space poll lists and carry identifiers only', async () => {
+  const fixture = liveClient();
+  try {
+    fixture.client.useLiveUpdates(accountId);
+    await flush();
+    const received = [];
+    const unsubscribe = fixture.client.subscribeLive(event => received.push({ ...event }));
+    const hint = { kind: 'poll', space_id: spaceId, poll_id: otherId, reason: 'changed' };
+    fixture.streams[0].send('change', hint);
+    await flush();
+    assert.deepEqual(received, [{ ...hint, accountId }]);
+    assert.deepEqual(fixture.invalidations.splice(0), [['spacePolls', accountId]]);
+    for (const invalid of [{ ...hint, poll_id: 'not-an-id' }, { ...hint, reason: 'voted' }, { ...hint, space_id: null }, { ...hint, question: 'Where?' }]) {
+      fixture.streams[0].send('change', invalid);
+      await flush();
+    }
+    assert.equal(received.length, 2, 'Only an exact poll hint is accepted; extra fields are dropped by the schema.');
+    assert.equal(received[1].question, undefined, 'A poll hint never carries poll content.');
+    assert.deepEqual(fixture.invalidations.splice(0), [['spacePolls', accountId]]);
+    assert.equal(fixture.calls.length, 1, 'The hint does not send any command.');
     unsubscribe();
   } finally { fixture.cleanup(); }
 });
@@ -320,7 +387,7 @@ test('Live session recovery regression catches a connection left permanently hal
 
 test('Ready and resync re-read all keys; conversation and notification hints invalidate only their prefixes', async () => {
   const fixture = liveClient();
-  const allKeys = ['conversations', 'notifications', 'home', 'agentRuns', 'agentMessageRun', 'agentMemories'].map(key => [key, accountId]);
+  const allKeys = ['conversations', 'notifications', 'home', 'agentRuns', 'agentMessageRun', 'agentMemories', 'spacePolls'].map(key => [key, accountId]);
   const events = [];
   const unsubscribe = fixture.client.subscribeLive(event => events.push({ ...event }));
   try {

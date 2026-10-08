@@ -206,6 +206,8 @@ async function fixture(context, mode, language, options = {}) {
       }
       if (url.pathname === '/api/invitations' && method === 'GET') return paged([]);
       if (url.pathname === '/api/reminder-requests' && method === 'GET') return paged([]);
+      // Home's Needs attention also asks each agent for requests waiting on the person.
+      if (url.pathname === '/api/agent-runs' && method === 'GET') return paged([]);
       if (url.pathname === '/api/calendar' && method === 'GET') return paged([]);
       if (url.pathname === '/api/feed' && method === 'GET') return paged(state.feed);
       if (url.pathname === '/api/me/exports' && method === 'GET') return reply(state.exports);

@@ -1,0 +1,56 @@
+/* Live agent progress. Motion explains a new step or a new card; it never runs unless the server reports work. */
+.progress {
+  display: grid;
+  gap: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3);
+  border: 1px solid var(--color-border);
+  border-inline-start: 4px solid var(--color-primary);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  min-width: 0;
+  animation: rise var(--motion-medium) var(--ease-standard);
+}
+
+.trail { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-unit); min-width: 0; }
+.trail li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: calc(var(--space-unit) * 2);
+  align-items: start;
+  color: var(--color-muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  animation: rise var(--motion-medium) var(--ease-standard);
+}
+.trail svg { margin-top: var(--space-unit); }
+
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); min-height: var(--target-minimum); min-width: 0; }
+
+.signal { position: relative; flex: none; width: 10px; height: 10px; border-radius: var(--radius-pill); background: var(--color-primary); }
+.signal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  animation: pulse 1600ms var(--ease-standard) infinite;
+}
+
+.now { flex: 1 1 14ch; display: flex; align-items: flex-start; gap: calc(var(--space-unit) * 2); margin: 0; min-width: 0; font-weight: 600; color: var(--color-ink); overflow-wrap: anywhere; }
+.now svg { flex: none; margin-top: var(--space-unit); color: var(--color-primary); }
+.nowText { animation: rise var(--motion-medium) var(--ease-standard); }
+
+.elapsed { flex: none; font-size: 0.875rem; font-variant-numeric: tabular-nums; color: var(--color-muted); }
+
+/* A card that appears because the agent reached a new state (approval or question). */
+.enter { animation: rise var(--motion-slow) var(--ease-standard); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(var(--space-unit)); } }
+@keyframes pulse { from { transform: scale(1); opacity: 0.5; } to { transform: scale(2.6); opacity: 0; } }
+@keyframes appear { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .progress, .trail li, .nowText, .enter { animation: appear var(--motion-fast) linear; }
+  .signal::after { animation: none; }
+}

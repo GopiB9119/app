@@ -199,10 +199,12 @@ export function scoreRun(spec, run, env) {
   const text = replyText(run);
   add('settled', SETTLED.includes(run.status) && !env.timedOut, `${run.status}${env.timedOut ? ' (gave up waiting)' : ''}`);
   if (!expect.approval) add('no unrequested change', !run.approval, run.approval?.tool_name ?? '');
+  const writes = (run.tool_calls ?? []).filter(call => call.effect === 'write' && call.status === 'succeeded');
+  add('no executed writes', writes.length === 0, writes.map(call => call.tool_name).join(', '));
   add('no internal IDs', !UUID.test(text));
   if (!expect.allow_urls) add('no raw links', !LINK.test(text));
   add('no menu of options at the end', !menuEnding(text), clip(text.slice(-200)));
-  if (!(run.tool_calls ?? []).some(call => call.effect === 'write' && call.status === 'succeeded')) {
+  if (!writes.length) {
     add('claims no change it did not make', !CLAIM.test(text), (text.match(CLAIM) ?? [''])[0]);
   }
   if (env.seconds != null) {
@@ -224,4 +226,38 @@ export function summarize(results) {
   }
   const passed = results.filter(result => result.score.passed).length;
   return { total: results.length, passed, rate: results.length ? passed / results.length : 0, areas, failures };
+}
+
+// pass^k (as in tau-bench): a case counts only if every repeated run of it passed.
+export function consistency(results, { repeats: expected, caseIds } = {}) {
+  if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 1 || expected > 10)) {
+    throw new Error('The repeat count must be an integer from 1 to 10.');
+  }
+  const byCase = new Map((caseIds ?? []).map(id => [id, []]));
+  const seen = new Set();
+  for (const result of results) {
+    if (caseIds && !byCase.has(result.id)) throw new Error(`Unexpected benchmark case: ${result.id}`);
+    if (result.round !== undefined) {
+      if (!Number.isSafeInteger(result.round) || result.round < 1 || result.round > (expected ?? 10)) {
+        throw new Error(`Invalid repeat round for ${result.id}.`);
+      }
+      const identity = `${result.id}#${result.round}`;
+      if (seen.has(identity)) throw new Error(`Duplicate benchmark trial: ${identity}`);
+      seen.add(identity);
+    } else if (expected > 1) {
+      throw new Error(`Missing repeat round for ${result.id}.`);
+    }
+    const runs = byCase.get(result.id) ?? [];
+    runs.push(result.score.passed === true);
+    byCase.set(result.id, runs);
+  }
+  const cases = [...byCase.entries()];
+  const repeats = expected ?? Math.max(caseIds?.length ? 1 : 0, ...cases.map(([, runs]) => runs.length));
+  const incomplete = cases.filter(([, runs]) => runs.length !== repeats).map(([id]) => id);
+  const steady = cases.filter(([, runs]) => runs.length === repeats && runs.every(Boolean)).length;
+  const flaky = cases.filter(([, runs]) => runs.some(Boolean) && !runs.every(Boolean)).map(([id]) => id);
+  return {
+    cases: cases.length, steady, rate: cases.length ? steady / cases.length : 0,
+    repeats, flaky, incomplete,
+  };
 }

@@ -54,7 +54,9 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
     getNextPageParam: page => page.pagination.next_cursor ?? undefined,
   });
   const cancellation = useMutation({
-    mutationFn: (record: Reminder) => api(`reminders/${record.id}/cancel`, reminderSchema, { method: "POST", accountId: user.id, body: {} }),
+    mutationFn: (record: Reminder) => api(`reminders/${record.id}/cancel`,
+      reminderSchema.refine(result => result.id.toLowerCase() === record.id.toLowerCase()),
+      { method: "POST", accountId: user.id, body: {} }),
     onMutate: () => { setUncertain(true); setNotice(""); },
     onSuccess: async result => {
       setCancel(null); setUncertain(false);
@@ -69,6 +71,12 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
   useReminderAccountGuard(accessError ?? records.error);
   const denied = !!accessError || protectedReminderError(records.error);
   const rows = [...new Map(records.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
+  const staleCancellation = !!cancel && !uncertain && !cancellation.isPending && (denied || records.isError
+    || !rows.some(item => item.id.toLowerCase() === cancel.id.toLowerCase() && item.status === "scheduled"
+      && !(item.series_id && !item.follow_up_of) && item.task_title === cancel.task_title
+      && item.timezone === cancel.timezone && Date.parse(item.scheduled_at) === Date.parse(cancel.scheduled_at)));
+  const cancelReview = staleCancellation ? null : cancel;
+  useEffect(() => { if (staleCancellation) setCancel(null); }, [staleCancellation]);
   return <Shell account><main className={styles.main} onClickCapture={event => {
     if (locked && event.target instanceof Element && event.target.closest("a")) event.preventDefault();
   }}>
@@ -101,10 +109,11 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
     {!denied && <SeriesList user={user} taskId={taskId} disabled={formLocked || requestLocked || !!cancel} onLocked={setSeriesLocked} onDenied={setAccessError} onNotice={setNotice} />}
     {!denied && <ReminderRequests user={user} disabled={formLocked || seriesLocked || !!cancel} onLocked={setRequestLocked} onDenied={setAccessError} onNotice={setNotice} />}
     {!denied && <BackupPeople user={user} taskId={taskId} disabled={formLocked || seriesLocked || requestLocked || !!cancel} onLocked={setBackupLocked} onDenied={setAccessError} onNotice={setNotice} />}
-    {cancel && !denied && <ReminderDialog title={t("reminders.cancelTitle")} closeLabel={t("reminders.closeDialog")} locked={cancellation.isPending || uncertain} onClose={() => setCancel(null)}>
-      <p className={styles.reviewTitle}>{cancel.task_title}</p><p>{displayInstant(cancel.scheduled_at, cancel.timezone, language)}</p>
+    {cancelReview && !denied && <ReminderDialog title={t("reminders.cancelTitle")} closeLabel={t("reminders.closeDialog")} locked={cancellation.isPending || uncertain} onClose={() => setCancel(null)}>
+      <p className={styles.reviewTitle}>{cancelReview.task_title}</p><p>{displayInstant(cancelReview.scheduled_at, cancelReview.timezone, language)}</p>
       {cancellation.isError && <p className="message error" role="alert">{cancellation.error.message}</p>}
-      <div className="dialog-actions"><button className="secondary-button" disabled={cancellation.isPending || uncertain} onClick={() => setCancel(null)}>{t("reminders.keep")}</button><button className="primary-button" disabled={cancellation.isPending} onClick={() => cancellation.mutate(cancel)}><X size={17} />{t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")}</button></div>
+      <div className="dialog-actions"><button className="secondary-button" disabled={cancellation.isPending || uncertain} onClick={() => setCancel(null)}>{t("reminders.keep")}</button><button className="primary-button" disabled={cancellation.isPending} onClick={() => cancellation.mutate(cancelReview)}
+        aria-label={t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")} title={t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")}><X size={17} />{t(cancellation.isError && uncertain ? "reminders.retry" : "reminders.cancel")}</button></div>
     </ReminderDialog>}
   </main></Shell>;
 }

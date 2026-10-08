@@ -21,6 +21,10 @@
 .composer { display: grid; gap: calc(var(--space-unit) * 2); }
 .actions { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 3); align-items: center; }
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(var(--space-unit) * 3); }
+.inbox { display: grid; gap: calc(var(--space-unit) * 4); min-width: 0; }
+.inbox h2 { margin: 0; font-size: 1.125rem; }
+.inboxList > li { min-width: 0; padding: calc(var(--space-unit) * 4) 0; border-top: 1px solid var(--color-border); }
+.inbox .agentSide { width: 100%; }
 .run { border: 1px solid var(--color-border); border-radius: var(--radius-dialog); padding: calc(var(--space-unit) * 4); background: var(--color-surface); display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
 .inlineRun { display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
 .inlineRequest { display: grid; flex: 1 1 100%; width: 100%; gap: calc(var(--space-unit) * 2); min-width: 0; }
@@ -32,6 +36,7 @@
 .scope { margin: 0; color: var(--color-muted); }
 .asked { margin: 0; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
 .when { margin: 0; color: var(--color-muted); font-size: 0.92rem; }
+.requestMeta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); min-width: 0; }
 .status { font-size: 0.92rem; font-weight: 600; color: var(--color-primary); }
 .answer { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .check { display: grid; gap: calc(var(--space-unit) * 2); border-top: 1px solid var(--color-border); padding-top: calc(var(--space-unit) * 3); }
@@ -132,12 +137,18 @@
 .composerFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: calc(var(--space-unit) * 2); }
 .autoApprove { min-height: var(--target-minimum); display: inline-flex; align-items: center; gap: calc(var(--space-unit) * 2); padding: calc(var(--space-unit)) calc(var(--space-unit) * 3); margin-inline-start: auto; border-radius: 999px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-ink); font: inherit; font-size: 0.92rem; cursor: pointer; }
 .autoApprove[aria-pressed="true"] { background: var(--color-primary-surface); border-color: var(--color-primary); font-weight: 700; }
-.autoState { padding: 0 calc(var(--space-unit) * 2); border-radius: var(--radius-control); border: 1px solid currentColor; font-size: 0.85rem; }
+.autoState { flex: none; white-space: nowrap; padding: 0 calc(var(--space-unit) * 2); border-radius: var(--radius-control); border: 1px solid currentColor; font-size: 0.85rem; }
 .srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .dialog { border: 1px solid var(--color-border); border-radius: var(--radius-dialog); padding: calc(var(--space-unit) * 6); max-width: min(520px, calc(100% - calc(var(--space-unit) * 8))); }
 .dialog p { overflow-wrap: anywhere; }
 .dialog :global(.dialog-actions) { flex-wrap: wrap; }
 .dialog :global(.dialog-actions) > button { flex: 1 1 auto; min-width: min(100%, 10em); }
+.memoryActions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); }
+.memoryForm { display: grid; gap: calc(var(--space-unit) * 3); min-width: 0; }
+.memoryForm label { display: grid; gap: calc(var(--space-unit) * 2); overflow-wrap: anywhere; }
+.memoryForm textarea { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; resize: vertical; }
+.memoryForm .memoryEnabled { display: flex; align-items: center; min-height: var(--target-minimum); cursor: pointer; }
+.memoryEnabled input { flex: none; width: 1.25rem; height: 1.25rem; }
 @media (max-width: 760px) {
 	.workspace { padding: calc(var(--space-unit) * 2) calc(var(--space-unit) * 3); gap: calc(var(--space-unit) * 2); }
 	.workspaceBar { gap: calc(var(--space-unit) * 2); }

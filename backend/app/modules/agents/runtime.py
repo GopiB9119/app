@@ -22,7 +22,12 @@ from app.modules.agents.llm import CALL_TOKENS, ModelError, ModelTurn, ToolCall,
 from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun
 from app.modules.agents.registry import route_for
 from app.modules.agents.toolkit import CORE_CONTROL, RESEARCH_TOOLS, TOOLS, ToolContext, ToolProblem
-from app.modules.agents.web import accepted_reading_offers, completed_reading_answer, requested_video, stored_sources
+from app.modules.agents.web import (
+    accepted_reading_offers,
+    completed_reading_answer,
+    requested_video,
+    stored_sources,
+)
 from app.modules.identity.models import User
 from app.modules.spaces.models import Space, SpaceMembership
 from app.telemetry import emit
@@ -128,15 +133,11 @@ class AgentRuntime:
 
     def step(self, run_id, worker, token):
         with self.agent.sessions.begin() as database:
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, token)
             if run is None:
                 return False
-            if run.space_id is not None and self.agent.agent_off(database, run.space_id):
-                self.agent.finish(database, run, "cancelled", self.agent.OFF_ANSWER, stop_reason="agent_off")
-                return False
-            if run.steps_used >= MAX_STEPS or run.tool_calls_used >= MAX_TOOL_CALLS:
-                self.agent.finish(database, run, "completed", "I stopped because this needed more steps than I may take at once. "
-                                  "What I did is listed above; ask me to continue.", self.outcome(run), "step_limit")
+            if run.steps_used >= MAX_STEPS:
+                self.finish_at_limit(database, run)
                 return False
             if self.clock() >= run.deadline_at:
                 self.agent.finish(database, run, "timed_out", "This took too long, so I stopped. Ask me again to continue.",
@@ -163,10 +164,12 @@ class AgentRuntime:
             turn = self.agent.model.complete(messages, tools, FINAL_OUTPUT if recovering else OUTPUT)
             if turn.finish_reason == "length":
                 raise ModelError("length", "completion_limit")
+            if not turn.tool_calls and not plain(turn.content, ANSWER_TEXT):
+                raise ModelError("empty", "visible_content")
         except ModelError as error:
             emit("agent_model_failed", kind=error.kind, detail=error.detail)
             with self.agent.sessions.begin() as database:
-                run = self.mine(database, run_id, worker)
+                run = self.authorized_run(database, run_id, worker, token)
                 if run is not None:
                     self.count(run, None, error)
                     if error.kind == "length" and not recovering and run.steps_used < MAX_STEPS - 1 and any(source["read"] for source in stored_sources(run.state)):
@@ -179,7 +182,7 @@ class AgentRuntime:
                                       stop_reason=f"model_{error.kind}"[:40])
             return False
         with self.agent.sessions.begin() as database:
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, token)
             if run is None:
                 return False
             self.count(run, turn)
@@ -188,7 +191,7 @@ class AgentRuntime:
                 self.agent.finish(database, run, "failed", MODEL_FAILURES["length"], stop_reason="answer_recovery_tools")
                 return False
             if not turn.tool_calls:
-                answer = plain(turn.content, ANSWER_TEXT) or "Done."
+                answer = plain(turn.content, ANSWER_TEXT)
                 if len(turn.content or "") > ANSWER_TEXT:
                     notice = "\n\nThis answer was shortened to the display limit; some details are not shown."
                     answer = plain(turn.content, ANSWER_TEXT - len(notice)) + notice
@@ -218,37 +221,39 @@ class AgentRuntime:
     def call(self, run_id, worker, ctx, call, rest):
         """Runs one call the model made. False when the run now waits for the person or stopped."""
         tool = TOOLS.get(call.name)
-        with self.agent.sessions() as database:
+        with self.agent.sessions.begin() as database:
+            if self.authorized_run(database, run_id, worker, ctx.token) is None:
+                return False
             agent = route_for(database, ctx.space_id)
         # A tool this run's agent was not given does not exist for it, whatever the model asks (DEC-060).
         if tool is None or not self.offered(tool) or not self.permitted(agent.definition, tool):
-            return self.reply(run_id, worker, call, {"error": f"There is no tool called {call.name!r}. Use only the listed tools."})
+            return self.reply(run_id, worker, call, {"error": f"There is no tool called {call.name!r}. Use only the listed tools."}, token=ctx.token)
         try:
             values = json.loads(call.arguments or "{}")
             if not isinstance(values, dict):
                 raise ValueError
         except ValueError:
-            return self.reply(run_id, worker, call, {"error": "The arguments must be one JSON object."})
+            return self.reply(run_id, worker, call, {"error": "The arguments must be one JSON object."}, token=ctx.token)
         try:
             args = tool.args.model_validate(values)
         except ValidationError as error:
             problems = "; ".join(f"{'.'.join(str(part) for part in item['loc']) or 'value'}: {item['msg']}" for item in error.errors()[:4])
-            return self.reply(run_id, worker, call, {"error": f"Invalid arguments: {problems}"})
+            return self.reply(run_id, worker, call, {"error": f"Invalid arguments: {problems}"}, token=ctx.token)
         if tool.effect == "control":
             return getattr(self, f"control_{tool.name}")(run_id, worker, ctx, call, args, rest)
         registry = tool.registry_for(args)
         if not agent.allows(registry):
-            return self.reply(run_id, worker, call, {"error": "This agent can't use that tool."})
+            return self.reply(run_id, worker, call, {"error": "This agent can't use that tool."}, token=ctx.token)
         if tool.effect == "read":
             return self.read(run_id, worker, ctx, call, tool, args, registry)
         try:
             proposal = tool.prepare(ctx, args)
         except ToolProblem as problem:
             return self.reply(run_id, worker, call, {"error": problem.message}, record=(
-                registry, "write", "failed", f"Could not prepare: {problem.message}", problem.code))
+                registry, "write", "failed", f"Could not prepare: {problem.message}", problem.code), token=ctx.token)
         if not tool.always_ask and self.automatic(run_id):
             return self.apply_now(run_id, worker, ctx, call, tool, registry, proposal)
-        return self.pause_for_approval(run_id, worker, call, tool, registry, proposal, rest)
+        return self.pause_for_approval(run_id, worker, call, tool, registry, proposal, rest, ctx.token)
 
     @staticmethod
     def permitted(definition, tool):
@@ -264,7 +269,7 @@ class AgentRuntime:
         with self.agent.sessions.begin() as database:
             # The person's lock comes before the run's, as when they approve by hand.
             self.agent.hold(database, ctx.account_id)
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, ctx.token)
             if run is None:
                 return False
             if run.space_id is not None and self.agent.agent_off(database, run.space_id):
@@ -280,7 +285,7 @@ class AgentRuntime:
         # Committed first: an uncommitted approval row key-locks the person's account, which the domain service locks.
         with self.agent.sessions.begin() as database:
             self.agent.hold(database, ctx.account_id)
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, ctx.token)
             approval = database.scalar(select(AgentApproval).where(AgentApproval.id == approval_id).with_for_update())
             if run is None or approval.status != "pending":
                 return False
@@ -314,17 +319,16 @@ class AgentRuntime:
             outcome = tool.run(ctx, args)
         except ToolProblem as problem:
             return self.reply(run_id, worker, call, {"error": problem.message},
-                              record=(registry, "read", "failed", f"{prefix}{tool.name}: {problem.message}", problem.code))
+                              record=(registry, "read", "failed", f"{prefix}{tool.name}: {problem.message}", problem.code), token=ctx.token)
         continued = self.reply(run_id, worker, call, {"result": outcome.data},
                                record=(registry, "read", "succeeded", prefix + outcome.summary, None),
-                               evidence=outcome.evidence, sources=outcome.sources)
+                               evidence=outcome.evidence, sources=outcome.sources, token=ctx.token)
         if continued and tool.name == "web_search":
             for source in [item for item in outcome.sources if item.get("video_id") is None][:2]:
                 with self.agent.sessions.begin() as database:
-                    run = self.mine(database, run_id, worker)
-                    if run is None or run.tool_calls_used >= MAX_TOOL_CALLS:
+                    run = self.authorized_run(database, run_id, worker, ctx.token)
+                    if run is None:
                         return False
-                    self.agent.check_context(database, ctx.token, run)
                     reading = ToolCall(id=f"read_{uuid4().hex}", name="read_web_page", arguments=json.dumps({"url": source["url"]}))
                     self.agent.append(run, ModelTurn(content=None, tool_calls=(reading,)).message())
                     self.agent.event(database, run, "run.reading", f"Reading {source['title'][:100]}.")
@@ -332,9 +336,9 @@ class AgentRuntime:
                     return False
         return continued
 
-    def reply(self, run_id, worker, call, content, record=None, evidence=(), transcript=True, sources=()):
+    def reply(self, run_id, worker, call, content, record=None, evidence=(), transcript=True, sources=(), *, token):
         with self.agent.sessions.begin() as database:
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, token)
             if run is None:
                 return False
             if transcript:
@@ -353,9 +357,9 @@ class AgentRuntime:
             self.agent.touch(run)
             return True
 
-    def pause_for_approval(self, run_id, worker, call, tool, registry, proposal, rest):
+    def pause_for_approval(self, run_id, worker, call, tool, registry, proposal, rest, token):
         with self.agent.sessions.begin() as database:
-            run = self.mine(database, run_id, worker)
+            run = self.authorized_run(database, run_id, worker, token)
             if run is None:
                 return False
             approval = self.approval_for(run, call, tool, registry, proposal)
@@ -405,7 +409,7 @@ class AgentRuntime:
             run = database.get(AgentRun, run_id)
             used = (run.state or {}).get("research", 0)
         if used >= MAX_RESEARCH:
-            return self.reply(run_id, worker, call, {"error": "The research helper was already used enough in this request. Answer with what you have."})
+            return self.reply(run_id, worker, call, {"error": "The research helper was already used enough in this request. Answer with what you have."}, token=ctx.token)
         with self.agent.sessions.begin() as database:
             run = self.mine(database, run_id, worker)
             if run is None:
@@ -417,11 +421,14 @@ class AgentRuntime:
         except ModelError as error:
             summary = None
             emit("agent_model_failed", kind=error.kind, detail=error.detail, use="research")
+        with self.agent.sessions.begin() as database:
+            if self.authorized_run(database, run_id, worker, ctx.token) is None:
+                return False
         if summary is None:
             return self.reply(run_id, worker, call, {"error": "The research helper could not finish."},
-                              record=("agent.research", "read", "failed", "Research helper could not finish.", "helper_failed"))
+                              record=("agent.research", "read", "failed", "Research helper could not finish.", "helper_failed"), token=ctx.token)
         return self.reply(run_id, worker, call, {"result": summary},
-                          record=("agent.research", "read", "succeeded", f"Research: {plain(args.task, 120)}", None))
+                          record=("agent.research", "read", "succeeded", f"Research: {plain(args.task, 120)}", None), token=ctx.token)
 
     def control_show_space_chats(self, run_id, worker, ctx, call, args, rest):
         """The Main Agent's handoff (DEC-060): buttons to the person's own Space chats. The model learns only how many."""
@@ -449,9 +456,11 @@ class AgentRuntime:
     def research(self, run_id, worker, ctx, task):
         """A sub-agent with its own context and read-only tools; only its final summary returns to the main agent."""
         names = [name for name in RESEARCH_TOOLS if self.offered(TOOLS[name])]
-        with self.agent.sessions() as database:
+        with self.agent.sessions.begin() as database:
+            run = self.authorized_run(database, run_id, worker, ctx.token)
+            if run is None:
+                return None
             definition = route_for(database, ctx.space_id).definition
-            run = database.get(AgentRun, run_id)
             context = self.context_text(database, run)
         names = [name for name in names if scopes(TOOLS[name]) & definition.tools]
         tools = [TOOLS[name].schema() for name in names]
@@ -459,9 +468,14 @@ class AgentRuntime:
                     {"role": "user", "content": task}]
         last = None
         for _step in range(RESEARCH_STEPS):
-            turn = self.agent.model.complete(self.trimmed(messages, tools), tools, 2000)
             with self.agent.sessions.begin() as database:
-                run = self.mine(database, run_id, worker)
+                if self.authorized_run(database, run_id, worker, ctx.token) is None:
+                    return None
+            turn = self.agent.model.complete(self.trimmed(messages, tools), tools, 2000)
+            if not turn.tool_calls and not plain(turn.content, 3000):
+                raise ModelError("empty", "visible_content")
+            with self.agent.sessions.begin() as database:
+                run = self.authorized_run(database, run_id, worker, ctx.token)
                 if run is None:
                     return None
                 self.count(run, turn)
@@ -471,6 +485,9 @@ class AgentRuntime:
                 return plain(turn.content, 3000)
             messages.append(turn.message())
             for call in turn.tool_calls:
+                with self.agent.sessions.begin() as database:
+                    if self.authorized_run(database, run_id, worker, ctx.token) is None:
+                        return None
                 tool = TOOLS.get(call.name)
                 if call.name not in names:
                     messages.append(tool_message(call.id, {"error": "Not available to the helper."}))
@@ -488,7 +505,7 @@ class AgentRuntime:
                 except ToolProblem as problem:
                     content, found, sources = {"error": problem.message}, (), ()
                     record = (tool.registry_for(args), "read", "failed", f"Helper: {tool.name}: {problem.message}", problem.code)
-                if not self.reply(run_id, worker, call, content, record=record, evidence=found, transcript=False, sources=sources):
+                if not self.reply(run_id, worker, call, content, record=record, evidence=found, transcript=False, sources=sources, token=ctx.token):
                     return None
                 messages.append(tool_message(call.id, content))
         return plain(f"The helper ran out of steps. Notes so far: {last}" if last else "", 3000) or None
@@ -512,7 +529,7 @@ class AgentRuntime:
         auto = bool((run.state or {}).get("auto_approve"))
         if run.space_id is None:
             memories = database.scalar(select(func.count()).select_from(AgentMemory).where(
-                AgentMemory.account_id == run.account_id, AgentMemory.space_id.is_(None)))
+                AgentMemory.account_id == run.account_id, AgentMemory.space_id.is_(None), AgentMemory.enabled.is_(True)))
             return prompts.context(person.display_name, run.timezone, local_now, None, None, memories,
                                    self.agent.web is not None, auto)
         space = database.get(Space, run.space_id)
@@ -522,6 +539,7 @@ class AgentRuntime:
         ))
         memories = database.scalar(select(func.count()).select_from(AgentMemory).where(
             AgentMemory.account_id == run.account_id,
+            AgentMemory.enabled.is_(True),
             or_(AgentMemory.space_id == run.space_id, and_(AgentMemory.space_id.is_(None), AgentMemory.kind == "preference")),
         ))
         return prompts.context(person.display_name, run.timezone, local_now, {"name": space.name, "type": space.space_type},
@@ -595,6 +613,27 @@ class AgentRuntime:
         if run is None or run.status != "running" or run.lease_owner != worker:
             return None
         return run
+
+    def authorized_run(self, database, run_id, worker, token):
+        run = self.mine(database, run_id, worker)
+        if run is None:
+            return None
+        if run.space_id is not None and self.agent.agent_off(database, run.space_id):
+            self.agent.finish(database, run, "cancelled", self.agent.OFF_ANSWER, stop_reason="agent_off")
+            return None
+        self.agent.check_context(database, token, run)
+        if self.clock() >= run.deadline_at:
+            self.agent.finish(database, run, "timed_out", "This took too long, so I stopped. Ask me again to continue.",
+                              stop_reason="timed_out")
+            return None
+        if run.tool_calls_used >= MAX_TOOL_CALLS:
+            self.finish_at_limit(database, run)
+            return None
+        return run
+
+    def finish_at_limit(self, database, run):
+        self.agent.finish(database, run, "completed", "I stopped because this needed more steps than I may take at once. "
+                          "What I did is listed above; ask me to continue.", self.outcome(run), "step_limit")
 
     def count(self, run, turn, error=None):
         usage = dict((run.state or {}).get("usage") or {"calls": 0, "tokens": 0, "seconds": 0.0, "failures": 0})

@@ -30,22 +30,29 @@ const MAX_PAGES = 10;
 export async function standingRequests(accountId: string, signal?: AbortSignal) {
   const accepted: ReminderRequest[] = [];
   let cursor: string | null = null;
+  let hasMoreRequests = false;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const result = await reminderRequestPage(accountId, "received", cursor, signal);
     accepted.push(...result.data.filter(item => item.status === "accepted" && item.reminder_id));
     cursor = result.pagination.next_cursor;
+    hasMoreRequests = result.pagination.has_more;
     if (!result.pagination.has_more || !cursor) break;
   }
   const wanted = new Set(accepted.map(item => item.reminder_id));
   const reminders = new Map<string, Reminder>();
+  let hasMoreReminders = false;
   cursor = null;
   for (let page = 0; page < MAX_PAGES && reminders.size < wanted.size; page += 1) {
     const result = await reminderPage(accountId, undefined, cursor, signal);
     for (const item of result.data) if (wanted.has(item.id)) reminders.set(item.id, item);
     cursor = result.pagination.next_cursor;
+    hasMoreReminders = result.pagination.has_more;
     if (!result.pagination.has_more || !cursor) break;
   }
-  return accepted.filter(item => reminders.get(item.reminder_id!)?.status === "scheduled");
+  return {
+    items: accepted.filter(item => reminders.get(item.reminder_id!)?.status === "scheduled"),
+    incomplete: hasMoreRequests || (hasMoreReminders && reminders.size < wanted.size),
+  };
 }
 
 export function PrivacyScreen() {
@@ -67,8 +74,15 @@ function PrivacyDetails({ user }: { user: Account }) {
   const [confirm, setConfirm] = useState<TakeBack | null>(null);
   const [notice, setNotice] = useState("");
   const confirmRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { if (confirm) { confirmRef.current?.scrollIntoView({ block: "nearest" }); confirmRef.current?.focus(); } }, [confirm]);
   const requests = useQuery({ queryKey: ["privacy", "requests", user.id], queryFn: ({ signal }) => standingRequests(user.id, signal) });
+  const requestResult = requests.isError ? undefined : requests.data;
+  const requestReviewIsStale = confirm?.kind === "request"
+    && !requestResult?.items.some(item => item.reminder_id === confirm.reminderId && item.task_title === confirm.name);
+  const review = requestReviewIsStale ? null : confirm;
+  useEffect(() => { if (review) { confirmRef.current?.scrollIntoView({ block: "nearest" }); confirmRef.current?.focus(); } }, [review]);
+  useEffect(() => {
+    if (requestReviewIsStale) setConfirm(item => item?.kind === "request" ? null : item);
+  }, [requestReviewIsStale]);
   const preferences = useQuery({ queryKey: ["notificationPreferences", user.id], queryFn: ({ signal }) => api("me/notification-preferences", notificationPreferencesSchema, { accountId: user.id, signal }) });
   const memories = useQuery({ queryKey: ["privacy", "memories", user.id], queryFn: ({ signal }) => readMemories(user.id, signal) });
   const interests = useQuery({ queryKey: ["privacy", "interests", user.id], queryFn: async ({ signal }) => readInterests(user.id, signal) });
@@ -76,7 +90,11 @@ function PrivacyDetails({ user }: { user: Account }) {
 
   const takeBack = useMutation({
     mutationFn: async (item: TakeBack) => {
-      if (item.kind === "request") await api(`reminders/${item.reminderId}/cancel`, reminderSchema, { method: "POST", accountId: user.id, body: {} });
+      if (item.kind === "request") {
+        const cancelledReminder = reminderSchema.refine(record => record.id.toLowerCase() === item.reminderId.toLowerCase()
+          && record.status === "cancelled");
+        await api(`reminders/${item.reminderId}/cancel`, cancelledReminder, { method: "POST", accountId: user.id, body: {} });
+      }
       else if (item.kind === "inApp") {
         await api("me/notification-preferences", notificationPreferencesSchema, { method: "PATCH", accountId: user.id, headers: { "If-Match": item.etag }, body: { in_app_reminders_enabled: false } });
       } else if (item.kind === "memory") await forgetMemory(user.id, item.memoryId);
@@ -106,15 +124,15 @@ function PrivacyDetails({ user }: { user: Account }) {
 
   return <Shell account><main className={`account-main ${styles.main}`}>
     <nav className={`workspace-nav ${styles.nav}`} aria-label={t("account.profile")}><Link className="text-button" href="/app/settings/account">{t("account.account")}</Link><span className="nav-active"><ShieldCheck size={18} aria-hidden />{t("privacy.title")}</span><Link className="text-button" href="/app/settings/data"><Download size={18} aria-hidden />{t("account.yourData")}</Link></nav>
-    <header className={styles.heading}><h1>{t("privacy.title")}</h1><p>{t("privacy.subtitle")}</p><p className={styles.note}>{t("privacy.notStored")}</p></header>
+    <header className={styles.heading}><h1>{t("privacy.title")}</h1><p>{t("privacy.subtitle")}</p><p className={styles.note}>{t("privacy.notStored")}</p><p><Link href="/privacy">{t("about.privacyLink")}</Link></p></header>
     {notice && <div className="message success" role="status">{notice}</div>}
-    {takeBack.isError && !confirm && <div className="message error" role="alert">{takeBack.error.message}</div>}
-    {confirm && <div ref={confirmRef} tabIndex={-1} className={styles.confirm} role="group" aria-labelledby="privacy-confirm-title" aria-describedby="privacy-confirm-name">
+    {takeBack.isError && !review && <div className="message error" role="alert">{takeBack.error.message}</div>}
+    {review && <div ref={confirmRef} tabIndex={-1} className={styles.confirm} role="group" aria-labelledby="privacy-confirm-title" aria-describedby="privacy-confirm-name">
       <h2 id="privacy-confirm-title">{t("privacy.confirmTitle")}</h2>
-      <p id="privacy-confirm-name">{confirm.name}</p>
+      <p id="privacy-confirm-name">{review.name}</p>
       <div className="dialog-actions">
         <button className="secondary-button" disabled={takeBack.isPending} onClick={() => setConfirm(null)}>{t("privacy.keep")}</button>
-        <button className="primary-button" disabled={takeBack.isPending} onClick={() => takeBack.mutate(confirm)}>{takeBack.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Undo2 size={17} aria-hidden />}{t("privacy.confirm")}</button>
+        <button className="primary-button" disabled={takeBack.isPending} onClick={() => takeBack.mutate(review)}>{takeBack.isPending ? <LoaderCircle size={17} className="spin" aria-hidden /> : <Undo2 size={17} aria-hidden />}{t("privacy.confirm")}</button>
       </div>
     </div>}
 
@@ -122,8 +140,12 @@ function PrivacyDetails({ user }: { user: Account }) {
       <h2 id="privacy-requests"><BellRing size={19} aria-hidden />{t("privacy.requests")}</h2>
       {requests.isPending && <p role="status">{t("privacy.loading")}</p>}
       {problem(requests)}
-      {requests.data?.length === 0 && <p className={styles.empty}>{t("privacy.none")}</p>}
-      <ul className={styles.list}>{requests.data?.map(item => <li key={item.id}>
+      {requestResult?.incomplete && <>
+        <p className="message" role="status">{t("privacy.requestsIncomplete")}</p>
+        <Link className="text-button" href="/app/reminders"><BellRing size={17} aria-hidden />{t("privacy.manageReminders")}</Link>
+      </>}
+      {requestResult?.items.length === 0 && !requestResult.incomplete && <p className={styles.empty}>{t("privacy.none")}</p>}
+      <ul className={styles.list}>{requestResult?.items.map(item => <li key={item.id}>
         <div><strong>{t("privacy.requestPurpose", { name: item.requested_by.display_name, task: item.task_title, date: date(item.scheduled_at) })}</strong>
           <span>{t("privacy.requestUses")}</span>{item.resolved_at && <time dateTime={item.resolved_at}>{t("privacy.since", { date: date(item.resolved_at) })}</time>}</div>
         {takeBackButton({ kind: "request", name: item.task_title, reminderId: item.reminder_id! })}

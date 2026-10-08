@@ -12,13 +12,20 @@ from sqlalchemy.exc import IntegrityError
 from app.errors import DomainError
 from app.modules.agents import registry
 from app.modules.agents.models import AgentInstance, AgentRun
-from app.modules.agents.registry import DEFINITIONS, MAIN, MAIN_TOOLS, SPACE_TOOLS, VERSION, agent_identity
+from app.modules.agents.registry import (
+    DEFINITIONS,
+    MAIN,
+    MAIN_TOOLS,
+    SPACE_TOOLS,
+    VERSION,
+    agent_identity,
+)
 from app.modules.agents.runtime import scopes
 from app.modules.agents.toolkit import TOOLS
 from app.modules.spaces.models import Space
 from tests import test_migrations
-from tests.test_agent_mentions import agent_messages, family, mention
 from tests.agent_support import ask
+from tests.test_agent_mentions import agent_messages, family, mention
 from tests.test_identity import account, auth
 from tests.test_messaging import open_chat
 from tests.test_space_agent_switch import start, turn_agent
@@ -57,6 +64,18 @@ def execute(app, statement, **values):
 def count(app, model):
     with app.state.sessions() as database:
         return database.scalar(select(func.count()).select_from(model))
+
+
+@pytest.mark.parametrize("name", ["list_polls", "get_poll", "create_poll"])
+def test_poll_tools_are_space_only_and_creation_always_requires_review(name):
+    tool = TOOLS[name]
+    assert tool.registry in SPACE_TOOLS and tool.registry not in MAIN_TOOLS
+    assert tool.needs_web is False
+    if name == "create_poll":
+        assert tool.effect == "write" and tool.always_ask is True
+        assert tool.prepare is not None and tool.execute is not None
+    else:
+        assert tool.effect == "read" and tool.prepare is None and tool.execute is None
 
 
 @pytest.mark.parametrize("space_type", SPACE_TYPES)
@@ -243,9 +262,47 @@ def test_definitions_are_fixed_and_name_every_tool_on_purpose():
     assert not any(name.startswith(inside) for name in MAIN_TOOLS)
     assert (MAIN.key, MAIN.version, MAIN.tools) == ("main", 1, frozenset(MAIN_TOOLS))
     for key, definition in DEFINITIONS.items():
-        # Version 5 (DEC-060) is the Space agent's list; a changed list needs a new version and a migration.
-        assert (definition.key, definition.version, definition.tools) == (key, 5, frozenset(SPACE_TOOLS))
+        # Version 7 adds poll reads and creation; a changed list needs a version and migration.
+        assert (definition.key, definition.version, definition.tools) == (key, 7, frozenset(SPACE_TOOLS))
         assert definition.label.endswith(" Agent") and definition.space_type == key
+
+
+def test_poll_tool_migration_preserves_binding_identity_and_recorded_history(client, app):
+    owner = account(client, app)
+    space_id = new_space(client, owner, "family")
+    run = ask(client, owner, space_id, "help")
+    config = Config("alembic.ini")
+    identity = agent_identity(space_id)
+    try:
+        command.downgrade(config, "0061")
+        assert [item[:3] for item in bindings(app, space_id)] == [(identity, "family", 6)]
+        with app.state.sessions.begin() as database:
+            existing = database.get(AgentRun, run["id"])
+            existing.state = {**existing.state, "agent": {**existing.state["agent"], "version": 6}}
+        before = stored_run(app, run["id"])
+    finally:
+        command.upgrade(config, "head")
+    assert [item[:3] for item in bindings(app, space_id)] == [(identity, "family", VERSION)]
+    assert stored_run(app, run["id"]) == before
+    test_migrations.test_migrated_schema_matches_models(app)
+
+
+def test_budget_tool_migration_preserves_agent_identity_and_run_history(client, app):
+    owner = account(client, app)
+    space_id = new_space(client, owner, "family")
+    run = ask(client, owner, space_id, "help")
+    before_binding = bindings(app, space_id)
+    before_run = stored_run(app, run["id"])
+    config = Config("alembic.ini")
+    try:
+        command.downgrade(config, "0057")
+        assert [item[:3] for item in bindings(app, space_id)] == [(agent_identity(space_id), "family", 5)]
+        assert stored_run(app, run["id"]) == before_run
+    finally:
+        command.upgrade(config, "head")
+    assert bindings(app, space_id) == before_binding
+    assert stored_run(app, run["id"]) == before_run
+    test_migrations.test_migrated_schema_matches_models(app)
 
 
 def test_existing_spaces_and_runs_receive_the_binding_when_the_database_is_upgraded(client, app):

@@ -7,8 +7,10 @@ per-call limit, so a long conversation is trimmed before it is sent instead of c
 import json
 import os
 import socket
+import sqlite3
 import threading
 import time
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,7 +80,8 @@ def estimate_tokens(value):
 
 class TokenLedger:
     """The owner's total for all live model use (Q44). Each process appends to its own file in one shared folder; a call
-    holds room for the most it may use until its real use is written. Times and token counts only."""
+    holds room for the most it may use until its real use is written. SQLite serializes shared reservations, including
+    unfinished calls left by stopped processes. Usage logs contain times and token counts only."""
 
     def __init__(self, folder, limit, call_tokens=CALL_TOKENS):
         if limit < call_tokens:
@@ -87,6 +90,17 @@ class TokenLedger:
         self.folder.mkdir(parents=True, exist_ok=True)
         self.path = self.folder / f"{socket.gethostname()}-{os.getpid()}-{uuid4().hex[:8]}.jsonl"
         self.lock, self.held = threading.Lock(), 0
+
+    @contextmanager
+    def accounting(self):
+        with self.lock, closing(sqlite3.connect(self.folder / "reservations.sqlite3", timeout=10.0)) as database:
+            with database:
+                database.execute("BEGIN IMMEDIATE")
+                database.execute(
+                    "CREATE TABLE IF NOT EXISTS reservations "
+                    "(owner TEXT PRIMARY KEY, tokens INTEGER NOT NULL CHECK (tokens >= 0))"
+                )
+                yield database
 
     def spent(self):
         total = 0
@@ -100,17 +114,31 @@ class TokenLedger:
         return total
 
     def hold(self):
-        with self.lock:
-            if self.spent() + self.held + self.call_tokens > self.limit:
+        with self.accounting() as database:
+            reserved = database.execute("SELECT COALESCE(SUM(tokens), 0) FROM reservations").fetchone()[0]
+            if self.spent() + reserved + self.call_tokens > self.limit:
                 return False
+            database.execute(
+                "INSERT INTO reservations (owner, tokens) VALUES (?, ?) "
+                "ON CONFLICT(owner) DO UPDATE SET tokens = reservations.tokens + excluded.tokens",
+                (self.path.name, self.call_tokens),
+            )
             self.held += self.call_tokens
             return True
 
     def add(self, tokens):
-        with self.lock:
-            self.held -= self.call_tokens
+        if type(tokens) is not int or tokens < 0:
+            raise ValueError("Model usage must be a nonnegative whole number of tokens.")
+        with self.accounting() as database:
+            if self.held < self.call_tokens:
+                raise ValueError("Model usage needs an active token reservation.")
             with self.path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "tokens": tokens}) + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+            database.execute("UPDATE reservations SET tokens = tokens - ? WHERE owner = ?", (self.call_tokens, self.path.name))
+            database.execute("DELETE FROM reservations WHERE tokens = 0")
+            self.held -= self.call_tokens
 
 
 def chat_address(url):

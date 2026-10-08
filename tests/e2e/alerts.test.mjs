@@ -10,7 +10,7 @@ const require = createRequire(new URL('../../web/package.json', import.meta.url)
 const { chromium } = require('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const base = process.env.COMMUNITY_WEB_URL ?? 'http://127.0.0.1:3000';
-const mail = 'http://127.0.0.1:8025';
+const mail = process.env.COMMUNITY_MAIL_URL ?? 'http://127.0.0.1:8025';
 const password = 'Synthetic-Meadow-49!';
 let browser;
 

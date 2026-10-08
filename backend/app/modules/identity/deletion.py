@@ -127,6 +127,9 @@ ERASE = (
     ("messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL, revision = revision + 1 WHERE sender_id = :a AND deleted_at IS NULL"),
     ("read_states", "DELETE FROM conversation_read_states WHERE account_id = :a"),
     ("event_answers", "DELETE FROM space_event_responses WHERE account_id = :a"),
+    # Their poll votes go; polls they asked in shared Spaces stay for the others, like events.
+    ("poll_votes", "DELETE FROM space_poll_votes WHERE account_id = :a"),
+    ("event_poll_votes", "DELETE FROM event_poll_votes WHERE account_id = :a"),
     # Expenses they recorded keep the amount and category for the others, without the note or who recorded it (DEC-039).
     ("expense_notes", "UPDATE event_expenses SET note = '', recorder_id = NULL, recorder_admission_id = NULL WHERE recorder_id = :a"),
     # Their promises go, because nobody can keep them now; what they gave stays in the totals without the note or name (DEC-041).
@@ -156,6 +159,12 @@ ERASE = (
                      "starts_at = created_at, local_start = to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), "
                      "ends_at = NULL, local_end = NULL, updated_at = :now WHERE space_id = ANY(:alone)"),
     ("alone_chunks", "DELETE FROM space_document_chunks WHERE space_id = ANY(:alone)"),
+    ("alone_poll_options", "UPDATE space_poll_options SET label = 'Deleted choice' WHERE poll_id IN (SELECT id FROM space_polls WHERE space_id = ANY(:alone))"),
+    ("alone_polls", "UPDATE space_polls SET question = 'Deleted poll', updated_at = :now WHERE space_id = ANY(:alone)"),
+    ("alone_event_poll_options", "UPDATE event_poll_options SET text = 'Deleted choice ' || position WHERE poll_id IN "
+                                  "(SELECT id FROM event_polls WHERE event_id IN (SELECT id FROM space_events WHERE space_id = ANY(:alone)))"),
+    ("alone_event_polls", "UPDATE event_polls SET question = 'Deleted poll' WHERE event_id IN "
+                          "(SELECT id FROM space_events WHERE space_id = ANY(:alone))"),
     ("alone_documents", "UPDATE space_documents SET status = 'deleted', name = NULL, media_type = NULL, size_bytes = NULL, line_count = NULL, sha256 = NULL, content = NULL, deleted_at = :now, deleted_by_id = :a WHERE space_id = ANY(:alone) AND status = 'active'"),
     ("alone_spaces", "UPDATE spaces SET status = 'archived', name = 'Deleted Space', description = '', visibility = 'private', version = version + 1 WHERE id = ANY(:alone)"),
     ("memberships", "UPDATE space_memberships SET status = 'removed' WHERE account_id = :a AND status = 'active'"),

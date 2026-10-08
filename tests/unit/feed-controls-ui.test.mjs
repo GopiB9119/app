@@ -135,6 +135,9 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/pages/garden-club') return reply(state.page);
       if (url.pathname === `/api/pages/${pageId}/posts`) return reply(state.posts.filter(post => post.page_id === pageId), { pagination: { next_cursor: null, has_more: false } });
       if (url.pathname === `/api/pages/${pageId}/pinned-posts`) return reply([]);
+      // Page events and help posts have nothing to show here.
+      if (url.pathname === `/api/pages/${pageId}/events` || url.pathname === '/api/discover/events') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/help-posts`) return reply([], { pagination: { next_cursor: null, has_more: false } });
       if (url.pathname === '/api/discover/pages') return reply([state.page], { pagination: { next_cursor: null, has_more: false } });
       if (url.pathname === '/api/me/interests') return reply({ topics: ['hobbies'], interests: ['gardening'], languages: [], places: [], etag: '"interests-1"' });
       if (url.pathname === '/api/me/interest-posts') return reply(state.posts.slice(0, 1).filter(visible).map(post => ({ post,

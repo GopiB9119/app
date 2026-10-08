@@ -8,6 +8,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, replace
+from datetime import datetime
 from hashlib import sha256
 from time import monotonic
 from urllib.parse import parse_qs, urlsplit
@@ -101,8 +102,17 @@ def youtube_id(link):
     return value if value is not None and VIDEO_ID.fullmatch(value) else None
 
 
-def web_source(title, link, read=False):
-    return {"title": clean(title, LONGEST_TITLE) or host_of(link), "url": link, "read": read, "video_id": youtube_id(link)}
+def web_source(title, link, read=False, retrieved_at=None):
+    timestamp = None
+    if isinstance(retrieved_at, str) and len(retrieved_at) <= 64:
+        try:
+            parsed = datetime.fromisoformat(retrieved_at)
+            if parsed.utcoffset() is not None:
+                timestamp = parsed.isoformat()
+        except ValueError:
+            pass
+    return {"title": clean(title, LONGEST_TITLE) or host_of(link), "url": link, "read": read,
+            "video_id": youtube_id(link), "retrieved_at": timestamp}
 
 
 def stored_sources(state):
@@ -113,7 +123,7 @@ def stored_sources(state):
         for item in stored:
             link = public_link(item.get("url")) if isinstance(item, dict) else None
             if link:
-                sources[link] = web_source(item.get("title"), link, item.get("read") is True)
+                sources[link] = web_source(item.get("title"), link, item.get("read") is True, item.get("retrieved_at"))
         return list(sources.values())[-8:]
     calls = {}
     for message in state.get("messages", []):
@@ -136,7 +146,7 @@ def stored_sources(state):
                 link = public_link(result.get("url"))
                 if link:
                     text = result.get("text")
-                    sources[link] = web_source(result.get("title"), link, isinstance(text, str) and bool(text.strip()))
+                    sources[link] = web_source(result.get("title"), link, isinstance(text, str) and bool(text.strip()), result.get("retrieved_at"))
     return list(sources.values())[-8:]
 
 

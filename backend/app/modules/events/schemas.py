@@ -8,7 +8,15 @@ from pydantic import AwareDatetime, BaseModel, Field, StrictInt, field_validator
 
 from app.modules.community.schemas import clean_text
 from app.modules.events.models import (
-    CONTRIBUTION_STATES, CURRENCIES, MAX_CAPACITY, MAX_MINOR, MAX_SPLIT_PEOPLE, RESPONSES, SPLIT_BASES, SPLIT_METHODS, WHOLE_PERCENT,
+    CONTRIBUTION_STATES,
+    CURRENCIES,
+    MAX_CAPACITY,
+    MAX_MINOR,
+    MAX_SPLIT_PEOPLE,
+    RESPONSES,
+    SPLIT_BASES,
+    SPLIT_METHODS,
+    WHOLE_PERCENT,
 )
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
@@ -90,6 +98,50 @@ class EventAction(Input):
 
 class Attendance(Input):
     response: Response
+
+
+class CreatePoll(Input):
+    question: str = Field(min_length=1, max_length=480)
+    options: list[str] = Field(min_length=2, max_length=8)
+
+    @field_validator("question")
+    @classmethod
+    def valid_question(cls, value: str) -> str:
+        return clean_text(value, 120, multiline=False)
+
+    @field_validator("options")
+    @classmethod
+    def valid_options(cls, values: list[str]) -> list[str]:
+        options = [clean_text(value, 80, multiline=False) for value in values]
+        if len({value.casefold() for value in options}) != len(options):
+            raise ValueError("Give each choice different text.")
+        return options
+
+
+class VotePoll(Input):
+    option_id: UUID | None
+
+
+class PollOptionView(BaseModel):
+    id: UUID
+    text: str
+    votes: int
+
+
+class PollView(BaseModel):
+    id: UUID
+    event_id: UUID
+    question: str
+    options: list[PollOptionView]
+    status: Literal["open", "closed"]
+    total_votes: int
+    my_option_id: UUID | None
+    vote_etag: str
+    can_vote: bool
+    can_close: bool
+    etag: str | None
+    created_at: AwareDatetime
+    closed_at: AwareDatetime | None
 
 
 class SpaceEventView(BaseModel):

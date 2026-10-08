@@ -21,6 +21,7 @@ const memoryId = '7b0c2f4e-5d1a-4c3b-9e8f-1a2b3c4d5e6f';
 const mixedName = 'Sita \u0c2e\u0c3e\u0c27\u0c35\u0c3f \u0939\u093f\u0928\u094d\u0926\u0940';
 const deviceName = `Phone ${mixedName}`;
 const spaceName = `Space ${mixedName}`;
+const pageName = `Page ${mixedName}`;
 const requestText = `Plan ${mixedName}`;
 const serverAnswer = `Answer ${mixedName}`;
 const serverQuestion = `Question ${mixedName}?`;
@@ -92,7 +93,7 @@ async function fixture(context, language, options = {}) {
   await page.exposeFunction('recordT98Unexpected', call => { result.unexpected.push(call); });
   await page.goto(origin + routePath);
   await page.addStyleTag({ content: css });
-  await page.evaluate(({ language, date, serverMessage, accountId, sessionId, spaceId, runId, approvalId, memoryId, mixedName, deviceName, spaceName, requestText, serverAnswer, serverQuestion, memoryLabel, memoryContent, approvalEtag, email, options }) => {
+  await page.evaluate(({ language, date, serverMessage, accountId, sessionId, spaceId, runId, approvalId, memoryId, mixedName, deviceName, spaceName, pageName, requestText, serverAnswer, serverQuestion, memoryLabel, memoryContent, approvalEtag, email, options }) => {
     const state = window.t98Fixture = {
       language, mode: options.mode, liveOpened: 0, liveClosed: 0, failSave: false, offlineAsk: false,
       profile: { id: accountId, display_name: mixedName, email, timezone: 'Asia/Kolkata', email_verified: true, version: 1 },
@@ -104,10 +105,10 @@ async function fixture(context, language, options = {}) {
       memories: [{ id: memoryId, kind: 'note', key: null, label: memoryLabel, content: memoryContent, source: 'agent', source_run_id: null, created_at: date }],
     };
     const run = {
-      id: runId, space_id: spaceId, message: requestText, status: 'waiting_for_approval', outcome: null, stop_reason: null, intent: null, answer: serverAnswer,
+      id: runId, agent_kind: 'main', space_id: null, message: requestText, status: 'waiting_for_approval', outcome: null, stop_reason: null, intent: null, answer: serverAnswer,
       question: null, approval: {
-        id: approvalId, run_id: runId, space_id: spaceId, tool_name: 'tasks.create', risk: 'low', summary: `Summary ${mixedName}`,
-        fields: [{ label: `Title ${mixedName}`, value: requestText }, { label: 'Space', value: spaceName }],
+        id: approvalId, run_id: runId, space_id: null, tool_name: 'community.posts.create', risk: 'medium', summary: `Summary ${mixedName}`,
+        fields: [{ label: `Title ${mixedName}`, value: requestText }, { label: 'Page', value: pageName }],
         status: 'pending', reason: null, result_ref: null, created_at: date, expires_at: '2026-10-09T18:15:00Z', decided_at: null, version: '1', etag: approvalEtag,
       },
       plan: [], tool_calls: [], evidence: [], events: [], created_at: date, updated_at: date, finished_at: null, version: '1',
@@ -177,7 +178,7 @@ async function fixture(context, language, options = {}) {
       await window.recordT98Unexpected(call);
       throw new Error(`Unexpected fixture request: ${method} ${url.pathname}`);
     };
-  }, { language, date, serverMessage, accountId, sessionId, spaceId, runId, approvalId, memoryId, mixedName, deviceName, spaceName, requestText, serverAnswer, serverQuestion, memoryLabel, memoryContent, approvalEtag, email, options });
+  }, { language, date, serverMessage, accountId, sessionId, spaceId, runId, approvalId, memoryId, mixedName, deviceName, spaceName, pageName, requestText, serverAnswer, serverQuestion, memoryLabel, memoryContent, approvalEtag, email, options });
   await page.addScriptTag({ content: javascript });
   await page.locator('main h1').waitFor();
   return result;
@@ -295,10 +296,11 @@ for (const language of ['te', 'hi']) {
       await page.getByRole('heading', { name: dictionary['agent.heading'], exact: true }).waitFor();
       await page.getByText(dictionary['agent.emptyRequests'], { exact: true }).waitFor();
       const request = page.getByRole('textbox', { name: dictionary['agent.message'], exact: true });
-      assert.equal(await page.getByRole('combobox', { name: dictionary['agent.space'], exact: true }).locator('option:checked').textContent(), spaceName);
+      assert.equal(await page.getByRole('combobox', { name: dictionary['agent.space'], exact: true }).count(), 0);
+      assert.equal(await page.getByRole('heading', { name: dictionary['agent.mainScope'], exact: true }).count(), 1);
       await page.getByRole('button', { name: dictionary['agent.ask'], exact: true }).click();
       await page.getByRole('alert').filter({ hasText: dictionary['agent.requestRequired'] }).waitFor();
-      await request.fill('a'.repeat(501));
+      await request.fill('a'.repeat(2001));
       await page.getByRole('button', { name: dictionary['agent.ask'], exact: true }).click();
       await page.getByRole('alert').filter({ hasText: dictionary['agent.requestLength'] }).waitFor();
       assert.equal(result.calls.filter(call => call.method === 'POST').length, 0);
@@ -308,8 +310,8 @@ for (const language of ['te', 'hi']) {
       await card.getByRole('heading', { name: dictionary['agent.check'], exact: true }).waitFor();
       assert.equal(await card.getByText(dictionary['agent.status.waiting_for_approval'], { exact: true }).count(), 1);
       assert.equal(await card.getByText(serverAnswer, { exact: true }).textContent(), serverAnswer);
-      assert.deepEqual(await card.locator('dt').allTextContents(), [`Title ${mixedName}`, 'Space']);
-      assert.deepEqual(await card.locator('dd').allTextContents(), [requestText, spaceName]);
+      assert.deepEqual(await card.locator('dt').allTextContents(), [`Title ${mixedName}`, 'Page']);
+      assert.deepEqual(await card.locator('dd').allTextContents(), [requestText, pageName]);
       const options = { dateStyle: 'medium', timeStyle: 'short' };
       const when = await expectedDate(page, language, date, options);
       assert.equal(await card.getByText(when, { exact: true }).count(), 1);
@@ -317,11 +319,11 @@ for (const language of ['te', 'hi']) {
       assert.equal(await card.getByText(dictionary['agent.waiting'].replace('{date}', until), { exact: true }).count(), 1);
       assert.equal(await card.getByRole('button', { name: dictionary['agent.reject'], exact: true }).count(), 1);
       const ask = result.calls.find(call => call.route === '/api/agent-runs' && call.method === 'POST');
-      assert.deepEqual(ask.body, { space_id: spaceId, message: requestText });
+      assert.deepEqual(ask.body, { message: requestText });
       assert.equal(ask.headers['x-account-id'], accountId);
       await card.getByRole('button', { name: dictionary['agent.approve'], exact: true }).click();
       await card.getByText(dictionary['agent.status.completed'], { exact: true }).waitFor();
-      assert.equal(await card.getByRole('heading', { name: `Summary ${mixedName}`, exact: true }).count(), 1);
+      assert.equal(await card.getByRole('heading', { name: `Summary ${mixedName} ${dictionary['agent.decision.approved']}`, exact: true }).count(), 1);
       const approval = result.calls.find(call => call.route.endsWith('/approve'));
       assert.equal(approval.route, `/api/agent-approvals/${approvalId}/approve`);
       assert.equal(approval.headers['if-match'], approvalEtag);
@@ -343,7 +345,7 @@ for (const language of ['te', 'hi']) {
       assert.equal(await card.getByText(dictionary['agent.status.waiting_for_user'], { exact: true }).count(), 1);
       assert.equal(await card.getByRole('button', { name: dictionary['agent.stop'], exact: true }).count(), 1);
       const answer = card.getByRole('textbox', { name: dictionary['agent.answerLabel'], exact: true });
-      await answer.fill('a'.repeat(501));
+      await answer.fill('a'.repeat(1001));
       await card.getByRole('alert').filter({ hasText: dictionary['agent.answerLength'] }).waitFor();
       assert.equal(await card.getByRole('button', { name: dictionary['agent.answer'], exact: true }).isDisabled(), true);
       await answer.fill(mixedName);

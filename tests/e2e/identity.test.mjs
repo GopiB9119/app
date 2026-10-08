@@ -10,12 +10,17 @@ const require = createRequire(new URL('../../web/package.json', import.meta.url)
 const { chromium } = require('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const base = process.env.COMMUNITY_WEB_URL ?? 'http://127.0.0.1:3000';
-const mail = 'http://127.0.0.1:8025';
+const mail = process.env.COMMUNITY_MAIL_URL ?? 'http://127.0.0.1:8025';
 const password = 'Synthetic-Meadow-49!';
 let browser;
 
 before(async () => {
   browser = await chromium.launch({ executablePath: process.env.COMMUNITY_CHROMIUM_PATH, headless: true });
+  const diagnostics = await browser.newBrowserCDPSession();
+  diagnostics.on('Target.targetCrashed', ({ status, errorCode }) => {
+    console.error(JSON.stringify({ event: 'browser-target-crashed', status, errorCode }));
+  });
+  await diagnostics.send('Target.setDiscoverTargets', { discover: true });
   await mkdir(path.join(root, '.local/screenshots'), { recursive: true });
 });
 after(async () => { await browser?.close(); });
@@ -39,7 +44,11 @@ async function mailCode(email, purpose = 'registration') {
 async function signUp(page, email) {
   await page.goto(`${base}/register`);
   await page.getByLabel('Email address').fill(email);
-  await page.getByRole('button', { name: 'Send verification code' }).click();
+  const [registration] = await Promise.all([
+    page.waitForResponse(response => response.url() === `${base}/api/auth/register` && response.request().method() === 'POST'),
+    page.getByRole('button', { name: 'Send verification code' }).click(),
+  ]);
+  assert.equal(registration.status(), 202, 'Synthetic registration must succeed before waiting for the verification form.');
   await page.getByRole('heading', { name: 'Complete your account' }).waitFor();
   const code = await mailCode(email);
   await page.getByLabel('Verification code').fill(code);
@@ -51,6 +60,292 @@ async function signUp(page, email) {
   await page.getByRole('heading', { name: 'Your account' }).waitFor();
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
 }
+
+test('space polls: exact create retry shared results private votes and authorized closure through the live API', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const memberContext = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  const errors = [];
+  const outbound = [];
+  for (const context of [ownerContext, memberContext]) {
+    await context.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (url.origin !== new URL(base).origin || url.pathname === '/api/agent-runs' && route.request().method() === 'POST') {
+        outbound.push(`${route.request().method()} ${url.origin}${url.pathname}`);
+        return route.abort('blockedbyclient');
+      }
+      return route.continue();
+    });
+  }
+  const page = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  for (const current of [page, memberPage]) current.on('pageerror', error => errors.push(error.message));
+  try {
+    const stamp = crypto.randomUUID();
+    await signUp(page, `space-poll-owner-${stamp}@example.test`);
+    await signUp(memberPage, `space-poll-member-${stamp}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const create = async (route, data) => {
+      const response = await ownerContext.request.post(`${base}/api/${route}`, {
+        headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data,
+      });
+      assert.equal(response.status(), 201, `Synthetic setup failed at ${route}.`);
+      return (await response.json()).data;
+    };
+    const space = await create('spaces', { name: 'Synthetic standalone poll family', space_type: 'family' });
+    const invitation = await create(`spaces/${space.id}/invitations`, { recipient_account_id: member.id });
+    assert.equal((await memberContext.request.post(`${base}/api/invitations/${invitation.id}/accept`, { headers: memberHeaders, data: {} })).status(), 200);
+    const read = async (context, headers, status = 'open') => {
+      const response = await context.request.get(`${base}/api/spaces/${space.id}/polls?status=${status}&limit=20`, { headers });
+      assert.equal(response.status(), 200);
+      return (await response.json()).data;
+    };
+    await page.goto(`${base}/app/polls?space_id=${space.id}`);
+    await page.getByRole('heading', { name: 'Polls', exact: true, level: 1 }).waitFor();
+    const question = 'Where should our synthetic Space meet?';
+    await page.getByLabel('Question', { exact: true }).fill(question);
+    await page.getByLabel('Choice 1', { exact: true }).fill('Cafe');
+    await page.getByLabel('Choice 2', { exact: true }).fill('Park');
+    const attempts = [];
+    await page.route(`**/api/spaces/${space.id}/polls`, async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      attempts.push({ key: route.request().headers()['idempotency-key'], body: route.request().postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 201, 'Creation must commit before dropping its response.');
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await page.getByRole('button', { name: 'Ask the Space', exact: true }).click();
+    await page.locator('main').getByRole('alert').first().waitFor();
+    assert.equal(await page.getByLabel('Question', { exact: true }).inputValue(), question);
+    assert.equal(await page.getByLabel('Question', { exact: true }).isDisabled(), true);
+    assert.equal((await read(ownerContext, ownerHeaders)).length, 1);
+    await page.getByRole('button', { name: 'Ask the Space', exact: true }).click();
+    const card = page.getByRole('article', { name: question, exact: true });
+    await card.waitFor();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[1], attempts[0]);
+    const polls = await read(ownerContext, ownerHeaders);
+    assert.equal(polls.length, 1);
+    const [poll] = polls;
+    await page.unroute(`**/api/spaces/${space.id}/polls`);
+    await memberPage.goto(`${base}/app/polls?space_id=${space.id}`);
+    const memberCard = memberPage.getByRole('article', { name: question, exact: true });
+    await memberCard.waitFor();
+    assert.equal(await memberCard.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    await memberCard.getByRole('button', { name: /^Cafe/ }).click();
+    await memberCard.getByRole('button', { name: /^Cafe/ }).and(memberPage.locator('[aria-pressed="true"]')).waitFor();
+    await card.getByText('1 vote', { exact: true }).waitFor();
+    const [ownerView] = await read(ownerContext, ownerHeaders);
+    assert.equal(ownerView.total_votes, 1);
+    assert.equal(ownerView.my_option_id, null);
+    assert.ok(ownerView.options.every(option => Object.keys(option).sort().join(',') === 'id,label,votes'));
+    const park = memberCard.getByRole('button', { name: /^Park/ });
+    const originalSize = await park.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await memberPage.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await park.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+    await park.scrollIntoViewIfNeeded();
+    await park.focus();
+    const reachability = await park.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return { focused: document.activeElement === element, height: bounds.height,
+        pointer: element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)) };
+    });
+    assert.equal(reachability.focused, true);
+    assert.equal(reachability.pointer, true);
+    assert.ok(reachability.height >= 44);
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/space-polls-live-320.png'), fullPage: false });
+    await park.click();
+    await park.and(memberPage.locator('[aria-pressed="true"]')).waitFor();
+    await memberCard.getByRole('button', { name: 'Take back my vote', exact: true }).click();
+    await memberCard.getByText('No votes yet', { exact: true }).waitFor();
+    const denied = await memberContext.request.post(`${base}/api/polls/${poll.id}/close`, {
+      headers: { ...memberHeaders, 'If-Match': poll.etag }, data: {},
+    });
+    assert.equal(denied.status(), 403);
+    await card.getByRole('button', { name: 'Close poll', exact: true }).click();
+    assert.equal((await read(ownerContext, ownerHeaders))[0].status, 'open');
+    await card.getByRole('group', { name: 'Close poll', exact: true }).getByRole('button', { name: 'Close poll', exact: true }).click();
+    await card.waitFor({ state: 'detached' });
+    await memberCard.waitFor({ state: 'detached' });
+    await memberPage.getByRole('button', { name: 'Closed', exact: true }).click();
+    const closed = memberPage.getByRole('article', { name: question, exact: true });
+    await closed.waitFor();
+    assert.equal(await closed.getByRole('button').count(), 0);
+    assert.equal((await read(memberContext, memberHeaders, 'closed'))[0].status, 'closed');
+    assert.deepEqual(errors, []);
+    assert.deepEqual(outbound, []);
+  } finally { await ownerContext.close(); await memberContext.close(); }
+});
+
+test('polls: reviewed creation private ballots exact retry withdrawal and closure through the live API', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const memberContext = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  const errors = [];
+  const outbound = [];
+  for (const context of [ownerContext, memberContext]) {
+    await context.route('**/*', route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.origin !== new URL(base).origin || url.pathname === '/api/agent-runs' && request.method() === 'POST') {
+        outbound.push(`${request.method()} ${url.origin}${url.pathname}`);
+        return route.abort('blockedbyclient');
+      }
+      return route.continue();
+    });
+  }
+  const page = await ownerContext.newPage();
+  const memberPage = await memberContext.newPage();
+  for (const current of [page, memberPage]) current.on('pageerror', error => errors.push(error.message));
+  try {
+    const stamp = crypto.randomUUID();
+    await signUp(page, `poll-owner-${stamp}@example.test`);
+    await signUp(memberPage, `poll-member-${stamp}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const member = (await (await memberContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const memberHeaders = { Origin: base, 'X-Account-ID': member.id };
+    const create = async (route, body) => {
+      const response = await ownerContext.request.post(`${base}/api/${route}`, {
+        headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() }, data: body,
+      });
+      assert.equal(response.status(), 201, `Synthetic setup failed at ${route}.`);
+      return (await response.json()).data;
+    };
+    const read = async (context, headers, route) => {
+      const response = await context.request.get(`${base}/api/${route}`, { headers });
+      assert.equal(response.status(), 200, `Live poll read failed at ${route}.`);
+      return (await response.json()).data;
+    };
+    const space = await create('spaces', { name: 'Synthetic poll family', space_type: 'family' });
+    const invitation = await create(`spaces/${space.id}/invitations`, { recipient_account_id: member.id });
+    const joined = await memberContext.request.post(`${base}/api/invitations/${invitation.id}/accept`, { headers: memberHeaders, data: {} });
+    assert.equal(joined.status(), 200);
+    const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const event = await create(`spaces/${space.id}/events`, {
+      title: 'Synthetic poll planning', description: 'Local synthetic poll workflow verification.', location: '', timezone: 'Asia/Kolkata',
+      local_start: `${date}T18:00`, local_end: `${date}T19:00`,
+    });
+    await page.goto(`${base}/app/events?space_id=${space.id}`);
+    await page.getByRole('button', { name: event.title, exact: true }).click();
+    const panel = page.getByTestId('event-polls');
+    await panel.getByRole('button', { name: 'Polls', exact: true }).click();
+    await panel.getByText('No polls yet.', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'New poll', exact: true }).click();
+    let review = page.getByRole('dialog');
+    await review.getByRole('textbox', { name: 'Question', exact: true }).fill('Where should our synthetic group meet?');
+    await review.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('Cafe');
+    await review.getByRole('textbox', { name: 'Choice 2', exact: true }).fill('Park');
+    await review.getByRole('button', { name: 'Review', exact: true }).click();
+    review = page.getByRole('dialog', { name: 'Review poll', exact: true });
+    await review.getByText('Where should our synthetic group meet?', { exact: true }).waitFor();
+    assert.deepEqual(await read(ownerContext, ownerHeaders, `events/${event.id}/polls`), []);
+    await review.getByRole('button', { name: 'Create poll', exact: true }).click();
+    await panel.getByText('Poll created.', { exact: true }).waitFor();
+    const [poll] = await read(ownerContext, ownerHeaders, `events/${event.id}/polls`);
+    assert.equal(poll.question, 'Where should our synthetic group meet?');
+    await page.screenshot({ path: path.join(root, '.local/screenshots/event-polls-live-desktop.png'), fullPage: true });
+    await memberPage.goto(`${base}/app/events?space_id=${space.id}`);
+    await memberPage.getByRole('button', { name: event.title, exact: true }).click();
+    const memberPanel = memberPage.getByTestId('event-polls');
+    await memberPanel.getByRole('button', { name: 'Polls', exact: true }).click();
+    await memberPanel.getByRole('radio', { name: /^Cafe/ }).waitFor();
+    assert.equal(await memberPanel.getByRole('button', { name: 'New poll', exact: true }).count(), 0);
+    assert.equal(await memberPanel.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    const votePath = `/api/events/${event.id}/polls/${poll.id}/vote`;
+    const attempts = [];
+    await memberPage.route(`**${votePath}`, async route => {
+      if (route.request().method() !== 'PUT') return route.continue();
+      const request = route.request();
+      attempts.push({ key: request.headers()['idempotency-key'], etag: request.headers()['if-match'], body: request.postData() });
+      const response = await route.fetch();
+      assert.equal(response.status(), 200, 'The real vote must commit before dropping its response.');
+      if (attempts.length === 1) return route.abort('failed');
+      return route.fulfill({ response });
+    });
+    await memberPanel.getByRole('radio', { name: /^Cafe/ }).check();
+    assert.equal((await read(memberContext, memberHeaders, `events/${event.id}/polls/${poll.id}`)).total_votes, 0);
+    await memberPanel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await memberPanel.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    const committed = await read(memberContext, memberHeaders, `events/${event.id}/polls/${poll.id}`);
+    assert.equal(committed.total_votes, 1);
+    const ownerView = await read(ownerContext, ownerHeaders, `events/${event.id}/polls/${poll.id}`);
+    assert.equal(ownerView.my_option_id, null);
+    assert.ok(ownerView.options.every(option => Object.keys(option).sort().join(',') === 'id,text,votes'));
+    await memberPanel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await memberPanel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[1], attempts[0]);
+    assert.equal((await read(memberContext, memberHeaders, `events/${event.id}/polls/${poll.id}`)).vote_etag, committed.vote_etag);
+    await memberPage.unroute(`**${votePath}`);
+    await memberPanel.getByRole('radio', { name: /^Park/ }).check();
+    const save = memberPanel.getByRole('button', { name: 'Save choice', exact: true });
+    const originalSize = await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await memberPage.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+    await save.scrollIntoViewIfNeeded();
+    await save.focus();
+    const box = await save.boundingBox();
+    assert.ok(box.width >= 44 && box.height >= 44);
+    const reachability = await save.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      return { focused: document.activeElement === element, disabled: element.disabled,
+        pointer: element.contains(hit), hit: hit?.tagName ?? null,
+        hitClass: hit?.getAttribute('class') ?? null, hitText: hit?.textContent?.slice(0, 120) ?? null,
+        coveringNavigation: hit?.closest('nav')?.getAttribute('class') ?? null,
+        navigation: (() => { const rect = document.querySelector('.main-nav')?.getBoundingClientRect(); return rect ? { top: rect.top, height: rect.height } : null; })(),
+        active: document.activeElement?.tagName ?? null, top: bounds.top, height: bounds.height };
+    });
+    assert.equal(reachability.focused, true, `Save must receive focus: ${JSON.stringify(reachability)}`);
+    assert.equal(reachability.pointer, true, `Save must receive pointer input: ${JSON.stringify(reachability)}`);
+    assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await memberPage.screenshot({ path: path.join(root, '.local/screenshots/event-polls-live-320.png'), fullPage: false });
+    await save.click();
+    await memberPanel.getByText('Your choice: Park', { exact: true }).waitFor();
+    const latest = await read(memberContext, memberHeaders, `events/${event.id}/polls/${poll.id}`);
+    const replay = await memberContext.request.put(`${base}${votePath}`, {
+      headers: { ...memberHeaders, 'Idempotency-Key': attempts[0].key, 'If-Match': attempts[0].etag }, data: JSON.parse(attempts[0].body),
+    });
+    assert.equal(replay.status(), 200);
+    assert.deepEqual((await replay.json()).data, latest);
+    await memberPanel.getByRole('button', { name: 'Withdraw', exact: true }).click();
+    await memberPanel.getByText('Your choice is withdrawn.', { exact: true }).waitFor();
+    const withdrawn = await read(memberContext, memberHeaders, `events/${event.id}/polls/${poll.id}`);
+    assert.equal(withdrawn.my_option_id, null);
+    assert.equal(withdrawn.total_votes, 0);
+    const denied = await memberContext.request.post(`${base}/api/events/${event.id}/polls/${poll.id}/close`, {
+      headers: { ...memberHeaders, 'If-Match': poll.etag }, data: {},
+    });
+    assert.equal(denied.status(), 403);
+    await panel.getByRole('button', { name: 'Refresh polls', exact: true }).click();
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).and(page.locator(':enabled')).waitFor();
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    const closure = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    assert.equal((await read(ownerContext, ownerHeaders, `events/${event.id}/polls/${poll.id}`)).status, 'open');
+    await closure.getByRole('button', { name: 'Close poll', exact: true }).click();
+    await panel.getByText('Poll closed.', { exact: true }).waitFor();
+    await memberPanel.getByRole('button', { name: 'Refresh polls', exact: true }).click();
+    await memberPanel.getByText('Closed', { exact: true }).waitFor();
+    assert.equal(await memberPanel.getByRole('button', { name: 'Save choice', exact: true }).count(), 0);
+    const tooLate = await memberContext.request.put(`${base}${votePath}`, {
+      headers: { ...memberHeaders, 'If-Match': withdrawn.vote_etag, 'Idempotency-Key': crypto.randomUUID() },
+      data: { option_id: poll.options[0].id },
+    });
+    assert.equal(tooLate.status(), 409);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(outbound, []);
+  } finally { await ownerContext.close(); await memberContext.close(); }
+});
 
 test('website wording: sign-in and account pages keep useful controls without developer labels', { timeout: 120000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -650,6 +945,15 @@ test('invitations: intended recipient reviews, joins, declines and observes revo
     });
     assert.equal(inboxResponse.status(), 200);
     const invitation = (await inboxResponse.json()).data[0];
+    async function addTask(title, assigneeId = null) {
+      const response = await ownerContext.request.post(`${base}/api/tasks`, {
+        headers: { Origin: base, 'X-Account-ID': ownerId, 'Idempotency-Key': crypto.randomUUID() },
+        data: { space_id: invitation.space_id, title, description: '', due_date: null, assignee_account_id: assigneeId },
+      });
+      assert.equal(response.status(), 201, await response.text());
+      return (await response.json()).data;
+    }
+    const earlierTask = await addTask('Earlier owner-only plan');
     const forbidden = await ownerContext.request.post(`${base}/api/invitations/${invitation.id}/accept`, {
       headers: { Origin: base, 'X-Account-ID': ownerId }, data: {},
     });
@@ -667,11 +971,66 @@ test('invitations: intended recipient reviews, joins, declines and observes revo
     }
     await recipientPage.setViewportSize({ width: 390, height: 844 });
     await recipientPage.screenshot({ path: path.join(root, '.local/screenshots/invitation-review-mobile.png'), fullPage: true });
+    const acceptancePath = `/api/invitations/${invitation.id}/accept`;
+    const acceptanceAttempts = [];
+    let firstAcceptedSpace;
+    await recipientPage.route(`**${acceptancePath}`, async route => {
+      acceptanceAttempts.push({ method: route.request().method(), body: route.request().postDataJSON(),
+        account: route.request().headers()['x-account-id'] });
+      const response = await route.fetch();
+      assert.equal(response.status(), 200, await response.text());
+      if (acceptanceAttempts.length === 1) {
+        firstAcceptedSpace = (await response.json()).data;
+        return route.abort('failed');
+      }
+      return route.fulfill({ response });
+    });
+    await recipientPage.getByRole('button', { name: 'Join Space', exact: true }).click();
+    const review = recipientPage.getByRole('dialog', { name: 'Join Invitation family?' });
+    await review.getByRole('alert').filter({ hasText: 'No connection. Your changes are not confirmed.' }).waitFor();
+    assert.equal(await recipientPage.getByText('Joined Invitation family.', { exact: true }).count(), 0);
+    assert.equal(firstAcceptedSpace.id, invitation.space_id);
     await recipientPage.getByRole('button', { name: 'Join Space', exact: true }).click();
     await recipientPage.getByText('Joined Invitation family.', { exact: true }).waitFor();
+    await recipientPage.unroute(`**${acceptancePath}`);
+    assert.equal(acceptanceAttempts.length, 2);
+    assert.deepEqual(acceptanceAttempts[0], acceptanceAttempts[1]);
+    assert.deepEqual(acceptanceAttempts[0], { method: 'POST', body: {}, account: recipientId });
+    const joinedResponse = await recipientContext.request.get(`${base}/api/spaces/${invitation.space_id}`, {
+      headers: { 'X-Account-ID': recipientId },
+    });
+    assert.equal(joinedResponse.status(), 200);
+    assert.equal((await joinedResponse.json()).data.version, firstAcceptedSpace.version, 'Retry must not create a new admission or change the Space twice.');
+    const rosterResponse = await ownerContext.request.get(`${base}/api/spaces/${invitation.space_id}/members`, {
+      headers: { 'X-Account-ID': ownerId },
+    });
+    assert.equal(rosterResponse.status(), 200);
+    assert.equal((await rosterResponse.json()).data.filter(member => member.account_id === recipientId).length, 1);
     await recipientSpaces.getByRole('heading', { name: 'Invitation family', exact: true }).waitFor();
     assert.equal(await recipientPage.getByRole('button', { name: 'Manage invitations for Invitation family', exact: true }).count(), 0);
     await recipientPage.reload();
+    await recipientSpaces.getByRole('heading', { name: 'Invitation family', exact: true }).waitFor();
+    const hiddenTask = await recipientContext.request.get(`${base}/api/tasks/${earlierTask.id}`, {
+      headers: { 'X-Account-ID': recipientId },
+    });
+    assert.equal(hiddenTask.status(), 404, 'Joining must not grant access to tasks from before the current admission.');
+    const assignedTask = await addTask('Joined member follow-up', recipientId);
+    const taskResponse = await recipientContext.request.get(`${base}/api/tasks/${assignedTask.id}`, {
+      headers: { 'X-Account-ID': recipientId },
+    });
+    assert.equal(taskResponse.status(), 200);
+    const visibleTask = (await taskResponse.json()).data;
+    assert.equal(visibleTask.space_id, invitation.space_id);
+    assert.equal(visibleTask.assignee.account_id, recipientId);
+    await recipientSpaces.locator(`a[href="/app/tasks?space_id=${invitation.space_id}"]`).click();
+    await recipientPage.getByRole('heading', { name: assignedTask.title, exact: true }).waitFor();
+    assert.equal(new URL(recipientPage.url()).searchParams.get('space_id'), invitation.space_id);
+    assert.equal(await recipientPage.getByRole('heading', { name: earlierTask.title, exact: true }).count(), 0);
+    await recipientPage.setViewportSize({ width: 320, height: 844 });
+    await recipientPage.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    assert.equal(await recipientPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await recipientPage.screenshot({ path: path.join(root, '.local/screenshots/invitation-task-handoff-mobile.png'), fullPage: true });
+    await recipientPage.goto(`${base}/app/spaces`);
     await recipientSpaces.getByRole('heading', { name: 'Invitation family', exact: true }).waitFor();
 
     await inviteTo('Declined family');
@@ -691,6 +1050,139 @@ test('invitations: intended recipient reviews, joins, declines and observes revo
     assert.equal(await recipientSpaces.getByRole('heading', { name: 'Revoked family', exact: true }).count(), 0);
     assert.equal(await recipientPage.evaluate(() => localStorage.length), 0);
     await ownerPage.screenshot({ path: path.join(root, '.local/screenshots/invitations-owner-desktop.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await ownerContext.close();
+    await recipientContext.close();
+  }
+});
+
+test('invitations: lost decision responses retry the same invitation without a second admission', { timeout: 180000 }, async () => {
+  const ownerContext = await browser.newContext();
+  const recipientContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ownerPage = await ownerContext.newPage();
+  const recipientPage = await recipientContext.newPage();
+  const errors = [];
+  ownerPage.on('pageerror', error => errors.push(error.message));
+  recipientPage.on('pageerror', error => errors.push(error.message));
+  try {
+    await signUp(ownerPage, `invite-retry-owner-${Date.now()}@example.test`);
+    await signUp(recipientPage, `invite-retry-recipient-${Date.now()}@example.test`);
+    const owner = (await (await ownerContext.request.get(`${base}/api/me`)).json()).data;
+    const recipient = (await (await recipientContext.request.get(`${base}/api/me`)).json()).data;
+    const ownerHeaders = { Origin: base, 'X-Account-ID': owner.id };
+    const recipientHeaders = { 'X-Account-ID': recipient.id };
+
+    for (const action of ['accept', 'decline']) {
+      const created = await ownerContext.request.post(`${base}/api/spaces`, {
+        headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+        data: { name: `Retry ${action} family`, space_type: 'family' },
+      });
+      assert.equal(created.status(), 201);
+      const space = (await created.json()).data;
+      const offered = await ownerContext.request.post(`${base}/api/spaces/${space.id}/invitations`, {
+        headers: { ...ownerHeaders, 'Idempotency-Key': crypto.randomUUID() },
+        data: { recipient_account_id: recipient.id },
+      });
+      assert.equal(offered.status(), 201);
+      const invitation = (await offered.json()).data;
+      assert.equal(invitation.space_id, space.id);
+      assert.equal(invitation.recipient_account_id, recipient.id);
+      assert.equal((await recipientContext.request.get(`${base}/api/spaces/${space.id}`, { headers: recipientHeaders })).status(), 404);
+      const available = await recipientContext.request.get(`${base}/api/invitations`, { headers: recipientHeaders });
+      assert.equal(available.status(), 200);
+      assert.equal((await available.json()).data.some(item => item.id === invitation.id), true, 'The committed invitation must reach its recipient inbox.');
+      await recipientPage.goto(`${base}/app/spaces`);
+      const inbox = recipientPage.locator('section[aria-labelledby="invitation-title"]');
+      const row = inbox.getByRole('listitem').filter({ has: recipientPage.getByRole('heading', { name: space.name, exact: true }) });
+      try {
+        await row.waitFor({ timeout: 10000 });
+      } catch (error) {
+        throw new Error(`Committed invitation did not render: ${JSON.stringify({
+          path: new URL(recipientPage.url()).pathname, alerts: await recipientPage.getByRole('alert').allTextContents(), browserErrors: errors,
+        })}`, { cause: error });
+      }
+      const endpoint = `${base}/api/invitations/${invitation.id}/${action}`;
+      const attempts = [];
+      const waiting = [];
+      const nextReceipt = () => new Promise(resolve => waiting.push(resolve));
+      await recipientPage.route(endpoint, async route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        attempts.push({
+          url: route.request().url(), body: route.request().postData(),
+          accountId: route.request().headers()['x-account-id'],
+        });
+        try {
+          const response = await route.fetch();
+          if (response.status() === 200 && attempts.length === 1) await route.abort('failed');
+          else await route.fulfill({ response });
+          waiting.shift()?.({ status: response.status() });
+        } catch (error) {
+          waiting.shift()?.({ error: error.name });
+        }
+      });
+      if (action === 'accept') await row.getByRole('button', { name: 'Review invitation', exact: true }).click();
+      const confirmation = recipientPage.getByRole('dialog', { name: `Join ${space.name}?`, exact: true });
+      const decision = action === 'accept'
+        ? confirmation.getByRole('button', { name: 'Join Space', exact: true })
+        : row.getByRole('button', { name: `Decline invitation to ${space.name}`, exact: true });
+      const [firstReceipt] = await Promise.all([nextReceipt(), decision.click()]);
+      assert.equal(firstReceipt.error, undefined, 'The live decision request failed before fault injection.');
+      assert.equal(firstReceipt.status, 200, 'The server must commit the decision before its response is lost.');
+      const failure = (action === 'accept' ? confirmation : inbox).getByRole('alert').filter({ hasText: 'No connection. Your changes are not confirmed.' });
+      await failure.waitFor();
+      const notice = action === 'accept' ? `Joined ${space.name}.` : 'Invitation declined.';
+      assert.equal(await recipientPage.getByText(notice, { exact: true }).count(), 0);
+
+      let acceptedSpace;
+      let acceptedMembers;
+      if (action === 'accept') {
+        const stored = await recipientContext.request.get(`${base}/api/spaces/${space.id}`, { headers: recipientHeaders });
+        assert.equal(stored.status(), 200);
+        acceptedSpace = (await stored.json()).data;
+        const roster = await recipientContext.request.get(`${base}/api/spaces/${space.id}/members`, { headers: recipientHeaders });
+        assert.equal(roster.status(), 200);
+        acceptedMembers = (await roster.json()).data;
+        assert.equal(acceptedMembers.length, 2);
+        assert.equal(acceptedSpace.role, 'member');
+      }
+      const sent = await ownerContext.request.get(`${base}/api/spaces/${space.id}/invitations`, { headers: ownerHeaders });
+      assert.equal(sent.status(), 200);
+      assert.equal((await sent.json()).data.find(item => item.id === invitation.id).status, action === 'accept' ? 'accepted' : 'declined');
+
+      if (action === 'accept') await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await inbox.getByRole('button', { name: 'Refresh invitations', exact: true }).click();
+      await inbox.getByText('No pending invitations.', { exact: true }).waitFor();
+      assert.equal(await row.count(), 0);
+      const retry = inbox.getByRole('button', { name: 'Retry original decision', exact: true });
+      assert.equal(await retry.count(), 1, 'A completed invitation disappearing from the inbox must not lose its unconfirmed decision.');
+      await recipientPage.screenshot({
+        path: path.join(root, `.local/screenshots/invitation-recovery-${action}-20261007.png`),
+        fullPage: true, animations: 'disabled',
+      });
+      const [retryReceipt] = await Promise.all([nextReceipt(), retry.click()]);
+      assert.equal(retryReceipt.error, undefined, 'The live retry request could not complete.');
+      assert.equal(retryReceipt.status, 200, 'The original decision retry must be confirmed by the server.');
+      await recipientPage.getByText(notice, { exact: true }).waitFor();
+      assert.equal(attempts.length, 2);
+      assert.deepEqual(attempts[1], attempts[0]);
+      assert.equal(attempts[0].accountId, recipient.id);
+      assert.deepEqual(JSON.parse(attempts[0].body), {});
+      await recipientPage.unroute(endpoint);
+      const current = await recipientContext.request.get(`${base}/api/spaces/${space.id}`, { headers: recipientHeaders });
+      if (action === 'accept') {
+        assert.equal(current.status(), 200);
+        assert.deepEqual((await current.json()).data, acceptedSpace, 'Retry must not change the Space version or membership view.');
+        const roster = await recipientContext.request.get(`${base}/api/spaces/${space.id}/members`, { headers: recipientHeaders });
+        assert.equal(roster.status(), 200);
+        assert.deepEqual((await roster.json()).data, acceptedMembers, 'Retry must preserve the original admission and roster.');
+      } else {
+        assert.equal(current.status(), 404, 'Declining and retrying must never admit the recipient.');
+      }
+      const remaining = await recipientContext.request.get(`${base}/api/invitations`, { headers: recipientHeaders });
+      assert.equal(remaining.status(), 200);
+      assert.equal((await remaining.json()).data.some(item => item.id === invitation.id), false);
+    }
     assert.deepEqual(errors, []);
   } finally {
     await ownerContext.close();
@@ -1030,6 +1522,71 @@ test('rejoin: a former member returns only through a new invitation and earlier 
     await ownerContext.close();
     await memberContext.close();
   }
+});
+
+test('task filters: real status and date scopes preserve undated tasks when cleared', { timeout: 120000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'Asia/Kolkata' });
+  const page = await context.newPage();
+  const errors = [];
+  const external = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await context.route('**/*', route => {
+    if (new URL(route.request().url()).origin === base) return route.continue();
+    external.push(route.request().url()); return route.abort('blockedbyclient');
+  });
+  try {
+    await signUp(page, `task-filters-${Date.now()}@example.test`);
+    const account = (await (await context.request.get(`${base}/api/me`)).json()).data;
+    const headers = { Origin: base, 'X-Account-ID': account.id };
+    const spaceResponse = await context.request.post(`${base}/api/spaces`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { name: 'Task filter family', space_type: 'family' },
+    });
+    assert.equal(spaceResponse.status(), 201);
+    const space = (await spaceResponse.json()).data;
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const nextDay = new Date(`${today}T12:00:00Z`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const tasks = [];
+    for (const [title, due_date] of [['Today open', today], ['Today in progress', today], ['Tomorrow open', nextDay.toISOString().slice(0, 10)], ['No deadline', null]]) {
+      const response = await context.request.post(`${base}/api/tasks`, {
+        headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+        data: { space_id: space.id, title, description: '', due_date, assignee_account_id: null },
+      });
+      assert.equal(response.status(), 201);
+      tasks.push({ ...(await response.json()).data, etag: response.headers().etag });
+    }
+    const progress = await context.request.post(`${base}/api/tasks/${tasks[1].id}/status`, {
+      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID(), 'If-Match': tasks[1].etag }, data: { status: 'in_progress' },
+    });
+    assert.equal(progress.status(), 200);
+    assert.equal((await progress.json()).data.status, 'in_progress');
+    await page.goto(`${base}/app/tasks?space_id=${space.id}`);
+    await page.getByRole('heading', { name: 'Today open', exact: true }).waitFor();
+    const statusFilter = page.locator('select[aria-labelledby="task-filter-label"]');
+    const dueFilter = page.locator('select[name="task_due_filter"]');
+    const expectRows = async identifiers => {
+      await page.waitForFunction(expected => {
+        const actual = Array.from(document.querySelectorAll('li[id^="task-"]'), row => row.id.slice(5)).sort();
+        return JSON.stringify(actual) === JSON.stringify([...expected].sort());
+      }, identifiers);
+      const alerts = page.getByRole('main').getByRole('alert');
+      assert.equal(await alerts.count(), 0, (await alerts.allTextContents()).join('\n'));
+    };
+    await statusFilter.selectOption('open');
+    await dueFilter.selectOption('today');
+    await expectRows([tasks[0].id]);
+    await statusFilter.selectOption('in_progress');
+    await expectRows([tasks[1].id]);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/task-filters-live-desktop.png'), fullPage: true });
+    await statusFilter.selectOption('');
+    await dueFilter.selectOption('');
+    await expectRows(tasks.map(task => task.id));
+    await page.setViewportSize({ width: 320, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.getByRole('heading', { name: 'No deadline', exact: true }).waitFor();
+    await page.screenshot({ path: path.join(root, '.local/screenshots/task-filters-live-mobile.png'), fullPage: true });
+    assert.deepEqual(external, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
 });
 
 test('tasks: admitted member completes a shared task and stale edits are rejected', { timeout: 180000 }, async () => {
@@ -2120,7 +2677,9 @@ test('events timezone: the browser default creates the intended local time using
     assert.equal(zonesResponse.status(), 200);
     const zones = (await zonesResponse.json()).data;
     assert.equal(zones.includes('Asia/Kolkata'), true);
-    assert.equal(zones.includes('Asia/Calcutta'), false);
+    const expectedTimezone = zones.includes('Asia/Calcutta') ? 'Asia/Calcutta' : 'Asia/Kolkata';
+    const unsupportedTimezone = 'Invalid/Synthetic_Zone';
+    assert.equal(zones.includes(unsupportedTimezone), false);
     const created = await ownerContext.request.post(`${base}/api/spaces`, {
       headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { name: 'Timezone fixture', space_type: 'family' },
     });
@@ -2143,7 +2702,7 @@ test('events timezone: the browser default creates the intended local time using
       const select = document.querySelector('form select');
       return select && !select.disabled;
     });
-    assert.equal(await timezone.inputValue(), 'Asia/Kolkata');
+    assert.equal(await timezone.inputValue(), expectedTimezone);
     assert.deepEqual(await timezone.locator('option').evaluateAll(options => options.map(option => option.value)), zones);
     const confirmations = [];
     const keepDraft = async dialog => { confirmations.push(dialog.message()); await dialog.dismiss(); };
@@ -2185,7 +2744,7 @@ test('events timezone: the browser default creates the intended local time using
     const storedResponse = await ownerContext.request.get(`${base}/api/events/${event.id}`, { headers });
     assert.equal(storedResponse.status(), 200);
     const stored = (await storedResponse.json()).data;
-    assert.equal(stored.timezone, 'Asia/Kolkata');
+    assert.equal(stored.timezone, expectedTimezone);
     assert.equal(stored.local_start, `${day}T18:30`);
     assert.equal(stored.local_end, `${day}T19:30`);
     assert.equal(Date.parse(stored.starts_at), Date.parse(`${day}T13:00:00Z`));
@@ -2193,7 +2752,7 @@ test('events timezone: the browser default creates the intended local time using
     const start = performance.now();
     const refused = await ownerContext.request.post(`${base}/api/spaces/${space.id}/events`, {
       headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-      data: { title: 'Refused alias', timezone: 'Asia/Calcutta', local_start: `${day}T18:30` },
+      data: { title: 'Refused unsupported timezone', timezone: unsupportedTimezone, local_start: `${day}T18:30` },
     });
     const milliseconds = Math.round(performance.now() - start);
     assert.equal(refused.status(), 422);
@@ -2202,7 +2761,7 @@ test('events timezone: the browser default creates the intended local time using
       'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY',
       'referrer-policy': 'no-referrer', 'permissions-policy': 'camera=(), microphone=(), geolocation=()',
     })) assert.equal(refused.headers()[name], value, name);
-    context.diagnostic(`Local synthetic validation request: 422 in ${milliseconds} ms; browser default persisted as Asia/Kolkata at the intended UTC instant.`);
+    context.diagnostic(`Local synthetic validation request: 422 in ${milliseconds} ms; browser default persisted as ${expectedTimezone} at the intended UTC instant.`);
     assert.deepEqual(errors, []);
   } finally { await ownerContext.close(); }
 });
@@ -3074,7 +3633,7 @@ test('couples: a couple Space waits for the partner, admits one person and refus
     await ownerPage.getByText('Couple Space created. Invite your partner to join you.', { exact: true }).waitFor();
     const ownerRow = ownerPage.getByRole('listitem').filter({ hasText: coupleName });
     await ownerRow.getByText('Waiting for your partner', { exact: true }).waitFor();
-    await ownerRow.getByText('Private', { exact: true }).waitFor();
+    await ownerRow.getByText('Private', { exact: true }).filter({ visible: true }).waitFor();
     assert.equal(await ownerRow.getByRole('button', { name: `Join requests for ${coupleName}` }).count(), 0);
 
     await ownerPage.getByRole('button', { name: `Manage invitations for ${coupleName}`, exact: true }).click();

@@ -153,6 +153,10 @@ async function fixture(context, options = {}) {
       }
       if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       if (url.pathname === '/api/spaces') return paged([]);
+      if (url.pathname === `/api/spaces/${spaceId}/members` && method === 'GET') return reply([
+        { account_id: accountId, display_name: 'Alex Morgan', role: 'owner' },
+        { account_id: otherId, display_name: 'Sam Morgan', role: 'member' },
+      ].map((member, index) => ({ ...member, joined_at: '2026-09-19T10:00:00Z', etag: `"member-${index}"` })));
       if (url.pathname === '/api/conversations') return paged(conversations, { unread_count: conversations.reduce((sum, item) => sum + item.unread_count, 0) });
       if (url.pathname === '/api/notifications') {
         if (state.notificationsDenied) return new Response(JSON.stringify({ error: { code: 'FORBIDDEN', message: 'Reminder access was refused.', details: {} } }), { status: 403 });
@@ -236,6 +240,10 @@ test('live chat: matching hints fetch new messages immediately and other convers
     const view = await fixture(context);
     const { page, pane } = view;
     await connect(page); await open(page, pane);
+    await page.waitForFunction(space => window.liveFixture.calls.some(call => call.route === `/api/spaces/${space}/members`), spaceId);
+    assert.deepEqual(await page.evaluate(space => window.liveFixture.calls
+      .filter(call => call.route === `/api/spaces/${space}/members`)
+      .map(call => ({ method: call.method, account: call.headers['x-account-id'] })), spaceId), [{ method: 'GET', account: accountId }]);
     const before = await pollCount(page);
     await page.evaluate(({ chatId, otherChatId, spaceId }) => {
       window.liveFixture.addMessage('Dinner at seven', chatId);

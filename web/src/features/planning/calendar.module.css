@@ -24,12 +24,16 @@
 .hiddenNote { margin: 0 0 calc(var(--space-unit) * 3); color: var(--color-muted); font-size: 0.875rem; }
 .month { flex: 0 1 210px; min-width: 0; }
 .workspace { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 36px; border-top: 1px solid var(--color-border); padding-top: 24px; align-items: start; }
-.monthGrid { min-width: 0; }
+.monthGrid { min-width: 0; container: calendar-dates / inline-size; }
 .weekdays, .dates { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
 .weekdays span { text-align: center; font-size: 13px; color: var(--color-muted); padding: 8px 0; }
-.dates button { min-width: 0; height: 46px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--color-ink); font: inherit; cursor: pointer; }
+.weekdays span::after { font-size: 13px; }
+.dates button { min-width: 0; height: 46px; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-ink); font: inherit; cursor: pointer; }
 .dates button:hover { background: var(--color-primary-surface); }
-.dates button[aria-current] { border-color: var(--color-primary); font-weight: 700; }
+.dates button[aria-current] { box-shadow: inset 0 0 0 1px var(--color-primary); font-weight: 700; }
+@media (forced-colors: active) { .dates button[aria-current] { outline: 1px solid CanvasText; outline-offset: -1px; } }
+/* em here follows the grid's own text size, so large text switches to one-letter weekdays and gapless dates. */
+@container calendar-dates (max-width: 14em) { .weekdays span { font-size: 0; } .weekdays span::after { content: attr(data-narrow); } .dates { gap: 0; } }
 .dates button[aria-pressed="true"] { background: var(--color-primary); color: var(--color-surface); }
 .dates button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -3px; }
 .agenda { min-width: 0; }

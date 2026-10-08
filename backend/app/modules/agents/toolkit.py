@@ -9,7 +9,7 @@ import json
 import re
 from copy import copy
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from hashlib import sha256
 from typing import Callable, Literal
 from uuid import UUID, uuid4
@@ -20,17 +20,35 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import sessionmaker
 
 from app.errors import DomainError
-from app.modules.agents.models import AgentMemory, AgentToolCall, AgentRun
+from app.modules.agents.models import AgentMemory, AgentRun
 from app.modules.agents.schemas import CreateWebFetch, WebFetchOptions, WebFetchPage
-from app.modules.agents.web import LONGEST_PAGE, LONGEST_QUERY, PAGE_CHUNK, PAGE_RESULT, WebAsk, accepted_reading_offers, article_changes, public_link, requested_video, stored_article, stored_sources, web_source, youtube_id
+from app.modules.agents.web import (
+    LONGEST_PAGE,
+    LONGEST_QUERY,
+    PAGE_CHUNK,
+    PAGE_RESULT,
+    WebAsk,
+    accepted_reading_offers,
+    article_changes,
+    public_link,
+    requested_video,
+    stored_article,
+    stored_sources,
+    web_source,
+    youtube_id,
+)
 from app.modules.community.schemas import CreateComment, CreatePage, CreatePost
 from app.modules.community.service import CommunityService
-from app.modules.events.schemas import CreateEvent
+from app.modules.events.budgets import MAX_EXPENSES, BudgetService, divide
+from app.modules.events.schemas import CreateEvent, SaveSplit
 from app.modules.planning.schemas import ChangeTaskStatus, CreateTask, EditTask
+from app.modules.polls.schemas import CreatePoll as CreateSpacePoll
+from app.modules.polls.service import MAX_POLL_DURATION, MIN_POLL_DURATION, PollService
 from app.modules.scheduling.models import Reminder, ReminderSeries
 from app.modules.scheduling.schemas import CreateReminder, PreviewReminder
 
 LISTED = 30
+LIST_RESULT_TEXT = 3000
 MAX_NOTES = 50
 DOCUMENT_TEXT = 6000
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
@@ -216,8 +234,17 @@ def get_space(ctx, args):
 
 class ListTasksArgs(Args):
     status: Literal["open", "completed", "all"] = Field("open", description="open = not done yet")
-    mine: bool = Field(False, description="Only tasks assigned to the person")
+    mine: bool = Field(False, description="Only explicitly assigned to the person; false includes unassigned shared tasks")
     query: str | None = Field(None, max_length=100, description="Words that must appear in the title")
+    due_from: date | None = Field(None, description="Inclusive earliest due date, YYYY-MM-DD")
+    due_to: date | None = Field(None, description="Inclusive latest due date, YYYY-MM-DD; use the same date for one day")
+    cursor: str | None = Field(None, max_length=4096, description="Use next_cursor to continue with the same filters")
+
+    @model_validator(mode="after")
+    def ordered_dates(self):
+        if self.due_from and self.due_to and self.due_from > self.due_to:
+            raise ValueError("The first due date must be on or before the last.")
+        return self
 
 
 def task_row(item):
@@ -230,26 +257,45 @@ def task_row(item):
 
 
 def list_tasks(ctx, args):
-    items, cursor = [], None
-    for _page in range(3):
-        page, pagination = domain(ctx.agent.tasks.list_tasks, ctx.token, ctx.space_id, 50, cursor)
-        items += page
-        if not pagination.has_more:
-            break
-        cursor = pagination.next_cursor
     wanted = {"open": ("open", "in_progress"), "completed": ("completed",), "all": None}[args.status]
     words = (args.query or "").casefold().split()
-    rows = [
-        item for item in items
-        if (wanted is None or item.status in wanted) and item.status != "cancelled"
-        and (not args.mine or (item.assignee and item.assignee.account_id == ctx.account_id))
-        and all(word in item.title.casefold() for word in words)
-    ]
+    filters = args.model_dump(mode="json", exclude={"cursor"})
+
+    def result(selected, position):
+        return {"more": bool(position), "next_cursor": position, "filters": filters,
+                "tasks": [task_row(item) for item in selected]}
+
+    rows, cursor = [], args.cursor
+    for _page in range(3):
+        limit = LISTED - len(rows)
+        while limit:
+            page, pagination = domain(
+                ctx.agent.tasks.list_tasks, ctx.token, ctx.space_id, limit, cursor,
+                status="completed" if args.status == "completed" else None,
+                assignee=ctx.account_id if args.mine else None,
+                due_from=args.due_from.isoformat() if args.due_from else None,
+                due_to=args.due_to.isoformat() if args.due_to else None,
+            )
+            selected = rows + [
+                item for item in page
+                if (wanted is None or item.status in wanted) and item.status != "cancelled"
+                and (not args.mine or (item.assignee and item.assignee.account_id == ctx.account_id))
+                and all(word in item.title.casefold() for word in words)
+            ]
+            next_cursor = pagination.next_cursor if pagination.has_more else None
+            text = json.dumps({"result": result(selected, next_cursor)}, ensure_ascii=False, separators=(",", ":"))
+            if len(text) <= LIST_RESULT_TEXT:
+                rows, cursor = selected, next_cursor
+                break
+            limit //= 2
+        if not limit and not rows:
+            raise ToolProblem("result_too_large", "This task page is too large. Use a narrower filter or open the Tasks screen.")
+        if not limit or not cursor or len(rows) >= LISTED:
+            break
     rows.sort(key=lambda item: (item.due_date is None, item.due_date or date.max, item.title.casefold()))
-    shown = rows[:LISTED]
     return Outcome(
-        {"tasks": [task_row(item) for item in shown], "more": len(rows) > LISTED},
-        f"Read {len(shown)} tasks.", [evidence("task", item.id, item.title) for item in shown],
+        result(rows, cursor),
+        f"Read {len(rows)} tasks.", [evidence("task", item.id, item.title) for item in rows],
     )
 
 
@@ -365,12 +411,35 @@ def execute_complete_task(ctx, payload, key):
 
 # Reminders
 
+class ListRemindersArgs(Args):
+    cursor: str | None = Field(None, max_length=4096, description="Use next_cursor to continue reminders in this same Space")
+
+
 def list_reminders(ctx, args):
-    rows, _pagination = domain(ctx.agent.reminders.list_reminders, ctx.token, 50)
-    rows = [row for row in rows if row.space_id == ctx.space_id and row.status in ("scheduled", "available")][:LISTED]
-    data = [{"id": row.id, "task_id": row.task_id, "task": row.task_title, "local_time": row.local_time.strftime("%Y-%m-%d %H:%M"),
-             "timezone": row.timezone, "status": row.status} for row in rows]
-    return Outcome({"reminders": data}, f"Read {len(data)} of your reminders.",
+    def result(selected, position):
+        return {"more": bool(position), "next_cursor": position, "reminders": [
+            {"id": row.id, "task_id": row.task_id, "task": row.task_title,
+             "local_time": row.local_time.strftime("%Y-%m-%d %H:%M"), "timezone": row.timezone, "status": row.status}
+            for row in selected
+        ]}
+
+    rows, cursor = [], args.cursor
+    for _page in range(3):
+        limit = LISTED - len(rows)
+        while limit:
+            page, pagination = domain(ctx.agent.reminders.list_reminders, ctx.token, limit, cursor, space_id=ctx.space_id)
+            selected = rows + [row for row in page if row.space_id == ctx.space_id and row.status in ("scheduled", "available")]
+            next_cursor = pagination.next_cursor if pagination.has_more else None
+            text = json.dumps({"result": result(selected, next_cursor)}, ensure_ascii=False, separators=(",", ":"))
+            if len(text) <= LIST_RESULT_TEXT:
+                rows, cursor = selected, next_cursor
+                break
+            limit //= 2
+        if not limit and not rows:
+            raise ToolProblem("result_too_large", "This reminder page is too large. Open the Reminders screen to review it.")
+        if not limit or not cursor or len(rows) >= LISTED:
+            break
+    return Outcome(result(rows, cursor), f"Read {len(rows)} of your reminders.",
                    [evidence("reminder", row.id, row.task_title) for row in rows])
 
 
@@ -381,7 +450,8 @@ class ScheduleReminderArgs(Args):
 
 
 def prepare_schedule_reminder(ctx, args):
-    task_id = str(args.task_id)
+    task, _etag = read_task(ctx, args.task_id)
+    task_id = task.id
     with ctx.agent.sessions() as database:
         pending = database.scalar(select(Reminder.id).where(
             Reminder.account_id == ctx.account_id, Reminder.task_id == task_id, Reminder.status == "scheduled",
@@ -407,6 +477,7 @@ def prepare_schedule_reminder(ctx, args):
 
 
 def execute_schedule_reminder(ctx, payload, key):
+    read_task(ctx, payload["task_id"])
     with ctx.agent.sessions() as database:
         done = database.scalar(select(Reminder).where(Reminder.account_id == ctx.account_id, Reminder.request_key == key))
         if done is not None:
@@ -427,19 +498,158 @@ def execute_schedule_reminder(ctx, payload, key):
 
 class ListEventsArgs(Args):
     when: Literal["upcoming", "past"] = "upcoming"
+    cursor: str | None = Field(None, max_length=4096, description="Use next_cursor with the same when filter and Space")
 
 
 def list_events(ctx, args):
-    rows, pagination = domain(ctx.agent.events.list_events, ctx.token, ctx.space_id, args.when, 20)
     zone = ZoneInfo(ctx.timezone)
-    data = [{
-        "id": str(event.id), "title": event.title, "starts": event.starts_at.astimezone(zone).strftime("%a %Y-%m-%d %H:%M"),
-        "ends": event.ends_at.astimezone(zone).strftime("%a %Y-%m-%d %H:%M") if event.ends_at else None,
-        "location": event.location or None, "status": "cancelled" if event.status == "cancelled" else "ended" if event.ended else "scheduled",
-        "your_rsvp": event.my_response, "going": event.going,
-    } for event in rows]
-    return Outcome({"events": data, "more": pagination.has_more}, f"Read {len(data)} {args.when} events.",
-                   [evidence("event", event.id, event.title) for event in rows])
+    limit = min(LISTED, 20)
+    while limit:
+        rows, pagination = domain(ctx.agent.events.list_events, ctx.token, ctx.space_id, args.when, limit, args.cursor)
+        data = {"more": pagination.has_more, "next_cursor": pagination.next_cursor,
+                "when": args.when, "timezone": ctx.timezone, "events": [{
+            "id": str(event.id), "title": event.title, "starts": event.starts_at.astimezone(zone).strftime("%a %Y-%m-%d %H:%M"),
+            "ends": event.ends_at.astimezone(zone).strftime("%a %Y-%m-%d %H:%M") if event.ends_at else None,
+            "location": event.location or None, "status": "cancelled" if event.status == "cancelled" else "ended" if event.ended else "scheduled",
+            "your_rsvp": event.my_response, "going": event.going,
+        } for event in rows]}
+        if len(json.dumps({"result": data}, ensure_ascii=False, separators=(",", ":"))) <= LIST_RESULT_TEXT:
+            return Outcome(data, f"Read {len(rows)} {args.when} events.",
+                           [evidence("event", event.id, event.title) for event in rows])
+        limit //= 2
+    raise ToolProblem("result_too_large", "This event page is too large. Open the Events screen to review it.")
+
+
+class EventBudgetArgs(Args):
+    event_id: UUID
+    section: Literal["summary", "categories", "expenses", "contributions", "shares"] = "summary"
+    offset: int = Field(0, ge=0, le=MAX_EXPENSES, strict=True)
+    content_version: str | None = Field(None, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def continuation(self):
+        if self.offset and (self.section == "summary" or self.content_version is None):
+            raise ValueError("Continue a detail section with its content_version and next_offset.")
+        return self
+
+
+def scoped_budget(ctx, event_id):
+    if ctx.space_id is None:
+        raise ToolProblem("NOT_FOUND", "Event not found.")
+    event = domain(ctx.agent.events.read, ctx.token, str(event_id))
+    if str(event.space_id) != ctx.space_id:
+        raise ToolProblem("NOT_FOUND", "Event not found.")
+    return event, domain(BudgetService(ctx.agent.events).read, ctx.token, str(event_id))
+
+
+def budget_version(ctx, budget):
+    snapshot = budget.model_dump(mode="json", exclude={"etag", "split_candidates", "can_manage", "can_record"})
+    return sha256(json.dumps(
+        {"account": ctx.account_id, "admission": ctx.admission_id, "budget": snapshot},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+
+
+def get_event_budget(ctx, args):
+    event, budget = scoped_budget(ctx, args.event_id)
+    content_version = budget_version(ctx, budget)
+    if args.content_version is not None and args.content_version != content_version:
+        raise ToolProblem("budget_changed", "This budget or your access changed. Restart this section at offset 0 without content_version.")
+    snapshot = budget.model_dump(mode="json")
+    split = snapshot["split"]
+    if args.section == "summary":
+        rows = []
+    elif args.section == "shares":
+        rows = split["shares"] if split else []
+    else:
+        rows = snapshot[args.section]
+    if args.offset > len(rows):
+        raise ToolProblem("invalid_offset", "Restart this budget section at offset 0.")
+    limit = min(10, len(rows) - args.offset)
+    while True:
+        page = [{key: value for key, value in row.items() if key not in {"can_delete", "can_change"}}
+                for row in rows[args.offset:args.offset + limit]]
+        next_offset = args.offset + len(page) if args.offset + len(page) < len(rows) else None
+        data = {
+            "event_id": str(event.id), "title": event.title, "currency": budget.currency, "amount_unit": "minor",
+            "estimate_minor": budget.estimate_minor, "recorded_minor": budget.recorded_minor,
+            "remaining_minor": budget.remaining_minor, "given_minor": budget.given_minor,
+            "promised_minor": budget.promised_minor, "expense_count": len(budget.expenses),
+            "contribution_count": budget.contribution_count, "all_contributions": budget.all_contributions,
+            "split": {key: value for key, value in split.items() if key != "shares"} if split else None,
+            "section": args.section, "visible_count": len(rows), "items": page,
+            "content_version": content_version, "more": next_offset is not None, "next_offset": next_offset,
+            "notice": "Self-reported records, not verified payments. A recorder is not necessarily the payer. "
+                      "A split is a plan, not a debt. No money is moved.",
+        }
+        if len(json.dumps({"result": data}, ensure_ascii=False, separators=(",", ":"))) <= LIST_RESULT_TEXT:
+            return Outcome(data, "Read this event's budget records.", [evidence("event", event.id, event.title)])
+        if limit <= 1:
+            raise ToolProblem("result_too_large", "This budget detail is too large. Open the Events screen to review it.")
+        limit //= 2
+
+
+class EventSplitArgs(Args):
+    event_id: UUID
+    split: SaveSplit
+
+
+def money(amount, currency):
+    whole, fraction = divmod(abs(amount), 100)
+    return f"{currency} {'-' if amount < 0 else ''}{whole}.{fraction:02d}"
+
+
+def prepare_set_event_split(ctx, args):
+    event, budget = scoped_budget(ctx, args.event_id)
+    if budget.currency is None:
+        raise ToolProblem("BUDGET_NOT_SET", "Set up this event's budget in Events first.")
+    if not budget.can_manage:
+        raise ToolProblem("EVENT_MANAGEMENT_DENIED", "Only the organizer or Space owner can change an open event's budget.")
+    candidates = {person.account_id: person.name for person in budget.split_candidates}
+    if any(person.account_id not in candidates for person in args.split.people):
+        raise ToolProblem("PERSON_UNAVAILABLE", "Someone chosen cannot see this event. Review the event's current participants.")
+    base = budget.estimate_minor if args.split.base == "planned" else budget.recorded_minor
+    shares = divide(args.split.method, base, [person.value for person in args.split.people])
+    fields = [
+        ("Event", event.title), ("Change", "Replace the cost-sharing plan; no payment or debt is created"),
+        ("Method", args.split.method), ("Based on", args.split.base), ("Total", money(base, budget.currency)),
+    ]
+    allocations = []
+    for index, (person, (amount, rounded)) in enumerate(zip(args.split.people, shares), start=1):
+        value = f"{index}. {candidates[person.account_id]}: {money(amount, budget.currency)}"
+        if args.split.method == "percentages":
+            value += f" ({person.value // 100}.{person.value % 100:02d}%)"
+        if rounded:
+            value += " (includes one extra minor unit for rounding)"
+        allocations.append(value)
+    fields.append(("Shares", "\n".join(allocations)))
+    fields.append(("Unallocated", money(base - sum(amount for amount, _rounded in shares), budget.currency)))
+    fields.append(("Visibility", "The organizer and Space owner see all shares; other members see only their own"))
+    return Proposal({"event_id": str(event.id), "etag": budget.etag, "content_version": budget_version(ctx, budget),
+                     "split": args.split.model_dump(mode="json")}, fields, "Save this cost-sharing plan, without moving money.")
+
+
+def execute_set_event_split(ctx, payload, key):
+    if ctx.database is None or ctx.space_id is None:
+        raise ToolProblem("approval_required", "Review and approve this cost-sharing plan first.")
+    ctx.agent.identity.authenticate(ctx.database, ctx.token, lock=True)
+    ctx.agent.check_context(ctx.database, ctx.token, ctx.database.get(AgentRun, ctx.run_id))
+    events = copy(ctx.agent.events)
+    events.identity = copy(events.identity)
+    events.sessions = sessionmaker(bind=ctx.database.connection(), expire_on_commit=False, join_transaction_mode="create_savepoint")
+    events.identity.sessions = events.sessions
+    event, membership = domain(events.visible, ctx.database, payload["event_id"], ctx.account_id, lock=True)
+    if str(event.space_id) != ctx.space_id:
+        raise ToolProblem("NOT_FOUND", "Event not found.")
+    budgets = BudgetService(events)
+    current = domain(budgets.present, ctx.database, event, membership)
+    if budget_version(ctx, current) != payload["content_version"]:
+        raise ToolProblem("budget_changed", "This budget changed after review. Ask for a fresh cost-sharing plan.")
+    saved = domain(budgets.save_split, ctx.token, payload["event_id"], validated(SaveSplit, payload["split"]), payload["etag"])
+    return Done(str(event.id), "Saved the cost-sharing plan. No money was moved.", {
+        "event_id": str(event.id), "currency": saved.currency, "method": saved.split.method,
+        "base": saved.split.base, "base_minor": saved.split.base_minor, "money_moved": False,
+    })
 
 
 class CreateEventArgs(Args):
@@ -472,6 +682,77 @@ def execute_create_event(ctx, payload, key):
     return Done(str(view.id), f"Created the event \u201c{view.title}\u201d.", {"event_id": str(view.id), "title": view.title})
 
 
+class ListPollsArgs(Args):
+    status: Literal["open", "closed"] = "open"
+    cursor: str | None = Field(None, max_length=2048, description="Continue with next_cursor and the same status and Space")
+
+
+class PollArgs(Args):
+    poll_id: UUID
+
+
+def poll_service(ctx):
+    if ctx.space_id is None:
+        raise ToolProblem("NOT_FOUND", "Polls are available only inside their Space.")
+    return PollService(ctx.agent.spaces)
+
+
+def poll_row(poll):
+    return poll.model_dump(mode="json", exclude={"etag", "created_by_name", "can_close", "can_vote"})
+
+
+def list_polls(ctx, args):
+    service = poll_service(ctx)
+    limit = 10
+    while limit:
+        rows, pagination = domain(service.list_polls, ctx.token, ctx.space_id, args.status, limit, args.cursor)
+        data = {"status": args.status, "polls": [poll_row(poll) for poll in rows],
+                "more": pagination.has_more, "next_cursor": pagination.next_cursor}
+        if len(json.dumps({"result": data}, ensure_ascii=False, separators=(",", ":"))) <= LIST_RESULT_TEXT:
+            return Outcome(data, f"Read {len(rows)} {args.status} polls in this Space.",
+                           [evidence("poll", poll.id, poll.question) for poll in rows])
+        limit //= 2
+    raise ToolProblem("result_too_large", "This poll page is too large. Open Polls in this Space to review it.")
+
+
+def get_poll(ctx, args):
+    poll = domain(poll_service(ctx).read, ctx.token, str(args.poll_id))
+    if str(poll.space_id) != ctx.space_id:
+        raise ToolProblem("NOT_FOUND", "Poll not found in this Space.")
+    return Outcome(poll_row(poll), "Read this poll's current results.", [evidence("poll", poll.id, poll.question)])
+
+
+def prepare_create_poll(ctx, args):
+    poll_service(ctx)
+    space = domain(ctx.agent.spaces.read, ctx.token, ctx.space_id)
+    now = ctx.agent.clock()
+    if args.closes_at is not None and not now + MIN_POLL_DURATION <= args.closes_at <= now + MAX_POLL_DURATION:
+        raise ToolProblem("POLL_CLOSING_TIME", "Choose a closing time between 5 minutes and 60 days from now.")
+    closing = args.closes_at.astimezone(ZoneInfo(ctx.timezone)).isoformat() if args.closes_at else "No automatic closing time"
+    fields = [("Space", space.name), ("Question", args.question),
+              ("Choices", "\n".join(f"{index}. {label}" for index, label in enumerate(args.options, start=1))),
+              ("Closes", closing), ("Time zone", ctx.timezone),
+              ("Who can see it", "Current members who can see this poll; new members do not gain earlier history"),
+              ("Voting", "Members choose for themselves. Counts and each person's own choice are shown, not a voter list.")]
+    return Proposal({"space_id": ctx.space_id, "values": args.model_dump(mode="json")}, fields, "Create this Space poll for members to answer.")
+
+
+def execute_create_poll(ctx, payload, key):
+    if ctx.database is None or ctx.space_id is None:
+        raise ToolProblem("approval_required", "Review and approve this poll first.")
+    if payload["space_id"] != ctx.space_id:
+        raise ToolProblem("NOT_FOUND", "This poll proposal belongs to another Space.")
+    ctx.agent.identity.authenticate(ctx.database, ctx.token, lock=True)
+    ctx.agent.check_context(ctx.database, ctx.token, ctx.database.get(AgentRun, ctx.run_id))
+    spaces = copy(ctx.agent.spaces)
+    spaces.identity = copy(spaces.identity)
+    spaces.sessions = sessionmaker(bind=ctx.database.connection(), expire_on_commit=False, join_transaction_mode="create_savepoint")
+    spaces.identity.sessions = spaces.sessions
+    poll = domain(PollService(spaces).create, ctx.token, ctx.space_id, validated(CreateSpacePoll, payload["values"]), key)
+    return Done(str(poll.id), f"Created the poll: {poll.question}", {"poll_id": str(poll.id), "space_id": ctx.space_id,
+                                                                "question": poll.question, "votes_cast": 0})
+
+
 # Documents and search
 
 class QueryArgs(Args):
@@ -492,12 +773,24 @@ def search_space(ctx, args):
     return Outcome(data, f"Searched this Space for \u201c{clip(args.query, 60)}\u201d: {len(found)} results.", found)
 
 
+class ListDocumentsArgs(Args):
+    cursor: str | None = Field(None, max_length=4096, description="Use next_cursor to continue documents in this same Space")
+
+
 def list_documents(ctx, args):
-    rows, pagination = domain(ctx.agent.documents.list_documents, ctx.token, ctx.space_id, 20)
-    rows = [row for row in rows if row.status == "active"]
-    data = [{"document_id": str(row.id), "name": row.name, "lines": row.line_count, "added_by": row.added_by_name} for row in rows]
-    return Outcome({"documents": data, "more": pagination.has_more}, f"Read {len(data)} document names.",
-                   [evidence("document", row.id, row.name or "Document") for row in rows])
+    limit = min(LISTED, 20)
+    while limit:
+        rows, pagination = domain(ctx.agent.documents.list_documents, ctx.token, ctx.space_id, limit, args.cursor)
+        rows = [row for row in rows if row.status == "active"]
+        data = {"more": pagination.has_more, "next_cursor": pagination.next_cursor, "documents": [
+            {"document_id": str(row.id), "name": row.name, "lines": row.line_count, "added_by": row.added_by_name}
+            for row in rows
+        ]}
+        if len(json.dumps({"result": data}, ensure_ascii=False, separators=(",", ":"))) <= LIST_RESULT_TEXT:
+            return Outcome(data, f"Read {len(rows)} document names.",
+                           [evidence("document", row.id, row.name or "Document") for row in rows])
+        limit //= 2
+    raise ToolProblem("result_too_large", "This document page is too large. Open the Documents screen to review it.")
 
 
 class ReadDocumentArgs(Args):
@@ -532,7 +825,7 @@ def memory_scope(ctx):
 
 def read_memories(ctx, args):
     with ctx.agent.sessions() as database:
-        rows = database.scalars(select(AgentMemory).where(AgentMemory.account_id == ctx.account_id, memory_scope(ctx))
+        rows = database.scalars(select(AgentMemory).where(AgentMemory.account_id == ctx.account_id, memory_scope(ctx), AgentMemory.enabled.is_(True))
                                 .order_by(AgentMemory.created_at.desc(), AgentMemory.id).limit(LISTED)).all()
         data = [{"id": row.id, "kind": row.kind, "content": row.content} for row in rows]
     return Outcome({"memories": data}, f"Read {len(data)} of your memories.", [evidence("memory", item["id"], "Memory") for item in data])
@@ -636,7 +929,7 @@ def web_search(ctx, args):
             item["snippet"] = item["snippet"][:len(item["snippet"]) // 2]
     return Outcome(data,
                    f"Searched the web for \u201c{clip(args.query, 60)}\u201d.",
-                   sources=[web_source(title, link) for title, _extract, link in lookup.results])
+                   sources=[web_source(title, link, retrieved_at=ctx.agent.clock().isoformat()) for title, _extract, link in lookup.results])
 
 
 class ReadWebArgs(Args):
@@ -729,7 +1022,7 @@ def read_web_page(ctx, args):
         if end <= args.offset:
             raise ToolProblem("page_size", "This section does not fit the reading limit.")
     return Outcome(data,
-                   f"Read {clip(title, 90)}.", sources=[web_source(title, source, read=True)])
+                   f"Read {clip(title, 90)}.", sources=[web_source(title, source, read=True, retrieved_at=data["retrieved_at"])])
 
 
 # Public community
@@ -961,14 +1254,17 @@ class SpaceChatsArgs(Args):
 
 
 TOOLS = {tool.name: tool for tool in (
-    read("list_tasks", "family.tasks.list", "List tasks in this Space the person can see.", ListTasksArgs, list_tasks),
+    read("list_tasks", "family.tasks.list", "List visible tasks in this Space, optionally by due-date range. When more is true, continue with next_cursor and the same filters before claiming the list is complete or no tasks match.", ListTasksArgs, list_tasks),
     read("get_task", "family.tasks.list", "Read one task with its notes.", TaskArgs, get_task),
     read("list_members", "family.members.list", "List the current members of this Space.", NoArgs, list_members),
     read("get_space", "spaces.settings.read", "Read this Space's details and the person's role.", NoArgs, get_space),
-    read("list_events", "family.events.list", "List events in this Space.", ListEventsArgs, list_events),
-    read("list_my_reminders", "reminders.list", "List the person's own upcoming reminders in this Space.", NoArgs, list_reminders),
+    read("list_polls", "space.poll.read", "List standalone polls in this Space with current counts and the person's own choice. Follow next_cursor with the same status while more is true; never treat a partial page as all results.", ListPollsArgs, list_polls),
+    read("get_poll", "space.poll.read", "Read one standalone poll in this Space. Results show counts and only the requester's own choice, not other people's ballots. Do not infer voter identities or treat leading choices as an agreed decision.", PollArgs, get_poll),
+    read("list_events", "family.events.list", "List events in this Space. Continue with next_cursor and the same when filter while more is true before claiming the list is complete.", ListEventsArgs, list_events),
+    read("get_event_budget", "events.budget.read", "Read an event budget in this Space: summary, categories, expenses, contributions or shares visible to the person. Amounts are minor units (paise/cents), not verified payments or debts. Continue the same section with next_offset and content_version while more is true. Never infer a payer from an expense recorder.", EventBudgetArgs, get_event_budget),
+    read("list_my_reminders", "reminders.list", "List the person's own reminders in this Space. When more is true, continue with next_cursor before claiming the list is complete or no reminders match.", ListRemindersArgs, list_reminders),
     read("search_space", "space.search", "Search this Space's documents, tasks and events by words.", QueryArgs, search_space),
-    read("list_documents", "documents.list", "List documents in this Space.", NoArgs, list_documents),
+    read("list_documents", "documents.list", "List documents in this Space. Continue with next_cursor while more is true before claiming the list is complete.", ListDocumentsArgs, list_documents),
     read("read_document", "documents.read", "Read a document's text, from a line.", ReadDocumentArgs, read_document),
     read("read_memories", "agent.memory.read", "Read what the person asked the Agent to remember.", NoArgs, read_memories),
     read("search_pages", "community.pages.list", "Find public community pages, or the person's own.", SearchPagesArgs, search_pages),
@@ -986,6 +1282,10 @@ TOOLS = {tool.name: tool for tool in (
           ScheduleReminderArgs, prepare_schedule_reminder, execute_schedule_reminder, "Schedule your reminder", "reminder"),
     write("create_event", "events.create", "Propose an event in this Space (needs approval).", CreateEventArgs,
           prepare_create_event, execute_create_event, "Create the event", "event"),
+        write("create_poll", "space.poll.create", "Prepare a standalone Space poll with two to six distinct choices and optional timezone-aware closing time. Always requires exact approval, even in automatic mode. Does not attach to an event, cast votes, contact outsiders or perform the selected action.", CreateSpacePoll,
+            prepare_create_poll, execute_create_poll, "Create the Space poll", "poll", always_ask=True),
+        write("set_event_split", "events.budget.split", "Propose an equal, percentage or fixed-amount cost-sharing plan for an event in this Space. Use exact member IDs and an explicit planned/recorded basis. Only its organizer or Space owner can save it. Always requires review, even in automatic mode; never pays, settles debts or changes recorded contributions.", EventSplitArgs,
+            prepare_set_event_split, execute_set_event_split, "Save the cost-sharing plan", "event", always_ask=True),
     write("save_memory", "agent.memory.save", "Propose remembering a short note for the person (needs approval).", SaveMemoryArgs,
           prepare_save_memory, execute_save_memory, "Save the memory", "memory"),
     write("create_page", "community.pages.create", "Propose a new public page owned by the person (needs approval).", CreatePageArgs,

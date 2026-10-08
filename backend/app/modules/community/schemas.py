@@ -15,6 +15,8 @@ from app.modules.spaces.schemas import Pagination
 
 # A code from the shared vocabulary (GET /v1/taxonomy). Whether it is a current term is checked against the database.
 Code = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
+# A page's main topic column holds 20 characters; nesting puts this limit after Code's, so it wins.
+TopicCode = Annotated[Code, Field(max_length=20)]
 ReportReason = Literal[REPORT_REASONS]
 HANDLE = re.compile(r"[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]")
 RESERVED_HANDLES = {
@@ -77,7 +79,7 @@ class CreatePage(Input):
     handle: str = Field(min_length=3, max_length=30)
     name: str = Field(min_length=1, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
     description: str = Field(default="", max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
-    topic: Code = Field(max_length=20, description="The main topic: a current topic code from GET /v1/taxonomy.")
+    topic: TopicCode = Field(description="The main topic: a current topic code from GET /v1/taxonomy.")
     classification: ClassificationInput | None = None
 
     @field_validator("handle")
@@ -104,7 +106,7 @@ class CreatePage(Input):
 class UpdatePage(Input):
     name: str | None = Field(default=None, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
     description: str | None = Field(default=None, max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
-    topic: Code | None = Field(default=None, max_length=20, description="The main topic: a current topic code from GET /v1/taxonomy.")
+    topic: TopicCode | None = Field(default=None, description="The main topic: a current topic code from GET /v1/taxonomy.")
     rules: str | None = Field(default=None, max_length=4000, description="Up to 2,000 characters, after line endings are normalized and surrounding spaces removed; empty removes the rules.")
     help_open: bool | None = Field(default=None, description="Let followers post requests for help and offers of help.")
     classification: ClassificationInput | None = None

@@ -258,7 +258,7 @@ async function fixture(testContext, mode, language, options = {}) {
   const result = { context, page, mode, language, outbound, errors };
   if (options.loading) await page.getByText(text(language, mode === 'tasks' ? 'loadingList' : mode === 'checklist' ? 'loadingChecklist' : 'calendarLoadingList'), { exact: true }).waitFor();
   else if (options.refused) await page.getByRole('alert').filter({ hasText: serverMessage }).waitFor();
-  else if (options.empty) await page.getByText(text(language, mode === 'tasks' ? 'noTasks' : mode === 'checklist' ? 'noItems' : 'calendarEmpty'), { exact: true }).waitFor();
+  else if (options.empty) await page.getByText(text(language, mode === 'tasks' ? 'emptyTitle' : mode === 'checklist' ? 'noItems' : 'calendarEmpty'), { exact: true }).waitFor();
   else if (mode === 'calendar') await page.locator('li[data-kind="planned"]').waitFor();
   else if (mode === 'checklist') await page.getByRole('dialog').getByRole('checkbox', { name: options.longText ? `Notebook ${mixed} ${'M'.repeat(130)}` : itemTitle, exact: true }).waitFor();
   else await page.getByRole('heading', { name: options.longText ? `Planning ${mixed} ${'W'.repeat(130)}` : taskTitle, exact: true }).waitFor();
@@ -344,7 +344,8 @@ for (const language of ['te', 'hi']) {
     assert.equal(await row.getByText(text(language, 'statusOpen'), { exact: true }).count(), 1);
     assert.equal(await main.getByLabel(text(language, 'familySpace'), { exact: true }).locator('option:checked').textContent(), spaceName);
     await row.getByText(personName, { exact: true }).waitFor();
-    await main.locator('details').first().locator('summary').click();
+    // The task's own notes, not the Space header's "Who can see what" section above the list.
+    await row.locator('details').first().locator('summary').click();
     await main.getByText(body, { exact: true }).first().waitFor();
     assert.equal(await main.locator('b').count(), 0);
     await assertTaskDate(result);
@@ -460,7 +461,8 @@ for (const mode of modes) {
   test(`te: ${mode} empty state is translated without invented content`, { timeout }, async testContext => {
     const result = await fixture(testContext, mode, 'te', { empty: true });
     const { page } = result;
-    const id = mode === 'tasks' ? 'noTasks' : mode === 'checklist' ? 'noItems' : 'calendarEmpty';
+    // With no filter chosen, an empty task list says nothing is planned yet; "no tasks in this view" is for filtered lists.
+    const id = mode === 'tasks' ? 'emptyTitle' : mode === 'checklist' ? 'noItems' : 'calendarEmpty';
     await page.getByText(text('te', id), { exact: true }).waitFor();
     const scope = mode === 'checklist' ? page.getByRole('dialog') : page.getByRole('main');
     const action = mode === 'tasks' ? 'create' : mode === 'checklist' ? 'addItem' : 'calendarToday';
@@ -471,7 +473,7 @@ for (const mode of modes) {
   test(`te: ${mode} loading state does not pretend to be empty`, { timeout }, async testContext => {
     const result = await fixture(testContext, mode, 'te', { loading: true });
     const { page } = result;
-    const empty = mode === 'tasks' ? 'noTasks' : mode === 'checklist' ? 'noItems' : 'calendarEmpty';
+    const empty = mode === 'tasks' ? 'emptyTitle' : mode === 'checklist' ? 'noItems' : 'calendarEmpty';
     assert.equal(await page.getByText(text('te', empty), { exact: true }).count(), 0);
     await page.evaluate(mode => window.tasksI18nFixture.releases[mode](), mode);
     if (mode === 'checklist') await page.getByRole('dialog').getByRole('checkbox', { name: itemTitle, exact: true }).waitFor();

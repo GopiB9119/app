@@ -3,16 +3,17 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
+import { Bot, CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
 import { useHydrated } from "@/features/platform/use-hydrated";
-import { useText } from "@/features/i18n/i18n";
+import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
 import { characters, lengthProblem, readMembers, spaceSchema, spacesSchema } from "./client";
 import type { FamilySpace } from "./client";
+import { memberSummary, SpaceTypeIcon } from "./space-header";
 import { AccountIdentifier, InvitationInbox, ManageInvitations } from "./invitations";
 import { ManageJoinRequests } from "./join-requests";
 import { ManageMembers } from "./members";
@@ -72,6 +73,7 @@ export function SpacesScreen() {
 
 function FamilySpaces({ user }: { user: Account }) {
   const t = useText();
+  const { language } = useLanguage();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [spaceType, setSpaceType] = useState<SpaceType>("family");
@@ -179,10 +181,16 @@ function FamilySpaces({ user }: { user: Account }) {
           {spaces.isError && <div className="message error" role="alert">{spaces.error.message}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />{t("spaces.retry")}</button></div>}
           {!spaces.isPending && !spaces.isError && spaces.data?.data.length === 0 && <div className={styles.empty}><UsersRound size={32} strokeWidth={1.5} aria-hidden /><h3>{t("spaces.empty.title")}</h3><p>{emptyStart}<Link href="/app/spaces/discover">{t("spaces.empty.link")}</Link>{emptyEnd}</p></div>}
           {!spaces.isError && !accountChanged && <ul className={styles.spaceList}>{spaces.data?.data.map(space => <li key={space.id}>
-            <span className={styles.familyMark} aria-hidden>{space.visibility === "public" ? <Globe size={23} /> : <UsersRound size={23} />}</span>
+            <span className={styles.familyMark} aria-hidden><SpaceTypeIcon type={space.space_type} size={23} /></span>
             <div className={styles.spaceIdentity}><h3>{space.name}</h3><span>{t(typeLabels[space.space_type])} <span aria-hidden>/</span> {t(space.role === "owner" ? "spaces.role.owner" : space.role === "admin" ? "spaces.role.admin" : "spaces.role.member")}</span>
               {space.space_type === "couple" && <CoupleStatus accountId={user.id} spaceId={space.id} version={space.version} />}
-              {space.description && <p className={styles.description}>{space.description}</p>}</div>
+              {space.description && <p className={styles.description}>{space.description}</p>}
+              <span className={styles.facts}>
+                {space.member_count !== undefined && <span><UsersRound size={14} aria-hidden />{memberSummary(t, space)}</span>}
+                <span className={styles.factPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden />{t("spaces.public")}</> : <><LockKeyhole size={14} aria-hidden />{t("spaces.private")}</>}</span>
+                {space.last_message_at && <span><MessageSquare size={14} aria-hidden /><time dateTime={space.last_message_at}>{t("spaces.lastMessage", { when: formatDateTime(language, space.last_message_at, { dateStyle: "medium", timeStyle: "short" }) })}</time></span>}
+                <span><Bot size={14} aria-hidden />{t(space.agent_enabled ? "spaces.agentOn" : "spaces.agentOff")}</span>
+              </span></div>
             <span className={styles.rowPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden className={styles.publicMark} />{t("spaces.public")}</> : <><LockKeyhole size={14} aria-hidden />{t("spaces.private")}</>}</span>
             <div className={styles.spaceActions}>
               <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={t("spaces.tasksFor", { name: space.name })} aria-label={t("spaces.tasksFor", { name: space.name })}><ClipboardList size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.tasks")}</span></Link>

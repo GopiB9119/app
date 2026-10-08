@@ -99,7 +99,7 @@ async function fixture(context, options = {}) {
     window.history.replaceState = (_data, _unused, next) => { state.address = String(next); };
     const space = {
       id: spaceId, name: spaceName, description: '', space_type: 'family', visibility: 'private', status: 'active',
-      role: 'owner', version: '1', created_at: addedAt,
+      role: 'owner', version: '1', created_at: addedAt, ...options.spaceFields,
     };
     state.spaces = [space];
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-documents', ...extra }), { status: 200 });
@@ -187,6 +187,22 @@ async function fixture(context, options = {}) {
   }
   return { page, outbound, errors };
 }
+
+test('offline Documents shows the Space header with Documents marked and its member facts', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, outbound, errors } = await fixture(context, { spaceFields: { member_count: 2, member_preview: ['Sam Lee'], agent_enabled: false } });
+    const header = page.getByRole('region', { name: `${spaceName} Space`, exact: true });
+    await header.getByText('2 members: Sam Lee', { exact: true }).waitFor();
+    await header.getByText('Agent off', { exact: true }).waitFor();
+    assert.equal(await header.getByRole('link', { name: 'Ask Agent', exact: true }).count(), 0);
+    const current = header.getByRole('navigation').locator('a[aria-current="page"]');
+    assert.equal(await current.getAttribute('aria-label'), `Documents for ${spaceName}`);
+    assert.equal(await current.getAttribute('href'), `/app/documents?space_id=${spaceId}`);
+    assert.equal(await page.evaluate(() => window.documentsFixture.calls.every(call => call.method === 'GET')), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 test('offline document add retries the same key and bytes after a lost response', async () => {
   const context = await browser.newContext({ timezoneId: 'UTC' });

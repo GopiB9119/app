@@ -8,6 +8,7 @@ import { ArrowDown, ArrowLeft, Bot, ClipboardList, CornerUpLeft, LoaderCircle, L
 import { Button } from "@/components/ui/button";
 import { LoadingState, PageSkeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { AgentProviderNotice } from "@/features/agents/provider-notice";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
@@ -15,14 +16,17 @@ import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { subscribeLive, useLiveConnected } from "@/features/realtime/live";
 import { readMembers, spacesSchema } from "@/features/spaces/client";
+import { SpaceHeader, SpaceMenu } from "@/features/spaces/space-header";
 import {
   MAX_MESSAGE_CHARACTERS, REACTIONS, askAgentAgain, bodyProblem, conversationPage, deleteMessage, editMessage, editable, markRead, mentionsAgent, mergeMessages,
   messagePage, normalizeBody, openConversation, reactToMessage, readConversation, sendMessage, shareAgentAnswer,
 } from "./client";
 import type { Conversation, Message, Reaction, Reply, SendIntent } from "./client";
+import { useConversationTyping } from "./typing";
 import styles from "./messages.module.css";
 
 const PrivateAgentRequest = lazy(() => import("@/features/agents/agent-screen").then(module => ({ default: module.PrivateAgentRequest })));
+const AgentMessageContent = lazy(() => import("@/features/agents/agent-message").then(module => ({ default: module.AgentMessageContent })));
 
 type Pending = SendIntent & { state: "sending" | "unknown" | "failed"; error?: string };
 const EMOJI: Record<Reaction, string> = { like: "\u{1F44D}", love: "\u2764\uFE0F", laugh: "\u{1F602}", wow: "\u{1F62E}", sad: "\u{1F622}", thanks: "\u{1F64F}" };
@@ -86,7 +90,7 @@ function sessionLost(error: unknown) {
   return error instanceof ApiError && (error.status === 401 || error.code === "ACCOUNT_CHANGED");
 }
 
-export function MessagesScreen({ initialSpaceId }: { initialSpaceId: string }) {
+export function MessagesScreen({ initialSpaceId, askAgent = false }: { initialSpaceId: string; askAgent?: boolean }) {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
   const hydrated = useHydrated();
@@ -99,15 +103,17 @@ export function MessagesScreen({ initialSpaceId }: { initialSpaceId: string }) {
   if (!profile.data || profile.isError) {
     return <Shell account><main className={styles.main}><h1>{t("chat.unavailableTitle")}</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />{t("chat.retry")}</button></main></Shell>;
   }
-  return <Messaging key={profile.data.data.id} user={profile.data.data} initialSpaceId={initialSpaceId} />;
+  return <Messaging key={profile.data.data.id} user={profile.data.data} initialSpaceId={initialSpaceId} askAgent={askAgent} />;
 }
 
-function Messaging({ user, initialSpaceId }: { user: Account; initialSpaceId: string }) {
+function Messaging({ user, initialSpaceId, askAgent }: { user: Account; initialSpaceId: string; askAgent: boolean }) {
   const t = useText();
   const { language } = useLanguage();
   const time = new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium", timeStyle: "short" });
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<Conversation | null>(null);
+  // The Space chat opened by an Ask Agent link starts with "@agent " in its composer, once.
+  const [askSpace, setAskSpace] = useState<string | null>(askAgent ? initialSpaceId : null);
   const [spaceId, setSpaceId] = useState(initialSpaceId);
   const autoOpened = useRef(false);
   const live = useLiveConnected();
@@ -151,6 +157,7 @@ function Messaging({ user, initialSpaceId }: { user: Account; initialSpaceId: st
   }, [initialSpaceId, spaces.data, open]);
 
   const items = conversations.data?.pages.flatMap(page => page.data) ?? [];
+  const chosenSpace = spaces.data?.data.find(space => space.id === spaceId);
   const unread = conversations.data?.pages[0]?.unreadCount ?? 0;
   const lost = sessionLost(problem);
   return <Shell account workspace>
@@ -190,12 +197,13 @@ function Messaging({ user, initialSpaceId }: { user: Account; initialSpaceId: st
             </div>}
             {open.isError && !lost && <div className="message error" role="alert">{open.error.message}</div>}
           </form>
+          {chosenSpace && <div className={styles.listSpace}><SpaceHeader space={chosenSpace} current="chat" /></div>}
           {conversations.isPending && <LoadingState label={t("chat.loadingConversations")} />}
           {conversations.isError && !lost && <div className="message error" role="alert">{conversations.error.message}<button className="text-button" onClick={() => conversations.refetch()}><RefreshCw size={16} aria-hidden />{t("chat.retry")}</button></div>}
           {!conversations.isPending && !conversations.isError && items.length === 0 && <p className={styles.emptyNote}>{t("chat.emptyConversations")}</p>}
           {!conversations.isError && !lost && <ul className={styles.conversationList}>
             {items.map(item => { const waiting = pendingLabel(user.id, item.id); return <li key={item.id}>
-              <button type="button" aria-current={selected?.id === item.id ? "true" : undefined} onClick={() => setSelected(item)}>
+              <button type="button" aria-current={selected?.id === item.id ? "true" : undefined} onClick={() => { setAskSpace(null); setSelected(item); }}>
                 <span className={styles.conversationMark} aria-hidden>{item.kind === "space" ? <UsersRound size={20} /> : <MessageSquare size={20} />}</span>
                 <span className={styles.conversationIdentity}>
                   <strong>{item.title}</strong>
@@ -210,15 +218,18 @@ function Messaging({ user, initialSpaceId }: { user: Account; initialSpaceId: st
         </section>
         <section className={styles.chat} aria-label={t("chat.conversation")}>
           {selected && !lost
-            ? <ConversationPane key={`${user.id}:${selected.id}`} user={user} initial={selected} onBack={() => setSelected(null)} onChanged={refreshList} />
-            : <div className={styles.placeholder}><MessageSquare size={32} strokeWidth={1.5} aria-hidden /><p>{t("chat.chooseConversation")}</p></div>}
+            ? <ConversationPane key={`${user.id}:${selected.id}`} user={user} initial={selected} onChanged={refreshList}
+              initialDraft={askSpace && selected.kind === "space" && selected.space_id === askSpace && chosenSpace?.id === askSpace && chosenSpace.agent_enabled ? "@agent " : ""}
+              onBack={() => { setAskSpace(null); setSelected(null); }} />
+            : <>{chosenSpace && <div className={styles.paneSpace}><SpaceHeader space={chosenSpace} current="chat" /></div>}
+              <div className={styles.placeholder}><MessageSquare size={32} strokeWidth={1.5} aria-hidden /><p>{t("chat.chooseConversation")}</p></div></>}
         </section>
       </div>
     </main>
   </Shell>;
 }
 
-function ConversationPane({ user, initial, onBack, onChanged }: { user: Account; initial: Conversation; onBack: () => void; onChanged: () => void }) {
+function ConversationPane({ user, initial, initialDraft = "", onBack, onChanged }: { user: Account; initial: Conversation; initialDraft?: string; onBack: () => void; onChanged: () => void }) {
   const t = useText();
   const { language } = useLanguage();
   const time = new Intl.DateTimeFormat(language === "en" ? undefined : language === "te" ? "te-IN" : "hi-IN", { dateStyle: "medium", timeStyle: "short" });
@@ -230,7 +241,15 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [error, setError] = useState("");
   const [denied, setDenied] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const prefillFocused = useRef(false);
+  useEffect(() => {
+    if (!initialDraft || loading || prefillFocused.current || !composerRef.current) return;
+    prefillFocused.current = true;
+    composerRef.current.focus();
+    composerRef.current.setSelectionRange(initialDraft.length, initialDraft.length);
+  }, [initialDraft, loading]);
   usePendingVersion();
   const pending = readPending(user.id, initial.id);
   const setPending = useCallback((change: (current: Pending[]) => Pending[]) => updatePending(user.id, initial.id, change), [user.id, initial.id]);
@@ -250,6 +269,7 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   const runPoll = useRef<(first: boolean, queue?: boolean, reread?: boolean) => void>(() => undefined);
   const live = useLiveConnected();
   const conversationId = initial.id;
+  const typing = useConversationTyping(user.id, conversation, !loading && !denied && conversation.can_send);
 
   const fail = useCallback((problem: unknown) => {
     if (sessionLost(problem)) {
@@ -265,6 +285,11 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
     }
     setError(problem instanceof Error ? problem.message : loadError);
   }, [loadError, onChanged, setPending]);
+
+  useEffect(() => {
+    if (sessionLost(typing.error)) fail(typing.error);
+    else if (typing.error instanceof ApiError && typing.error.status === 404) runPoll.current(false, true);
+  }, [typing.error, fail]);
 
   const absorb = useCallback((incoming: Message[]) => {
     const merged = mergeMessages(itemsRef.current, incoming);
@@ -434,6 +459,7 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (bodyProblem(draft) || !conversation.can_send || denied) return;
+    typing.stop();
     const intent: SendIntent = { accountId: user.id, conversationId, key: crypto.randomUUID(), body: normalizeBody(draft) };
     if (replyingTo) intent.replyTo = replyingTo.id;
     setDraft("");
@@ -554,6 +580,9 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
         <h2>{conversation.title}</h2>
         <span>{conversation.kind === "space" ? t("chat.spaceChat") : t("chat.directConversation")} / {conversation.space_name}</span>
       </div>
+      {conversation.kind === "space" && !denied && <Link className="icon-button" href={`/app/agent/tasks?space_id=${conversation.space_id}`}
+        aria-label={t("agent.inboxTitle")} title={t("agent.inboxTitle")}><Bot size={19} aria-hidden /></Link>}
+      {conversation.kind === "space" && !denied && <SpaceMenu spaceId={conversation.space_id} spaceName={conversation.space_name} current="chat" />}
     </header>
     <details className={styles.conversationDetails} open>
       <summary className={styles.protection}><LockKeyhole size={15} aria-hidden />{t("chat.protection")}</summary>
@@ -570,7 +599,10 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
           <div className={styles.bubble}>
             <span className={styles.meta}><strong className={message.from_agent ? styles.agentLabel : undefined}>{message.from_agent ? <><Bot size={14} aria-hidden />{t("chat.agentName")}</> : message.mine ? t("chat.you") : message.sender_name}</strong> <time dateTime={message.created_at}>{time.format(new Date(message.created_at))}</time>{message.edited_at && message.status !== "deleted" && <> · <span>{t("chat.edited")}</span></>}</span>
             {message.reply_to && quote(message.reply_to)}
-            {message.status === "sent" && editing?.id !== message.id && <p className={styles.body}>{message.body}</p>}
+            {message.status === "sent" && editing?.id !== message.id && (message.from_agent
+              ? <Suspense fallback={<p className={styles.body}>{message.body}</p>}>
+                <AgentMessageContent parts={[{ type: "markdown", content: message.body ?? "" }]} />
+              </Suspense> : <p className={styles.body}>{message.body}</p>)}
             {editing?.id === message.id && <form className={styles.editor} onSubmit={event => { event.preventDefault(); void saveEdit(message, editing.draft); }}>
               <label>
                 <span>{t("chat.editLabel")}</span>
@@ -642,6 +674,18 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
         <ArrowDown aria-hidden />{t("ui.latestMessages")}
       </Button>}
       </div>
+      <div className={styles.typing} role="status" aria-live="polite" aria-atomic="true" aria-label={t("chat.typingStatus")} tabIndex={typing.people.length ? 0 : undefined}>
+        {typing.people.map(person => {
+          const mentions = [...person.mentions.map(name => `@${name}`), ...(person.mentionsAgent ? ["@agent"] : [])];
+          return <p key={person.accountId} className={styles.typingPerson}>
+            <span className={styles.typingDots} aria-hidden="true"><span /><span /><span /></span>
+            <span>{mentions.length
+              ? t("chat.typingMention", { name: person.name, mentions: new Intl.ListFormat(language, { style: "long", type: "conjunction" }).format(mentions) })
+              : t("chat.typing", { name: person.name })}</span>
+          </p>;
+        })}
+      </div>
+      {typing.error && <p className={styles.count} role="status">{t("chat.typingUnavailable")}</p>}
       {conversation.can_send
         ? <form className={styles.composer} onSubmit={submit}>
             {replyingTo && <div className={styles.replying} role="status">
@@ -652,14 +696,16 @@ function ConversationPane({ user, initial, onBack, onChanged }: { user: Account;
             <label>
               <span id="composer-label" className="sr-only">{t("chat.message")}</span>
               <Textarea aria-labelledby="composer-label" placeholder={t("chat.message")} rows={2} value={draft} maxLength={MAX_MESSAGE_CHARACTERS * 2}
+                ref={composerRef}
                 aria-invalid={problem ? true : undefined} aria-describedby="composer-help"
-                onChange={event => setDraft(event.target.value)}
+                onChange={event => { setDraft(event.target.value); typing.change(event.target.value); }}
+                onBlur={() => typing.stop()}
                 onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing && (event.ctrlKey || event.metaKey)) event.currentTarget.form?.requestSubmit(); }} />
             </label>
             <Button type="submit" size="icon" aria-label={t("chat.send")} title={t("chat.send")} disabled={Boolean(bodyProblem(draft))}><Send aria-hidden /></Button>
             </div>
             <span id="composer-help" className={problem ? "field-error" : styles.count}>{problem ?? `${characters}/${MAX_MESSAGE_CHARACTERS}`}</span>
-            {!problem && mentionsAgent(draft) && <span className={styles.agentHint}>{t("chat.agentHint")}</span>}
+            {!problem && mentionsAgent(draft) && <div className={styles.agentHint}><span>{t("chat.agentHint")}</span><AgentProviderNotice /></div>}
           </form>
         : <p className={styles.readOnly} role="status">{t("chat.readOnly")}</p>}
     </>}

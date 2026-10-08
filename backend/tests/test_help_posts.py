@@ -350,6 +350,9 @@ def test_blocks_and_limits_keep_help_posts_bounded(client, app):
         assert blocked.status_code == 201, blocked.text
     assert trolled["id"] not in [item["id"] for item in page_list(client, page, asker)]
     assert client.get(f"/v1/help-posts/{trolled['id']}", headers=auth(asker)).status_code == 404
+    # A post hidden by the reader's own block stays hidden when answered from an old link.
+    hidden = reply(client, asker, trolled["id"])
+    assert hidden.status_code == 404, hidden.text
     stopped = post_help(client, troll, page["id"], title="Again")
     assert stopped.status_code == 403 and stopped.json()["error"]["code"] == "POSTING_UNAVAILABLE"
     post = post_help(client, asker, page["id"]).json()["data"]

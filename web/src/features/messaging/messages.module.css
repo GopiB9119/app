@@ -62,6 +62,16 @@
 .composerInput>button { flex: none; min-height: var(--target-minimum); min-width: var(--target-minimum); }
 .count { color: var(--color-muted); font-size: 13px; }
 .readOnly { color: var(--color-muted); padding: calc(var(--space-unit) * 3) 0; border-top: 1px solid var(--color-border); }
+.typing { flex: none; min-width: 0; max-height: calc(var(--space-unit) * 24); overflow-y: auto; color: var(--color-muted); font-size: 0.875rem; }
+.typing:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.typingPerson { display: flex; align-items: baseline; gap: calc(var(--space-unit) * 2); overflow-wrap: anywhere; }
+.typingPerson > span:last-child { min-width: 0; }
+.typingDots { display: inline-flex; align-items: center; gap: var(--space-unit); flex: none; }
+.typingDots span { width: var(--space-unit); height: var(--space-unit); border-radius: var(--radius-control); background: currentColor; animation: typingPulse 1.2s ease-in-out infinite; }
+.typingDots span:nth-child(2) { animation-delay: 0.15s; }
+.typingDots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typingPulse { 0%, 60%, 100% { opacity: 0.45; transform: translateY(0); } 30% { opacity: 1; transform: translateY(calc(var(--space-unit) * -1)); } }
+@media (prefers-reduced-motion: reduce) { .typingDots span { animation: none; } }
 /* Replies, reactions and edits (DEC-033). */
 .quote { display: flex; align-items: flex-start; gap: var(--space-unit); margin: 0; padding: var(--space-unit) calc(var(--space-unit) * 2); border-left: 3px solid var(--color-primary); color: var(--color-muted); font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
 .quote strong { color: var(--color-ink); font-weight: 600; }
@@ -81,11 +91,17 @@
 .agentLabel { display: inline-flex; align-items: center; gap: var(--space-unit); }
 .agentStatus { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); color: var(--color-muted); font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
 .agentStatus a, .agentStatus button { display: inline-flex; align-items: center; min-height: var(--target-minimum); }
-.agentHint { color: var(--color-muted); font-size: 13px; }
+.agentHint { display: flex; align-items: flex-start; gap: calc(var(--space-unit) * 2); color: var(--color-muted); font-size: 13px; }
+.agentHint > span { flex: 1; min-width: 0; }
+
+/* The Space header shows once: in the conversation pane on wide screens, in the list on phones where that pane is hidden. */
+.listSpace { display: none; }
 
 @media (max-width: 760px) {
+  .listSpace { display: block; }
+  .paneSpace { display: none; }
   .main { width: 100%; padding: 0 calc(var(--space-unit) * 3); }
-  .navigation { display: none; }
+  .main > .navigation[aria-label] { display: none; }
   .layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: calc(var(--space-unit) * 3); }
   .layout[data-open=conversation] .sidebar { display: none; }
   .layout[data-open=list] .chat { display: none; }

@@ -1,27 +1,83 @@
 """The LLM agent loop (DEC-059): the model decides, Python validates, the person approves every change."""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from time import monotonic, sleep
+from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
 import httpx
+import pytest
 from sqlalchemy import func, select
 
+from app.errors import DomainError
 from app.modules.agents.llm import ModelError, ModelTurn
 from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun
 from app.modules.agents.prompts import MAIN, RESEARCH
-from app.modules.agents.schemas import CreateWebFetch, WebFetchPage
-from app.modules.agents.web import FETCH_URL, LONGEST_PAGE, PAGE_CHUNK, PREVIEW_TEXT, SEARCH_URL, WebLookup, article_changes, completed_reading_answer, page_text, stored_web_text, youtube_id
+from app.modules.agents.runtime import tool_message
+from app.modules.agents.schemas import AgentInteractionView, AgentRunView, CreateWebFetch, WebFetchPage
+from app.modules.agents.toolkit import (
+    EventBudgetArgs,
+    ListEventsArgs,
+    ListRemindersArgs,
+    ListTasksArgs,
+    ToolContext,
+    ToolProblem,
+    execute_schedule_reminder,
+    get_event_budget,
+    list_documents,
+    list_events,
+    list_reminders,
+    list_tasks,
+)
+from app.modules.agents.web import (
+    FETCH_URL,
+    LONGEST_PAGE,
+    PAGE_CHUNK,
+    PREVIEW_TEXT,
+    SEARCH_URL,
+    WebLookup,
+    article_changes,
+    completed_reading_answer,
+    page_text,
+    stored_sources,
+    stored_web_text,
+    web_source,
+    youtube_id,
+)
 from app.modules.community.models import PublicPage, PublicPost
+from app.modules.identity.models import AccountSession
 from app.modules.planning.models import Task
-from tests.agent_support import MAIN_AGENT, answer, approve, ask, call, fields, install, reject, say, script, solo
+from app.modules.polls.models import SpacePoll, SpacePollVote
+from app.modules.scheduling.models import Reminder
+from app.modules.scheduling.schemas import CreateReminder, PreviewReminder
+from app.modules.spaces.models import Space
+from tests.agent_support import (
+    MAIN_AGENT,
+    answer,
+    approve,
+    ask,
+    call,
+    fields,
+    install,
+    reject,
+    say,
+    script,
+    solo,
+)
 from tests.test_community import create_page, draft, publish
+from tests.test_documents import add as add_document
+from tests.test_event_budget_splits import ids, split
+from tests.test_event_budgets import budget, gathering, planned, spend
+from tests.test_event_contributions import give
+from tests.test_events import create as create_event
+from tests.test_events import outbox
 from tests.test_identity import account, auth
-from tests.test_messaging import admit
+from tests.test_messaging import admit, roster_entry
+from tests.test_polls import create_poll as create_space_poll
+from tests.test_space_agent_switch import turn_agent
 from tests.test_spaces import create_space
-from tests.test_tasks import create_task
+from tests.test_tasks import change_task, create_task
 
 
 def count(app, model, *conditions):
@@ -31,6 +87,634 @@ def count(app, model, *conditions):
 
 def tool_results(messages):
     return [json.loads(message["content"]) for message in messages if message["role"] == "tool"]
+
+
+@pytest.mark.parametrize("agent_kind,space_id", [("main", None), ("space", str(uuid4()))])
+def test_interaction_projection_shares_public_fields_without_private_state(agent_kind, space_id):
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    run = AgentRunView(
+        id=str(uuid4()), agent_kind=agent_kind, space_id=space_id, message="Summarize this",
+        status="completed", outcome="answered", stop_reason=None, intent=None,
+        answer="## Result\nA supported answer.", question=None, approval=None, plan=[], tool_calls=[],
+        evidence=[], events=[], created_at=now, updated_at=now, finished_at=now, version="1",
+        state={"transcript": "PRIVATE_STATE_SENTINEL", "provider_key": "PRIVATE_KEY_SENTINEL"},
+    )
+    output = run.model_dump(mode="json")
+    interaction = AgentInteractionView.model_validate(output["interaction"])
+    assert interaction.schema_version == 1 and interaction.run_id == run.id
+    assert (interaction.agent_kind, interaction.space_id) == (agent_kind, space_id)
+    assert [(item.id, item.role) for item in interaction.messages] == [
+        (f"{run.id}:request", "user"), (f"{run.id}:response", "agent"),
+    ]
+    assert output["interaction"]["messages"][0]["parts"] == [{"type": "text", "content": run.message}]
+    assert output["interaction"]["messages"][1]["parts"] == [{"type": "markdown", "content": run.answer}]
+    assert "PRIVATE_" not in run.model_dump_json()
+    assert run.model_copy(update={"version": "2"}).interaction.messages[1].id == interaction.messages[1].id
+    output["interaction"]["messages"][1]["parts"].append({"type": "reasoning", "content": "Not public"})
+    with pytest.raises(ValueError, match="union_tag_invalid"):
+        AgentInteractionView.model_validate(output["interaction"])
+
+
+def test_source_retrieval_time_survives_storage_without_fabricating_unknown_dates():
+    link = "https://cooking.example.org/research"
+    timestamp = "2026-10-08T12:00:00+00:00"
+    source = web_source("Guide", link, read=True, retrieved_at=timestamp)
+    assert source["retrieved_at"] == timestamp
+    assert stored_sources({"web_sources": [source]}) == [source]
+    for missing in (None, "", "2026-10-08", "2026-10-08T12:00:00", "not a timestamp", {"secret": "hidden"}):
+        assert web_source("Guide", link, retrieved_at=missing)["retrieved_at"] is None
+    legacy = {"messages": [
+        {"role": "assistant", "tool_calls": [{"id": "read", "function": {"name": "read_web_page"}}]},
+        {"role": "tool", "tool_call_id": "read", "content": json.dumps({"result": {
+            "url": link, "title": "Guide", "text": "Read content", "retrieved_at": timestamp,
+        }})},
+    ]}
+    assert stored_sources(legacy) == [source]
+
+
+def test_interaction_projection_keeps_exact_approval_tool_source_task_and_activity_records():
+    now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+    run_id, space_id, approval_id = (str(uuid4()) for _index in range(3))
+    run = AgentRunView(
+        id=run_id, agent_kind="space", space_id=space_id, message="Create the reviewed task",
+        status="waiting_for_approval", outcome=None, stop_reason=None, intent="create_task", answer=None,
+        question=None, approval={
+            "id": approval_id, "run_id": run_id, "space_id": space_id, "tool_name": "tasks.create",
+            "risk": "medium", "summary": "Create this task", "fields": [{"label": "Title", "value": "Exact title"}],
+            "status": "pending", "reason": None, "result_ref": None, "created_at": now,
+            "expires_at": now + timedelta(minutes=30), "decided_at": None, "version": "1", "etag": '"reviewed"',
+        },
+        sources=[{"title": "Documentation", "url": "https://example.org/docs", "read": True}],
+        plan=[{"id": "review", "label": "Review task", "kind": "approval", "tool": "tasks.create", "status": "pending"}],
+        todos=[{"content": "Create the task", "status": "in_progress"}],
+        tool_calls=[{
+            "id": str(uuid4()), "sequence": 1, "tool_name": "tasks.list", "tool_version": "1", "effect": "read",
+            "risk": "low", "status": "succeeded", "summary": "Read visible tasks", "result_ref": None,
+            "error_code": None, "approval_id": None, "created_at": now,
+        }],
+        evidence=[{"kind": "policy", "ref": space_id, "label": "Space permissions"}],
+        events=[{"sequence": 1, "event_type": "approval.requested", "summary": "Waiting for review", "created_at": now}],
+        handoffs=[{"space_id": space_id, "name": "This Space", "space_type": "solo"}],
+        created_at=now, updated_at=now, finished_at=None, version="2",
+    )
+    output = run.model_dump(mode="json")
+    parts = {part["type"]: part for part in output["interaction"]["messages"][1]["parts"]}
+    assert set(parts) == {"activity", "task", "tool", "sources", "evidence", "approval", "handoffs"}
+    assert parts["approval"]["approval"] == output["approval"]
+    assert parts["tool"]["call"] == output["tool_calls"][0]
+    assert parts["activity"]["events"] == output["events"]
+    assert parts["sources"]["sources"] == output["sources"]
+    assert parts["task"] == {"type": "task", "plan": output["plan"], "todos": output["todos"]}
+    assert parts["evidence"]["items"] == output["evidence"]
+    assert parts["handoffs"]["handoffs"] == output["handoffs"]
+    schema = AgentRunView.model_json_schema(mode="serialization")
+    assert schema["properties"]["interaction"]["readOnly"] is True
+    assert schema["$defs"]["AgentChatMessage"]["properties"]["parts"]["items"]["discriminator"]["propertyName"] == "type"
+
+
+@pytest.mark.parametrize("scope", ["main", "space"])
+def test_interaction_api_uses_authorized_run_projection_and_keeps_other_accounts_out(client, app, scope):
+    person, space_id = solo(client, app)
+    stranger = account(client, app, "interaction-stranger@example.test")
+    install(app, script(say("## Answer\nA structured result.")))
+    run = ask(client, person, MAIN_AGENT if scope == "main" else space_id, "Explain this result")
+    interaction = run["interaction"]
+    assert interaction["run_id"] == run["id"] and interaction["agent_kind"] == scope
+    assert interaction["messages"][1]["parts"][0] == {"type": "markdown", "content": run["answer"]}
+    own = client.get(f"/v1/agent-runs/{run['id']}", headers=auth(person))
+    assert own.status_code == 200 and own.json()["data"]["interaction"] == interaction
+    denied = client.get(f"/v1/agent-runs/{run['id']}", headers=auth(stranger))
+    assert denied.status_code == 404 and "interaction" not in denied.json()
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+def test_agent_poll_creation_needs_review_and_retries_create_once(client, app, automatic):
+    person, space_id = solo(client, app)
+    model = install(app, script(call("create_poll", question="  Where shall we meet?  ", options=[" Cafe ", "Park"]),
+                                say("Created the reviewed poll; nobody has voted.")))
+    response = client.post("/v1/agent-runs", headers={**auth(person), "Idempotency-Key": str(uuid4())},
+                           json={"space_id": space_id, "message": "Create a poll: Cafe or Park", "auto_approve": automatic})
+    assert response.status_code == 201, response.text
+    run = response.json()["data"]
+    assert run["status"] == "waiting_for_approval" and run["approval"]["tool_name"] == "space.poll.create"
+    assert fields(run)["Question"] == "Where shall we meet?"
+    assert fields(run)["Choices"] == "1. Cafe\n2. Park"
+    assert count(app, SpacePoll) == count(app, SpacePollVote) == 0
+    key = str(uuid4())
+    approved = approve(client, person, run, key=key)
+    assert approved.status_code == 200, approved.text
+    done = approved.json()["data"]
+    assert done["status"] == "completed" and done["approval"]["status"] == "approved", done
+    assert done["approval"]["reason"] is None
+    result = tool_results(model.calls[-1][0])[-1]["result"]
+    assert result["votes_cast"] == 0 and result["space_id"] == space_id
+    polls = client.get(f"/v1/spaces/{space_id}/polls", headers=auth(person)).json()["data"]
+    assert len(polls) == 1 and polls[0]["id"] == result["poll_id"]
+    assert polls[0]["question"] == fields(run)["Question"] and polls[0]["total_votes"] == 0
+    assert done["evidence"][-1]["kind"] == "poll" and done["evidence"][-1]["ref"] == polls[0]["id"]
+    replay = approve(client, person, run, key=key)
+    assert replay.status_code == 200 and replay.json()["data"] == done
+    assert count(app, SpacePoll) == 1 and count(app, SpacePollVote) == 0 and len(model.calls) == 2
+
+
+@pytest.mark.parametrize("tool_name,arguments", [
+    ("list_polls", {}), ("get_poll", {"poll_id": str(uuid4())}),
+    ("create_poll", {"question": "Where?", "options": ["Cafe", "Park"]}),
+])
+def test_agent_poll_tools_are_unavailable_to_main(client, app, tool_name, arguments):
+    person, _space_id = solo(client, app)
+    model = install(app, script(call(tool_name, **arguments), say("Ask in the current Space.")))
+    run = ask(client, person, MAIN_AGENT, "Help with our poll")
+    assert run["status"] == "completed" and run["approval"] is None
+    assert all(tool_name not in tools for _messages, tools in model.calls)
+    assert "error" in tool_results(model.calls[-1][0])[-1]
+    assert count(app, SpacePoll) == count(app, AgentApproval) == 0
+
+
+def test_agent_poll_read_cannot_cross_spaces_even_for_a_common_member(client, app):
+    person, here = solo(client, app)
+    elsewhere = create_space(client, person).json()["data"]["id"]
+    poll = create_space_poll(client, person, elsewhere, question="Private other-Space question?").json()["data"]
+    model = install(app, script(call("get_poll", poll_id=poll["id"]), say("Not available in this Space.")))
+    denied = ask(client, person, here, "Read the referenced poll")
+    assert denied["approval"] is None and denied["evidence"] == []
+    assert "error" in tool_results(model.calls[-1][0])[-1]
+    assert poll["question"] not in json.dumps(model.calls)
+    model = install(app, script(call("get_poll", poll_id=poll["id"]), say("Read the current poll.")))
+    allowed = ask(client, person, elsewhere, "Read this poll")
+    result = tool_results(model.calls[-1][0])[-1]["result"]
+    assert result["id"] == poll["id"] and result["question"] == poll["question"]
+    assert "etag" not in result and "created_by_name" not in result
+    assert allowed["evidence"] == [{"kind": "poll", "ref": poll["id"], "label": poll["question"]}]
+
+
+def test_agent_poll_rejection_and_transaction_failure_do_not_create_a_poll(client, app, monkeypatch):
+    person, space_id = solo(client, app)
+    install(app, script(call("create_poll", question="Where?", options=["Cafe", "Park"]), say("Nothing created.")))
+    waiting = ask(client, person, space_id, "Prepare a poll")
+    refused = reject(client, person, waiting)
+    assert refused.status_code == 200 and refused.json()["data"]["approval"]["status"] == "rejected"
+    assert count(app, SpacePoll) == 0
+    install(app, script(call("create_poll", question="Where?", options=["Cafe", "Park"]), say("Created once.")))
+    waiting = ask(client, person, space_id, "Prepare another poll")
+    apply = app.state.agents.apply
+
+    def interrupted(*arguments, **options):
+        assert apply(*arguments, **options) is True
+        raise DomainError(503, "SYNTHETIC_FAILURE", "Synthetic failure after saving the poll.")
+
+    monkeypatch.setattr(app.state.agents, "apply", interrupted)
+    assert approve(client, person, waiting).status_code == 503
+    assert count(app, SpacePoll) == 0
+    with app.state.sessions() as database:
+        assert database.get(AgentApproval, waiting["approval"]["id"]).status == "pending"
+    monkeypatch.setattr(app.state.agents, "apply", apply)
+    approved = approve(client, person, waiting)
+    assert approved.status_code == 200 and approved.json()["data"]["approval"]["status"] == "approved"
+    assert count(app, SpacePoll) == 1 and count(app, SpacePollVote) == 0
+
+
+@pytest.mark.parametrize("changes", [
+    {"options": ["Same", " same "]}, {"options": ["Only one"]},
+    {"options": [str(index) for index in range(7)]}, {"space_id": str(uuid4())},
+    {"closes_at": "2026-09-18T10:00:00Z"}, {"account_id": str(uuid4())},
+])
+def test_agent_poll_invalid_choices_deadline_or_authority_never_reach_approval(client, app, changes):
+    person, space_id = solo(client, app)
+    model = install(app, script(call("create_poll", **{"question": "Where?", "options": ["Cafe", "Park"], **changes}),
+                                say("The poll needs valid details.")))
+    run = ask(client, person, space_id, "Create a poll")
+    assert run["status"] == "completed" and run["approval"] is None
+    assert "error" in tool_results(model.calls[-1][0])[-1]
+    assert count(app, SpacePoll) == count(app, AgentApproval) == 0
+
+
+def test_agent_poll_list_follows_complete_pages_without_creating_or_voting(client, app):
+    person, space_id = solo(client, app)
+    expected = []
+    for index in range(7):
+        poll = create_space_poll(client, person, space_id, question=f"Question {index}: " + "x" * 170,
+                                 options=[f"{option}: " + '\\"' * 37 for option in range(6)])
+        assert poll.status_code == 201, poll.text
+        expected.append(poll.json()["data"]["id"])
+        app.state.clock.now += timedelta(seconds=1)
+
+    pages = []
+
+    def brain(messages, tools):
+        results = tool_results(messages)
+        if not results:
+            return call("list_polls")
+        assert "result" in results[-1], results[-1]
+        result = results[-1]["result"]
+        pages.append(result)
+        if result["more"]:
+            return call("list_polls", cursor=result["next_cursor"])
+        return say("Read all available polls. No votes were cast.")
+
+    install(app, brain)
+    run = ask(client, person, space_id, "Read our open polls")
+    assert run["status"] == "completed" and run["approval"] is None, run
+    assert len(pages) > 1 and all(len(json.dumps({"result": page}, ensure_ascii=False, separators=(",", ":"))) <= 3000 for page in pages)
+    assert [poll["id"] for page in pages for poll in page["polls"]] == list(reversed(expected))
+    assert {item["ref"] for item in run["evidence"]} == set(expected)
+    assert count(app, SpacePoll) == 7 and count(app, SpacePollVote) == count(app, AgentApproval) == 0
+
+
+@pytest.mark.parametrize("change", ["member_removed", "agent_off"])
+def test_agent_poll_approval_rechecks_current_space_access(client, app, change):
+    owner, space_id = solo(client, app)
+    member = account(client, app, "agent-poll-requester@example.test")
+    admit(client, owner, space_id, member)
+    install(app, script(call("create_poll", question="Where?", options=["Cafe", "Park"]), say("No poll created.")))
+    waiting = ask(client, member, space_id, "Prepare a poll")
+    assert waiting["status"] == "waiting_for_approval"
+    if change == "member_removed":
+        reviewed = roster_entry(client, owner, space_id, member["user"]["id"])
+        removed = client.post(f"/v1/spaces/{space_id}/members/{member['user']['id']}/remove", json={},
+                              headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]})
+        assert removed.status_code == 200, removed.text
+        assert approve(client, member, waiting).status_code == 404
+    else:
+        turn_agent(client, owner, space_id, False)
+        result = approve(client, member, waiting)
+        assert result.status_code == 200, result.text
+        assert result.json()["data"]["approval"]["status"] == "cancelled"
+    assert count(app, SpacePoll) == count(app, SpacePollVote) == 0
+
+
+def test_agent_poll_changed_deadline_and_foreign_approved_payload_fail_closed(client, app):
+    person, space_id = solo(client, app)
+    closing = (app.state.clock.now + timedelta(minutes=6)).isoformat()
+    install(app, script(call("create_poll", question="Where?", options=["Cafe", "Park"], closes_at=closing),
+                        say("The closing time needs a fresh review.")))
+    waiting = ask(client, person, space_id, "Create a poll closing in six minutes")
+    assert waiting["status"] == "waiting_for_approval"
+    assert fields(waiting)["Time zone"] == "Asia/Kolkata" and "+05:30" in fields(waiting)["Closes"]
+    app.state.clock.now += timedelta(minutes=2)
+    refused = approve(client, person, waiting)
+    assert refused.status_code == 200 and refused.json()["data"]["approval"]["status"] == "cancelled"
+    assert count(app, SpacePoll) == 0
+    elsewhere = create_space(client, person).json()["data"]["id"]
+    install(app, script(call("create_poll", question="Where?", options=["Cafe", "Park"]), say("Wrong Space.")))
+    waiting = ask(client, person, space_id, "Prepare another poll")
+    with app.state.sessions.begin() as database:
+        stored = database.get(AgentApproval, waiting["approval"]["id"])
+        stored.payload = {**stored.payload, "input": {**stored.payload["input"], "space_id": elsewhere}}
+    refused = approve(client, person, waiting)
+    assert refused.status_code == 200 and refused.json()["data"]["approval"]["status"] == "cancelled"
+    assert count(app, SpacePoll) == 0
+
+
+def test_event_budget_tool_is_read_only_and_needs_no_provider():
+    from app.modules.agents.registry import MAIN_TOOLS, SPACE_TOOLS
+    from app.modules.agents.toolkit import TOOLS
+
+    tool = TOOLS["get_event_budget"]
+    assert tool.effect == "read"
+    assert tool.needs_web is False
+    assert tool.prepare is None and tool.execute is None
+    assert tool.registry == "events.budget.read"
+    assert tool.registry in SPACE_TOOLS and tool.registry not in MAIN_TOOLS
+
+
+def test_event_budget_tool_split_always_requires_explicit_approval():
+    from app.modules.agents.registry import MAIN_TOOLS, SPACE_TOOLS
+    from app.modules.agents.toolkit import TOOLS
+
+    tool = TOOLS["set_event_split"]
+    assert tool.effect == "write" and tool.always_ask is True
+    assert tool.prepare is not None and tool.execute is not None
+    assert tool.needs_web is False
+    assert tool.registry == "events.budget.split"
+    assert tool.registry in SPACE_TOOLS and tool.registry not in MAIN_TOOLS
+
+
+@pytest.fixture
+def event_budget_tool_view(monkeypatch):
+    from app.modules.agents import toolkit
+    from app.modules.events.schemas import BudgetView
+
+    event_id, space_id = str(uuid4()), str(uuid4())
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    view = BudgetView(
+        event_id=event_id, currency="INR", estimate_minor=2300, recorded_minor=2300,
+        uncategorized_minor=2300, remaining_minor=0, given_minor=2300, promised_minor=0,
+        contribution_count=23, all_contributions=True, can_manage=True, can_record=True,
+        etag='"budget-version"', split_candidates=[],
+        categories=[{"id": str(uuid4()), "name": f"Category {index}", "estimate_minor": 100,
+                     "recorded_minor": 100, "remaining_minor": 0} for index in range(23)],
+        expenses=[{"id": str(uuid4()), "amount_minor": 100, "category_id": None, "note": '\\"' * 60,
+                   "recorded_by_name": "Recorded name", "recorded_at": now, "mine": False,
+                   "can_delete": True} for _index in range(23)],
+        contributions=[{"id": str(uuid4()), "amount_minor": 100, "state": "given", "note": '\\"' * 60,
+                        "contributor_name": "Contributor name", "recorded_at": now, "mine": False,
+                        "can_change": False} for _index in range(23)],
+        split={"method": "equal", "base": "recorded", "base_minor": 2300, "people_count": 23,
+               "allocated_minor": 2300, "difference_minor": 0, "rounding_count": 0, "all_shares": True,
+               "shares": [{"account_id": str(uuid4()), "name": "Member name", "mine": False,
+                           "value": None, "share_minor": 100, "rounded_up": False} for _index in range(23)]},
+    )
+    event = SimpleNamespace(id=event_id, space_id=space_id, title="Shared event")
+    events = SimpleNamespace(read=lambda token, identifier: event)
+    monkeypatch.setattr(toolkit, "BudgetService", lambda service: SimpleNamespace(read=lambda token, identifier: view))
+    context = SimpleNamespace(agent=SimpleNamespace(events=events), space_id=space_id, token="synthetic",
+                              account_id=str(uuid4()), admission_id=str(uuid4()))
+    return context, view
+
+
+@pytest.mark.parametrize("section", ["summary", "categories", "expenses", "contributions", "shares"])
+def test_event_budget_tool_pages_are_complete_bounded_and_exact(event_budget_tool_view, section):
+    context, view = event_budget_tool_view
+    dumped = view.model_dump(mode="json")
+    expected = [] if section == "summary" else dumped["split"]["shares"] if section == "shares" else dumped[section]
+    expected = [{key: value for key, value in row.items() if key not in {"can_change", "can_delete"}} for row in expected]
+    received, arguments = [], {"event_id": view.event_id, "section": section}
+    for _page in range(30):
+        outcome = get_event_budget(context, EventBudgetArgs(**arguments))
+        result = json.loads(tool_message("budget-page", {"result": outcome.data})["content"])["result"]
+        assert result == outcome.data
+        assert len(json.dumps({"result": result}, ensure_ascii=False, separators=(",", ":"))) <= 3000
+        assert (result["currency"], result["amount_unit"], result["recorded_minor"]) == ("INR", "minor", 2300)
+        assert result["visible_count"] == len(expected)
+        assert "not verified payments" in result["notice"] and "not a debt" in result["notice"]
+        assert "etag" not in result and "split_candidates" not in result
+        assert outcome.evidence == [{"kind": "event", "ref": str(view.event_id), "label": "Shared event"}]
+        received.extend(result["items"])
+        if not result["more"]:
+            assert result["next_offset"] is None
+            break
+        assert result["next_offset"] > arguments.get("offset", 0)
+        arguments.update(offset=result["next_offset"], content_version=result["content_version"])
+    else:
+        pytest.fail("Budget pagination did not terminate.")
+    assert received == expected
+
+
+@pytest.mark.parametrize("change", ["amount", "visibility", "requester"])
+def test_event_budget_tool_rejects_changed_continuations(event_budget_tool_view, change):
+    context, view = event_budget_tool_view
+    first = get_event_budget(context, EventBudgetArgs(event_id=view.event_id, section="expenses")).data
+    assert first["more"] is True
+    if change == "amount":
+        view.recorded_minor += 1
+    elif change == "visibility":
+        view.all_contributions = False
+        view.contributions = []
+    else:
+        context.admission_id = str(uuid4())
+    with pytest.raises(ToolProblem) as refused:
+        get_event_budget(context, EventBudgetArgs(event_id=view.event_id, section="expenses",
+                         offset=first["next_offset"], content_version=first["content_version"]))
+    assert refused.value.code == "budget_changed"
+    restarted = get_event_budget(context, EventBudgetArgs(event_id=view.event_id, section="expenses")).data
+    assert restarted["content_version"] != first["content_version"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"event_id": "not-an-event"}, {"section": "payments"}, {"offset": True}, {"offset": 0.5},
+    {"offset": -1}, {"offset": 201}, {"offset": 1, "section": "expenses"},
+    {"offset": 1, "content_version": "a" * 64}, {"content_version": "unknown"}, {"transfer": True},
+])
+def test_event_budget_tool_rejects_invalid_arguments(changes):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        EventBudgetArgs.model_validate({"event_id": str(uuid4()), **changes})
+
+
+def test_event_budget_tool_requires_current_space_even_outside_runtime(event_budget_tool_view):
+    context, view = event_budget_tool_view
+    for space_id in (None, str(uuid4())):
+        context.space_id = space_id
+        with pytest.raises(ToolProblem) as refused:
+            get_event_budget(context, EventBudgetArgs(event_id=view.event_id))
+        assert refused.value.code == "NOT_FOUND"
+
+
+def test_event_budget_tool_split_review_preserves_every_person_within_client_limit(event_budget_tool_view):
+    from app.modules.agents.toolkit import EventSplitArgs, prepare_set_event_split
+    from app.modules.events.schemas import SplitCandidateView
+
+    context, view = event_budget_tool_view
+    view.split_candidates = [SplitCandidateView(account_id=share.account_id, name=f"Participant {index}")
+                             for index, share in enumerate(view.split.shares, start=1)]
+    args = EventSplitArgs(event_id=view.event_id, split={"method": "equal", "base": "recorded",
+                         "people": [{"account_id": person.account_id} for person in view.split_candidates]})
+    proposal = prepare_set_event_split(context, args)
+    assert len(proposal.fields) <= 10
+    for person in view.split_candidates:
+        assert f"{person.name}: INR 1.00" in dict(proposal.fields)["Shares"]
+    assert len(proposal.payload["split"]["people"]) == 23
+
+
+@pytest.mark.parametrize("actor_index", [0, 1, 2])
+@pytest.mark.parametrize("section", ["shares", "contributions"])
+def test_space_budget_reads_preserve_private_details_and_never_write(client, app, actor_index, section):
+    owner, organizer, member, space_id, event = gathering(client, app)
+    people = (owner, organizer, member)
+    planned(client, organizer, event["id"], categories=[{"name": "Trip", "estimate_minor": 800_000}])
+    for person, amount in zip(people, (400_000, 250_000, 150_000)):
+        assert spend(client, person, event["id"], amount).status_code == 201
+        assert give(client, person, event["id"], amount, note=f"Private contribution {amount}").status_code == 201
+    current = budget(client, organizer, event["id"]).json()["data"]
+    saved = split(client, organizer, event["id"], current["etag"], base="recorded", people=ids(*people))
+    assert saved.status_code == 200, saved.text
+    before = budget(client, organizer, event["id"]).json()["data"]
+    actor = people[actor_index]
+    allowed = budget(client, actor, event["id"]).json()["data"]
+    model = install(app, script(call("get_event_budget", event_id=event["id"], section=section),
+                                say("These are recorded amounts and planned shares, not verified payments or debts.")))
+    key = str(uuid4())
+    run = ask(client, actor, space_id, "Show the trip budget " + section, key=key)
+    assert run["status"] == "completed" and run["approval"] is None, run
+    result = tool_results(model.calls[-1][0])[0]["result"]
+    expected = allowed["split"]["shares"] if section == "shares" else allowed["contributions"]
+    expected = [{name: value for name, value in row.items() if name != "can_change"} for row in expected]
+    assert result["items"] == expected
+    assert result["recorded_minor"] == 800_000 and result["split"]["allocated_minor"] == 800_000
+    assert result["split"]["rounding_count"] == 2 and result["split"]["difference_minor"] == 0
+    assert result["split"]["all_shares"] is (actor_index != 2)
+    assert result["all_contributions"] is (actor_index != 2)
+    if actor_index == 2:
+        assert len(result["items"]) == 1 and result["items"][0]["mine"] is True
+        assert "Private contribution 400000" not in json.dumps(model.calls)
+        assert "Private contribution 250000" not in json.dumps(model.calls)
+    assert [(item["tool_name"], item["effect"]) for item in run["tool_calls"]] == [("events.budget.read", "read")]
+    assert count(app, AgentApproval) == 0
+    assert budget(client, organizer, event["id"]).json()["data"] == before
+    again = ask(client, actor, space_id, "Show the trip budget " + section, key=key)
+    assert again["id"] == run["id"] and len(model.calls) == 2
+
+
+@pytest.mark.parametrize("scope", ["main", "other_space", "later_member"])
+@pytest.mark.parametrize("tool_name", ["get_event_budget", "set_event_split"])
+def test_space_budget_reads_cannot_escape_agent_or_admission_scope(client, app, scope, tool_name, monkeypatch):
+    from app.modules.events.budgets import BudgetService
+
+    owner, organizer, member, space_id, event = gathering(client, app)
+    planned(client, organizer, event["id"])
+    actor, target_space = owner, space_id
+    if scope == "main":
+        target_space = None
+    elif scope == "other_space":
+        target_space = create_space(client, owner).json()["data"]["id"]
+    else:
+        actor = account(client, app, "later-budget-member@example.test")
+        admit(client, owner, space_id, actor)
+
+    def forbidden_read(*arguments):
+        pytest.fail("An out-of-scope request reached the budget service.")
+
+    monkeypatch.setattr(BudgetService, "read", forbidden_read)
+    arguments = {"section": "contributions"} if tool_name == "get_event_budget" else {
+        "split": {"method": "equal", "base": "recorded", "people": ids(owner, organizer, member)},
+    }
+    model = install(app, script(call(tool_name, event_id=event["id"], **arguments),
+                                say("That budget is not available here.")))
+    run = ask(client, actor, target_space, "Read that event budget")
+    assert run["status"] == "completed" and run["approval"] is None, run
+    assert "error" in tool_results(model.calls[-1][0])[0]
+    assert run["evidence"] == [] and count(app, AgentApproval) == 0
+    if scope == "main":
+        assert all(tool_name not in tools for _messages, tools in model.calls)
+
+
+def test_space_budget_reads_unconfigured_budget_without_inventing_currency(client, app):
+    owner, _organizer, _member, space_id, event = gathering(client, app)
+    model = install(app, script(call("get_event_budget", event_id=event["id"]), say("No budget has been set.")))
+    run = ask(client, owner, space_id, "What is our event budget?")
+    assert run["status"] == "completed" and run["approval"] is None, run
+    result = tool_results(model.calls[-1][0])[0]["result"]
+    assert result["currency"] is None and result["split"] is None
+    assert result["recorded_minor"] == 0 and result["items"] == [] and result["more"] is False
+
+
+@pytest.fixture
+def space_budget_split(client, app):
+    owner, organizer, member, space_id, event = gathering(client, app)
+    planned(client, organizer, event["id"], categories=[{"name": "Trip", "estimate_minor": 900_000}])
+    for person, amount in zip((owner, organizer, member), (400_000, 250_000, 150_000)):
+        assert spend(client, person, event["id"], amount).status_code == 201
+    body = {"method": "equal", "base": "recorded", "people": ids(owner, organizer, member)}
+    return owner, organizer, member, space_id, event, body
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+@pytest.mark.parametrize("method,base,values,expected", [
+    ("equal", "recorded", None, [266_667, 266_667, 266_666]),
+    ("equal", "planned", None, [300_000, 300_000, 300_000]),
+    ("percentages", "recorded", [5000, 3125, 1875], [400_000, 250_000, 150_000]),
+    ("amounts", "recorded", [400_000, 250_000, 100_000], [400_000, 250_000, 100_000]),
+])
+def test_space_budget_split_exact_review_approval_and_retry_never_move_money(
+    client, app, space_budget_split, automatic, method, base, values, expected,
+):
+    owner, organizer, member, space_id, event, body = space_budget_split
+    body.update(method=method, base=base)
+    if values is not None:
+        for person, value in zip(body["people"], values):
+            person["value"] = value
+    before = budget(client, organizer, event["id"]).json()["data"]
+    model = install(app, script(call("set_event_split", event_id=event["id"], split=body),
+                                say("Saved the reviewed split plan. No money was moved.")))
+    response = client.post("/v1/agent-runs", headers={**auth(organizer), "Idempotency-Key": str(uuid4())},
+                           json={"space_id": space_id, "message": "Save this cost-sharing plan", "auto_approve": automatic})
+    assert response.status_code == 201, response.text
+    run = response.json()["data"]
+    assert run["status"] == "waiting_for_approval" and run["approval"]["status"] == "pending"
+    assert run["approval"]["tool_name"] == "events.budget.split"
+    assert fields(run)["Total"] == ("INR 9000.00" if base == "planned" else "INR 8000.00")
+    for amount in expected:
+        assert f"INR {amount // 100}.{amount % 100:02d}" in fields(run)["Shares"]
+    assert len(fields(run)["Shares"].splitlines()) == len(expected)
+    assert fields(run)["Unallocated"] == ("INR 500.00" if method == "amounts" else "INR 0.00")
+    assert budget(client, organizer, event["id"]).json()["data"] == before
+    assert outbox(app, "event.budget.split.updated") == 0
+    key = str(uuid4())
+    approved = approve(client, organizer, run, key=key)
+    assert approved.status_code == 200, approved.text
+    done = approved.json()["data"]
+    assert done["status"] == "completed" and done["approval"]["status"] == "approved", done
+    assert done["approval"]["reason"] is None
+    assert tool_results(model.calls[-1][0])[-1]["result"]["money_moved"] is False
+    after = budget(client, organizer, event["id"]).json()["data"]
+    assert [share["share_minor"] for share in after["split"]["shares"]] == expected
+    assert after["expenses"] == before["expenses"] and after["contributions"] == before["contributions"]
+    assert after["given_minor"] == before["given_minor"] and after["promised_minor"] == before["promised_minor"]
+    assert outbox(app, "event.budget.split.updated") == 1
+    replay = approve(client, organizer, run, key=key)
+    assert replay.status_code == 200 and replay.json()["data"] == done
+    assert outbox(app, "event.budget.split.updated") == 1 and len(model.calls) == 2
+
+
+@pytest.mark.parametrize("change", ["expense", "participant", "cancelled"])
+def test_space_budget_split_refuses_changed_review_basis(client, app, space_budget_split, change):
+    owner, organizer, member, space_id, event, body = space_budget_split
+    model = install(app, script(call("set_event_split", event_id=event["id"], split=body),
+                                say("The reviewed plan is no longer current. No split was saved.")))
+    run = ask(client, organizer, space_id, "Split this trip equally")
+    assert run["status"] == "waiting_for_approval", run
+    before = budget(client, organizer, event["id"]).json()["data"]
+    if change == "expense":
+        assert spend(client, member, event["id"], 1).status_code == 201
+        assert budget(client, organizer, event["id"]).json()["data"]["etag"] == before["etag"]
+    elif change == "participant":
+        reviewed = roster_entry(client, owner, space_id, member["user"]["id"])
+        removed = client.post(f"/v1/spaces/{space_id}/members/{member['user']['id']}/remove", json={},
+                              headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": reviewed["etag"]})
+        assert removed.status_code == 200, removed.text
+    else:
+        cancelled = client.post(f"/v1/events/{event['id']}/cancel", headers={**auth(organizer), "If-Match": event["etag"]}, json={})
+        assert cancelled.status_code == 200, cancelled.text
+    current = budget(client, organizer, event["id"]).json()["data"]
+    response = approve(client, organizer, run)
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    assert result["approval"]["status"] == "cancelled"
+    assert "error" in tool_results(model.calls[-1][0])[-1]
+    assert budget(client, organizer, event["id"]).json()["data"] == current
+    assert outbox(app, "event.budget.split.updated") == 0
+
+
+def test_space_budget_split_rollback_keeps_plan_and_approval_atomic(client, app, space_budget_split, monkeypatch):
+    _owner, organizer, _member, space_id, event, body = space_budget_split
+    install(app, script(call("set_event_split", event_id=event["id"], split=body), say("Saved the reviewed split.")))
+    run = ask(client, organizer, space_id, "Save the split plan")
+    assert run["status"] == "waiting_for_approval", run
+    before = budget(client, organizer, event["id"]).json()["data"]
+    apply = app.state.agents.apply
+
+    def interrupted(*arguments, **options):
+        assert apply(*arguments, **options) is True
+        raise DomainError(503, "SYNTHETIC_FAILURE", "Synthetic approval transaction failure.")
+
+    monkeypatch.setattr(app.state.agents, "apply", interrupted)
+    failed = approve(client, organizer, run)
+    assert failed.status_code == 503, failed.text
+    assert budget(client, organizer, event["id"]).json()["data"] == before
+    assert outbox(app, "event.budget.split.updated") == 0
+    with app.state.sessions() as database:
+        assert database.get(AgentApproval, run["approval"]["id"]).status == "pending"
+    monkeypatch.setattr(app.state.agents, "apply", apply)
+    succeeded = approve(client, organizer, run)
+    assert succeeded.status_code == 200 and succeeded.json()["data"]["approval"]["status"] == "approved"
+    assert outbox(app, "event.budget.split.updated") == 1
+
+
+def test_space_budget_split_rejection_and_member_denial_leave_budget_unchanged(client, app, space_budget_split):
+    _owner, organizer, member, space_id, event, body = space_budget_split
+    before = budget(client, organizer, event["id"]).json()["data"]
+    model = install(app, script(call("set_event_split", event_id=event["id"], split=body), say("You cannot manage this budget.")))
+    refused = ask(client, member, space_id, "Change this split")
+    assert refused["status"] == "completed" and refused["approval"] is None
+    assert "error" in tool_results(model.calls[-1][0])[0] and count(app, AgentApproval) == 0
+    install(app, script(call("set_event_split", event_id=event["id"], split=body), say("The split was not saved.")))
+    waiting = ask(client, organizer, space_id, "Change this split")
+    rejected = reject(client, organizer, waiting)
+    assert rejected.status_code == 200 and rejected.json()["data"]["approval"]["status"] == "rejected"
+    assert budget(client, organizer, event["id"]).json()["data"] == before
+    assert outbox(app, "event.budget.split.updated") == 0
 
 
 @pytest.mark.parametrize("output_format", ["markdown", "html", "json"])
@@ -191,6 +875,63 @@ def test_web_extraction_running_chat_cancel_drops_late_content_without_refunding
         assert "Late text" not in json.dumps(run.state)
 
 
+@pytest.mark.parametrize("helper", [False, True])
+@pytest.mark.parametrize("change, status, reason", [
+    ("session", "failed", "session_ended"),
+    ("switch", "cancelled", "agent_off"),
+    ("membership", "failed", "not_found"),
+    ("cancel", "cancelled", "cancelled"),
+])
+def test_late_tool_results_are_discarded_when_access_ends(client, app, monkeypatch, helper, change, status, reason):
+    owner, space_id = solo(client, app)
+    person = owner
+    if change == "membership":
+        person = account(client, app, "late-tool-member@example.test")
+        admit(client, owner, space_id, person)
+    link = "https://news.example.org/late-report"
+    late_text = "Late tool content must not be retained."
+    turns = [call("read_web_page", url=link), say("The report is ready.")]
+    if helper:
+        turns.insert(0, call("research", task="Read the report"))
+    model = install(app, script(*turns))
+    monkeypatch.setattr(app.state.agents, "submit", lambda run_id, token: None)
+    queued = ask(client, person, space_id, "Read this report: " + link)
+    requests = []
+
+    def endpoint(request):
+        requests.append(request)
+        if change == "cancel":
+            response = client.post(f"/v1/agent-runs/{queued['id']}/cancel", headers=auth(person), json={})
+            assert response.status_code == 200, response.text
+        elif change == "membership":
+            roster = client.get(f"/v1/spaces/{space_id}/members", headers=auth(owner)).json()["data"]
+            entry = next(member for member in roster if member["account_id"] == person["user"]["id"])
+            response = client.post(
+                f"/v1/spaces/{space_id}/members/{person['user']['id']}/remove", json={},
+                headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": entry["etag"]},
+            )
+            assert response.status_code == 200, response.text
+        else:
+            with app.state.sessions.begin() as database:
+                run = database.get(AgentRun, queued["id"])
+                if change == "session":
+                    database.get(AccountSession, run.session_id).revoked_at = app.state.clock()
+                else:
+                    database.get(Space, space_id).agent_enabled = False
+        return httpx.Response(200, json={"results": [{"url": link, "title": "Late report", "text": late_text}]})
+
+    app.state.agents.web = WebLookup("synthetic-key", daily_limit=1, transport=httpx.MockTransport(endpoint))
+    app.state.agents.runtime.advance(queued["id"], auth(person)["Authorization"].removeprefix("Bearer "))
+    with app.state.sessions() as database:
+        run = database.get(AgentRun, queued["id"])
+        assert (run.status, run.stop_reason) == (status, reason)
+        assert late_text not in json.dumps(run.state) and late_text not in (run.answer or "")
+        assert not run.state.get("web_sources")
+        assert app.state.agents.web_usage(database, run.account_id) == 1
+    assert len(requests) == 1 and len(model.calls) == (2 if helper else 1)
+    assert count(app, AgentApproval) == 0 and count(app, Task) == 0
+
+
 @pytest.mark.parametrize("output_format", ["markdown", "html", "json"])
 def test_fetch_preview_bounds_content_and_never_truncates_json_into_invalid_text(output_format):
     link = "https://news.example.org/report"
@@ -300,7 +1041,7 @@ def test_web_source_preview_uses_only_matching_bounded_read_results(kind):
     preview = stored_web_text(state)
     assert json.dumps(state) == before
     if kind in ("oversized", "legacy"):
-        assert preview == [{"source": source, "text": text[:PAGE_CHUNK], "offset": None, "partial": True}]
+        assert preview == [{"source": {**source, "retrieved_at": None}, "text": text[:PAGE_CHUNK], "offset": None, "partial": True}]
     else:
         assert preview == []
 
@@ -700,7 +1441,318 @@ def test_research_helper_keeps_its_web_sources_for_the_final_answer(client, app)
                         say("The guide recommends varied ingredients."), say("Use varied ingredients for everyday meals.")))
     run = ask(client, person, None, "Research simple cooking habits")
     assert run["status"] == "completed", run
-    assert run["sources"] == [{"title": "Read cooking guide", "url": link, "read": True, "video_id": None}]
+    assert run["sources"] == [{"title": "Read cooking guide", "url": link, "read": True, "video_id": None,
+                               "retrieved_at": app.state.clock().isoformat().replace("+00:00", "Z")}]
+
+
+def test_event_listing_exposes_and_uses_its_next_page_cursor():
+    expected = [SimpleNamespace(
+        id=str(uuid4()), title=f"Event {index}", starts_at=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+        ends_at=None, location="Hall", status="scheduled", ended=False, my_response=None, going=0,
+    ) for index in range(2)]
+    cursors = []
+
+    def page(token, space_id, when, limit, cursor=None):
+        cursors.append(cursor)
+        if cursor is None:
+            return expected[:1], SimpleNamespace(has_more=True, next_cursor="second-events-page")
+        assert cursor == "second-events-page"
+        return expected[1:], SimpleNamespace(has_more=False, next_cursor=None)
+
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", timezone="Asia/Kolkata",
+                              agent=SimpleNamespace(events=SimpleNamespace(list_events=page)))
+    first = list_events(context, ListEventsArgs())
+    assert first.data["more"] is True
+    assert first.data["next_cursor"] == "second-events-page"
+    second = list_events(context, ListEventsArgs(cursor=first.data["next_cursor"]))
+    assert second.data["more"] is False and second.data["next_cursor"] is None
+    assert [item["id"] for item in first.data["events"] + second.data["events"]] == [item.id for item in expected]
+    assert cursors == [None, "second-events-page"]
+
+
+@pytest.mark.parametrize("when", ["upcoming", "past"])
+def test_event_listing_keeps_complete_payloads_and_timezone_context(when):
+    starts = datetime(2026, 9, 19, 23, 45, tzinfo=timezone.utc)
+    events = [SimpleNamespace(
+        id=str(uuid4()), title='"' * 110 + f" {index:02d}", starts_at=starts + timedelta(minutes=index),
+        ends_at=starts + timedelta(hours=1, minutes=index), location="\\" * 195,
+        status="cancelled" if index == 0 else "scheduled", ended=when == "past", my_response="going", going=index,
+    ) for index in range(27)]
+
+    def page(token, space_id, selected_when, limit, cursor=None):
+        assert space_id == "selected-space" and selected_when == when
+        start = int(cursor or "0")
+        selected = events[start:start + limit]
+        end = start + len(selected)
+        more = end < len(events)
+        return selected, SimpleNamespace(has_more=more, next_cursor=str(end) if more else None)
+
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", timezone="Asia/Kolkata",
+                              agent=SimpleNamespace(events=SimpleNamespace(list_events=page)))
+    seen, cursor = [], None
+    for _page in range(len(events)):
+        outcome = list_events(context, ListEventsArgs(when=when, cursor=cursor))
+        message = json.loads(tool_message("event-page", {"result": outcome.data})["content"])
+        assert "result" in message, "Event rows and continuation must not be cut into partial JSON."
+        result = message["result"]
+        assert result["timezone"] == "Asia/Kolkata" and result["when"] == when
+        assert [item["ref"] for item in outcome.evidence] == [item["id"] for item in result["events"]]
+        seen.extend(result["events"])
+        if not result["more"]:
+            assert result["next_cursor"] is None
+            break
+        assert result["next_cursor"] and result["next_cursor"] != cursor
+        cursor = result["next_cursor"]
+    assert [item["id"] for item in seen] == [item.id for item in events]
+    assert [item["title"] for item in seen] == [item.title for item in events]
+    assert seen[0]["starts"] == "Sun 2026-09-20 05:15"
+    assert seen[0]["ends"] == "Sun 2026-09-20 06:15"
+    assert seen[0]["status"] == "cancelled"
+    assert seen[1]["status"] == ("ended" if when == "past" else "scheduled")
+
+
+def test_document_listing_keeps_complete_rows_and_continuation():
+    documents = [SimpleNamespace(
+        id=str(uuid4()), name='"' * 180 + f"-{index:02d}.txt", line_count=index + 1,
+        added_by_name="\\" * 75, status="deleted" if index % 5 == 0 else "active",
+    ) for index in range(31)]
+
+    def page(token, space_id, limit, cursor=None):
+        assert space_id == "selected-space"
+        start = int(cursor or "0")
+        selected = documents[start:start + limit]
+        end = start + len(selected)
+        more = end < len(documents)
+        return selected, SimpleNamespace(has_more=more, next_cursor=str(end) if more else None)
+
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space",
+                              agent=SimpleNamespace(documents=SimpleNamespace(list_documents=page)))
+    seen, cursor = [], None
+    for _page in range(len(documents)):
+        outcome = list_documents(context, SimpleNamespace(cursor=cursor))
+        message = json.loads(tool_message("document-page", {"result": outcome.data})["content"])
+        assert "result" in message, "Document rows and continuation must not be cut into partial JSON."
+        result = message["result"]
+        assert [item["ref"] for item in outcome.evidence] == [item["document_id"] for item in result["documents"]]
+        seen.extend(result["documents"])
+        if not result["more"]:
+            assert result["next_cursor"] is None
+            break
+        assert result["next_cursor"] and result["next_cursor"] != cursor
+        cursor = result["next_cursor"]
+    expected = [item for item in documents if item.status == "active"]
+    assert [item["document_id"] for item in seen] == [item.id for item in expected]
+    assert [item["name"] for item in seen] == [item.name for item in expected]
+    assert [item["lines"] for item in seen] == [item.line_count for item in expected]
+
+
+def test_reminder_listing_does_not_claim_empty_when_unread_pages_remain():
+    cursors = []
+    other = SimpleNamespace(space_id="another-space", status="scheduled")
+
+    def page(token, limit, cursor=None, **filters):
+        cursors.append(cursor)
+        return [other], SimpleNamespace(has_more=True, next_cursor=f"page-{len(cursors)}")
+
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space",
+                              agent=SimpleNamespace(reminders=SimpleNamespace(list_reminders=page)))
+    result = list_reminders(context, ListRemindersArgs())
+    assert result.data["reminders"] == []
+    assert result.data["more"] is True
+    assert result.data["next_cursor"] == "page-3"
+    assert cursors == [None, "page-1", "page-2"]
+
+
+def test_reminder_listing_keeps_complete_rows_scoped_and_resumable_for_the_model():
+    items = [SimpleNamespace(
+        id=str(uuid4()), task_id=str(uuid4()), task_title='"' * 185 + f" {index:03d}",
+        space_id="selected-space" if index % 7 else "another-space",
+        status=("scheduled", "available", "cancelled", "suppressed", "expired", "failed")[index % 6],
+        local_time=datetime(2026, 9, 20, 18, 30), timezone="Asia/Kolkata",
+    ) for index in range(67)]
+    scoped = [item for item in items if item.space_id == "selected-space"]
+    requested = []
+
+    def page(token, limit, cursor=None, *, space_id=None):
+        requested.append(space_id)
+        assert space_id == "selected-space"
+        start = int(cursor or "0")
+        selected = scoped[start:start + limit]
+        end = start + len(selected)
+        more = end < len(scoped)
+        return selected, SimpleNamespace(has_more=more, next_cursor=str(end) if more else None)
+
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space",
+                              agent=SimpleNamespace(reminders=SimpleNamespace(list_reminders=page)))
+    seen, cursor = [], None
+    for _page in range(len(items)):
+        outcome = list_reminders(context, ListRemindersArgs(cursor=cursor))
+        message = json.loads(tool_message("reminder-page", {"result": outcome.data})["content"])
+        assert "result" in message, "Reminder rows must not be cut into partial JSON."
+        result = message["result"]
+        seen.extend(item["id"] for item in result["reminders"])
+        assert [item["ref"] for item in outcome.evidence] == [item["id"] for item in result["reminders"]]
+        assert all(item["local_time"] == "2026-09-20 18:30" and item["timezone"] == "Asia/Kolkata"
+                   for item in result["reminders"])
+        if not result["more"]:
+            assert result["next_cursor"] is None
+            break
+        assert result["next_cursor"] and result["next_cursor"] != cursor
+        cursor = result["next_cursor"]
+    assert seen == [item.id for item in scoped if item.status in ("scheduled", "available")]
+    assert requested and set(requested) == {"selected-space"}
+
+
+def test_task_listing_does_not_report_an_exhausted_search_with_unseen_pages():
+    scanned = []
+    item = SimpleNamespace(title="Unrelated task", status="open", assignee=None)
+
+    def page(token, space_id, limit, cursor=None, **filters):
+        scanned.append(cursor)
+        return [item], SimpleNamespace(has_more=True, next_cursor=f"page-{len(scanned)}")
+
+    context = SimpleNamespace(
+        token="synthetic-session", space_id="synthetic-space", account_id="synthetic-person",
+        agent=SimpleNamespace(tasks=SimpleNamespace(list_tasks=page)),
+    )
+    result = list_tasks(context, ListTasksArgs(query="important"))
+    assert result.data["tasks"] == []
+    assert result.data["more"] is True
+    assert result.data["next_cursor"] == "page-3"
+    assert scanned == [None, "page-1", "page-2"]
+
+
+def test_task_listing_preserves_whole_rows_and_cursors_within_model_results():
+    items = [SimpleNamespace(
+        id=str(uuid4()), title='"' * 190 + f" {index:03d}", status="open", due_date=None, priority="normal",
+        assignee=SimpleNamespace(account_id="synthetic-person", display_name="\\" * 75),
+        permissions=SimpleNamespace(can_edit=True, allowed_statuses=["completed"]),
+    ) for index in range(37)]
+
+    def page(token, space_id, limit, cursor=None, **filters):
+        start = int(cursor or "0")
+        selected = items[start:start + limit]
+        end = start + len(selected)
+        more = end < len(items)
+        return selected, SimpleNamespace(has_more=more, next_cursor=str(end) if more else None)
+
+    context = SimpleNamespace(
+        token="synthetic-session", space_id="synthetic-space", account_id="synthetic-person",
+        agent=SimpleNamespace(tasks=SimpleNamespace(list_tasks=page)),
+    )
+    seen, cursor = [], None
+    for _page in range(len(items)):
+        outcome = list_tasks(context, ListTasksArgs(cursor=cursor))
+        message = json.loads(tool_message("task-page", {"result": outcome.data})["content"])
+        assert "result" in message, "Task results must not be cut into partial JSON."
+        result = message["result"]
+        assert result["tasks"]
+        seen.extend(item["id"] for item in result["tasks"])
+        assert [entry["ref"] for entry in outcome.evidence] == [item["id"] for item in result["tasks"]]
+        assert result["filters"] == {"status": "open", "mine": False, "query": None, "due_from": None, "due_to": None}
+        if not result["more"]:
+            assert result["next_cursor"] is None
+            break
+        assert result["next_cursor"] and result["next_cursor"] != cursor
+        cursor = result["next_cursor"]
+    assert seen == [item.id for item in items]
+
+
+@pytest.mark.parametrize("status", ["open", "completed", "all"])
+@pytest.mark.parametrize("mine", [False, True])
+def test_task_listing_applies_supported_filters_before_paging(status, mine):
+    requested = []
+
+    def page(token, space_id, limit, cursor=None, **filters):
+        requested.append(filters)
+        return [], SimpleNamespace(has_more=False, next_cursor=None)
+
+    context = SimpleNamespace(
+        token="synthetic-session", space_id="synthetic-space", account_id="synthetic-person",
+        agent=SimpleNamespace(tasks=SimpleNamespace(list_tasks=page)),
+    )
+    result = list_tasks(context, ListTasksArgs(status=status, mine=mine, due_from="2026-09-19", due_to="2026-09-20"))
+    assert requested == [{
+        "status": "completed" if status == "completed" else None,
+        "assignee": "synthetic-person" if mine else None,
+        "due_from": "2026-09-19", "due_to": "2026-09-20",
+    }]
+    assert result.data["tasks"] == [] and result.data["more"] is False and result.data["next_cursor"] is None
+    assert result.data["filters"]["due_from"] == "2026-09-19"
+    assert result.data["filters"]["due_to"] == "2026-09-20"
+
+
+@pytest.mark.parametrize("dates", [
+    {"due_from": "2026-02-30"}, {"due_to": "not a date"},
+    {"due_from": "2026-09-21", "due_to": "2026-09-20"},
+])
+def test_task_listing_rejects_invalid_due_ranges(dates):
+    with pytest.raises(ValueError):
+        ListTasksArgs.model_validate(dates)
+
+
+@pytest.mark.parametrize("mine", [False, True])
+def test_task_listing_date_filters_preserve_assignment_and_space_boundaries(client, app, mine):
+    person, space_id = solo(client, app)
+    own_id = person["user"]["id"]
+    create_task(client, person, space_id, title="Earlier task", due_date="2026-09-18", assignee_id=own_id)
+    shared = create_task(client, person, space_id, title="Shared task", due_date="2026-09-19").json()["data"]
+    assigned = create_task(client, person, space_id, title="Assigned task", due_date="2026-09-20", assignee_id=own_id)
+    progressed = change_task(client, person, assigned.json()["data"]["id"], {"status": "in_progress"},
+                             etag=assigned.headers["etag"], operation="status")
+    assert progressed.status_code == 200, progressed.text
+    create_task(client, person, space_id, title="Later task", due_date="2026-09-21", assignee_id=own_id)
+    create_task(client, person, space_id, title="Undated task", due_date=None, assignee_id=own_id)
+    other = create_space(client, person, "Other task plans").json()["data"]["id"]
+    create_task(client, person, other, title="Other Space task", due_date="2026-09-20", assignee_id=own_id)
+    model = install(app, script(call("list_tasks", mine=mine, due_from="2026-09-19", due_to="2026-09-20"),
+                                say("Here are the matching tasks.")))
+    run = ask(client, person, space_id, "What is due today or tomorrow?")
+    assert run["status"] == "completed" and run["approval"] is None
+    result = tool_results(model.calls[-1][0])[-1]["result"]
+    expected = {assigned.json()["data"]["id"]} if mine else {shared["id"], assigned.json()["data"]["id"]}
+    assert {item["id"] for item in result["tasks"]} == expected
+    assert {item["ref"] for item in run["evidence"]} == expected
+    assert result["more"] is False and result["next_cursor"] is None
+    assert result["filters"] == {"status": "open", "mine": mine, "query": None,
+                                  "due_from": "2026-09-19", "due_to": "2026-09-20"}
+
+
+def test_task_listing_cursor_reaches_every_task_and_remains_scoped(client, app):
+    person, space_id = solo(client, app)
+    expected = set()
+    for index in range(9):
+        created = create_task(client, person, space_id, title="Page task " + '"' * 180 + f" {index:02d}")
+        assert created.status_code == 201, created.text
+        expected.add(created.json()["data"]["id"])
+    seen, cursors = [], []
+
+    def paginate(messages, tools):
+        if messages[-1]["role"] != "tool":
+            return call("list_tasks", query="Page task")
+        result = json.loads(messages[-1]["content"])["result"]
+        seen.extend(item["id"] for item in result["tasks"])
+        if result["more"]:
+            assert result["next_cursor"] not in cursors
+            cursors.append(result["next_cursor"])
+            return call("list_tasks", query="Page task", cursor=result["next_cursor"])
+        return say("The complete matching task list is available.")
+
+    model = install(app, paginate)
+    run = ask(client, person, space_id, "Show all the page tasks")
+    assert run["status"] == "completed", run
+    assert len(seen) == len(expected) and set(seen) == expected
+    assert {item["ref"] for item in run["evidence"]} == expected
+    assert cursors and len(model.calls) == len(cursors) + 2
+
+    other = create_space(client, person, "Other cursor scope").json()["data"]["id"]
+    for target, extra in ((other, {}), (space_id, {"due_from": "2026-09-20"})):
+        denied = install(app, script(call("list_tasks", query="Page task", cursor=cursors[0], **extra),
+                                     say("Reload this task list.")))
+        result = ask(client, person, target, "Continue the task list")
+        assert result["tool_calls"][0]["error_code"] == "CURSOR_INVALID"
+        assert result["evidence"] == [] and result["approval"] is None
+        assert "error" in tool_results(denied.calls[-1][0])[-1]
 
 
 def test_the_model_reads_with_a_tool_and_answers_from_the_result(client, app):
@@ -717,6 +1769,180 @@ def test_the_model_reads_with_a_tool_and_answers_from_the_result(client, app):
     # The tool's result reached the model as tool data, not as instructions.
     [result] = tool_results(second[0])
     assert result["result"]["tasks"][0]["title"] == "Water the plants"
+
+
+@pytest.mark.parametrize("same_space", [False, True])
+def test_reminder_tool_only_proposes_tasks_in_its_current_space(client, app, same_space):
+    person, space_id = solo(client, app)
+    other = create_space(client, person, "Other reminder plans").json()["data"]["id"]
+    target = space_id if same_space else other
+    task = create_task(client, person, target, title="Review the plans").json()["data"]
+    model = install(app, script(call("schedule_reminder", task_id=task["id"], date="2026-09-20", time="18:00"),
+                                say("The reminder request was checked.")))
+    run = ask(client, person, space_id, "Remind me about that task tomorrow at 6 pm")
+    assert count(app, Reminder) == 0
+    if not same_space:
+        assert run["status"] == "completed" and run["approval"] is None
+        assert tool_results(model.calls[-1][0])[-1]["error"] == "That task isn't in this Space."
+        assert run["tool_calls"][0]["error_code"] == "NOT_FOUND"
+        assert count(app, AgentApproval) == 0
+        return
+    assert run["status"] == "waiting_for_approval"
+    assert fields(run)["Task"] == task["title"]
+    approved = approve(client, person, run)
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["data"]["outcome"] == "action_completed"
+    with app.state.sessions() as database:
+        reminder = database.scalars(select(Reminder)).one()
+        assert reminder.task_id == task["id"] and reminder.space_id == space_id
+
+
+@pytest.mark.parametrize("tool_name, collection, identifier", [
+    ("list_events", "events", "id"),
+    ("list_documents", "documents", "document_id"),
+])
+def test_resource_listing_pages_preserve_history_scope_and_account_boundaries(client, app, monkeypatch, tool_name, collection, identifier):
+    owner, space_id = solo(client, app)
+
+    def create_resource(title):
+        response = (create_event(client, owner, space_id, title=title) if tool_name == "list_events"
+                    else add_document(client, owner, space_id, name=title + ".txt", content="Synthetic planning notes."))
+        assert response.status_code == 201, response.text
+        return response.json()["data"]["id"]
+
+    hidden = create_resource("Before admission")
+    member = account(client, app, f"{collection}-page-member@example.test")
+    admit(client, owner, space_id, member)
+    expected = {create_resource(f"Visible plan {index}") for index in range(2)}
+    other = create_space(client, owner, "Other resource scope").json()["data"]["id"]
+    admit(client, owner, other, member)
+    monkeypatch.setattr("app.modules.agents.toolkit.LISTED", 1)
+    seen, cursors = [], []
+
+    def follow_pages(messages, tools):
+        if messages[-1]["role"] != "tool":
+            return call(tool_name)
+        result = json.loads(messages[-1]["content"])["result"]
+        seen.extend(item[identifier] for item in result[collection])
+        if result["more"]:
+            assert result["next_cursor"] not in cursors
+            cursors.append(result["next_cursor"])
+            return call(tool_name, cursor=result["next_cursor"])
+        return say("These are the visible items in this Space.")
+
+    model = install(app, follow_pages)
+    run = ask(client, member, space_id, "List the planning resources here")
+    assert run["status"] == "completed" and run["approval"] is None
+    assert len(seen) == 2 and set(seen) == expected and hidden not in seen
+    assert {item["ref"] for item in run["evidence"]} == expected
+    assert len(model.calls) == 3 and len(cursors) == 1
+    assert all(item["effect"] == "read" and item["status"] == "succeeded" for item in run["tool_calls"])
+
+    attempts = [(owner, space_id, {}), (member, other, {})]
+    if tool_name == "list_events":
+        attempts.append((member, space_id, {"when": "past"}))
+    for actor, target, extra in attempts:
+        install(app, script(call(tool_name, cursor=cursors[0], **extra), say("Reload this list.")))
+        rejected = ask(client, actor, target, "Continue that list")
+        assert rejected["tool_calls"][0]["error_code"] == "CURSOR_INVALID"
+        assert rejected["evidence"] == [] and rejected["approval"] is None
+
+    expiry = json.loads(app.state.security.open(cursors[0]))["expires_at"]
+    app.state.clock.now = datetime.fromisoformat(expiry) + timedelta(seconds=1)
+    install(app, script(call(tool_name, cursor=cursors[0]), say("The page expired.")))
+    expired = ask(client, member, space_id, "Continue that list")
+    assert expired["tool_calls"][0]["error_code"] == "CURSOR_EXPIRED"
+    assert expired["evidence"] == [] and count(app, AgentApproval) == 0
+
+
+def test_reminder_service_scoped_pages_preserve_cursor_and_account_boundaries(client, app, monkeypatch):
+    owner, space_id = solo(client, app)
+    other = create_space(client, owner, "Other reminder scope").json()["data"]["id"]
+    member = account(client, app, "reminder-page-member@example.test")
+    admit(client, owner, space_id, member)
+    private_space = create_space(client, member, "Private reminder scope").json()["data"]["id"]
+    reminders = app.state.reminders
+    token = auth(owner)["Authorization"].removeprefix("Bearer ")
+    member_token = auth(member)["Authorization"].removeprefix("Bearer ")
+
+    def schedule(actor, target, title):
+        task = create_task(client, actor, target, title=title).json()["data"]
+        actor_token = auth(actor)["Authorization"].removeprefix("Bearer ")
+        preview = reminders.preview(actor_token, PreviewReminder.model_validate({
+            "task_id": task["id"], "local_time": "2026-09-20T18:00", "timezone": "Asia/Kolkata",
+        }))
+        return reminders.create(actor_token, CreateReminder(preview_token=preview.options[0].preview_token), str(uuid4()))
+
+    selected = {schedule(owner, space_id, title).id for title in ("First scoped reminder", "Second scoped reminder")}
+    elsewhere = schedule(owner, other, "Other Space reminder").id
+    member_reminder = schedule(member, space_id, "Another account's reminder").id
+    first, pagination = reminders.list_reminders(token, 1, space_id=space_id)
+    assert len(first) == 1 and first[0].space_id == space_id
+    assert pagination.has_more and pagination.next_cursor
+    rest, end = reminders.list_reminders(token, 2, pagination.next_cursor, space_id=space_id)
+    assert {item.id for item in first + rest} == selected
+    assert not end.has_more and end.next_cursor is None
+
+    for actor_token, target in ((token, other), (member_token, space_id), (token, None)):
+        with pytest.raises(DomainError) as failure:
+            reminders.list_reminders(actor_token, 2, pagination.next_cursor, space_id=target)
+        assert failure.value.code == "CURSOR_INVALID"
+    with pytest.raises(DomainError) as failure:
+        reminders.list_reminders(token, 2, space_id=private_space)
+    assert failure.value.status == 404
+    mine, _pagination = reminders.list_reminders(member_token, 10, space_id=space_id)
+    assert [item.id for item in mine] == [member_reminder]
+
+    global_first, global_page = reminders.list_reminders(token, 1)
+    legacy_fields = json.loads(reminders.security.open(global_page.next_cursor))
+    legacy_fields.pop("space_id", None)
+    legacy_cursor = reminders.security.seal(json.dumps(legacy_fields))
+    global_rest, _pagination = reminders.list_reminders(token, 10, legacy_cursor)
+    assert {item.id for item in global_first + global_rest} == selected | {elsewhere}
+
+    monkeypatch.setattr("app.modules.agents.toolkit.LISTED", 1)
+    seen = []
+
+    def follow_pages(messages, tools):
+        if messages[-1]["role"] != "tool":
+            return call("list_my_reminders")
+        result = json.loads(messages[-1]["content"])["result"]
+        seen.extend(item["id"] for item in result["reminders"])
+        if result["more"]:
+            return call("list_my_reminders", cursor=result["next_cursor"])
+        return say("These are your reminders in this Space.")
+
+    model = install(app, follow_pages)
+    run = ask(client, owner, space_id, "List all my reminders here")
+    assert run["status"] == "completed" and run["approval"] is None
+    assert len(seen) == 2 and set(seen) == selected
+    assert len(model.calls) == 3
+    assert {item["ref"] for item in run["evidence"]} == selected
+    assert all(item["tool_name"] == "reminders.list" for item in run["tool_calls"])
+    assert count(app, Reminder) == 4 and count(app, AgentApproval) == 0
+
+    app.state.clock.now += timedelta(minutes=16)
+    with pytest.raises(DomainError) as failure:
+        reminders.list_reminders(token, 2, pagination.next_cursor, space_id=space_id)
+    assert failure.value.code == "CURSOR_EXPIRED"
+
+
+def test_reminder_execution_rechecks_the_space_of_an_older_payload(client, app):
+    person, space_id = solo(client, app)
+    other = create_space(client, person, "Other saved reminder").json()["data"]["id"]
+    task = create_task(client, person, other, title="Old foreign proposal").json()["data"]
+    token = auth(person)["Authorization"].removeprefix("Bearer ")
+    preview = app.state.reminders.preview(token, PreviewReminder.model_validate({
+        "task_id": task["id"], "local_time": "2026-09-20T18:00", "timezone": "Asia/Kolkata",
+    }))
+    payload = {"task_id": task["id"], "task_version": preview.task_version,
+               "local_time": "2026-09-20T18:00", "timezone": "Asia/Kolkata",
+               "scheduled_at": preview.options[0].scheduled_at.isoformat()}
+    context = ToolContext(agent=app.state.agents, token=token, run_id=str(uuid4()), account_id=person["user"]["id"],
+                          admission_id=None, space_id=space_id, timezone="Asia/Kolkata", now=app.state.clock())
+    with pytest.raises(ToolProblem, match="That task isn't in this Space"):
+        execute_schedule_reminder(context, payload, str(uuid4()))
+    assert count(app, Reminder) == 0
 
 
 def test_a_change_waits_for_approval_then_runs_once_and_the_model_reports_it(client, app):
@@ -996,11 +2222,205 @@ def test_model_failures_end_the_run_honestly(client, app):
     assert (refused.status_code, refused.json()["error"]["code"]) == (503, "AGENT_MODEL_UNAVAILABLE")
 
 
+@pytest.mark.parametrize("helper", [False, True])
+def test_a_model_answer_without_visible_text_is_not_reported_as_success(client, app, helper):
+    person = account(client, app)
+    empty_answer = say("\u200b\u0000")
+    turns = [empty_answer]
+    if helper:
+        turns = [call("research", task="Review the current information"), empty_answer,
+                 say("The research helper could not finish. Please try again.")]
+    model = install(app, script(*turns))
+
+    run = ask(client, person, MAIN_AGENT, "Review the current information")
+
+    if helper:
+        result = tool_results(model.calls[-1][0])[-1]
+        assert result == {"error": "The research helper could not finish."}
+        assert run["tool_calls"][-1]["status"] == "failed"
+        assert run["tool_calls"][-1]["error_code"] == "helper_failed"
+    else:
+        assert (run["status"], run["stop_reason"]) == ("failed", "model_empty")
+    assert run["answer"] != "Done." and run["approval"] is None
+    assert len(model.calls) == len(turns)
+
+
 def test_the_loop_stops_after_its_step_limit(client, app):
     person, space_id = solo(client, app)
     install(app, lambda messages, tools: call("list_tasks"))
     run = ask(client, person, space_id, "loop forever")
     assert (run["status"], run["stop_reason"]) == ("completed", "step_limit")
+
+
+def test_a_model_tool_batch_stops_at_the_run_call_limit(client, app):
+    person = account(client, app)
+    batch = ModelTurn(content=None, tool_calls=tuple(call("read_memories").tool_calls[0] for _ in range(31)))
+    model = install(app, script(batch, say("This extra turn must not run.")))
+
+    run = ask(client, person, MAIN_AGENT, "Review my saved notes")
+
+    assert len(run["tool_calls"]) == 30
+    assert run["tool_calls"][-1]["sequence"] == 30
+    assert (run["status"], run["stop_reason"]) == ("completed", "step_limit")
+    assert run["finished_at"] is not None and run["approval"] is None
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("path", ["automatic_reads", "research"])
+def test_nested_reads_stop_cleanly_at_the_run_call_limit(client, app, path):
+    person = account(client, app)
+    requested = []
+
+    def endpoint(request):
+        requested.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json={"results": [{
+                "title": "Transit report", "url": "https://news.example.org/transit", "snippet": "Service update.",
+            }]})
+        return httpx.Response(200, json={"results": [{"title": "Transit report", "text": "Service starts tomorrow."}]})
+
+    app.state.agents.web = WebLookup("synthetic-key", daily_limit=100, transport=httpx.MockTransport(endpoint))
+    if path == "automatic_reads":
+        batch = ModelTurn(content=None, tool_calls=(
+            *(call("read_memories").tool_calls[0] for _ in range(29)),
+            call("web_search", query="transit report").tool_calls[0],
+        ))
+        turns = [batch]
+    else:
+        turns = [
+            call("research", task="Review the transit reports"),
+            ModelTurn(content=None, tool_calls=tuple(
+                call("read_web_page", url=f"https://news.example.org/transit-{index}").tool_calls[0]
+                for index in range(31)
+            )),
+        ]
+    model = install(app, script(*turns, say("This extra turn must not run.")))
+
+    run = ask(client, person, MAIN_AGENT, "Review the available information")
+
+    assert (run["status"], run["stop_reason"]) == ("completed", "step_limit")
+    assert len(run["tool_calls"]) == 30 and run["tool_calls"][-1]["sequence"] == 30
+    assert run["finished_at"] is not None
+    assert len(model.calls) == len(turns)
+    assert requested == (["GET"] if path == "automatic_reads" else ["POST"] * 30)
+    persisted = client.get(f"/v1/agent-runs/{run['id']}", headers=auth(person)).json()["data"]
+    assert persisted["status"] == "completed" and persisted["stop_reason"] == "step_limit"
+
+
+@pytest.mark.parametrize("helper", [False, True])
+@pytest.mark.parametrize("outcome", ["answer", "tool", "error"])
+def test_model_results_at_the_run_deadline_are_discarded(client, app, helper, outcome):
+    person, space_id = solo(client, app)
+    late_text = "This model reply arrived after the deadline."
+
+    def respond(messages, tools):
+        if helper and len(model.calls) == 1:
+            return call("research", task="Review the plans")
+        with app.state.sessions() as database:
+            run = database.scalars(select(AgentRun).where(AgentRun.status == "running")).one()
+            app.state.clock.now = run.deadline_at
+        if outcome == "error":
+            return ModelError("unavailable")
+        if outcome == "tool":
+            return call("create_task", title=late_text)
+        return say(late_text)
+
+    model = install(app, respond)
+    result = ask(client, person, space_id, "Review the current plans")
+    assert (result["status"], result["stop_reason"]) == ("timed_out", "timed_out")
+    assert result["approval"] is None and count(app, Task) == 0
+    assert len(model.calls) == (2 if helper else 1)
+    with app.state.sessions() as database:
+        run = database.get(AgentRun, result["id"])
+        assert late_text not in json.dumps(run.state) and late_text not in (run.answer or "")
+        assert run.lease_owner is None and run.finished_at == app.state.clock()
+
+
+@pytest.mark.parametrize("helper", [False, True])
+def test_web_results_at_the_run_deadline_are_discarded(client, app, helper):
+    person, space_id = solo(client, app)
+    link = "https://news.example.org/slow-report"
+    late_text = "This web result arrived after the deadline."
+    turns = [call("read_web_page", url=link), say("This answer must not be reached.")]
+    if helper:
+        turns.insert(0, call("research", task="Read the report"))
+    model = install(app, script(*turns))
+    requested = []
+
+    def endpoint(request):
+        requested.append(request)
+        with app.state.sessions() as database:
+            run = database.scalars(select(AgentRun).where(AgentRun.status == "running")).one()
+            app.state.clock.now = run.deadline_at
+        return httpx.Response(200, json={"results": [{"url": link, "title": "Slow report", "text": late_text}]})
+
+    app.state.agents.web = WebLookup("synthetic-key", daily_limit=1, transport=httpx.MockTransport(endpoint))
+    result = ask(client, person, space_id, "Read this report: " + link)
+    assert (result["status"], result["stop_reason"]) == ("timed_out", "timed_out")
+    assert result["sources"] == [] and result["approval"] is None
+    assert len(requested) == 1 and len(model.calls) == (2 if helper else 1)
+    with app.state.sessions() as database:
+        run = database.get(AgentRun, result["id"])
+        assert late_text not in json.dumps(run.state) and late_text not in (run.answer or "")
+        assert app.state.agents.web_usage(database, run.account_id) == 1
+
+
+@pytest.mark.parametrize("helper", [False, True])
+@pytest.mark.parametrize("outcome", ["answer", "tool", "error"])
+def test_model_turns_at_the_active_deadline_cannot_complete_or_propose_actions(client, app, helper, outcome):
+    person = account(client, app)
+    late_text = "This result arrived after the active deadline."
+    model = install(app)
+
+    def respond(messages, tools):
+        if helper and len(model.calls) == 1:
+            return call("research", task="Review the current information")
+        app.state.clock.now += timedelta(minutes=6)
+        if outcome == "error":
+            return ModelError("length")
+        if outcome == "tool":
+            return call("create_page", name=late_text, handle="late-report", topic="hobbies")
+        return say(late_text)
+
+    model.brain = respond
+    run = ask(client, person, MAIN_AGENT, "Review the current information")
+
+    assert (run["status"], run["stop_reason"]) == ("timed_out", "timed_out")
+    assert run["finished_at"] is not None and run["approval"] is None
+    assert len(model.calls) == (2 if helper else 1)
+    assert count(app, AgentApproval) == 0 and count(app, PublicPage) == 0
+    with app.state.sessions() as database:
+        stored = database.get(AgentRun, run["id"])
+        assert late_text not in json.dumps(stored.state) and late_text not in stored.answer
+        assert stored.lease_owner is None
+
+
+@pytest.mark.parametrize("helper", [False, True])
+def test_page_reads_at_the_active_deadline_are_discarded_without_refunding_the_attempt(client, app, helper):
+    person = account(client, app)
+    late_text = "Article content received after the deadline."
+    requested = []
+
+    def endpoint(request):
+        requested.append(request)
+        app.state.clock.now += timedelta(minutes=6)
+        return httpx.Response(200, json={"results": [{"title": "Late report", "text": late_text}]})
+
+    app.state.agents.web = WebLookup("synthetic-key", daily_limit=1, transport=httpx.MockTransport(endpoint))
+    turns = [call("read_web_page", url="https://news.example.org/late-report")]
+    if helper:
+        turns.insert(0, call("research", task="Read the report"))
+    model = install(app, script(*turns, say("This extra turn must not run.")))
+
+    run = ask(client, person, MAIN_AGENT, "Read the current report")
+
+    assert (run["status"], run["stop_reason"]) == ("timed_out", "timed_out")
+    assert run["sources"] == [] and run["tool_calls"] == []
+    assert len(requested) == 1 and len(model.calls) == len(turns)
+    with app.state.sessions() as database:
+        stored = database.get(AgentRun, run["id"])
+        assert late_text not in json.dumps(stored.state) and late_text not in stored.answer
+        assert app.state.agents.web_usage(database, stored.account_id) == 1
 
 
 def test_earlier_requests_are_history_but_not_for_chat_requests(client, app):
@@ -1040,6 +2460,115 @@ def test_cancel_stops_a_waiting_run(client, app):
     run = ask(client, person, space_id, "add a task to sweep")
     stopped = client.post(f"/v1/agent-runs/{run['id']}/cancel", headers=auth(person), json={}).json()["data"]
     assert (stopped["status"], stopped["approval"]["status"]) == ("cancelled", "cancelled")
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+@pytest.mark.parametrize("change, status, reason", [
+    ("session", "failed", "session_ended"),
+    ("switch", "cancelled", "agent_off"),
+    ("deadline", "timed_out", "timed_out"),
+])
+def test_prepared_actions_recheck_access_and_deadline_before_approval(client, app, monkeypatch, automatic, change, status, reason):
+    person, space_id = solo(client, app)
+    model = install(app, script(call("create_task", title="This task must not be created")))
+    agent = app.state.agents
+    monkeypatch.setattr(agent, "submit", lambda run_id, token: None)
+    queued = ask(client, person, space_id, "Add a task")
+    with app.state.sessions.begin() as database:
+        run = database.get(AgentRun, queued["id"])
+        agent.remember(run, auto_approve=automatic)
+    method_name = "apply_now" if automatic else "pause_for_approval"
+    original = getattr(agent.runtime, method_name)
+
+    def delayed_proposal(*args, **kwargs):
+        with app.state.sessions.begin() as database:
+            run = database.get(AgentRun, queued["id"])
+            if change == "session":
+                database.get(AccountSession, run.session_id).revoked_at = app.state.clock()
+            elif change == "switch":
+                database.get(Space, space_id).agent_enabled = False
+            else:
+                app.state.clock.now = run.deadline_at
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(agent.runtime, method_name, delayed_proposal)
+    agent.runtime.advance(queued["id"], auth(person)["Authorization"].removeprefix("Bearer "))
+    with app.state.sessions() as database:
+        run = database.get(AgentRun, queued["id"])
+        assert (run.status, run.stop_reason) == (status, reason)
+        assert run.finished_at is not None and run.lease_owner is None
+    assert len(model.calls) == 1
+    assert count(app, AgentApproval) == 0 and count(app, Task) == 0
+
+
+@pytest.mark.parametrize("phase", ["queued", "answer", "research_before", "research_answer"])
+@pytest.mark.parametrize("outcome", ["answer", "tool", "error"])
+@pytest.mark.parametrize("change, scoped, status, reason", [
+    ("session", True, "failed", "session_ended"),
+    ("session", False, "failed", "session_ended"),
+    ("switch", True, "cancelled", "agent_off"),
+    ("membership", True, "failed", "not_found"),
+])
+def test_model_turns_recheck_access_before_sending_and_after_answering(client, app, monkeypatch, phase, outcome, change, scoped, status, reason):
+    owner, space_id = solo(client, app)
+    person = owner
+    if change == "membership":
+        person = account(client, app, "revoked-runtime-member@example.test")
+        admit(client, owner, space_id, person)
+    model = install(app)
+    monkeypatch.setattr(app.state.agents, "submit", lambda run_id, token: None)
+    queued = ask(client, person, space_id if scoped else None, "Summarize the current plans")
+    assert queued["status"] == "queued"
+    late_text = "Private late answer that must not be saved."
+
+    def invalidate():
+        if change == "membership":
+            roster = client.get(f"/v1/spaces/{space_id}/members", headers=auth(owner)).json()["data"]
+            entry = next(member for member in roster if member["account_id"] == person["user"]["id"])
+            removed = client.post(
+                f"/v1/spaces/{space_id}/members/{person['user']['id']}/remove", json={},
+                headers={**auth(owner), "Idempotency-Key": str(uuid4()), "If-Match": entry["etag"]},
+            )
+            assert removed.status_code == 200, removed.text
+            return
+        with app.state.sessions.begin() as database:
+            run = database.get(AgentRun, queued["id"])
+            if change == "session":
+                database.get(AccountSession, run.session_id).revoked_at = app.state.clock()
+            else:
+                database.get(Space, space_id).agent_enabled = False
+
+    def respond(messages, tools):
+        if phase.startswith("research") and len(model.calls) == 1:
+            return call("research", task="Review the current plans")
+        if phase in ("answer", "research_answer"):
+            invalidate()
+        if outcome == "error":
+            return ModelError("unavailable")
+        if outcome == "tool":
+            return call("create_task", title=late_text)
+        return say(late_text)
+
+    model.brain = respond
+    if phase == "research_before":
+        research = app.state.agents.runtime.research
+
+        def interrupted_research(run_id, worker, context, task):
+            invalidate()
+            return research(run_id, worker, context, task)
+
+        monkeypatch.setattr(app.state.agents.runtime, "research", interrupted_research)
+    if phase == "queued":
+        invalidate()
+    app.state.agents.runtime.advance(queued["id"], auth(person)["Authorization"].removeprefix("Bearer "))
+
+    with app.state.sessions() as database:
+        run = database.get(AgentRun, queued["id"])
+        assert (run.status, run.stop_reason) == (status, reason)
+        assert late_text not in (run.answer or "") and late_text not in json.dumps(run.state)
+        assert run.lease_owner is None and run.finished_at is not None
+    assert len(model.calls) == {"queued": 0, "answer": 1, "research_before": 1, "research_answer": 2}[phase]
+    assert count(app, AgentApproval) == 0 and count(app, Task) == 0
 
 
 def test_runs_work_in_the_background(client, app):

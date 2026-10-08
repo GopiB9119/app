@@ -93,6 +93,34 @@ def family(client, app):
     return owner, member, space_id
 
 
+def test_space_list_shows_last_chat_activity_only_since_the_viewer_joined(client, app):
+    owner = account(client, app)
+    space_id = create_space(client, owner).json()["data"]["id"]
+
+    def last(actor):
+        return {item["id"]: item["last_message_at"] for item in client.get("/v1/spaces", headers=auth(actor)).json()["data"]}
+
+    assert last(owner) == {space_id: None}
+    chat = open_chat(client, owner, space_id).json()["data"]["id"]
+    assert send(client, owner, chat, "Before Sam joined").status_code == 201
+    first = last(owner)[space_id]
+    assert first is not None
+    advance(app, seconds=5)
+    member = account(client, app, "chat-member@example.test")
+    admit(client, owner, space_id, member)
+    # The earlier message's time is not shown to someone who joined later.
+    assert last(member) == {space_id: None}
+    advance(app, seconds=5)
+    assert send(client, member, chat, "Hello").status_code == 201
+    assert last(member)[space_id] == last(owner)[space_id] != first
+    # A direct chat in the same Space is not Space activity.
+    advance(app, seconds=5)
+    direct = open_chat(client, owner, space_id, member["user"]["id"]).json()["data"]["id"]
+    before = last(owner)[space_id]
+    assert send(client, owner, direct, "Just us").status_code == 201
+    assert last(owner)[space_id] == before
+
+
 def test_unread_marker_changes_for_a_new_message_at_the_same_count_but_not_an_own_send(client, app):
     owner, member, space_id = family(client, app)
     chat = open_chat(client, owner, space_id).json()["data"]

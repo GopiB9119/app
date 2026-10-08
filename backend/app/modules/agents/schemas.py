@@ -3,16 +3,26 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, StringConstraints, field_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    Field,
+    StringConstraints,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
+from app.modules.agents.web import public_link
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
-from app.modules.agents.web import public_link
 
 RunStatus = Literal[
     "queued", "running", "waiting_for_approval", "waiting_for_user", "verifying",
     "completed", "failed", "cancelled", "timed_out", "expired",
 ]
+RunFilter = Literal["all", "working", "waiting_for_approval", "waiting_for_user", "completed", "failed", "cancelled", "needs_you"]
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired", "cancelled", "superseded"]
 
 
@@ -159,7 +169,7 @@ class AgentQuestionView(BaseModel):
 
 
 class AgentEvidence(BaseModel):
-    kind: Literal["task", "reminder", "memory", "roster", "policy", "event", "document", "page", "post", "comment", "report", "message", "space", "interests"]
+    kind: Literal["task", "reminder", "memory", "roster", "policy", "event", "poll", "document", "page", "post", "comment", "report", "message", "space", "interests"]
     ref: str | None
     label: str
 
@@ -181,6 +191,7 @@ class AgentWebSource(BaseModel):
     url: str
     read: bool = False
     video_id: str | None = None
+    retrieved_at: AwareDatetime | None = None
 
 
 class AgentWebTextView(BaseModel):
@@ -193,6 +204,80 @@ class AgentWebTextView(BaseModel):
 class AgentRunWebTextView(BaseModel):
     run_id: str
     sources: list[AgentWebTextView] = Field(max_length=8)
+
+
+class AgentTextPart(BaseModel):
+    type: Literal["text"] = "text"
+    content: str
+
+
+class AgentMarkdownPart(BaseModel):
+    type: Literal["markdown"] = "markdown"
+    content: str
+
+
+class AgentActivityPart(BaseModel):
+    type: Literal["activity"] = "activity"
+    events: list[AgentEventView]
+
+
+class AgentTaskPart(BaseModel):
+    type: Literal["task"] = "task"
+    plan: list[AgentPlanStep]
+    todos: list[AgentTodoView]
+
+
+class AgentToolPart(BaseModel):
+    type: Literal["tool"] = "tool"
+    call: AgentToolCallView
+
+
+class AgentSourcesPart(BaseModel):
+    type: Literal["sources"] = "sources"
+    sources: list[AgentWebSource]
+
+
+class AgentEvidencePart(BaseModel):
+    type: Literal["evidence"] = "evidence"
+    items: list[AgentEvidence]
+
+
+class AgentApprovalPart(BaseModel):
+    type: Literal["approval"] = "approval"
+    approval: AgentApprovalView
+
+
+class AgentQuestionPart(BaseModel):
+    type: Literal["question"] = "question"
+    question: AgentQuestionView
+
+
+class AgentHandoffsPart(BaseModel):
+    type: Literal["handoffs"] = "handoffs"
+    handoffs: list[AgentHandoffView]
+
+
+AgentMessagePart = Annotated[
+    AgentTextPart | AgentMarkdownPart | AgentActivityPart | AgentTaskPart | AgentToolPart
+    | AgentSourcesPart | AgentEvidencePart | AgentApprovalPart | AgentQuestionPart | AgentHandoffsPart,
+    Field(discriminator="type"),
+]
+
+
+class AgentChatMessage(BaseModel):
+    id: str
+    role: Literal["user", "agent"]
+    parts: list[AgentMessagePart]
+    created_at: datetime
+
+
+class AgentInteractionView(BaseModel):
+    schema_version: Literal[1] = 1
+    run_id: str
+    agent_kind: Literal["main", "space"]
+    space_id: str | None
+    status: RunStatus
+    messages: list[AgentChatMessage]
 
 
 class AgentRunView(BaseModel):
@@ -219,6 +304,37 @@ class AgentRunView(BaseModel):
     finished_at: datetime | None
     version: str
 
+    @computed_field
+    @property
+    def interaction(self) -> AgentInteractionView:
+        parts: list[AgentMessagePart] = []
+        if self.answer:
+            parts.append(AgentMarkdownPart(content=self.answer))
+        if self.events:
+            parts.append(AgentActivityPart(events=self.events))
+        if self.plan or self.todos:
+            parts.append(AgentTaskPart(plan=self.plan, todos=self.todos))
+        parts.extend(AgentToolPart(call=call) for call in self.tool_calls)
+        if self.sources:
+            parts.append(AgentSourcesPart(sources=self.sources))
+        if self.evidence:
+            parts.append(AgentEvidencePart(items=self.evidence))
+        if self.approval:
+            parts.append(AgentApprovalPart(approval=self.approval))
+        if self.question:
+            parts.append(AgentQuestionPart(question=self.question))
+        if self.handoffs:
+            parts.append(AgentHandoffsPart(handoffs=self.handoffs))
+        return AgentInteractionView(
+            run_id=self.id, agent_kind=self.agent_kind, space_id=self.space_id, status=self.status,
+            messages=[
+                AgentChatMessage(id=f"{self.id}:request", role="user", created_at=self.created_at,
+                                 parts=[AgentTextPart(content=self.message)]),
+                AgentChatMessage(id=f"{self.id}:response", role="agent", parts=parts,
+                                 created_at=self.finished_at or self.updated_at),
+            ],
+        )
+
 
 class AgentRunPage(Envelope[list[AgentRunView]]):
     pagination: Pagination
@@ -228,12 +344,26 @@ class AgentEventPage(Envelope[list[AgentEventView]]):
     pagination: Pagination
 
 
+class EditAgentMemory(Input):
+    content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200), AfterValidator(plain_message)] | None = None
+    enabled: bool | None = Field(default=None, strict=True)
+
+    @model_validator(mode="after")
+    def explicit_changes(self):
+        if not self.model_fields_set or any(getattr(self, name) is None for name in self.model_fields_set):
+            raise ValueError("Supply memory text, an enabled setting, or both; values cannot be null.")
+        return self
+
+
 class AgentMemoryView(BaseModel):
     id: str
     kind: Literal["preference", "note"]
     key: str | None
     label: str
     content: str
+    enabled: bool
+    version: str
+    etag: str
     source: str
     source_run_id: str | None
     # The Space whose agent keeps this note; None for the person's own memory.
@@ -257,6 +387,7 @@ class DeletedMemory(BaseModel):
 
 class AgentRunCursor(Input):
     kind: Literal["agent_runs"]
+    status: RunFilter = "all"
     account_id: UUID
     space_id: UUID | None
     admission_id: UUID | None

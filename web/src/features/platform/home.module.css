@@ -1,4 +1,5 @@
 /* Home, the personal overview (DEC-014): grouped lists on the grey page. Lists, headers and alerts come from the shared kit. */
 .main { width: min(720px, 100%); margin: 0 auto; padding: calc(var(--space-unit) * 5) calc(var(--space-unit) * 4) calc(var(--space-unit) * 10); display: grid; gap: calc(var(--space-unit) * 6); min-width: 0; }
 .shortcuts { display: flex; flex-wrap: wrap; gap: calc(var(--space-unit) * 2); }
+.summary { margin: 0; padding-inline: calc(var(--space-unit) * 4); color: var(--color-ink); font-weight: 600; }
 .quiet { margin: 0; padding: calc(var(--space-unit) * 4); display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--space-unit) * 2); border-radius: var(--radius-dialog); background: var(--color-surface); color: var(--color-muted); }

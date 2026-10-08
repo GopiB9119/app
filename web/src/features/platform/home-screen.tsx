@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { Bell, BellRing, CalendarDays, Heart, House, Mail, Newspaper, Pill, RefreshCw, UserPlus, UserRound, UsersRound } from "lucide-react";
+import { Bell, BellRing, Bot, CalendarDays, Heart, House, Mail, Newspaper, Pill, RefreshCw, UserPlus, UserRound, UsersRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemLeading, ItemLink, ItemTitle } from "@/components/ui/item";
 import { PageHeader, Section as Group } from "@/components/ui/section";
 import { LoadingState } from "@/components/ui/skeleton";
+import { runPage } from "@/features/agents/client";
 import { homeFeed } from "@/features/community/client";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
@@ -22,7 +23,7 @@ import { calendarPage, compareCalendarEntries, dateInZone } from "@/features/pla
 import type { CalendarEntry } from "@/features/planning/calendar-client";
 import { notificationPage, reminderRequestPage } from "@/features/scheduling/client";
 import { invitationPage, pendingJoinRequests, spacesSchema } from "@/features/spaces/client";
-import type { FamilySpace } from "@/features/spaces/client";
+import type { ListedSpace } from "@/features/spaces/client";
 import styles from "./home.module.css";
 
 const SHOWN = 3;
@@ -50,7 +51,7 @@ function Overview({ user }: { user: Account }) {
   const t = useText();
   const spaces = useQuery({ queryKey: ["spaces", user.id], queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }) });
   return <Shell account><main className={styles.main}>
-    <PageHeader title={t("home.title")} actions={<nav className={styles.shortcuts} aria-label={t("home.shortcuts")}>
+    <PageHeader title={t("home.title")} description={t(greetingFor(user.timezone), { name: user.display_name })} actions={<nav className={styles.shortcuts} aria-label={t("home.shortcuts")}>
       <Button asChild variant="secondary" size="sm"><Link href="/app/calendar"><CalendarDays aria-hidden />{t("home.calendar")}</Link></Button>
       <Button asChild variant="secondary" size="sm"><Link href="/app/care"><Pill aria-hidden />{t("home.medicines")}</Link></Button>
     </nav>} />
@@ -61,7 +62,13 @@ function Overview({ user }: { user: Account }) {
   </main></Shell>;
 }
 
-type SpacesQuery = UseQueryResult<{ data: FamilySpace[] }>;
+type SpacesQuery = UseQueryResult<{ data: ListedSpace[] }>;
+
+// The hour in the person's own timezone, not the device's.
+function greetingFor(timezone: string): MessageId {
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  return hour < 12 ? "home.greeting.morning" : hour < 17 ? "home.greeting.afternoon" : "home.greeting.evening";
+}
 
 function Section({ id, title, more, moreLabel, children }: { id: string; title: string; more: string; moreLabel: string; children: React.ReactNode }) {
   const t = useText();
@@ -94,7 +101,25 @@ function NeedsAttention({ user, spaces }: { user: Account; spaces: SpacesQuery }
     queryKey: ["home", user.id, "join-requests", space.id], queryFn: ({ signal }: { signal: AbortSignal }) => pendingJoinRequests(user.id, space.id, signal),
   })) });
   const now = Date.now();
+  // The Main Agent plus each Space whose agent is on; agent live hints refresh these through the "agentRuns" key.
+  const agentScopes: (string | null)[] = [null, ...(spaces.data?.data ?? []).filter(space => space.agent_enabled).map(space => space.id)];
+  const agentRuns = useQueries({ queries: agentScopes.map(spaceId => ({
+    queryKey: ["agentRuns", user.id, "home-needs-you", spaceId ?? "main"],
+    queryFn: ({ signal }: { signal: AbortSignal }) => runPage(user.id, spaceId, null, signal, "needs_you"),
+  })) });
+  const spaceNames = new Map((spaces.data?.data ?? []).map(space => [space.id, space.name]));
   const groups: { name: string; checking: MessageId; problem: MessageId; items: Attention[]; query: { isPending: boolean; isError: boolean; refetch: () => unknown } }[] = [
+    { name: "agent", checking: "home.checkingAgent", problem: "home.failedAgent",
+      query: { isPending: spaces.isPending || agentRuns.some(runs => runs.isPending), isError: agentRuns.some(runs => runs.isError),
+        refetch: () => agentRuns.filter(runs => runs.isError).forEach(runs => void runs.refetch()) },
+      items: agentRuns.flatMap(runs => runs.data?.data ?? []).map(run => ({
+        key: `agent-${run.id}`,
+        text: run.status === "waiting_for_user" && run.question ? t("home.agentQuestion", { question: run.question.text })
+          : t("home.agentApproval", { summary: run.approval?.summary ?? run.message }),
+        detail: run.space_id ? spaceNames.get(run.space_id) : t("home.mainAgent"),
+        href: run.space_id ? `/app/agent/tasks?space_id=${run.space_id}` : "/app/agent",
+        action: t(run.status === "waiting_for_user" ? "home.agentAnswer" : "home.agentReview"), icon: Bot, tone: "warning" as const,
+      })) },
     { name: "invitations", checking: "home.checkingInvitations", problem: "home.failedInvitations", query: invitations, items: (invitations.data?.data ?? []).filter(item => item.status === "pending" && Date.parse(item.expires_at) > now).map(item => ({
       key: `invitation-${item.id}`, text: t("home.invitation", { name: item.inviter_name, space: item.space_name }), href: "/app/spaces", action: t("home.reviewInvitation"), icon: Mail,
     })) },
@@ -115,6 +140,8 @@ function NeedsAttention({ user, spaces }: { user: Account; spaces: SpacesQuery }
   const loaded = groups.filter(group => !group.query.isPending && !group.query.isError);
   const items = loaded.flatMap(group => group.items);
   return <Section id="home-attention" title={t("home.attention")} more="/app/notifications" moreLabel={t("home.viewInbox")}>
+    {loaded.length === groups.length && items.length > 0 && <p className={styles.summary}>
+      {items.length === 1 ? t("home.attentionOne") : t("home.attentionCount", { count: items.length })}</p>}
     {items.length > 0 && <ItemGroup>
       {items.slice(0, SHOWN * 2).map(item => <Item key={item.key} tone={item.tone}>
         <ItemLeading><item.icon size={20} aria-hidden /></ItemLeading>
@@ -186,7 +213,9 @@ function YourSpaces({ spaces }: { spaces: SpacesQuery }) {
     {list.length > 0 && <ItemGroup>
       {list.slice(0, SHOWN + 1).map(space => { const Icon = spaceIcons[space.space_type] ?? UsersRound; return <Item key={space.id}>
         <ItemLeading><Icon size={20} aria-hidden /></ItemLeading>
-        <ItemContent><ItemTitle>{space.name}</ItemTitle><ItemDescription>{t(`home.type.${space.space_type}`)} · {t(`home.role.${space.role}`)}</ItemDescription></ItemContent>
+        <ItemContent><ItemTitle>{space.name}</ItemTitle><ItemDescription>{t(`home.type.${space.space_type}`)} · {t(`home.role.${space.role}`)}
+          {space.member_count !== undefined && <> · {space.member_count === 1 ? t("spaces.groups.memberOne") : t("spaces.groups.memberOther", { count: String(space.member_count) })}</>}
+          {" · "}{t(space.agent_enabled ? "spaces.agentOn" : "spaces.agentOff")}</ItemDescription></ItemContent>
         <ItemLink href={`/app/tasks?space_id=${space.id}`} aria-label={t("home.tasksIn", { space: space.name })}>{t("home.tasks")}</ItemLink>
       </Item>; })}
     </ItemGroup>}

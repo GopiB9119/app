@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import os
 import queue
 import socket
@@ -30,6 +31,7 @@ from app.modules.realtime import database as live_database
 from app.modules.realtime.hub import signal
 from app.modules.realtime import leases as lease_module
 from app.modules.realtime.models import LiveConnectionLease
+from tests.agent_support import MAIN_AGENT, ask
 from tests.test_identity import account, auth
 from tests.test_messaging import admit, family, open_chat, send
 from tests.test_reminder_delivery_guards import schedule_reminder
@@ -187,6 +189,76 @@ def test_inbox_hints_reach_only_the_recipient(client, app):
         assert response.status_code == 200, response.text
     assert mine.since_last() == [{"kind": "notifications", "reason": "read"}, {"kind": "notifications", "reason": "acknowledge"}]
     assert theirs.since_last() == []
+
+
+def test_main_agent_progress_hints_reach_only_the_requester_and_name_no_space_or_content(client, app):
+    asker = account(client, app, "asker@example.test")
+    other = account(client, app, "other@example.test")
+    mine, theirs = Hints(app, asker), Hints(app, other)
+    run = ask(client, asker, MAIN_AGENT, "Private dinner idea")
+    assert run["status"] == "completed"
+    hints = mine.since_last()
+    # Each recorded step (received, working, understanding, finished) commits its own hint, so the screen follows live.
+    assert len(hints) == len(client.get(f"/v1/agent-runs/{run['id']}", headers=auth(asker)).json()["data"]["events"]) >= 3
+    assert all(hint == {"kind": "agent", "space_id": None, "run_id": run["id"], "reason": "changed"} for hint in hints)
+    assert "dinner" not in repr(hints).lower()
+    assert theirs.since_last() == []
+
+
+@pytest.mark.parametrize("driver_timeout", [None, live_database.CONNECT_SECONDS])
+def test_live_database_connect_matches_the_driver_generator_signature(monkeypatch, driver_timeout):
+    requested, ready, connected = object(), object(), object()
+    calls = []
+
+    def handshake(connection_class, conninfo, options):
+        calls.append((connection_class, conninfo, options))
+        assert (yield requested) is ready
+        return connected
+
+    if driver_timeout is None:
+        def connect(connection_class, conninfo=""):
+            return handshake(connection_class, conninfo, {})
+    else:
+        def connect(connection_class, conninfo="", *, timeout=0):
+            return handshake(connection_class, conninfo, {"timeout": timeout})
+
+    monkeypatch.setattr(live_database.psycopg.Connection, "_connect_gen", classmethod(connect))
+    options = {} if driver_timeout is None else {"timeout": driver_timeout}
+    generator = live_database.BoundedConnection._connect_gen("dbname=community_test", **options)
+    try:
+        assert next(generator) is requested
+        with pytest.raises(StopIteration) as completed:
+            generator.send(ready)
+        assert completed.value.value is connected
+        assert calls == [(live_database.BoundedConnection, "dbname=community_test", options)]
+    finally:
+        generator.close()
+
+
+def test_live_database_wait_accepts_driver_timeout_and_still_closes_on_expiry(monkeypatch):
+    clock = SimpleNamespace(now=100.0)
+    requested = object()
+    closed = []
+
+    def operation():
+        try:
+            yield requested
+            pytest.fail("An expired database operation resumed.")
+        finally:
+            closed.append("generator")
+
+    def wait(generator, descriptor, interval):
+        assert descriptor == 7 and interval == live_database.POLL_SECONDS
+        assert next(generator) is requested
+        clock.now += live_database.TRANSPORT_SECONDS
+        generator.send(None)
+
+    monkeypatch.setattr(live_database, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(live_database.waiting, "wait", wait)
+    connection = SimpleNamespace(pgconn=SimpleNamespace(socket=7), close=lambda: closed.append("connection"))
+    with pytest.raises(live_database.psycopg.OperationalError, match="Live database time budget exhausted"):
+        live_database.BoundedConnection.wait(connection, operation(), timeout=live_database.TRANSPORT_SECONDS)
+    assert closed == ["generator", "connection"]
 
 
 def test_live_connections_per_account_are_bounded_and_need_a_session(client, app):
@@ -873,7 +945,8 @@ def test_live_route_cancellation_during_acquire_releases_before_response_handoff
 def test_live_lease_deadlines_include_elapsed_database_call_time(client, app, monkeypatch):
     person = account(client, app)
     leases = app.state.live.leases
-    ticks = iter([100.0, 101.0, 102.0, 103.0])
+    # Acquire reads the clock twice and renewal starts at 102; renewal's later checks all read 103.
+    ticks = itertools.chain([100.0, 101.0, 102.0], itertools.repeat(103.0))
     monkeypatch.setattr(lease_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
     reservation = app.state.live.acquire(person["session_token"])
     try:

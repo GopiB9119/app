@@ -4,6 +4,40 @@ Status: PROPOSED for the owner's review, 2026-10-06. Scope: backend and website.
 ("don't touch Android first"). Inputs: the owner's two directives of 2026-10-06 (Master Product + UX + Agent + Engineering, and
 Visual Design System), the owner's chat requests of 2026-10-05 and 2026-10-06, and an inspection of this repository on 2026-10-06.
 
+**Owner scope/order update, 2026-10-07:** work on the backend and website only; do not work on Android. Finish outstanding
+existing tasks before starting more capabilities from [new_features.md](new_features.md). The reminder-permission and manual
+cancellation recovery milestone is now [verified and recorded](../README.md#privacy-permission-and-reminder-recovery-2026-10-07).
+This does not mark all old tasks complete. Concurrent Agent memory/inbox/realtime work retains its separate ownership and
+verification gates; a pinned backend/web release candidate and the privacy/operational decisions still precede launch.
+No Android parity gate is part of this owner's current delivery scope, and no external integration or transaction is enabled by this update.
+
+### Current Finish Plan (2026-10-08)
+
+The owner's latest instruction is to finish ready work end to end without repeated continuation prompts. This is the execution
+order for the existing backend/web capabilities, not approval of every historical proposal or a claim that all 47 roadmap items
+are shipped. Keep the [feature-by-feature status](PRODUCT_RESEARCH_2026-10-07.md), [privacy gates](PRIVACY_READINESS.md) and
+the [retained runtime activation record](../infra/README.md#agent-poll-runtime-activation-2026-10-08) alongside this matrix.
+Owners below are responsibility assignments, not claims that staff have been hired.
+
+| Gate | Responsible Role | Completion Check | Current State |
+| --- | --- | --- | --- |
+| F1: compatible local runtime | Backend/operations | Verified owned services, matching source/database contract, preserved data/key, readiness and retained recovery evidence | Migration 0062 and definition 7 activated; 884 existing rows and 12 Agent identities preserved at handoff. Recheck service availability after interruptions. |
+| F2: offline regression closure | Engineering/QA | Reproduce each failure, preserve assertions, verify the affected slice, and bind final reports to captured inputs | Earlier component run: 814/821 passed; all seven failures were missing current-Space roster fixtures. Existing repair now passes all 19 realtime checks with unchanged watched inputs. Full combined qualification remains a separate gate. |
+| F3: local user workflows | QA/backend/web | Actual browser/proxy/API/mail flows; permissions, exact retry, no duplicate effects, private history and 320 px doubled-text checks | Earlier activation journeys passed 3/3. Reconcile the newer broad-workflow reports before declaring the current finish pass complete. |
+| F4: conversational AI and web lookup | Owner + backend/security | Approved provider/endpoint/model, private credentials, preserved usage ledger and bounded limits; explicit opt-in followed by a small synthetic live evaluation | Blocked: no model connection or AI/web-provider credentials are configured. Keep providers off; do not invent credentials, reset usage or relax approval/resource checks. |
+| F5: external transactions and account integrations | Owner + integration/security | An implemented authorized connector, resource-specific consent, exact review, idempotency, receipt, reconciliation and revocation tests for each action | Not enabled. Model access alone cannot authorize purchases, bookings, transfers, external sends or another person's resources. |
+| F6: public release | Owner + privacy/operations | Approved operator/privacy details, retention and provider terms, production security/recovery/monitoring, real-device/accessibility and explicit deployment approval | Blocked pending those decisions and evidence. Current synthetic local results are not production or real-user qualification; Android remains paused. |
+
+Run F1-F3 autonomously, repair only reproducible in-scope defects, and keep concurrent work and failed/interrupted evidence intact.
+Advance F4-F6 only when their dependencies are supplied; repeated requests to continue do not supply missing credentials or raise
+limits. Do not repeatedly ask the same unavailable setup questions. Finish reports must name passed checks, failed or unrun gates,
+captured-source differences, the reachable preview and the next concrete dependency. No unbounded background coding or evaluation
+loop is part of this plan.
+
+Current focused evidence: [19-case realtime JUnit](../.local/verify/end-to-end-20261008-XFbpro/realtime.xml) and
+[watched input hashes](../.local/verify/end-to-end-20261008-XFbpro/realtime-inputs.json). The roster fixture handles only the
+current Space's authenticated GET and verifies the account header; unexpected traffic assertions were not removed or filtered away.
+
 ## 0. How to read this plan
 
 Every important statement carries one label.
@@ -37,6 +71,36 @@ Items marked ★ block the next phase.
 | D7 | Development browser policy | Allow the YouTube embed domains and docs.tinyfish.ai in the VS Code network policy, or test in Chrome or Edge | Videos cannot play in the VS Code browser (FACT: blocked by policy); TinyFish API details can't be read. |
 
 Already decided by the owner (FACT, chat 2026-10-06): no automatic reminders for tasks and events; Android work waits.
+
+### Poll contract and privacy checkpoint (2026-10-07)
+
+FACT: the owner's [feature brief](new_features.md) requests Space/group coordination and `space.poll.create`. Current code has
+two separately evolving contracts: standalone [Space polls](../backend/app/modules/polls/schemas.py), with 2-6 labelled options,
+and [event poll schemas](../backend/app/modules/events/schemas.py), with an event ID, option text, 2-8 choices and different vote
+review/withdrawal fields. They are not interchangeable merely because both are called polls. The design document remains a
+proposal, and this checkpoint does not silently approve or merge either contract. Existing work and tests are preserved.
+
+The implementation-independent privacy requirement is that membership must not reveal pre-admission private history. This batch
+reproduced standalone poll IDs/activity reaching members who could not read the poll and fixed only the hint audience predicate.
+It also verified the concurrently implemented admission-bound cursor and corrected a frozen-clock ordering fixture while adding
+explicit tie-pagination coverage. [Commands, captured results and limitations](../README.md#poll-admission-privacy-2026-10-07)
+record 10/10 backend poll tests, 24/24 existing live-client checks, web types and scoped Ruff; these are not poll-screen or launch qualification.
+
+Before combining the user-facing flows, record the chosen placement (Space-level, event-linked, or both with clearly distinct
+resources), who may close a poll early, and whether result visibility is counts-only or includes voter identities and when results
+are shown. Current standalone behavior allows one changeable vote, separate withdrawal and close by the same-admission creator
+or a current owner/admin; it exposes counts and the requester's choice rather than voter lists. These are implementation facts,
+not newly approved product policies. Reconcile choice/length limits and response shapes before wiring one UI to the other API.
+Do not bypass existing authorization or restore missing governance documents to resolve this conflict.
+
+Event-poll implementation follow-up: another workstream added the event-linked backend and web controls. This continuation
+repaired two concrete recovery defects in that existing view, without deciding how it should be combined with standalone Space
+polls: stale unsubmitted closure reviews are invalidated on confirmed snapshot changes, and unknown-action details remain hidden
+when the current list no longer contains their target. Original uncertain requests remain available for exact reconciliation;
+drafts and unchanged reviews survive refresh. [Fixed-source evidence](../README.md#event-poll-review-recovery-2026-10-07) records
+65 Events browser tests, 26 client tests, types and three backend contract tests, including zero-write refresh and mobile checks.
+This is not a new poll-placement or privacy-policy decision, nor a live release claim. The retained runtime's exact database/mail
+containers were found absent; no data recreation, key replacement or shared migration was attempted to bypass that gate.
 
 ## 2. Coordination with work already in progress
 
@@ -72,6 +136,540 @@ Working rules (DECISION):
 | Observability | JSON request logs with request, trace and span IDs; `/metrics` with work-queue gauges; the token ledger. No trace viewer. |
 | Analytics | None. |
 
+#### Model budget reliability follow-up (2026-10-06)
+
+FACT: on `7d94559` plus this follow-up, the existing token ledger allowed separate clients and processes to reserve beyond the shared budget because unfinished calls were counted only in each Python instance. A new regression reproduced this before the fix. `backend/app/modules/agents/llm.py` now serializes durable reservations with Python's built-in SQLite while preserving existing JSONL usage records; usage is flushed before a reservation is released. Invalid settlements and storage failures cannot free reserved tokens. This changes accounting, not the model or approved budget amounts.
+
+Evidence: from `backend`, `PYTHONPATH=. ../.local/agent-venv/bin/pytest --noconftest -q tests/test_agent_llm.py` passed **21/21**, including four independent worker processes, settlement, older usage logs, process exits and timed-out provider retries. Scoped Ruff and editor checks passed. These are local tests with synthetic provider responses, not live model-quality or whole-application qualification; no provider request, key change or budget increase was made.
+
+Unfinished reservations deliberately remain charged after a process exits. Reconciliation needs known provider usage, not an automatic budget reset on restart. All model workers must use the updated code and the same local ledger directory for shared accounting.
+
+#### Runtime access revalidation follow-up (2026-10-07)
+
+FACT: on `7d94559` plus the current working changes, queued and completed model turns checked worker ownership without consistently rechecking the requester's current access. Three of the original four regression cases failed: revoked sessions still reached the model or accepted its answer, and an agent-off change during the call still allowed the answer to be saved. The runtime and research helper now reuse the existing session, admission and switch checks before sending context and before accepting model results, including errors. This does not grant new tools, change approval policy or recall requests already sent to a provider.
+
+Evidence: a disposable `postgres:17-alpine` instance from the local cache at `127.0.0.1:55433`, synthetic `community_test` database, a separate migrated schema per pytest session, and scripted provider responses. From `backend`, with `COMMUNITY_ENVIRONMENT=test`, `COMMUNITY_DATABASE_URL` pointing only to that disposable database, the model URL/name/key empty, and `PYTHONPATH=.`:
+
+- `../.local/agent-venv/bin/pytest -q tests/test_agent_runtime.py -k model_turns_recheck_access`: **48/48 passed**, including Main/Space sessions, member removal, switch-off, queued requests, research boundaries and late text/tool/error responses. No late text, approvals or tasks are retained by these cases.
+- `../.local/agent-venv/bin/pytest -q tests/test_agent_*.py tests/test_space_agent_switch.py`: **251 passed, 1 failed**. The unchanged Main Agent downgrade test expects schema `0053` after rollback; current migrations leave `0057`. The test and migrations match HEAD and were not modified or skipped. This run is not an all-green qualification claim.
+- Scoped Ruff and editor checks passed after import formatting in the two touched Python files. Existing Starlette and Alembic deprecation warnings remain.
+- `node scripts/records-check.mjs` fails on four record files already deleted by HEAD compared with its parent: TASKS, DECISIONS, BUILD_STATUS and EVALUATIONS. A separate check using the same exported `compare`/`KINDS` API confirms current edits preserve the records present in HEAD. No missing document was restored.
+
+No live model or web-provider call, budget increase, saved environment-file change, shared database migration/reset or client change was made by this follow-up. Other worktree edits remain outside its verification claim.
+
+#### Late-result and approval-boundary follow-up (2026-10-07)
+
+FACT: the next local regression pass found late tool text/source references still being saved after access ended (6/8 cases failed), results accepted at the active deadline (7/8 failed), and stale prepared actions reaching manual or automatic approval (4/6 failed). Tool-result persistence and approval preparation now use the same current-access guard as model turns, and that guard also enforces the active deadline. Attempted web requests remain charged; no already-sent provider request is claimed to be recalled. The rejected-downgrade test preserves its original revision/data checks without assuming that `0053` is forever the schema head.
+
+Verification used the disposable `event-agent-work-20261007` PostgreSQL instance at `127.0.0.1:55433`, synthetic `community_test`, and isolated migration schemas; provider settings were empty and all provider responses scripted. From `backend`, the three focused selections `-k late_tool_results`, `-k at_the_run_deadline` and `-k prepared_actions_recheck` pass **8/8**, **8/8** and **6/6** respectively, and `tests/test_agent_kinds.py -k lossy_downgrade` passes **1/1**.
+
+The initial complete command `pytest -q --tb=short --show-capture=no tests/test_agent_*.py tests/test_space_agent_switch.py` passed **287/287**, but backend source changed while it ran. It was followed by a fixed capture at `/tmp/event-agent-qualification-AtUz6c`: 242 backend source/config/test files, excluding environment files, local data and virtualenvs, with a SHA-256 manifest. Running the same selection using the existing local agent virtualenv and `--junitxml=/tmp/event-agent-qualification-AtUz6c/agent-tests.xml` passed **287/287** in 456.44 seconds. The XML has zero failures/errors/skips; all captured hashes remained unchanged and all captured backend files matched the shared workspace at the final comparison. This qualifies that backend agent slice, not all application or live model behavior. It includes the concurrent batch/nested-call limit and empty-answer repairs; their implementation is not attributed to this follow-up.
+
+`node --test scripts/agent-golden.test.mjs` passes **47/47**, and `npm run golden` validates **41 cases in 39 threads** without sending requests. Scoped Ruff, editor and whitespace checks pass. Existing dependency deprecation warnings and historical record deletions remain separately documented. No deployment, provider request, spending-limit increase, saved environment-file edit or shared-service reset was performed.
+
+#### Task-and-reminder tool follow-up (2026-10-07)
+
+FACT: task listing previously filtered only the first 150 tasks, could say there were no more results while pages remained, and returned up to 30 rows that the runtime could cut mid-JSON before the model saw them. The new regression checks reproduced both failures. Task results now carry `more`, `next_cursor` and the applied filters; smaller domain pages keep complete results within a 3,000-character budget, below the runtime's tool-text limit, without advancing past omitted rows. Each call still performs a bounded scan; an incomplete empty result is not proof that no matching task exists. The model is instructed to continue with the same filters.
+
+The tool also accepts validated inclusive `due_from`/`due_to` dates and delegates date, completed-status and explicit-assignee filtering to the existing authorized task service before paging. Unassigned shared tasks remain included by default; in-progress tasks remain open. Real API checks cover inclusive boundaries, undated/out-of-range exclusion, exact cursor continuation, evidence coverage, and rejection of cursors from another Space or date filter. No HTTP API or database schema changed.
+
+A separate regression reproduced a reminder proposal for a task in another Space the person could access. Both proposal preparation and execution now use the existing Space-scoped task lookup. The positive same-Space approval flow and rejection of a valid older foreign-Space payload are covered; no approval policy changed.
+
+Verification used the disposable `event-agent-tools-20261007` PostgreSQL instance at `127.0.0.1:55433`, synthetic `community_test` schemas, empty provider settings and scripted responses. From `backend`, `pytest -q tests/test_agent_runtime.py -k 'reminder_execution_rechecks or reminder_tool_only or task_listing'` passes **17/17**. A fixed 242-file capture at `/tmp/event-agent-tools-qualification-6rhHPd`, excluding environment files and local data, passes **304/304** with `tests/test_agent_*.py tests/test_space_agent_switch.py` in 667.00 seconds. Archived `agent-tests.xml` reports zero failures/errors/skips; the SHA-256 manifest is unchanged and the captured backend files match the shared workspace at final comparison.
+
+Scoped Ruff, editor and whitespace checks pass. `node --test scripts/agent-golden.test.mjs` passes **47/47**; `npm run golden` validates **41 requests in 39 threads** without sending them. These checks verify backend/tool behavior, not live model reasoning or full product qualification. Existing dependency deprecation warnings remain. No provider request, budget increase, saved environment-file change, shared-service reset or client edit was made by this follow-up.
+
+#### Scoped reminder-list follow-up (2026-10-07)
+
+FACT: the agent previously read only the first 50 account-wide reminders, filtered them for its Space and returned no continuation metadata. It could therefore report an empty list even when later pages contained matching reminders. The failing offline regression reproduced the missing `more` field. The tool now uses the same bounded whole-result approach as task listing: at most three candidate pages per call, smaller pages when necessary to fit the 3,000-character result budget, explicit `more`/`next_cursor`, and evidence only for the returned complete rows.
+
+The owning reminder service now has an optional keyword-only Space filter used by the agent. It checks current membership and applies the Space predicate before fetching rows; existing per-account, admission and task visibility checks remain. New scoped cursors include the Space alongside their account/task/kind/expiry binding. Other accounts, other Spaces and unscoped callers cannot reuse a scoped cursor. Old unscoped tokens without a Space field still work; HTTP route parameters and the database schema are unchanged. The agent excludes cancelled, suppressed, expired and failed reminders as before, retaining scheduled and available ones.
+
+Focused regressions use synthetic data for exact pagination, long quoted titles, the model's actual tool-message encoder, local time/timezone, account/Space denial, legacy cursors and expiry. A real test-API request with a scripted model follows successive reminder cursors, returns only its selected Space's reminders, records matching evidence and creates no approval or reminder.
+
+Qualification used a disposable `event-agent-reminders-20261007` PostgreSQL container at `127.0.0.1:55433`, the synthetic `community_test` database and isolated migration schemas. A fixed source/contract capture at `/tmp/event-agent-reminder-qualification-VPrbVs` contains 244 files, excluding keys, environment files and live data. With model/web-provider settings empty and the existing agent virtualenv, `pytest -q --junitxml=/tmp/event-agent-reminder-qualification-VPrbVs/tests.xml tests/test_agent_*.py tests/test_space_agent_switch.py tests/test_reminder_delivery_guards.py tests/test_reminder_dispatch_fairness.py tests/test_reminder_series.py tests/test_openapi.py` passes **424/424** in 476.49 seconds. Parsed JUnit has zero failures/errors/skips; all captured hashes stayed unchanged and match the shared inputs at final comparison.
+
+Scoped Ruff and editor checks pass after mechanical import formatting. `npm run test:golden` passes **69/69**; `npm run golden` validates **47 requests in 45 threads** without sending them. Existing dependency deprecation warnings remain. This verifies the affected backend/tool behavior, not live model quality or a full release. The separately running synthetic API uses its prior captured backend and was not restarted, reconfigured or silently updated; shared data, providers and the preserved environment file were untouched.
+
+#### Task outcome integrity follow-up (2026-10-07)
+
+FACT: the existing task client validated response shapes and ETags but did not correlate every returned task with the
+requested task and Space. A well-formed wrong-target response could close a review or replace an edit's basis. Task pages
+also accepted another Space's rows, duplicate IDs, oversized responses and non-progressing continuation. A failed list read
+hid rows but retained its cached Load more control. This is a defect in an existing workflow, not approval of a new feature.
+
+User job and acceptance: a member creates, edits or completes the intended private task, knows whether the result was
+confirmed, and can retry an uncertain response without a duplicate effect or a changed target. The falsifiable hypothesis
+was that schema-valid mismatches would be accepted as success. Nine initial client cases and two browser cases reproduced
+it; three additional same-task/wrong-Space client checks reproduced a review finding. Existing tests covered malformed
+records and connection failures but did not cover these well-formed identity mismatches.
+
+The [task client](../web/src/features/planning/client.ts) now validates the task ID and any known Space, with UUID case
+equivalence, and validates page scope, uniqueness, the requested 20-row limit and cursor progress. The
+[task screen](../web/src/features/planning/task-screen.tsx) passes its Space into reads/writes and hides stale pagination on
+read errors. Unconfirmed writes preserve the original body, key and If-Match value. The optional Space argument keeps
+reminder lookups compatible. A delayed idempotent replay may legitimately return a newer title or status; the guards do
+not mistake that current state for a failed write. Rejecting a response does not imply that its server-side write rolled back.
+
+The existing backend already rechecks current task grants, membership/admission and operation authority before returning a
+command receipt. Five new [authorization regressions](../backend/tests/test_task_authorization.py) verify revoked grants
+for owner/member edit and status retries, and a former assignee's status retry after reopening and reassignment. They assert
+no extra task version, audit or command effect. No backend permission, HTTP contract, database schema or migration changed.
+
+Fresh verification, all with synthetic data and no provider request:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Task service, authorization and priority/filter API tests | 73/73, no failures/errors/skips | [Fixed 242-input backend capture](../.local/verify/task-integrity-backend-frozen-20261007-cGvNVR/summary.json), [JUnit](../.local/verify/task-integrity-backend-frozen-20261007-cGvNVR/tasks.xml) |
+| Task/shared/reminder client and BFF tests | 94/94, no failures/errors/skips | [Client log](../.local/verify/task-integrity-web-20261007-8o2JU3/client.log), [JUnit](../.local/verify/task-integrity-web-20261007-8o2JU3/client.xml) |
+| Complete current task browser file | 51/51, no failures/errors/skips | [Final 193-input web capture](../.local/verify/task-integrity-final-20261007-5A38DS/summary.json), [JUnit](../.local/verify/task-integrity-final-20261007-5A38DS/planning-browser.xml) |
+| Localized task/checklist/calendar browser tests | 20/20, no failures/errors/skips | [Final follow-up](../.local/verify/task-integrity-final-20261007-5A38DS/follow-up-summary.json), [JUnit](../.local/verify/task-integrity-final-20261007-5A38DS/localized-browser.xml) |
+
+Backend execution used `pytest -q --tb=short --show-capture=no tests/test_tasks.py tests/test_task_authorization.py
+tests/test_task_priority_filters.py` from the captured backend, using the existing local agent virtualenv, test environment,
+empty model/web provider settings and a separate migrated schema in the owned disposable PostgreSQL `community_test`.
+Client execution used `node --test --test-concurrency=1 tests/tasks-priority-filters-client.test.mjs
+tests/web-client.test.mjs tests/scheduling-client.test.mjs`. Browser execution used the installed Chromium headless shell,
+`node --test --test-concurrency=1` and the two browser files listed above. Reports retain the exact commands and JUnit files.
+Final `tsc --noEmit`, scoped Ruff, Pylance syntax/editor diagnostics and changed-file whitespace checks pass.
+
+The final web capture and its matching shared inputs stayed unchanged during both the task-browser run and localized/type
+follow-up. The fixed backend capture also stayed unchanged and matched the workspace at comparison. An earlier 73-pass
+backend run had three concurrent source changes; an earlier 94-client/71-browser/type run had a changed task fixture.
+Those reports remain retained under `.local/verify/task-integrity-backend-20261007-FTmtmu` and
+`.local/verify/task-integrity-web-20261007-8o2JU3`. Intermediate captures and repeated tests are not added into a larger
+coverage total. Concurrent status/date-filter, search-opened-task and Space-list recovery implementations are included
+in the final qualification but are not attributed to this work item's identity/pagination fixes.
+
+The sixteen new response-recovery cases cover 1280 px and 320 px. The final mobile checks double measured rendered font
+sizes, assert the retry control's actual size, keyboard focus, pointer hit testing, 44 px targets and no horizontal overflow.
+Initial root-font-only checks were insufficient to prove controls styled in pixels were doubled and were strengthened.
+[Mobile retry](../.local/verify/task-integrity-final-20261007-5A38DS/capture/.local/screenshots/task-integrity-status-space-320.png)
+and the other retained captures were inspected. This is not a manual screen-reader audit or real-user usability evidence.
+
+The owned `event-task-integrity-20261007-2900` test container was checked for its synthetic ownership labels and original
+loopback binding, removed, and confirmed absent ([cleanup](../.local/verify/task-integrity-final-20261007-5A38DS/cleanup.json)).
+Shared API/preview/mail services, saved environment files, keys and data were not changed. No new analytics collection,
+agent permission, provider budget, live model evaluation, Android implementation, deployment, commit or push was performed.
+The next release gate remains a single pinned whole-product candidate with live signed-in/API, operational and security
+qualification; missing authoritative backlog records still require an owner-approved recovery decision, not silent restoration.
+
+#### Shared-cost Space Agent delivery (2026-10-07)
+
+Authority: the owner's explicit current implementation request in [new_features.md](new_features.md), sections 7, 14-16 and 31.
+This implements one bounded part of that request, not all 47 capabilities. The [operating plan and complete request map](PRODUCT_RESEARCH_2026-10-07.md#18-company-operating-plan-and-space-agent-delivery)
+separate current implementation, future work, staffing proposals and external/privacy dependencies. No missing historical governance file was restored.
+
+User job: inspect an event's authorized budget inside its Space and prepare the requested cost-sharing plan for an exact review.
+The initial offline regressions reproduced the missing read and split tools. The [toolkit](../backend/app/modules/agents/toolkit.py) now provides:
+
+- `get_event_budget`: summary and version-checked pages of categories, expenses, permitted contributions and permitted shares.
+  Complete JSON results stay within the existing tool-text budget. Continuation rechecks current event access and the requester's view;
+  Main, another Space (even when the requester belongs to both), and later event admissions are denied.
+- `set_event_split`: the existing equal, percentage and fixed-amount domain rules with an explicit planned/recorded basis and exact
+  integer minor-unit allocation. Only the event organizer or Space owner can prepare/save it. `always_ask` prevents automatic approval.
+  Every participant and rounded amount remains visible, along with any unallocated difference and the audience.
+- Execution locks the event, compares the reviewed budget snapshot as well as the edit ETag, and uses the approval transaction's
+  connection/savepoint. Expense changes do not update that ETag, so the snapshot check is necessary. Stale spending, unavailable
+  participants and cancelled events cannot silently change the plan the person reviewed. Failed approval persistence rolls back the split.
+
+These are self-reported planning records, not verified payments, debts or settlement instructions. An expense recorder is not necessarily
+its payer. Ordinary members receive only their permitted contribution records and own share; organizer/owner authority does not grant
+access to another Space or private external account. No payment, contribution mutation or vendor call is made by either tool.
+
+[Space definition version 6](../backend/app/modules/agents/registry.py) explicitly lists both tools; the Main Agent definition is unchanged.
+[Migration 0058](../backend/migrations/versions/0058_agent_event_budgets.py) advances existing version-5 bindings without replacing identities
+or rewriting recorded run history, and supports downgrade. Prompt version is `agent-react-2026-10-07-15`.
+Upgrade a separately approved runtime/database together before using these tools; **this work did not migrate the shared backend**.
+The HTTP schema is unchanged. The privacy data map now describes the permitted budget data that can reach a configured model/run history.
+
+A 23-participant regression found that one approval field per person exceeded the web client's ten-field limit. The tool now returns
+eight fields including the complete numbered Shares value, without widening the client contract. A browser regression then reproduced
+collapsed line breaks. The [approval renderer](../web/src/features/agents/agent-screen.tsx) preserves and wraps multiline values.
+Existing public-action reviews still pass. Six new [browser cases](../tests/unit/agents-ui.test.mjs) verify a 12-person private review,
+Approve/Reject, lost-response retry, original key/If-Match, one effect, Main isolation, 1280 px and 320 px with measured doubled text,
+keyboard focus, pointer hit testing, 44 px targets and no horizontal overflow.
+
+Fresh verification used empty model/web-provider settings, scripted model responses and an owned loopback-only PostgreSQL 17 container
+with a synthetic `community_test` database and a separate migrated schema per test session:
+
+| Check | Result | Evidence / limits |
+| --- | --- | --- |
+| Budget-focused API/tool/registry checks | 50/50 | Main/Space/admission/privacy, paging, exact amounts, automatic-mode review, rejection, stale basis, rollback and retries; includes existing registry invariant |
+| Complete affected backend selection | 414/414 | [JUnit](../.local/verify/space-costs-web-20261007-LOrwYy/backend-tests.xml), [244-input manifest](../.local/verify/space-costs-web-20261007-LOrwYy/inputs.sha256) |
+| Final current registry/migration file | 23/23 | [JUnit](../.local/verify/space-costs-web-20261007-LOrwYy/registry-final.xml); after mechanical import formatting only |
+| Complete affected agent client/browser suites | 79/79 | [JUnit](../.local/verify/space-costs-web-20261007-LOrwYy/tests.xml), [web source/asset hashes](../.local/verify/space-costs-web-20261007-LOrwYy/web-inputs.sha256); unchanged during tests/types |
+| Golden/supervisor self-tests | 105/105 | `node --test scripts/agent-golden.test.mjs scripts/work-cycle.test.mjs`; no new supervisor or evaluator implementation claimed |
+| Golden inventory | 47 requests / 45 threads valid | `npm run golden`; **nothing sent**, no live model-quality score |
+| Static and editor checks | Passed | Scoped Ruff, web `tsc --noEmit`, Pylance syntax, editor and whitespace checks |
+
+From `backend`, with test environment/DB and provider settings explicitly empty:
+
+```sh
+PYTHONPATH=. ../.local/agent-venv/bin/pytest -q --tb=short --show-capture=no \
+  tests/test_agent_*.py tests/test_space_agent_switch.py tests/test_event_budgets.py \
+  tests/test_event_contributions.py tests/test_event_budget_splits.py tests/test_migrations.py tests/test_openapi.py
+```
+
+The full run used fixed capture `/tmp/event-space-costs-4Gzqci` and the same installed interpreter by absolute path; no dependency,
+environment file, key or local database was copied. Its hashes remained unchanged. At final comparison all 244 captured inputs matched
+the workspace except import ordering in the registry test file, separately requalified above. Parsed backend/web JUnit reports contain
+zero failures/errors/skips. Counts overlap and must not be added into a larger unique coverage claim. Existing dependency deprecation
+warnings remain; this is not a whole-product, live-model, legal, production or Android qualification.
+
+From the application root:
+
+```sh
+COMMUNITY_CHROMIUM_PATH=<installed-chromium> node --test --test-concurrency=1 \
+  tests/agents-client.test.mjs tests/unit/agents-ui.test.mjs
+npm --prefix web run typecheck
+node --test scripts/agent-golden.test.mjs scripts/work-cycle.test.mjs
+npm run golden
+npm run work:cycle -- --status
+```
+
+The [desktop review](../.local/screenshots/agent-split-review-1280-approve.png) and
+[320 px doubled-text review](../.local/screenshots/agent-split-review-320-retry.png) were inspected after the line-break fix.
+Browser APIs were synthetic/intercepted and unexpected outbound calls were rejected. Local evidence under `.local` is not committed;
+another checkout must rerun these commands. Native-language/screen-reader review and real-user testing remain separate gates.
+
+Cleanup confirmed the owned `event-space-budget-20261007-6f348466` test container and anonymous volume removed, without resetting shared
+data. The web preview was initially absent, then another session acquired port 3000; this session's duplicate launch failed with
+`EADDRINUSE` and its terminal was closed. The existing `http://127.0.0.1:3000/app/agent` subsequently returned HTTP 200 and was left intact.
+That page response does not prove its separate backend has migration 0058 or a configured/qualified model. No live agent request was sent.
+Supervisor status showed no active lock or stop request; its earlier `changed` report was retained, not relabelled as passed.
+No coding daemon, live provider connection, spending increase, Android change, deployment, commit or push was performed.
+
+#### Agent task inbox and memory controls (2026-10-07)
+
+Authority: the owner's implementation request and continuation for the Agent Task Inbox and memory controls in
+[new_features.md](new_features.md), sections 24-25 and roadmap items 27-28, 40 and 43. These are local backend/web features,
+not approval of external accounts, purchases, recurring execution or a production rollout.
+
+The [Agent task inbox](../web/src/app/app/agent/tasks/page.tsx) at `/app/agent/tasks` selects a current Space and lists only the
+signed-in requester's runs, never other members' private Agent conversations. Filters cover all, working, needs approval,
+needs an answer, completed, failed and cancelled requests. There is no Scheduled tab: persistent request history is not a scheduler.
+Existing exact review, answer, rejection and cancellation controls are reused; failed reads hide cached actions and pagination.
+Links are available from Main Agent and Space chat. The Main Agent still cannot access private Space data through its tools.
+
+The [list service](../backend/app/modules/agents/service.py) applies the effective status before pagination, including expired
+approvals, interrupted work and the Space's agent-off state. Cursors bind account, Space, admission and filter. The
+[client](../web/src/features/agents/client.ts) checks scope/kind/status, duplicate IDs, row bounds and cursor progress before
+using a response. Unknown approval outcomes retain the original reviewed request and retry key.
+
+In Agent > Memories, the owner can edit a note, disable future retrieval, re-enable it or delete it. Disabled memories remain
+manageable but are excluded from fresh model context counts and memory-tool results. Existing Main/Space note scope and owner-only
+visibility remain unchanged; this does not create a shared household memory store. The editor includes draft English/Telugu/Hindi
+labels and explicitly says that disabling/deleting does not erase earlier conversations or data already sent to providers.
+
+`PATCH /v1/agent-memories/{memory_id}` requires the signed-in owner, `If-Match` and `Idempotency-Key`. Edits are versioned, and durable
+receipts prevent an old retry from replacing a later edit or re-enabling a disabled memory. Exact retries return current state without
+reapplying the change. Stale versions, cross-account access, malformed values and prohibited secret-like content are rejected.
+Deletion cascades the memory's edit receipts. The web validates returned identity, Space, kind/key and version; an uncertain reply keeps
+the original retry available even after closing the dialog, while a conflict requires a fresh review. Older-server lists stay readable,
+but edits need the new version/ETag metadata.
+
+[Migration 0059](../backend/migrations/versions/0059_agent_memory_controls.py) adds enabled/version fields and command receipts.
+It refuses downgrade when doing so would re-enable disabled memories or discard receipts. Upgrade an approved runtime and database
+together before using the new API; the shared runtime/database was not migrated here. The generated [OpenAPI contract](../packages/openapi/openapi.json)
+includes the memory operation and inbox filter; its compatibility with the concurrent Space-list change was tested separately.
+
+The paused web report was **243/247 passed, four failures**, not an all-green gate. Three narrow-screen reading-area failures came from
+the newly added full-text inbox toolbar link. A labeled icon link recovered the reading area without changing the assertions.
+The fourth test expected an obsolete immediate-erasure message; it now requires the accurate retrieval/history/provider distinction
+and additionally verifies focus returns after both Keep and Escape. The original [failed report](../.local/verify/agent-controls-20261007-IAqzoo/web-tests.xml)
+and its [input hashes](../.local/verify/agent-controls-20261007-IAqzoo/web-inputs.sha256) remain retained.
+
+| Fresh check | Result | Evidence and limits |
+| --- | --- | --- |
+| Affected backend: agents, switch, deletion, export, migrations, OpenAPI | 433/433 | [JUnit](../.local/verify/agent-controls-20261007-IAqzoo/backend-tests.xml), [245-input manifest](../.local/verify/agent-controls-20261007-IAqzoo/backend-inputs.sha256); fixed `/tmp/event-agent-controls-UTGmLz` |
+| Agent/messaging/privacy/localization web selection | 207/207 | [JUnit](../.local/verify/agent-controls-final-20261007-59fchv/web-tests.xml), [watched inputs](../.local/verify/agent-controls-final-20261007-59fchv/web-inputs.sha256); types passed and hashes matched at completion |
+| Original shared client/proxy file | 60/60 | [JUnit](../.local/verify/agent-controls-final-20261007-59fchv/web-client-tests.xml); accounts for the original report's tests absent from the newer selection |
+| Concurrent Space-list/API integration | 37/37 | [JUnit](../.local/verify/agent-controls-final-20261007-59fchv/backend-integration.xml), [unchanged inputs](../.local/verify/agent-controls-final-20261007-59fchv/backend-integration-inputs.sha256); fixed `/tmp/event-agent-controls-followup-lq0ETK` |
+| Final inbox and memory browser workflows | 20/20 | [JUnit](../.local/verify/agent-controls-final-20261007-59fchv/current-boundary-web.xml); current Space client and web types passed |
+| Static checks | Passed | Scoped Ruff, TypeScript, editor diagnostics and whitespace checks |
+
+The full backend capture stayed unchanged during its run. A later source comparison found another workstream's Space member-count
+addition in its schema/service/test and OpenAPI output. The 37-case follow-up qualifies that adjacent API integration without attributing
+its implementation to this milestone. Later reminder/Space UI edits likewise remain other workstreams; the 20-case browser follow-up
+checks the memory/inbox boundary on the integrated client. These are scoped results, not a frozen whole-product candidate; overlapping
+counts must not be added into a larger coverage total. Existing Starlette, Alembic and SQLAlchemy deprecation warnings remain.
+
+Reproduce the full backend selection from `backend`, using an owned synthetic PostgreSQL `community_test` database, the test environment,
+empty model/web-provider settings and the installed test interpreter:
+
+```sh
+PYTHONPATH=. ../.local/agent-venv/bin/pytest -x -q --tb=short --show-capture=no \
+  tests/test_agent_*.py tests/test_space_agent_switch.py tests/test_account_deletion.py \
+  tests/test_exports.py tests/test_migrations.py tests/test_openapi.py
+```
+
+Reproduce the web qualification from the application root with an installed compatible Chromium:
+
+```sh
+COMMUNITY_CHROMIUM_PATH=<installed-chromium> node --test --test-concurrency=1 \
+  tests/agents-client.test.mjs tests/i18n-client.test.mjs tests/messaging-agent-client.test.mjs \
+  tests/text-limits-client.test.mjs tests/unit/agents-ui.test.mjs tests/unit/messaging-ui.test.mjs \
+  tests/unit/privacy-ui.test.mjs tests/unit/i18n-account-ui.test.mjs
+node --test tests/web-client.test.mjs
+npm --prefix web run typecheck
+```
+
+Inspected captures include the [memory editor](../.local/screenshots/agent-memory-320-edit.png),
+[Telugu](../.local/screenshots/agent-memory-te-320.png), [Hindi](../.local/screenshots/agent-memory-hi-320.png),
+[inbox](../.local/screenshots/agent-inbox-320.png) and [repaired reading/composer area](../.local/screenshots/agent-workspace-320-large-text.png).
+Checks include 320 px measured doubled text, keyboard/focus, reachable controls, unchanged retry intent, no duplicate effect and no
+unexpected outbound browser calls. Synthetic screenshots and script checks do not replace native-language or screen-reader review.
+All backend model responses were scripted; no provider request, real customer data or live-model quality score is claimed.
+
+After the final checks, the `event-agent-inbox-6f348466` container's owner and synthetic-test labels were checked, then that container
+and its anonymous volume were removed and confirmed absent. Other databases, mailboxes and test workstreams were left untouched.
+
+The existing preview subsequently returned HTTP 200 at `http://127.0.0.1:3000/app/agent/tasks`. Another session acquired that port after
+the availability probe; the duplicate launch failed with `EADDRINUSE` and only its own terminal was closed. The shared preview was
+not replaced. A served page does not prove its separate API is migrated or its model configured. No saved environment file, provider
+budget, Android implementation, deployment, commit or push was changed. Historical governance documents remain missing and were not restored.
+
+Activation follow-up: the retained synthetic runtime was subsequently upgraded from `0057` to `0059` after backup/restore rehearsal
+and continuity checks. The [runtime activation record](../infra/README.md#agent-controls-activation-2026-10-07) supersedes only the
+earlier "not migrated" runtime status, not its recorded qualification limits. Two live browser/API/mail/database journeys now pass
+with clearly seeded synthetic memories/history and no provider calls; a separate upgrade regression preserves sessions and approvals.
+Existing data, key and retained containers were kept. No automatic purchases, external integration or live-model evaluation was enabled.
+
+#### Agent response confirmation and Stop recovery (2026-10-07)
+
+Continuation started from the retained [seven-case response-binding failure](../.local/verify/agent-binding-saved-cases-ACW1H8/browser.log).
+That report had four passes and three failures. Current source already preserved the original answer command after an unconfirmed
+response, and its earlier failing cases passed unchanged when rerun. A newer case reproduced the remaining defect: after a mismatched
+Stop response, a background read advanced the run to approval and removed both the failure message and the only Stop retry.
+
+The [request view](../web/src/features/agents/agent-screen.tsx) now retains the Stop failure independently of current run status and
+offers the same cancellation retry when no progress/question control remains. The existing client continues to bind returned runs
+to the intended identity/scope and rejects inconsistent approval ownership. Those surrounding client/answer fixes were preserved
+and qualified, not replaced or attributed to this narrow UI repair.
+
+The [browser regression](../tests/unit/agents-ui.test.mjs) now checks approval and completed-state transitions at 1280 px and 320 px,
+including measured doubled text, 44 px targets, keyboard focus and pointer reachability. Each retry uses the same endpoint, account
+headers and body; it sends no approval and creates no action. A completed request remains completed when cancellation is replayed:
+the fixture follows the backend's terminal-state no-op behavior rather than falsely calling completed work cancelled. Existing
+Main/Space response mismatch, answer, approval/rejection and read-only recovery assertions remain intact.
+
+Qualification from a fixed capture at `/tmp/event-agent-response-binding-6UOT7Y` passed **199/199** affected Agent client/browser,
+messaging and English/Telugu/Hindi checks, with zero failures/errors/skips. Web typechecking, editor diagnostics and whitespace checks
+pass. All **200 captured inputs** stayed unchanged and matched the shared workspace at final comparison. The capture excludes
+environment files and user data, reuses installed dependencies and includes transitive Android translation fixtures without editing Android.
+
+- [JUnit](../.local/verify/agent-stop-recovery-20261007-vmL4ef/tests-final.xml), [test log](../.local/verify/agent-stop-recovery-20261007-vmL4ef/qualification.log),
+  and [input hashes](../.local/verify/agent-stop-recovery-20261007-vmL4ef/inputs.sha256) are retained.
+- The focused response-binding selection passed **12/12** before the complete run; these overlapping counts are not added together.
+- A duplicate recovery fragment introduced during concurrent edits was removed after editor diagnostics found it outside its component.
+  Immediate types and the same focused tests then passed. An earlier broad run was interrupted before completion; its partial
+  `tests.xml` remains in the capture and is not relabelled as qualification. The separate final report is complete.
+- Inspected mobile captures: [approval transition](../.local/verify/agent-stop-recovery-20261007-vmL4ef/agent-stop-transition-waiting_for_approval-320.png)
+  and [completed transition](../.local/verify/agent-stop-recovery-20261007-vmL4ef/agent-stop-transition-completed-320.png).
+
+Reproduce from the application root with an installed compatible Chromium:
+
+```sh
+COMMUNITY_CHROMIUM_PATH=<installed-chromium> node --test --test-concurrency=1 \
+  tests/agents-client.test.mjs tests/messaging-agent-client.test.mjs tests/i18n-client.test.mjs \
+  tests/unit/agents-ui.test.mjs tests/unit/messaging-ui.test.mjs tests/unit/i18n-account-ui.test.mjs
+npm --prefix web run typecheck
+```
+
+Browser requests are synthetic/intercepted, and unexpected outbound requests fail the tests. The existing local Agent preview returned
+HTTP 200 without a restart. No backend, migration, permission, provider, budget, saved environment file, deployment or native change
+was made by this repair. This does not qualify live model behavior, reverse a completed action, or establish whole-product accessibility.
+
+Additional response-contract qualification, recorded separately from the 199-case follow-up above:
+
+- The client rejects wrong-run replies for reads, answers, decisions and Stop; creation checks the requested Main/Space scope.
+  Known scope is retained on Stop, and every run snapshot checks Agent-kind/Space consistency and embedded approval ownership.
+  Case-equivalent UUIDs and later states/new approvals on the same run are allowed. An unconfirmed answer retains its original
+  run/question/text while other newly returned approval controls wait for reconciliation.
+- A [192-file fixed web capture](../.local/verify/agent-response-final-20261007T155959Z-b157dcaa/summary.json) passed **91/91**
+  full Agent browser cases, **58/58** Agent client, **4/4** messaging-Agent client, **13/13** translation client and types.
+  It correctly reports shared-tree drift because the Stop-transition test expanded during execution. The [12-case delta](../.local/verify/agent-response-delta-20261007T160644Z-d1a7c3/summary.json)
+  qualifies that exact test-only change, with all application/config/dependency fingerprints unchanged and final capture/workspace parity.
+  These are overlapping results, not a full 94-case claim. Shared installed dependencies remain a non-hermetic caveat.
+- [Nine existing backend contracts](../.local/verify/agent-response-backend-20261007-4d9a73e1/summary.json) passed in one session:
+  approval replay, rejection, sequential approvals, question continuation, requester access/expiry, cancellation, auto-approval
+  replay, Main scope and switch-off. All 247 captured inputs and observed dependencies remained unchanged at head `0059`.
+  Scripted model responses and an owned loopback PostgreSQL instance were used; schema teardown and owner-checked container
+  removal/absence were verified. Shared services, data, keys and environment files were untouched.
+- Initial identity regressions, missing/partial saved-test insertions, syntax failures and preflight failures remain in their
+  original reports. They were not counted as passing behavior checks. The final saved tests ran with exact counts; no existing
+  assertion was skipped to obtain a pass. Concurrent Stop, runtime activation and Space-header work was preserved rather than
+  silently overwritten or attributed to the client-binding change.
+
+#### Event poll workflow delivery (2026-10-07)
+
+Activation update, 2026-10-08: the [fresh synthetic runtime and live browser checkpoint](../infra/README.md#fresh-poll-runtime-2026-10-08)
+now qualify the two-person poll workflow through the real browser/proxy/API/database/mail path. This supersedes only the earlier
+activation-blocked status below, not the old-runtime recovery limits. A reproduced mobile navigation overlap was repaired at its
+shared scroll boundary, with 94 event/client, 34 shared-layout and one live check passing. Older backups/data were not reset or restored.
+
+Scope: finish the event-linked poll workflow started in the owner's continuation. This is the existing event contract, not a silent
+replacement for the standalone Space-poll draft described in the [contract checkpoint](#poll-contract-and-privacy-checkpoint-2026-10-07).
+Event polls use a question up to 120 characters and 2-8 distinct choices of up to 80 characters. Only the event organizer under the
+current admission or the Space owner creates/closes a poll; event-visible members can choose, change or withdraw their own vote.
+The implementation does not grant every Space admin that event authority, expose individual ballots, publish a public poll, decide
+a winner's consequences, or add Agent voting/creation tools. Broader poll placement and unified policy remain separate decisions.
+
+The [event poll service](../backend/app/modules/events/polls.py), [models](../backend/app/modules/events/models.py) and
+[migration 0061](../backend/migrations/versions/0061_event_polls.py) implement event-bound reads, a complete maximum-20-poll list,
+reviewed creation, voting/withdrawal and closure. The API and [web proxy](../web/src/app/api/[...path]/route.ts) expose only the exact
+event/poll routes. The generated [OpenAPI contract](../packages/openapi/openapi.json) matches the current implementation.
+
+Each voter has a separate admission-bound ETag and durable command receipts. An exact older retry returns current state rather than
+overwriting a newer choice; a new stale intent is refused. Withdrawal retains a revision row so an old vote cannot resurrect it.
+Database constraints bind options to their poll, and the event lock serializes competing choices. Authorization is checked before
+receipt lookup, including leave/rejoin and expired sessions waiting for a lock. Counts include only current-admission ballots.
+Responses expose totals and the requester's own choice, not ballot identities; small-group totals are not an anonymity guarantee.
+Cancelled or ended events are read-only. Exact already-committed requests remain reconcilable without allowing new votes.
+
+The [event panel](../web/src/features/events/events-screen.tsx) opens [Polls](../web/src/features/events/polls.tsx) lazily. Its manual
+workflow includes create review, option validation/add/remove, radio-choice draft and explicit save, withdrawal, aggregate counts,
+close review and empty/loading/error states. Unknown replies retain original body/key/If-Match across reads, dialog closure and
+navigation; mismatched confirmations never become success. Conflicts require fresh review. Lost-access or missing targets hide
+cached details/actions, and a changed unsent close review is invalidated. The latter review/missing-target repairs were concurrent
+work and were preserved, not attributed to this implementation.
+
+Two additional browser regressions reproduced an unavailable retry after the event ended/cancelled following a committed vote with
+a lost reply. The recovery path now permits only the original unknown command while the current target remains readable; new
+actions remain disabled. Backend authority still decides whether reconciliation is permitted. English/Telugu/Hindi text is present;
+Telugu/Hindi remains draft pending native review. The 320 px cases double measured font sizes and check focus, hit testing and targets.
+
+Account deletion removes event ballots and cascades their retry receipts; sole-member Space poll questions/options are redacted via
+the existing erasure pipeline. The original exhaustive purge test reproduced retained event poll text before the fix, and all 14
+deletion checks then passed. Shared records remain subject to the existing retention policy. Migration 0061 refuses downgrade while
+event polls exist; no destructive downgrade or shared database migration was performed.
+
+Evidence, using synthetic data and no providers:
+
+| Check | Result | Retained evidence |
+| --- | --- | --- |
+| Poll/event/budget/deletion/migration/OpenAPI backend selection | 118/118 | [JUnit](../.local/verify/event-polls-20261007-efF3rJ/backend-tests.xml) |
+| Events, capacity, shared proxy/client, localization and browser selection | 177/177 | [JUnit](../.local/verify/event-polls-20261007-efF3rJ/web-tests.xml), [log](../.local/verify/event-polls-20261007-efF3rJ/web-tests.log) |
+| Fixed source | 457 inputs unchanged during tests and types | [SHA-256 manifest](../.local/verify/event-polls-20261007-efF3rJ/inputs.sha256), capture `/tmp/event-polls-qualified-qVCrlE` |
+| Static checks | New/touched poll code lint and web types passed; editor/whitespace clean | Four unrelated deletion-test lint findings match HEAD after ignoring shifted line numbers |
+
+Parsed JUnit has zero failures/errors/skips. The focused 42 backend poll checks, 32 poll browser checks, 14 deletion checks and
+delegated frontend passes overlap with the final selection and are not added into a larger coverage count. Earlier route-not-found,
+purge, closed-event retry and expired-fixture failures were repaired locally without weakening assertions. The clock-only ended-event
+fixture was shortened to keep its authentication valid; independent expiry-under-lock cases still pass. Existing dependency
+deprecation warnings and the pre-existing deletion-test lint findings remain reported, not silently fixed.
+
+The fixed capture excludes environment/key/data files, reuses installed dependencies and includes transitive fixture resources
+without changing Android. At comparison, only two unrelated messaging files differed from the capture. These results qualify the
+captured poll workflow, not every concurrent worktree change. Captures inspected include [desktop](../.local/verify/event-polls-20261007-efF3rJ/event-polls-desktop.png),
+[320 px doubled text](../.local/verify/event-polls-20261007-efF3rJ/event-polls-320-200-en.png),
+[Telugu creation](../.local/verify/event-polls-20261007-efF3rJ/event-polls-create-320-200-te.png) and
+[Hindi creation](../.local/verify/event-polls-20261007-efF3rJ/event-polls-create-320-200-hi.png).
+
+From `backend`, with test environment, an owned synthetic `community_test` database and model/web-provider settings empty:
+
+```sh
+PYTHONPATH=. ../.local/agent-venv/bin/pytest -x -q --tb=short --show-capture=no \
+  tests/test_event_polls.py tests/test_polls.py tests/test_events.py tests/test_event_budgets.py \
+  tests/test_event_budget_splits.py tests/test_event_contributions.py tests/test_account_deletion.py \
+  tests/test_migrations.py tests/test_openapi.py
+```
+
+From the application root with an installed compatible Chromium:
+
+```sh
+COMMUNITY_CHROMIUM_PATH=<installed-chromium> node --test --test-concurrency=1 \
+  tests/events-client.test.mjs tests/events-capacity-client.test.mjs tests/web-client.test.mjs \
+  tests/i18n-client.test.mjs tests/text-limits-client.test.mjs tests/unit/events-ui.test.mjs
+npm --prefix web run typecheck -- --incremental false
+```
+
+The existing frontend served `/app/events` with HTTP 200, but port 8000 had no API listener. The previously retained synthetic
+runtime's missing database/mail containers were not recreated or repointed under an old key. Runtime activation still requires a
+separately approved compatible database/API at migration 0061 and a recovery/fresh-data decision. This is backend integration plus
+intercepted-browser qualification, not a live full-stack, real-user, production, native or live-model result. No providers, agent
+permissions, reminders, purchases, deployment, commit or push were enabled by this milestone.
+
+Cleanup: the exact `event-poll-integrity-6f348466` container was rechecked for its owner and `synthetic-tests` labels, then removed
+with its anonymous volume and confirmed absent. Shared database/mail services, old runtime metadata and keys were not changed.
+
+#### Reviewed Space Agent poll capability (2026-10-08)
+
+The owner's [feature request](new_features.md) names `space.poll.create` and asks the Space Agent to prepare group decisions without
+requiring a specialist selection. This milestone adds that capability to the existing standalone Space-poll service; event-linked
+polls remain a distinct contract. No redesign, external provider, automatic ballot, public publishing or event attachment was added.
+
+The [toolkit](../backend/app/modules/agents/toolkit.py) now exposes `list_polls`, `get_poll` and `create_poll` only to Space Agents.
+Reads use current account/Space/admission permissions, return aggregate results and only the requester's own choice, and preserve
+bounded complete pages with continuation. A known poll in another Space cannot be read even when the person belongs to both.
+No voter-list tool or voting/closing action is available. The Main Agent's tool list is unchanged.
+
+Creation reuses the existing standalone contract: 2-6 distinct choices, a question up to 200 characters, choice text up to 80, and an
+optional timezone-aware closing time within the domain's allowed window. The exact Space, question, choices, closing time, timezone
+and visibility are reviewed before creation. `always_ask` prevents auto-approval even when automatic mode is enabled. The created
+poll uses the requester's own identity and permissions, not a new Agent account or elevated role. Closing time and current access
+are rechecked at execution; delayed, invalid or foreign-Space proposals fail rather than being silently adjusted.
+
+The poll service is bound to the approval transaction using the existing savepoint pattern, so a failed approval commit leaves no
+poll behind. Approval replay creates at most one poll and no votes. The normal action ledger and the new `poll` evidence kind retain
+the result; the web parser and English/Telugu/Hindi labels accept it. The seven-field review stays within the established ten-field
+client limit. Other members' ballot identities are not returned, but small-group totals are not an anonymity guarantee.
+
+[Definition version 7](../backend/app/modules/agents/registry.py) and [migration 0062](../backend/migrations/versions/0062_agent_space_polls.py)
+advance existing version-6 bindings without replacing identities or rewriting recorded run history. Prompt version is
+`agent-react-2026-10-08-16`. The generated [OpenAPI contract](../packages/openapi/openapi.json) matches the additive poll-evidence type.
+The existing upgrade-preservation regression now checks the current definition version instead of permanently assuming version 6.
+
+Fresh qualification, synthetic data and scripted models only:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| New poll workflow plus registry/kinds/automatic-mode/switch/Space polls/migration/OpenAPI selection | 123/123 | [Backend JUnit](../.local/verify/agent-polls-20261008-Y02Y7E/backend.xml) |
+| Agent client, messaging client, localization and complete Agent/messaging browser files | 216/216 | [Web JUnit](../.local/verify/agent-polls-20261008-Y02Y7E/web.xml), [log](../.local/verify/agent-polls-20261008-Y02Y7E/web.log) |
+| Source qualification | 462 unchanged inputs, matching the shared workspace at comparison | [Manifest](../.local/verify/agent-polls-20261008-Y02Y7E/inputs.sha256), fixed `/tmp/agent-poll-capability-wI9Eau` |
+| Static checks | Passed | Scoped Ruff, TypeScript, editor diagnostics and whitespace |
+
+Focused checks include Main exclusion, cross-Space denial, no effect before approval/rejection, exact retry, rollback after saving,
+member removal, agent-off, a deadline that becomes invalid during review, foreign approved payload refusal, and complete long-page
+reads. The pagination test initially inspected only the final trimmed model context; it was corrected to observe each delivered
+page without changing the runtime's context budget or weakening completeness assertions. Three initial policy regressions established
+the missing tools. [Mobile review](../.local/verify/agent-polls-20261008-Y02Y7E/agent-poll-review-320-retry.png) and the desktop review
+were inspected; the six review cases preserve every field, explicit rejection and retry identity at 1280 px and measured doubled-text
+320 px, with focus, hit testing, 44 px targets and no overflow. Localized labels remain drafts, not native-speaker approval.
+
+Reproduce from `backend`, with a test-only `community_test` database and provider settings empty:
+
+```sh
+PYTHONPATH=. ../.local/agent-venv/bin/pytest -x -q --tb=short --show-capture=no \
+  tests/test_agent_runtime.py tests/test_agent_registry.py tests/test_agent_kinds.py tests/test_agent_auto_approve.py \
+  tests/test_space_agent_switch.py tests/test_polls.py tests/test_migrations.py tests/test_openapi.py \
+  -k 'agent_poll or test_agent_registry or test_agent_kinds or test_agent_auto_approve or test_space_agent_switch or test_polls or test_migrations or test_openapi'
+```
+
+From the application root with an installed compatible Chromium:
+
+```sh
+COMMUNITY_CHROMIUM_PATH=<installed-chromium> node --test --test-concurrency=1 \
+  tests/agents-client.test.mjs tests/messaging-agent-client.test.mjs tests/i18n-client.test.mjs \
+  tests/unit/agents-ui.test.mjs tests/unit/messaging-ui.test.mjs
+npm --prefix web run typecheck -- --incremental false
+```
+
+These results are scoped, not a whole-backend or live-model reasoning score. Focused runs overlap the final totals. Existing dependency
+deprecation warnings remain. At initial qualification, the running local snapshot was not migrated or switched: activation required a compatible runtime at
+0062 and separately authorized model configuration. No paid model call, provider budget change, shared-data reset, Android change,
+deployment, commit or push was made. Existing manual polls remain available under their own domain rules.
+
+The disposable `event-agent-polls-6f348466` database container and its anonymous volume were removed after rechecking the exact
+container ID, owner and synthetic-test labels, and absence was confirmed. Active runtime containers, keys and data were untouched.
+
+Activation follow-up: the retained fresh synthetic runtime is now on `0062` with the qualified 191-file backend and definition 7.
+Rehearsal and actual migration preserved all 884 existing rows across 95 tables and all 12 Agent identities; the key stayed unchanged.
+The migration regression passed 1/1 and existing live Agent-controls/manual-poll journeys passed 3/3 on 192 unchanged inputs.
+The [activation record](../infra/README.md#agent-poll-runtime-activation-2026-10-08) supersedes the database/source gate above, not the
+model gate: no model endpoint/name/key is configured, providers remain off, and no conversational or live-model evaluation is claimed.
+
 ### 3.2 Gaps against the directives (FACT: no tables or routes exist for these)
 
 - Help requests, offers, services, opportunities.
@@ -92,7 +690,7 @@ Working rules (DECISION):
 3. Videos (FACT): in the VS Code browser YouTube embeds are blocked by policy. The agent also offered guessed videos.
 4. Wrong context (OBSERVATION, 01:16): a BigBasket product request got video results first.
 5. Slow or stuck website (owner's report to the redesign session; ASSUMPTION about the cause until measured on a production build).
-6. Out-of-date tests (FACT, earlier run): `tests/unit/agents-ui.test.mjs` still expects removed controls.
+6. Out-of-date tests (FACT, earlier run): `tests/unit/agents-ui.test.mjs` expected removed controls. Follow-up on 2026-10-07: the fixtures now cover the current Main Agent and private Space-chat interfaces without discarding approval or privacy checks. They exposed missing request records/status labels and polling/retry regressions, which were fixed in the shared view. The three affected client/browser suites pass 82/82; [commands and scope](../README.md#agent-interface-recovery-2026-10-07). This does not approve the proposed product changes below.
 
 ## 4. Product discovery
 

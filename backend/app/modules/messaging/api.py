@@ -16,6 +16,8 @@ from app.modules.messaging.schemas import (
     OpenConversation,
     ReactToMessage,
     SendMessage,
+    TypingInput,
+    TypingView,
 )
 
 router = APIRouter(
@@ -44,6 +46,17 @@ def list_conversations(
 @router.get("/conversations/{conversation_id}", response_model=Envelope[ConversationView])
 def read_conversation(request: Request, conversation_id: UUID):
     return envelope(request, request.app.state.messaging.read(token(request), str(conversation_id)))
+
+
+@router.post(
+    "/conversations/{conversation_id}/typing", response_model=Envelope[TypingView],
+    description="Publishes transient typing metadata to the conversation's other current participants through live "
+                "updates. Accepts no draft text and creates no message, notification, history or agent request. "
+                "Active updates expire after 8 seconds; each client supplies increasing sequence numbers. "
+                "At most five current participants may be mentioned, with at most 120 updates per account per minute.",
+)
+def update_typing(request: Request, conversation_id: UUID, body: TypingInput):
+    return envelope(request, request.app.state.messaging.typing(token(request), str(conversation_id), body))
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=MessagePage)

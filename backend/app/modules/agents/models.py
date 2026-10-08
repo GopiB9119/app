@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -192,6 +193,7 @@ class AgentMemory(Base):
         CheckConstraint("kind IN ('preference', 'note')", name="ck_agent_memory_kind"),
         CheckConstraint("(kind = 'preference') = (key IS NOT NULL)", name="ck_agent_memory_key"),
         CheckConstraint("length(content) BETWEEN 1 AND 200", name="ck_agent_memory_content"),
+        CheckConstraint("version > 0", name="ck_agent_memory_version"),
         Index("uq_agent_memory_preference", "account_id", "key", unique=True, postgresql_where=text("key IS NOT NULL")),
         Index("ix_agent_memory_account", "account_id", "created_at"),
         Index("ix_agent_memory_space", "account_id", "space_id"),
@@ -204,6 +206,21 @@ class AgentMemory(Base):
     kind: Mapped[str] = mapped_column(String(16))
     key: Mapped[str | None] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     source_run_id: Mapped[str | None] = mapped_column(ForeignKey(AgentRun.id))
     source: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AgentMemoryCommand(Base):
+    __tablename__ = "agent_memory_commands"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "request_key", name="uq_agent_memory_command_request"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(ForeignKey(AgentMemory.id, ondelete="CASCADE"))
+    request_key: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

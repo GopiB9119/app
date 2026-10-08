@@ -70,6 +70,30 @@ class MessageAction(Input):
     pass
 
 
+class TypingInput(Input):
+    client_id: UUID
+    sequence: int = Field(ge=1, le=2_147_483_647, strict=True)
+    is_typing: bool = Field(strict=True)
+    mentioned_account_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    mentions_agent: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def valid_context(self) -> "TypingInput":
+        if len(set(self.mentioned_account_ids)) != len(self.mentioned_account_ids):
+            raise ValueError("Mention each person only once.")
+        if not self.is_typing and (self.mentioned_account_ids or self.mentions_agent):
+            raise ValueError("A stopped typing update cannot contain mentions.")
+        return self
+
+
+class TypingView(TypingInput):
+    kind: Literal["typing"] = "typing"
+    conversation_id: UUID
+    space_id: UUID
+    account_id: UUID
+    expires_at: AwareDatetime
+
+
 class ParticipantView(BaseModel):
     account_id: str
     display_name: str

@@ -67,7 +67,7 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
     },
     onError: error => failed(error, () => setAgentIntent(null)),
   });
-  const problem = save.error ?? visibility.error ?? invitePolicy.error ?? agentPolicy.error ?? review.error;
+  const problem = review.error ?? save.error ?? visibility.error ?? invitePolicy.error ?? agentPolicy.error;
   const denied = problem instanceof ApiError && ([401, 403, 404].includes(problem.status) || problem.code === "ACCOUNT_CHANGED");
   const locked = intent !== null || visibilityIntent !== null || inviteIntent !== null || agentIntent !== null || save.isPending || visibility.isPending || invitePolicy.isPending || agentPolicy.isPending;
   const dirty = basis !== null && (name !== basis.name || description !== basis.description);
@@ -84,9 +84,12 @@ export function ManageSpaceSettings({ accountId, spaceId, onClose }: { accountId
   }, [problem, cache]);
   function close() { if (!locked || denied) { if (dirty && !denied) setDiscard("close"); else onClose(); } }
   async function reload() {
-    setDiscard(null); save.reset(); visibility.reset(); invitePolicy.reset(); agentPolicy.reset(); setNotice(""); setConfirming(false); setConfirmingInvites(false); setConfirmingAgent(false);
+    setDiscard(null); setNotice(""); setConfirming(false); setConfirmingInvites(false); setConfirmingAgent(false);
     const result = await review.refetch();
-    if (result.data && !result.isError) { setBasis(result.data); setName(result.data.name); setDescription(result.data.description); setConflict(false); }
+    if (result.data && !result.isError) {
+      setBasis(result.data); setName(result.data.name); setDescription(result.data.description); setConflict(false);
+      save.reset(); visibility.reset(); invitePolicy.reset(); agentPolicy.reset();
+    }
   }
   const target = basis?.visibility === "public" ? "private" : "public";
   const inviteTarget = basis ? !basis.member_invites : true;

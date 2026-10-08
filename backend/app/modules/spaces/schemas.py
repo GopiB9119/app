@@ -117,7 +117,16 @@ class Pagination(BaseModel):
     has_more: bool
 
 
-class SpacePage(Envelope[list[SpaceView]]):
+class SpaceListItem(SpaceView):
+    # Active members, so the Space switcher can say who is here without reading each roster.
+    member_count: int
+    # Up to three other current members' display names; never the viewer's own.
+    member_preview: list[str]
+    # When the Space chat last had a message the viewer could see; null when none since they joined.
+    last_message_at: datetime | None
+
+
+class SpacePage(Envelope[list[SpaceListItem]]):
     pagination: Pagination
 
 

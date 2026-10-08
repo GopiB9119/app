@@ -17,6 +17,17 @@ export type AgentRequestStatus = typeof AGENT_REQUEST_STATUSES[number];
 const MENTION = /(?<![\p{L}\p{N}_@.])@agent(?![\p{L}\p{N}_])/iu;
 
 export const participantSchema = z.object({ account_id: uuid, display_name: chars(1, 80) });
+export const TYPING_TTL_MILLISECONDS = 8000;
+export const MAX_TYPING_MENTIONS = 5;
+export const typingSchema = z.object({
+  kind: z.literal("typing"), conversation_id: uuid, space_id: uuid, account_id: uuid,
+  client_id: uuid, sequence: z.number().int().min(1).max(2147483647), is_typing: z.boolean(),
+  mentioned_account_ids: z.array(uuid).max(MAX_TYPING_MENTIONS).refine(ids => new Set(ids).size === ids.length),
+  mentions_agent: z.boolean(), expires_at: timestamp,
+}).refine(value => value.is_typing || (!value.mentions_agent && value.mentioned_account_ids.length === 0));
+export type TypingUpdate = z.infer<typeof typingSchema>;
+export type TypingIntent = Pick<TypingUpdate, "client_id" | "sequence" | "is_typing" | "mentioned_account_ids" | "mentions_agent">;
+
 export const conversationSchema = z.object({
   id: uuid, space_id: uuid, space_name: chars(1, 80),
   kind: z.enum(["space", "direct"]), title: chars(1, 80),
@@ -209,6 +220,49 @@ export function editable(message: Message, now = Date.now()) {
 /** Whether a message asks the agent: "@agent" as a word of its own, as the server reads it (DEC-046). */
 export function mentionsAgent(text: string) {
   return MENTION.test(text);
+}
+
+export function typingMentions(text: string, members: readonly z.infer<typeof participantSchema>[]) {
+  const normalized = text.normalize("NFC");
+  const names = new Map<string, { name: string; accounts: string[] }>();
+  for (const member of members) {
+    const name = member.display_name.trim().normalize("NFC");
+    const key = name.toLowerCase();
+    if (!name || key === "agent") continue;
+    const entry = names.get(key) ?? { name, accounts: [] };
+    entry.accounts.push(member.account_id);
+    names.set(key, entry);
+  }
+  const occupied: { start: number; end: number }[] = [];
+  const targets = new Map<string, number>();
+  // Prefer a complete longer name over its prefix; duplicate display names do not identify a person.
+  for (const { name, accounts } of [...names.values()].sort((a, b) => b.name.length - a.name.length)) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}\\p{M}_@.])@${escaped}(?![\\p{L}\\p{N}\\p{M}_])`, "giu");
+    for (const match of normalized.matchAll(pattern)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (occupied.some(range => start < range.end && end > range.start)) continue;
+      occupied.push({ start, end });
+      if (accounts.length === 1 && !targets.has(accounts[0])) targets.set(accounts[0], start);
+    }
+  }
+  return {
+    mentioned_account_ids: [...targets].sort((a, b) => a[1] - b[1]).slice(0, MAX_TYPING_MENTIONS).map(([id]) => id),
+    mentions_agent: mentionsAgent(text),
+  };
+}
+
+export async function sendTyping(accountId: string, conversationId: string, intent: TypingIntent, signal?: AbortSignal) {
+  const { data } = await api(`conversations/${conversationId}/typing`, typingSchema, {
+    method: "POST", accountId, body: intent, signal,
+  });
+  if (data.account_id !== accountId || data.conversation_id !== conversationId || data.client_id !== intent.client_id
+    || data.sequence !== intent.sequence || data.is_typing !== intent.is_typing || data.mentions_agent !== intent.mentions_agent
+    || data.mentioned_account_ids.join(",") !== intent.mentioned_account_ids.join(",")) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The typing update could not be confirmed.");
+  }
+  return data;
 }
 
 /** The author asks the agent again about their own message when no answer came; once answered, nothing changes. */

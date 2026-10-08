@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
@@ -21,6 +21,7 @@ from app.modules.spaces.schemas import (
     OwnershipTransferView,
     Pagination,
     SpaceCursor,
+    SpaceListItem,
     SpaceMemberView,
     SpaceSettingsView,
     SpaceView,
@@ -29,6 +30,8 @@ from app.modules.spaces.schemas import (
 MAX_ACCOUNT_SPACES = 50
 MAX_FAMILY_MEMBERS = 50
 MAX_COUPLE_MEMBERS = 2
+# Other members named on a Space list row, owner and admins first.
+MEMBER_PREVIEW = 3
 MAX_SPACE_INVITATIONS = 200
 OWNERSHIP_OFFER_LIFETIME = timedelta(minutes=15)
 OWNERSHIP_AUTH_MAX_AGE = timedelta(minutes=15)
@@ -478,8 +481,29 @@ class SpaceService:
                         expires_at=self.clock() + timedelta(minutes=15),
                     ).model_dump_json()
                 )
+            members = {}
+            if page:
+                rank = case((SpaceMembership.role == "owner", 0), (SpaceMembership.role == "admin", 1), else_=2)
+                for space_id, account_id, name in database.execute(
+                    select(SpaceMembership.space_id, SpaceMembership.account_id, User.display_name)
+                    .join(User, User.id == SpaceMembership.account_id)
+                    .where(SpaceMembership.space_id.in_([row[0].id for row in page]), SpaceMembership.status == "active")
+                    .order_by(SpaceMembership.space_id, rank, SpaceMembership.joined_at, SpaceMembership.account_id)
+                ).all():
+                    members.setdefault(space_id, []).append((account_id, name))
+                chats = dict(database.execute(select(Conversation.space_id, Conversation.last_message_at).where(
+                    Conversation.kind == "space", Conversation.space_id.in_([row[0].id for row in page]),
+                )).all())
+            else:
+                chats = {}
             return (
-                [self.view(*row) for row in page],
+                [SpaceListItem(
+                    **self.view(*row).model_dump(),
+                    member_count=max(1, len(members.get(row[0].id, []))),
+                    member_preview=[name for account_id, name in members.get(row[0].id, []) if account_id != user.id][:MEMBER_PREVIEW],
+                    # Chat activity from before the viewer joined is not theirs to see.
+                    last_message_at=(chats.get(row[0].id) if chats.get(row[0].id) and chats[row[0].id] >= row[1].joined_at else None),
+                ) for row in page],
                 Pagination(next_cursor=next_cursor, has_more=has_more),
             )
 

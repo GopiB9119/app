@@ -1,6 +1,8 @@
 """The model client (DEC-059): tool calling, retries, refusals and the owner's token limits, against a fake Azure endpoint."""
 
 import json
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 
 import httpx
 import pytest
@@ -95,6 +97,88 @@ def test_the_owner_token_total_stops_calls(tmp_path):
     assert ledger.spent() == 18_000
     with pytest.raises(ModelError, match="token_limit"):
         client.complete([{"role": "user", "content": "hi"}])
+
+
+def test_the_token_budget_includes_other_clients_in_flight_calls(tmp_path):
+    first = TokenLedger(tmp_path, 25_000)
+    second = TokenLedger(tmp_path, 25_000)
+    assert first.hold()
+    assert second.hold()
+    assert not first.hold()
+    assert not TokenLedger(tmp_path, 25_000).hold()
+
+    first.add(1_000)
+    assert first.spent() == second.spent() == 1_000
+    assert second.hold()
+    assert not first.hold()
+    second.add(2_000)
+    second.add(3_000)
+    assert first.spent() == second.spent() == 6_000
+
+
+def hold_budget_in_process(folder):
+    return TokenLedger(folder, 25_000).hold()
+
+
+def test_concurrent_processes_cannot_overbook_or_forget_unfinished_calls(tmp_path):
+    with ProcessPoolExecutor(max_workers=4, mp_context=multiprocessing.get_context("spawn")) as workers:
+        results = list(workers.map(hold_budget_in_process, [str(tmp_path)] * 8))
+    assert results.count(True) == 2
+    assert results.count(False) == 6
+    assert not TokenLedger(tmp_path, 25_000).hold()
+
+
+def test_existing_usage_logs_still_count_toward_the_token_budget(tmp_path):
+    (tmp_path / "previous-process.jsonl").write_text('{"tokens": 18000}\n', encoding="utf-8")
+    ledger = TokenLedger(tmp_path, 25_000)
+    assert ledger.spent() == 18_000
+    assert not ledger.hold()
+
+
+@pytest.mark.parametrize("tokens", [-1, True, "100", None, 1.5])
+def test_invalid_usage_never_releases_a_token_reservation(tmp_path, tokens):
+    ledger = TokenLedger(tmp_path, 10_000)
+    assert ledger.hold()
+    with pytest.raises(ValueError, match="nonnegative"):
+        ledger.add(tokens)
+    assert ledger.spent() == 0
+    assert not TokenLedger(tmp_path, 10_000).hold()
+
+
+def test_usage_cannot_be_recorded_without_a_token_reservation(tmp_path):
+    ledger = TokenLedger(tmp_path, 10_000)
+    with pytest.raises(ValueError, match="active token reservation"):
+        ledger.add(0)
+    assert ledger.spent() == 0
+    assert ledger.hold()
+
+
+def test_failed_usage_persistence_keeps_the_reservation(tmp_path, monkeypatch):
+    ledger = TokenLedger(tmp_path, 10_000)
+    assert ledger.hold()
+
+    def failed_sync(descriptor):
+        raise OSError("Usage storage unavailable")
+
+    monkeypatch.setattr("app.modules.agents.llm.os.fsync", failed_sync)
+    with pytest.raises(OSError, match="Usage storage unavailable"):
+        ledger.add(1_000)
+    assert not TokenLedger(tmp_path, 10_000).hold()
+
+
+def test_unknown_provider_usage_is_charged_before_retrying(tmp_path):
+    ledger = TokenLedger(tmp_path, 25_000)
+    calls = []
+
+    def timeout(request):
+        calls.append(request)
+        raise httpx.ReadTimeout("Provider timed out", request=request)
+
+    with pytest.raises(ModelError, match="token_limit"):
+        model(timeout, usage=ledger).complete([{"role": "user", "content": "hi"}])
+    assert len(calls) == 2
+    assert ledger.spent() == 20_000
+    assert not TokenLedger(tmp_path, 25_000).hold()
 
 
 def test_the_key_only_goes_to_azure_over_https():

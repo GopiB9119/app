@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { Compass, House, MessageSquare, UserRound, UsersRound } from "lucide-react";
 import { useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
@@ -12,7 +13,7 @@ import type { MessageId } from "@/features/i18n/messages";
 // the notification inbox, search and the agent stay in the header.
 export const mainSections = [
   { label: "Home", href: "/app", icon: House, paths: ["/app", "/app/calendar", "/app/care", "/app/reminders"] },
-  { label: "Spaces", href: "/app/spaces", icon: UsersRound, paths: ["/app/spaces", "/app/tasks", "/app/events", "/app/documents"] },
+  { label: "Spaces", href: "/app/spaces", icon: UsersRound, paths: ["/app/spaces", "/app/tasks", "/app/events", "/app/documents", "/app/polls"] },
   { label: "Messages", href: "/app/messages", icon: MessageSquare, paths: ["/app/messages"] },
   { label: "Discover", href: "/app/discover", icon: Compass, paths: ["/app/discover", "/app/home", "/app/pages", "/pages", "/posts"] },
   { label: "Profile", href: "/app/settings/account", icon: UserRound, paths: ["/app/settings", "/app/safety", "/app/moderation"] },
@@ -31,7 +32,18 @@ export function currentSection(pathname: string): MainSection | null {
 export function MainNavigation() {
   const t = useText();
   const current = currentSection(usePathname() ?? "");
-  return <nav className="main-nav" aria-label={t("nav.main")}>
+  const navigation = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = navigation.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const measure = () => root.style.setProperty("--navigation-height", `${element.getBoundingClientRect().height}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => { observer.disconnect(); root.style.removeProperty("--navigation-height"); };
+  }, []);
+  return <nav ref={navigation} className="main-nav" aria-label={t("nav.main")}>
     {mainSections.map(({ label, href, icon: Icon }) => <Link key={label} href={href} title={t(sectionMessages[label])} aria-current={current === label ? "page" : undefined}>
       <Icon size={20} aria-hidden /><span>{t(sectionMessages[label])}</span>
     </Link>)}

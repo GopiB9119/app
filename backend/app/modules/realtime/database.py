@@ -83,13 +83,14 @@ class BoundedConnection(psycopg.Connection):
         return super().connect(**params)
 
     @classmethod
-    def _connect_gen(cls, conninfo, *, timeout=0):
+    def _connect_gen(cls, conninfo="", **kwargs):
+        # psycopg 3.2 passes a timeout here and 3.3 does not, so forward exactly what was given.
         return (yield from bounded(
-            super()._connect_gen(conninfo, timeout=timeout),
+            super()._connect_gen(conninfo, **kwargs),
             time.monotonic() + remaining(CONNECT_SECONDS),
         ))
 
-    def wait(self, generator, interval=POLL_SECONDS):
+    def wait(self, generator, interval=POLL_SECONDS, timeout=None):
         try:
             return waiting.wait(
                 bounded(generator, time.monotonic() + remaining(TRANSPORT_SECONDS)),

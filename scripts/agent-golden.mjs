@@ -3,13 +3,14 @@
 // so nothing is sent without --live, and a run stops starting new requests after --max-tokens.
 //   node scripts/agent-golden.mjs                      check the cases, no network
 //   node scripts/agent-golden.mjs --live --only a,b    run selected cases (whole threads)
+//   node scripts/agent-golden.mjs --live --repeat 3    run every thread 3 times and report pass^3
 //   node scripts/agent-golden.mjs --score FILE         re-score a saved run without the model
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  AREAS, loadCases, registryNames, resolveDates, root, scoreRun, SETTLED, summarize, threads, validateCases,
+  AREAS, consistency, loadCases, registryNames, resolveDates, root, scoreRun, SETTLED, summarize, threads, validateCases,
 } from './agent-golden-score.mjs';
 
 const api = process.env.COMMUNITY_API_URL ?? 'http://127.0.0.1:8000';
@@ -19,20 +20,43 @@ const timeZone = 'Asia/Kolkata';
 const WORKING = ['queued', 'running', 'verifying', 'waiting_for_approval', 'waiting_for_user'];
 
 function parse(argv) {
-  const value = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
+  const value = name => {
+    const index = argv.indexOf(name);
+    if (index < 0) return undefined;
+    const next = argv[index + 1];
+    if (!next?.trim() || next.startsWith('--')) throw new Error(`${name} requires a value.`);
+    return next;
+  };
   const list = name => value(name)?.split(',').map(item => item.trim()).filter(Boolean);
+  const tokenCount = (name, fallback, minimum = 1) => {
+    const count = Number(value(name) ?? fallback);
+    if (!Number.isSafeInteger(count) || count < minimum) {
+      throw new Error(`${name} must be ${minimum === 0 ? 'a non-negative' : 'a positive'} safe integer.`);
+    }
+    return count;
+  };
+  const passValue = value('--min-pass');
+  const minPass = passValue === undefined ? null : Number(passValue);
+  if (minPass !== null && (!Number.isFinite(minPass) || minPass < 0 || minPass > 1)) {
+    throw new Error('--min-pass must be a finite number between 0 and 1.');
+  }
+  const repeat = tokenCount('--repeat', 1);
+  if (repeat > 10) throw new Error('--repeat must be a positive safe integer up to 10.');
   return {
     live: argv.includes('--live'), score: value('--score'), only: list('--only'), areas: list('--area'),
-    maxTokens: Number(value('--max-tokens') ?? 120_000), reserve: Number(value('--reserve') ?? 300_000),
-    limit: Number(value('--limit') ?? 2_000_000), out: path.resolve(value('--out') ?? path.join(root, '.local/agent-golden')),
-    minPass: value('--min-pass') === undefined ? null : Number(value('--min-pass')),
+    maxTokens: tokenCount('--max-tokens', 120_000), reserve: tokenCount('--reserve', 300_000, 0),
+    limit: tokenCount('--limit', 2_000_000), out: path.resolve(value('--out') ?? path.join(root, '.local/agent-golden')),
+    minPass, repeat,
   };
 }
 
 function select(cases, { only, areas }) {
+  const unknownAreas = (areas ?? []).filter(area => !AREAS.includes(area));
+  if (unknownAreas.length) throw new Error(`Unknown areas: ${unknownAreas.join(', ')}`);
   const chosen = cases.filter(item => (!only || only.includes(item.id)) && (!areas || areas.includes(item.area)));
   const unknown = (only ?? []).filter(id => !cases.some(item => item.id === id));
   if (unknown.length) throw new Error(`Unknown case ids: ${unknown.join(', ')}`);
+  if (!chosen.length) throw new Error('No golden cases match the selected filters.');
   // A follow-up only makes sense after the turns before it, so a chosen case brings its whole thread.
   const keys = new Set(chosen.map(item => item.thread ?? item.id));
   return cases.filter(item => keys.has(item.thread ?? item.id));
@@ -104,7 +128,8 @@ async function ask(account, spaceId, message, seconds) {
   return { run, seconds: (Date.now() - started) / 1000, timedOut: !SETTLED.includes(run.status) };
 }
 
-function report(results, skipped = []) {
+function report(results, skipped = [], plan = {}) {
+  const steady = consistency(results, plan);
   for (const result of results) {
     const failed = result.score.checks.filter(check => !check.ok);
     const cost = result.tokens == null ? '' : `, ${result.tokens} tokens`;
@@ -117,7 +142,12 @@ function report(results, skipped = []) {
   const failures = Object.entries(summary.failures).sort((a, b) => b[1] - a[1]);
   if (failures.length) console.log(`Most failed checks: ${failures.slice(0, 8).map(([name, count]) => `${name} (${count})`).join('; ')}`);
   if (skipped.length) console.log(`Not run (token cap reached): ${skipped.join(', ')}`);
-  return summary;
+  if (steady.repeats > 1) {
+    console.log(`pass^${steady.repeats}: ${steady.steady}/${steady.cases} cases passed every run (${Math.round(steady.rate * 100)}%)`);
+    if (steady.flaky.length) console.log(`Passed only sometimes: ${steady.flaky.join(', ')}`);
+  }
+  if (steady.incomplete?.length) console.log(`Incomplete cases: ${steady.incomplete.join(', ')}`);
+  return { ...summary, rate: steady.rate };
 }
 
 async function live(options, chosen) {
@@ -131,17 +161,18 @@ async function live(options, chosen) {
   const prompts = await readFile(path.join(root, 'backend/app/modules/agents/prompts.py'), 'utf8');
   const meta = {
     started_at: new Date().toISOString(), api, prompt_version: prompts.match(/^PROMPT_VERSION = "([^"]+)"/m)?.[1] ?? null,
-    dates: resolveDates(new Date(), timeZone), ledger_before: before, max_tokens: options.maxTokens,
+    dates: resolveDates(new Date(), timeZone), ledger_before: before, max_tokens: options.maxTokens, repeat: options.repeat,
+    case_ids: chosen.map(item => item.id),
   };
-  console.log(`Live golden run: ${chosen.length} requests, prompt ${meta.prompt_version}, ${remaining} tokens left before the run.`);
+  console.log(`Live golden run: ${chosen.length} requests x ${options.repeat}, prompt ${meta.prompt_version}, ${remaining} tokens left before the run.`);
   const results = [];
   const skipped = [];
   const accounts = [];
   let spaceAccount;
   try {
-    for (const [index, group] of threads(chosen).entries()) {
+    for (let round = 1; round <= options.repeat; round += 1) for (const [index, group] of threads(chosen).entries()) {
       if ((await spentTokens()) - before >= options.maxTokens) {
-        skipped.push(...group.map(item => item.id));
+        skipped.push(...group.map(item => (options.repeat > 1 ? `${item.id}#${round}` : item.id)));
         continue;
       }
       let account;
@@ -149,18 +180,22 @@ async function live(options, chosen) {
       if (group[0].scope === 'space') {
         if (!spaceAccount) accounts.push(spaceAccount = await signUp('space'));
         account = spaceAccount;
-        spaceId = (await familySpace(account, index + 1, meta.dates)).id;
+        spaceId = (await familySpace(account, `${round}-${index + 1}`, meta.dates)).id;
       } else {
-        accounts.push(account = await signUp(`main${index + 1}`));
-        if (group.some(item => item.fixtures === 'family')) await familySpace(account, index + 1, meta.dates);
+        accounts.push(account = await signUp(`main${round}-${index + 1}`));
+        if (group.some(item => item.fixtures === 'family')) await familySpace(account, `${round}-${index + 1}`, meta.dates);
       }
-      for (const spec of group) {
+      for (const [turn, spec] of group.entries()) {
         const tokensBefore = await spentTokens();
+        if (tokensBefore - before >= options.maxTokens) {
+          skipped.push(...group.slice(turn).map(item => (options.repeat > 1 ? `${item.id}#${round}` : item.id)));
+          break;
+        }
         const { run, seconds, timedOut } = await ask(account, spaceId, spec.message, spec.expect?.max_seconds ?? 150);
         const tokens = (await spentTokens()) - tokensBefore;
         const score = scoreRun(spec, run, { dates: meta.dates, seconds, timedOut });
-        results.push({ id: spec.id, area: spec.area, thread: spec.thread ?? spec.id, message: spec.message, seconds, timedOut, tokens, run, score });
-        console.log(`${score.passed ? 'pass' : 'FAIL'} ${spec.id} ${run.status} ${Math.round(seconds)}s ${tokens} tokens`);
+        results.push({ id: spec.id, area: spec.area, thread: spec.thread ?? spec.id, round, message: spec.message, seconds, timedOut, tokens, run, score });
+        console.log(`${score.passed ? 'pass' : 'FAIL'} ${spec.id}${options.repeat > 1 ? ` #${round}` : ''} ${run.status} ${Math.round(seconds)}s ${tokens} tokens`);
         // Free the run so the next request is not refused as busy; nothing proposed is ever approved.
         if (WORKING.includes(run.status)) await post(`/agent-runs/${run.id}/cancel`, account.token, {}).catch(error => console.warn(error.message));
       }
@@ -175,17 +210,35 @@ async function live(options, chosen) {
     await writeFile(file, JSON.stringify({ meta, skipped, results }, null, 2), { flag: 'wx' });
     console.log(`\nSaved ${file} (${meta.tokens} tokens in the shared ledger during the run, including any other work).`);
   }
-  return report(results, skipped);
+  return report(results, skipped, { repeats: options.repeat, caseIds: meta.case_ids });
 }
 
-async function rescore(file, cases) {
+async function rescore(file, cases, { only, areas }) {
   const saved = JSON.parse(await readFile(path.resolve(file), 'utf8'));
   const known = new Map(cases.map(item => [item.id, item]));
-  const results = saved.results.filter(result => known.has(result.id)).map(result => ({
+  const selected = saved.results.filter(result => known.has(result.id));
+  if (!selected.length) throw new Error('No saved results match the selected cases.');
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const result of selected) {
+    // Repeated runs of one case are told apart by their round; older saved runs have none.
+    const key = `${result.id}#${result.round ?? 1}`;
+    if (seen.has(key)) duplicates.add(result.id);
+    seen.add(key);
+  }
+  if (duplicates.size) throw new Error(`Duplicate saved result IDs: ${[...duplicates].join(', ')}`);
+  if (only || areas) {
+    const missing = cases.filter(item => !selected.some(result => result.id === item.id));
+    if (missing.length) throw new Error(`Saved run is missing selected cases: ${missing.map(item => item.id).join(', ')}`);
+  }
+  const results = selected.map(result => ({
     ...result, score: scoreRun(known.get(result.id), result.run, { dates: saved.meta.dates, seconds: result.seconds, timedOut: result.timedOut }),
   }));
+  const skipped = (saved.skipped ?? []).filter(id => known.has(id.split('#')[0]));
+  const caseIds = saved.meta.case_ids?.filter(id => known.has(id))
+    ?? [...new Set([...selected.map(result => result.id), ...skipped.map(id => id.split('#')[0])])];
   console.log(`Re-scored ${results.length} saved requests from ${saved.meta.started_at} (prompt ${saved.meta.prompt_version}).`);
-  return report(results, saved.skipped ?? []);
+  return report(results, skipped, { repeats: saved.meta.repeat, caseIds });
 }
 
 async function main() {
@@ -198,7 +251,7 @@ async function main() {
   }
   const chosen = select(cases, options);
   let summary;
-  if (options.score) summary = await rescore(options.score, chosen);
+  if (options.score) summary = await rescore(options.score, chosen, options);
   else if (options.live) summary = await live(options, chosen);
   else {
     const counts = AREAS.map(area => [area, chosen.filter(item => item.area === area).length]).filter(([, count]) => count);

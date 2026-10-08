@@ -4,9 +4,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.security import HTTPBearer
 
+from app.modules.events.polls import EventPollService
 from app.modules.events.schemas import (
-    Attendance, BudgetView, ChangeContribution, CreateEvent, EventAction, EventDetail, EventList, RecordContribution,
-    RecordExpense, SaveBudget, SaveSplit, UpdateEvent,
+    Attendance,
+    BudgetView,
+    ChangeContribution,
+    CreateEvent,
+    CreatePoll,
+    EventAction,
+    EventDetail,
+    EventList,
+    PollView,
+    RecordContribution,
+    RecordExpense,
+    SaveBudget,
+    SaveSplit,
+    UpdateEvent,
+    VotePoll,
 )
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
@@ -54,6 +68,34 @@ def cancel_event(request: Request, event_id: UUID, body: EventAction, if_match: 
 @router.post("/events/{event_id}/attendance", response_model=Envelope[EventDetail])
 def respond_to_event(request: Request, event_id: UUID, body: Attendance):
     return envelope(request, service(request).respond(token(request), str(event_id), body))
+
+
+@router.get("/events/{event_id}/polls", response_model=Envelope[list[PollView]])
+def list_polls(request: Request, event_id: UUID):
+    return envelope(request, EventPollService(service(request)).list_polls(token(request), str(event_id)))
+
+
+@router.post("/events/{event_id}/polls", response_model=Envelope[PollView], status_code=201)
+def create_poll(request: Request, event_id: UUID, body: CreatePoll, idempotency_key: UUID = Header()):
+    return envelope(request, EventPollService(service(request)).create(token(request), str(event_id), body, str(idempotency_key)))
+
+
+@router.get("/events/{event_id}/polls/{poll_id}", response_model=Envelope[PollView])
+def read_poll(request: Request, event_id: UUID, poll_id: UUID):
+    return envelope(request, EventPollService(service(request)).read(token(request), str(event_id), str(poll_id)))
+
+
+@router.put("/events/{event_id}/polls/{poll_id}/vote", response_model=Envelope[PollView])
+def vote_poll(request: Request, event_id: UUID, poll_id: UUID, body: VotePoll, idempotency_key: UUID = Header(),
+              if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, EventPollService(service(request)).vote(token(request), str(event_id), str(poll_id), body,
+                                                                   str(idempotency_key), if_match))
+
+
+@router.post("/events/{event_id}/polls/{poll_id}/close", response_model=Envelope[PollView])
+def close_poll(request: Request, event_id: UUID, poll_id: UUID, body: EventAction,
+               if_match: str | None = Header(default=None, max_length=200)):
+    return envelope(request, EventPollService(service(request)).close(token(request), str(event_id), str(poll_id), if_match))
 
 
 # Budgets (DEC-039): planned and recorded amounts; recording an expense is never a payment.

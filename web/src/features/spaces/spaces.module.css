@@ -54,6 +54,10 @@
 .spaceIdentity { flex: 1 1 140px; min-width: 0; }
 .spaceIdentity h3 { font-size: 18px; line-height: 1.35; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
 .spaceIdentity span { color: var(--muted); font-size: 14px; }
+.facts { display: flex; flex-wrap: wrap; gap: var(--space-unit) calc(var(--space-unit) * 3); margin-top: calc(var(--space-unit) * 2); }
+.facts > span { display: inline-flex; align-items: flex-start; gap: var(--space-unit); }
+.facts svg { flex: none; margin-top: 0.2em; }
+.factPrivacy { display: none !important; }
 .spaceActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; flex-shrink: 1; margin-left: auto; gap: 4px; }
 .spaceActions > a, .spaceActions > button { display: flex; flex: 0 0 auto; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: auto; min-width: 56px; height: auto; min-height: 56px; padding: 6px 4px; border-radius: var(--radius-control); font-size: 12px; font-weight: 500; line-height: 1.2; text-align: center; text-decoration: none; }
 .actionLabel { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
@@ -132,8 +136,11 @@
   .privacy { margin-top: 10px; }
   .workspace { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .rowPrivacy { display: none; }
+  .factPrivacy { display: inline-flex !important; }
   .spaceList li { flex-wrap: wrap; }
-  .spaceActions { flex-basis: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); justify-items: center; gap: 4px 0; }
+  /* Each action keeps its label's width and the row wraps, so labels such as "Documents" never split mid-word. */
+  .spaceActions { flex-basis: 100%; justify-content: flex-start; gap: 4px; }
+  .spaceActions > a, .spaceActions > button { flex: 1 0 auto; }
   .inviteForm { grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
   .invitationList li { flex-wrap: wrap; gap: 12px; }
   .invitationActions { width: 100%; justify-content: flex-start; }

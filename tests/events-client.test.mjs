@@ -214,6 +214,224 @@ test('Lists reject foreign, duplicated, wrong-period or repeated pages; form che
   assert.match(client.formatWhen(event(), 'UTC').yours, /your time/);
 });
 
+const pollTestId = 'ab3d7e52-5a3b-4f0e-9a61-0d4e6f2b7c11';
+const pollChoiceId = 'bc2e8f63-6b4c-4a1f-8b72-1e5f7a3c8d22';
+const pollOtherChoiceId = 'cd3f9074-7c5d-4b20-9c83-2f6a8b4d9e33';
+const pollVoteEtag = `"${'a'.repeat(64)}"`;
+const pollCloseEtag = `"${'b'.repeat(64)}"`;
+const eventPoll = (overrides = {}) => ({
+  id: pollTestId, event_id: eventId, question: 'Which day?',
+  options: [{ id: pollChoiceId, text: 'Saturday', votes: 0 }, { id: pollOtherChoiceId, text: 'Sunday', votes: 0 }],
+  status: 'open', total_votes: 0, my_option_id: null, vote_etag: pollVoteEtag, can_vote: true,
+  can_close: true, etag: pollCloseEtag, created_at: '2026-10-07T10:00:00Z', closed_at: null, ...overrides,
+});
+const closedEventPoll = () => eventPoll({ status: 'closed', closed_at: '2026-10-07T11:00:00Z', can_vote: false, can_close: false });
+
+test('Poll BFF allows only exact event routes and preserves personal and manager preconditions', async () => {
+  for (const [method, route, etag] of [
+    ['GET', `events/${eventId}/polls`], ['POST', `events/${eventId}/polls`],
+    ['GET', `events/${eventId}/polls/${pollTestId}`],
+    ['PUT', `events/${eventId}/polls/${pollTestId}/vote`, pollVoteEtag],
+    ['POST', `events/${eventId}/polls/${pollTestId}/close`, pollCloseEtag],
+    ['GET', `events/${eventId.toUpperCase()}/polls/${pollTestId.toUpperCase()}`],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route, etag ? { 'If-Match': etag } : {})).status, 200, `${method} ${route}`);
+    assert.equal(proxy.calls.length, 2);
+    assert.equal(proxy.calls[0].url, 'https://backend.example.test/v1/me');
+    const upstream = proxy.calls[1];
+    assert.equal(upstream.url, `https://backend.example.test/v1/${route}`);
+    assert.equal(upstream.options.method, method);
+    assert.equal(upstream.options.headers.Authorization, 'Bearer synthetic-session');
+    assert.equal(upstream.options.cache, 'no-store');
+    if (method !== 'GET') {
+      assert.equal(upstream.options.headers['Idempotency-Key'], key);
+      assert.equal(upstream.options.headers['If-Match'], etag ?? '"v1"');
+      assert.equal(upstream.options.body, '{}');
+    }
+    for (const query of ['limit=20', 'cursor=abc', `event_id=${otherId}`, 'as=someone', 'choice=one&choice=two', '%63ursor=abc']) {
+      const injected = bff();
+      assert.equal((await injected.request(method, `${route}?${query}`)).status, 400);
+      assert.equal(injected.calls.length, 0);
+    }
+  }
+});
+
+test('Poll BFF refuses near-miss routes, foreign origins and changed accounts without forwarding a poll', async () => {
+  for (const [method, route] of [
+    ['PUT', `events/${eventId}/polls`], ['PATCH', `events/${eventId}/polls/${pollTestId}`],
+    ['POST', `events/${eventId}/polls/${pollTestId}`], ['DELETE', `events/${eventId}/polls/${pollTestId}`],
+    ['POST', `events/${eventId}/polls/${pollTestId}/vote`], ['GET', `events/${eventId}/polls/${pollTestId}/vote`],
+    ['PUT', `events/${eventId}/polls/${pollTestId}/close`], ['GET', `events/${eventId}/polls/${pollTestId}/close`],
+    ['GET', `events/${eventId}/polls/${pollTestId}/ballots`], ['POST', `spaces/${spaceId}/events/${eventId}/polls`],
+    ['GET', `events/${'-'.repeat(36)}/polls`], ['GET', `events/${eventId}/polls/${'a'.repeat(36)}`],
+    ['GET', `events/${eventId}/polls/${pollTestId}/extra`], ['POST', `events/${eventId}/polls/`],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);
+    assert.equal(proxy.calls.length, 0);
+  }
+  for (const [headers, status, count] of [
+    [{ Origin: 'https://foreign.example' }, 403, 0], [{ Cookie: '' }, 401, 0],
+    [{ 'X-Account-ID': otherId }, 409, 1], [{ 'X-Account-ID': '' }, 409, 0],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request('PUT', `events/${eventId}/polls/${pollTestId}/vote`, headers)).status, status);
+    assert.equal(proxy.calls.length, count);
+    assert.ok(proxy.calls.every(call => call.url.endsWith('/v1/me')));
+  }
+});
+
+test('Poll schema validates bounded choices, private totals and consistent state', () => {
+  const { pollSchema } = eventsClient();
+  for (const value of [eventPoll(), closedEventPoll(), eventPoll({ can_vote: false, can_close: false, etag: null })]) {
+    assert.equal(pollSchema.safeParse(value).success, true);
+  }
+  for (const changes of [
+    { question: '' }, { question: 'x'.repeat(121) }, { options: [] }, { options: [eventPoll().options[0]] },
+    { options: Array(9).fill(eventPoll().options[0]) }, { options: [eventPoll().options[0], { ...eventPoll().options[1], id: pollChoiceId.toUpperCase() }] },
+    { options: [eventPoll().options[0], { ...eventPoll().options[1], text: 'SATURDAY' }] },
+    { options: [{ id: pollChoiceId, text: 'Stra\u00dfe', votes: 0 }, { id: pollOtherChoiceId, text: 'STRASSE', votes: 0 }] },
+    { options: [{ ...eventPoll().options[0], text: 'x'.repeat(81) }, eventPoll().options[1]] },
+    { options: [{ ...eventPoll().options[0], votes: -1 }, eventPoll().options[1]] },
+    { options: [{ ...eventPoll().options[0], votes: 0.5 }, eventPoll().options[1]], total_votes: 0.5 },
+    { total_votes: 1 }, { my_option_id: otherId }, { vote_etag: 'unquoted' }, { vote_etag: '"short"' }, { etag: null },
+    { etag: `"${'g'.repeat(64)}"` }, { closed_at: '2026-10-07T11:00:00Z' }, { status: 'closed' },
+    { status: 'closed', closed_at: '2026-10-07T11:00:00Z' }, { created_at: 'not-a-date' },
+  ]) assert.equal(pollSchema.safeParse(eventPoll(changes)).success, false, JSON.stringify(changes));
+});
+
+test('Poll drafts normalize whitespace and count Unicode characters without merging distinct choices', () => {
+  const client = eventsClient();
+  const body = client.pollBody('  Which\n day? ', [' Saturday ', 'Sunday']);
+  assert.deepEqual(JSON.parse(JSON.stringify(body)), { question: 'Which day?', options: ['Saturday', 'Sunday'] });
+  assert.equal(client.validPollBody(body), true);
+  assert.equal(client.validPollBody({ question: '\u{1f642}'.repeat(120), options: ['\u{1f642}'.repeat(80), 'Other'] }), true);
+  assert.equal(client.validPollBody({ question: 'Day?', options: ['i', '\u0131'] }), true);
+  for (const value of [
+    client.pollBody('Question', [' Same ', 'same']), { question: '\u{1f642}'.repeat(121), options: ['A', 'B'] },
+    { question: 'Question', options: ['A', '\u{1f642}'.repeat(81)] }, { question: ' ', options: ['A', 'B'] },
+    { question: 'Question', options: ['A', ' '] }, { question: 'Question\u202e', options: ['A', 'B'] },
+  ]) assert.equal(client.validPollBody(value), false);
+});
+
+test('Poll reads bind canonical UUID targets and send only the account and abortable GET', async () => {
+  const calls = [];
+  const signal = new AbortController().signal;
+  const canonical = eventPoll({ id: pollTestId.toUpperCase(), event_id: eventId.toUpperCase(),
+    options: eventPoll().options.map(option => ({ ...option, id: option.id.toUpperCase() })) });
+  const client = eventsClient(async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ data: String(url).endsWith('/polls') ? [canonical] : canonical });
+  });
+  assert.equal((await client.listEventPolls(accountId, eventId, signal))[0].id, pollTestId);
+  assert.equal((await client.readEventPoll(accountId, eventId.toUpperCase(), pollTestId.toUpperCase(), signal)).event_id, eventId);
+  assert.equal(calls[0].url, `/api/events/${eventId}/polls`);
+  assert.equal(calls[1].url, `/api/events/${eventId.toUpperCase()}/polls/${pollTestId.toUpperCase()}`);
+  for (const { options } of calls) {
+    assert.equal(options.method, 'GET');
+    assert.equal(options.headers['X-Account-ID'], accountId);
+    assert.equal(options.headers['Idempotency-Key'], undefined);
+    assert.equal(options.headers['If-Match'], undefined);
+    assert.equal(options.body, undefined);
+    assert.equal(options.signal, signal);
+  }
+  for (const value of [eventPoll({ event_id: otherId }), eventPoll({ id: otherId })]) {
+    await assert.rejects(eventsClient(async () => Response.json({ data: value })).readEventPoll(accountId, eventId, pollTestId), { status: 502, code: 'INVALID_RESPONSE' });
+  }
+});
+
+test('Poll lists accept empty results but reject duplicate, foreign, oversized and incomplete pages', async () => {
+  assert.equal((await eventsClient(async () => Response.json({ data: [] })).listEventPolls(accountId, eventId)).length, 0);
+  for (const envelope of [
+    { data: [eventPoll(), eventPoll({ id: pollTestId.toUpperCase() })] }, { data: [eventPoll({ event_id: otherId })] },
+    { data: Array.from({ length: 21 }, (_, index) => eventPoll({ id: `463aa3d5-a47c-4560-8fe9-${String(index).padStart(12, '0')}` })) },
+    { data: [], pagination: { next_cursor: 'more', has_more: true } }, { data: {} }, { data: [eventPoll({ total_votes: 2 })] },
+  ]) await assert.rejects(eventsClient(async () => Response.json(envelope)).listEventPolls(accountId, eventId), { status: 502 });
+});
+
+test('Poll creation retries the exact reviewed body and UUID key and rejects mismatched confirmation', async () => {
+  const calls = [];
+  const intent = { accountId, eventId: eventId.toUpperCase(), key, body: { question: 'Which day?', options: ['Saturday', 'Sunday'] } };
+  const client = eventsClient(async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) throw new TypeError('Connection lost');
+    return Response.json({ data: eventPoll() }, { status: 201 });
+  });
+  await assert.rejects(client.createEventPoll(intent), { status: 0 });
+  assert.equal((await client.createEventPoll(intent)).id, pollTestId);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, `/api/events/${intent.eventId}/polls`);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.headers['X-Account-ID'], accountId);
+  assert.equal(calls[0].options.headers['Idempotency-Key'], key);
+  assert.equal(calls[0].options.headers['If-Match'], undefined);
+  assert.equal(calls[0].options.body, JSON.stringify(intent.body));
+  assert.deepEqual(calls[0], calls[1]);
+  for (const value of [eventPoll({ event_id: otherId }), eventPoll({ question: 'Another question?' }), eventPoll({ options: [...eventPoll().options].reverse() })]) {
+    await assert.rejects(eventsClient(async () => Response.json({ data: value })).createEventPoll(intent), { status: 502 });
+  }
+});
+
+test('Poll vote retry keeps its original choice, key and vote ETag while accepting newer canonical state', async () => {
+  const calls = [];
+  const intent = { accountId, eventId, pollId: pollTestId, key, voteEtag: pollVoteEtag, body: { option_id: pollChoiceId } };
+  const client = eventsClient(async (url, options) => {
+    calls.push({ url, options });
+    if (calls.length === 1) throw new TypeError('Connection lost after write');
+    return Response.json({ data: eventPoll({ id: pollTestId.toUpperCase(), event_id: eventId.toUpperCase(),
+      my_option_id: pollOtherChoiceId.toUpperCase(), total_votes: 1, vote_etag: `"${'c'.repeat(64)}"`,
+      options: [eventPoll().options[0], { ...eventPoll().options[1], votes: 1 }] }) });
+  });
+  await assert.rejects(client.voteEventPoll(intent), { status: 0 });
+  assert.equal((await client.voteEventPoll(intent)).my_option_id, pollOtherChoiceId);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, `/api/events/${eventId}/polls/${pollTestId}/vote`);
+  assert.equal(calls[0].options.method, 'PUT');
+  assert.equal(calls[0].options.headers['X-Account-ID'], accountId);
+  assert.equal(calls[0].options.headers['Idempotency-Key'], key);
+  assert.equal(calls[0].options.headers['If-Match'], pollVoteEtag);
+  assert.equal(calls[0].options.body, JSON.stringify({ option_id: pollChoiceId }));
+  assert.deepEqual(calls[0], calls[1]);
+});
+
+test('Poll withdrawal is explicit null and wrong-target vote responses never confirm a write', async () => {
+  const intent = { accountId, eventId, pollId: pollTestId, key, voteEtag: pollVoteEtag, body: { option_id: null } };
+  const calls = [];
+  const client = eventsClient(async (url, options) => { calls.push({ url, options }); return Response.json({ data: eventPoll() }); });
+  assert.equal((await client.voteEventPoll(intent)).my_option_id, null);
+  assert.equal(calls[0].options.body, '{"option_id":null}');
+  for (const value of [eventPoll({ id: otherId }), eventPoll({ event_id: otherId })]) {
+    await assert.rejects(eventsClient(async () => Response.json({ data: value })).voteEventPoll(intent), { status: 502, code: 'INVALID_RESPONSE' });
+  }
+});
+
+test('Poll close uses its reviewed ETag and empty POST body and requires closed target state', async () => {
+  const calls = [];
+  const intent = { accountId, eventId, pollId: pollTestId, etag: pollCloseEtag };
+  const client = eventsClient(async (url, options) => { calls.push({ url, options }); return Response.json({ data: closedEventPoll() }); });
+  await client.closeEventPoll(intent);
+  await client.closeEventPoll(intent);
+  assert.equal(calls[0].url, `/api/events/${eventId}/polls/${pollTestId}/close`);
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.headers['If-Match'], pollCloseEtag);
+  assert.equal(calls[0].options.headers['Idempotency-Key'], undefined);
+  assert.equal(calls[0].options.body, '{}');
+  assert.deepEqual(calls[0], calls[1]);
+  for (const value of [eventPoll(), { ...closedEventPoll(), id: otherId }, { ...closedEventPoll(), event_id: otherId }]) {
+    await assert.rejects(eventsClient(async () => Response.json({ data: value })).closeEventPoll(intent), { status: 502 });
+  }
+});
+
+test('Poll stale and denied writes surface unchanged without automatic retries', async () => {
+  for (const status of [403, 404, 409, 412]) {
+    let requests = 0;
+    const client = eventsClient(async () => { requests += 1; return Response.json({ error: { code: 'POLL_CHANGED', message: 'Review again.' } }, { status }); });
+    await assert.rejects(client.voteEventPoll({ accountId, eventId, pollId: pollTestId, key, voteEtag: pollVoteEtag, body: { option_id: pollChoiceId } }), { status, code: 'POLL_CHANGED' });
+    assert.equal(requests, 1);
+  }
+});
+
 // Event budgets (DEC-039, T159).
 const categoryId = '8c1d7e52-5a3b-4f0e-9a61-0d4e6f2b7c11';
 const expenseId = '9d2e8f63-6b4c-4a1f-8b72-1e5f7a3c8d22';

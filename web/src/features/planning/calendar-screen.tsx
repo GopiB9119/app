@@ -160,7 +160,10 @@ function CalendarAgenda({ accountId, spaceId, solo, view, range, timezone, selec
   }
   return <div className={view === "month" ? styles.workspace : styles.single}>
     {view === "month" && <section className={styles.monthGrid} aria-label={t("tasks.calendarDates")}>
-      <div className={styles.weekdays} aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => <span key={day}>{language === "en" ? day : new Intl.DateTimeFormat(`${language}-IN`, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 8, 20 + index)))}</span>)}</div>
+      <div className={styles.weekdays} aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => {
+        const weekday = (width: "short" | "narrow") => new Intl.DateTimeFormat(language === "en" ? "en" : `${language}-IN`, { weekday: width, timeZone: "UTC" }).format(new Date(Date.UTC(2026, 8, 20 + index)));
+        return <span key={day} data-narrow={weekday("narrow")}>{language === "en" ? day : weekday("short")}</span>;
+      })}</div>
       <div className={styles.dates}>
         {Array.from({ length: firstDay }, (_, index) => <span key={`blank-${index}`} />)}
         {Array.from({ length: days }, (_, index) => {

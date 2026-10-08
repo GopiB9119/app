@@ -284,6 +284,10 @@ class HelpService(CommunityService):
         digest = self.security.digest("help.reply.create", post_id, body.body)
         with self.identity.signed_in_write(token) as (database, user):
             post, page = self.locked(database, user, post_id)
+            if post.author_id != user.id and (post.author_id in self.blocked(database, user, "account") or (
+                not self.manages(database, user, page) and page.id in self.blocked(database, user, "page")
+            )):
+                raise not_found("Help post")
             existing = database.scalar(select(HelpReply).where(HelpReply.author_id == user.id, HelpReply.creation_key == key))
             if existing is not None:
                 if existing.creation_digest != digest or existing.post_id != post.id:

@@ -5,6 +5,7 @@ change waits for the person's exact approval here. The run carries the person's 
 works, so every tool acts with exactly their current permissions; a run is never continued with stored credentials."""
 
 import json
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -12,10 +13,17 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 
 from app.errors import DomainError
-from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun, AgentRunEvent, AgentToolCall
+from app.modules.agents.models import (
+    AgentApproval,
+    AgentMemory,
+    AgentMemoryCommand,
+    AgentRun,
+    AgentRunEvent,
+    AgentToolCall,
+)
 from app.modules.agents.prompts import PROMPT_VERSION
 from app.modules.agents.registry import MAIN_ROUTE, route, route_for
 from app.modules.agents.runtime import ACTIVE, TERMINAL, AgentRuntime, scopes, tool_message
@@ -37,7 +45,7 @@ from app.modules.agents.schemas import (
     AgentWebSource,
     DeletedMemory,
 )
-from app.modules.agents.toolkit import TOOLS, ToolContext, ToolProblem
+from app.modules.agents.toolkit import HHMM, SENSITIVE, TOOLS, ToolContext, ToolProblem
 from app.modules.agents.web import stored_sources, stored_web_text
 from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceMembership
@@ -53,6 +61,13 @@ WORKERS = 4
 PERSON_LOCK = 20261001
 WAITING = ("waiting_for_approval", "waiting_for_user")
 WORKING = ("queued", "running")
+RUN_FILTERS = {
+    "working": ("queued", "running", "verifying"),
+    "waiting_for_approval": ("waiting_for_approval",), "waiting_for_user": ("waiting_for_user",),
+    "completed": ("completed",), "failed": ("failed", "timed_out", "expired"), "cancelled": ("cancelled",),
+    # Home's "needs you" list: every request waiting on the person.
+    "needs_you": WAITING,
+}
 SHOWN_CALLS = 40
 SHOWN_EVENTS = 40
 SHOWN_EVIDENCE = 60
@@ -136,9 +151,8 @@ class AgentService:
             id=str(uuid4()), run_id=run.id, sequence=run.event_sequence, event_type=event_type,
             summary=summary[:300], created_at=self.clock(),
         ))
-        # Live clients read an Agent hint as naming a Space; the Main Agent's screen refreshes by itself while it works.
-        if run.space_id is not None:
-            signal(database, "agent", [run.account_id], space_id=run.space_id, run_id=run.id, reason="changed")
+        # Only the requester hears it, and a Main Agent hint names no Space; clients then read the run through the API.
+        signal(database, "agent", [run.account_id], space_id=run.space_id, run_id=run.id, reason="changed")
 
     def record_call(self, database, run, registry, effect, status, summary, arguments, result_ref=None, error_code=None,
                     approval_id=None):
@@ -520,7 +534,7 @@ class AgentService:
             _user, run = self.owned_run(database, token, str(run_id))
             return AgentRunWebTextView(run_id=run.id, sources=stored_web_text(run.state))
 
-    def list_runs(self, token, space_id, limit, cursor=None):
+    def list_runs(self, token, space_id, limit, cursor=None, *, status="all"):
         """The person's requests to one agent: the Main Agent without a Space, otherwise that Space's agent."""
         space_id = None if space_id is None else str(space_id)
         with self.sessions.begin() as database:
@@ -531,6 +545,19 @@ class AgentService:
             scope = ((AgentRun.space_id.is_(None),) if space_id is None
                      else (AgentRun.space_id == space_id, AgentRun.admission_id == admission_id))
             statement = select(AgentRun).where(AgentRun.account_id == user.id, *scope)
+            if status != "all":
+                if status not in RUN_FILTERS:
+                    raise DomainError(400, "INVALID_FILTER", "Choose a request status.")
+                now = self.clock()
+                effective_status = case(
+                    (and_(AgentRun.status.in_(WAITING), AgentRun.deadline_at <= now), "expired"),
+                    (and_(AgentRun.status.in_(WAITING + WORKING),
+                          space_id is not None and self.agent_off(database, space_id)), "cancelled"),
+                    (or_(and_(AgentRun.status == "running", AgentRun.lease_expires_at <= now - LEASE_GRACE),
+                         and_(AgentRun.status == "queued", AgentRun.updated_at <= now - STALE_QUEUE)), "failed"),
+                    else_=AgentRun.status,
+                )
+                statement = statement.where(effective_status.in_(RUN_FILTERS[status]))
             if cursor:
                 try:
                     position = AgentRunCursor.model_validate_json(self.security.open(cursor))
@@ -538,7 +565,7 @@ class AgentService:
                     raise DomainError(400, "CURSOR_INVALID", "Reload your requests.") from None
                 shown = tuple(None if value is None else str(value)
                               for value in (position.account_id, position.space_id, position.admission_id))
-                if shown != (user.id, space_id, admission_id):
+                if shown != (user.id, space_id, admission_id) or position.status != status:
                     raise DomainError(400, "CURSOR_INVALID", "Reload your requests.")
                 if position.expires_at <= self.clock():
                     raise DomainError(410, "CURSOR_EXPIRED", "Reload your requests.")
@@ -552,10 +579,12 @@ class AgentService:
             page = rows[:limit]
             for run in page:
                 self.refresh(database, run)
+                if status != "all" and run.status not in RUN_FILTERS[status]:
+                    raise DomainError(409, "RUN_LIST_CHANGED", "Requests changed while loading. Refresh this list.")
             next_cursor = None
             if len(rows) > limit:
                 next_cursor = self.security.seal(AgentRunCursor(
-                    kind="agent_runs", account_id=user.id, space_id=space_id, admission_id=admission_id,
+                    kind="agent_runs", status=status, account_id=user.id, space_id=space_id, admission_id=admission_id,
                     before_created_at=page[-1].created_at, before_id=page[-1].id, expires_at=self.clock() + LIFETIME,
                 ).model_dump_json())
             return [self.view(database, run) for run in page], Pagination(next_cursor=next_cursor, has_more=len(rows) > limit)
@@ -582,6 +611,49 @@ class AgentService:
                 raise DomainError(404, "NOT_FOUND", "Memory not found.")
             database.delete(memory)
             return DeletedMemory(id=str(memory_id))
+
+    def edit_memory(self, token, memory_id, body, key, expected):
+        with self.sessions.begin() as database:
+            user, _session = self.identity.authenticate(database, token)
+            self.hold(database, user.id)
+            user, _session = self.identity.authenticate(database, token)
+            memory = database.scalar(select(AgentMemory).where(
+                AgentMemory.id == str(memory_id), AgentMemory.account_id == user.id,
+            ).with_for_update())
+            if memory is None:
+                raise DomainError(404, "NOT_FOUND", "Memory not found.")
+            if expected is None:
+                raise DomainError(428, "PRECONDITION_REQUIRED", "Review the current memory first.")
+            digest = self.security.digest("agent.memory.edit", memory.id, expected,
+                                          body.model_dump_json(exclude_unset=True))
+            previous = database.scalar(select(AgentMemoryCommand).where(
+                AgentMemoryCommand.memory_id == memory.id, AgentMemoryCommand.request_key == key,
+            ))
+            if previous is not None:
+                if previous.request_digest != digest:
+                    raise DomainError(409, "IDEMPOTENCY_CONFLICT", "Use a new request for changed memory details.")
+                return self.memory_view(memory)
+            if expected != self.memory_etag(memory):
+                raise DomainError(412, "PRECONDITION_FAILED", "This memory changed. Review it again.")
+            if body.content is not None:
+                if SENSITIVE.search(body.content):
+                    raise DomainError(422, "MEMORY_SENSITIVE", "Memories cannot hold passwords, PINs, card, bank or ID numbers.")
+                if memory.kind == "preference" and not re.fullmatch(HHMM, body.content):
+                    raise DomainError(422, "MEMORY_INVALID", "Use a valid 24-hour reminder time, HH:MM.")
+            changed = False
+            if body.content is not None and memory.content != body.content:
+                memory.content = body.content
+                memory.source = "user_edit"
+                changed = True
+            if body.enabled is not None and memory.enabled != body.enabled:
+                memory.enabled = body.enabled
+                changed = True
+            if changed:
+                memory.version += 1
+            database.add(AgentMemoryCommand(id=str(uuid4()), memory_id=memory.id, request_key=key,
+                                            request_digest=digest, created_at=self.clock()))
+            database.flush()
+            return self.memory_view(memory)
 
     def tools(self):
         views = []
@@ -617,8 +689,12 @@ class AgentService:
     def memory_view(self, memory):
         return AgentMemoryView(
             id=memory.id, kind=memory.kind, key=memory.key, label=self.memory_label(memory), content=memory.content,
+            enabled=memory.enabled, version=str(memory.version), etag=self.memory_etag(memory),
             source=memory.source, source_run_id=memory.source_run_id, space_id=memory.space_id, created_at=memory.created_at,
         )
+
+    def memory_etag(self, memory):
+        return f'"{self.security.digest("agent.memory.view", memory.id, str(memory.version))}"'
 
     @staticmethod
     def handoffs(database, run):

@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 
 from app.errors import DomainError
-from app.modules.identity.models import OutboxEvent, User
+from app.modules.identity.models import OutboxEvent, RateBucket, User
 from app.modules.messaging.mentions import AGENT_NAME, agent_identity, mentions_agent
 from app.modules.messaging.models import (
     REACTIONS,
@@ -27,6 +27,8 @@ from app.modules.messaging.schemas import (
     ParticipantView,
     ReactionView,
     ReplyView,
+    TypingInput,
+    TypingView,
 )
 from app.modules.realtime.hub import signal
 from app.modules.spaces.models import Space, SpaceAuditEvent, SpaceMembership
@@ -38,6 +40,8 @@ MAX_MESSAGES_PER_MINUTE = 30
 # An author may correct a message for a short time only, and only a few times (DEC-033).
 EDIT_WINDOW = timedelta(minutes=15)
 MAX_EDITS_PER_MESSAGE = 10
+TYPING_TTL_SECONDS = 8
+MAX_TYPING_UPDATES_PER_MINUTE = 120
 
 
 def not_found(subject="Conversation"):
@@ -264,6 +268,39 @@ class MessagingService:
         with self.sessions() as database:
             caller, _session = self.identity.authenticate(database, token)
             return self.build(database, self.authorized(database, conversation_id, caller.id), caller.id)
+
+    def typing(self, token: str | None, conversation_id: str, body: TypingInput) -> TypingView:
+        with self.identity.signed_in_write(token) as (database, caller):
+            space_id = database.scalar(select(Conversation.space_id).where(Conversation.id == conversation_id))
+            if space_id is None:
+                raise not_found()
+            # A departure cannot commit between checking the audience and delivering this transient notice.
+            self.spaces.lock_space(database, space_id, shared=True)
+            row = self.authorized(database, conversation_id, caller.id)
+            if not self.build(database, row, caller.id).can_send:
+                raise read_only()
+            audience = set(self.audience(database, row[0]))
+            if not {str(identifier) for identifier in body.mentioned_account_ids}.issubset(audience):
+                raise DomainError(409, "TYPING_TARGET_UNAVAILABLE", "A mentioned person is no longer in this conversation.")
+            now = self.clock()
+            window = str(int(now.timestamp()) // 60)
+            key = self.security.digest("conversation.typing.rate", caller.id, window)
+            count = database.execute(
+                insert(RateBucket).values(key=key, count=1, expires_at=now + timedelta(minutes=2))
+                .on_conflict_do_update(index_elements=[RateBucket.key], set_={"count": RateBucket.count + 1})
+                .returning(RateBucket.count)
+            ).scalar_one()
+            if count > MAX_TYPING_UPDATES_PER_MINUTE:
+                raise DomainError(
+                    429, "TYPING_RATE_LIMITED", "Typing updates are too frequent. Wait a moment.",
+                    retry_after=60 - int(now.timestamp()) % 60,
+                )
+            view = TypingView(
+                **body.model_dump(), conversation_id=conversation_id, space_id=space_id, account_id=caller.id,
+                expires_at=now + timedelta(seconds=TYPING_TTL_SECONDS if body.is_typing else 0),
+            )
+            signal(database, "typing", audience - {caller.id}, **view.model_dump(mode="json", exclude={"kind"}))
+            return view
 
     def list_conversations(self, token, limit, cursor=None, space_id=None):
         with self.sessions() as database:

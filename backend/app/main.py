@@ -42,6 +42,8 @@ from app.modules.events.service import EventService
 from app.modules.files.api import router as document_router
 from app.modules.files.service import DocumentService
 from app.modules.identity.api import router
+from app.modules.polls.api import router as polls_router
+from app.modules.polls.service import PollService
 from app.modules.identity.deletion import AccountDeletionService
 from app.modules.identity.exports import ExportService
 from app.modules.identity.security import Security
@@ -210,6 +212,7 @@ def create_app(settings=None, clock=utcnow):
     application.state.page_lifecycle = PageLifecycleService(application.state.identity)
     application.state.events = EventService(application.state.spaces)
     application.state.budgets = BudgetService(application.state.events)
+    application.state.polls = PollService(application.state.spaces)
     application.state.documents = DocumentService(application.state.spaces)
     application.state.search = PrivateSearchService(application.state.spaces)
     application.state.care = CareService(application.state.identity)
@@ -334,6 +337,7 @@ def create_app(settings=None, clock=utcnow):
     application.include_router(page_events_public_router)
     application.include_router(safety_router)
     application.include_router(events_router)
+    application.include_router(polls_router)
     application.include_router(document_router)
     application.include_router(search_router)
     application.include_router(care_router)

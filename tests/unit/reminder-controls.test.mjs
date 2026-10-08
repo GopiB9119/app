@@ -76,10 +76,11 @@ async function fixture(context, options = {}) {
       permissions: { can_edit: true, allowed_statuses: ['in_progress', 'completed', 'cancelled'] },
     };
     const state = window.reminderFixture = {
-      calls: [], denied: false, task, reminders: [], notifications: [],
+      calls: [], denied: false, reminderReadError: 0, task, reminders: [], notifications: [],
       preferences: { in_app_reminders_enabled: true, version: '1' },
       overlap: false, gap: false, failSave: !!options.failSave, failAcknowledgment: !!options.failAcknowledgment,
-      cancelSuppressed: !!options.cancelSuppressed,
+      failCancellation: !!options.failCancellation,
+      cancelSuppressed: !!options.cancelSuppressed, cancelMismatch: !!options.cancelMismatch,
     };
     const previews = new Map();
     const saves = new Map();
@@ -103,6 +104,12 @@ async function fixture(context, options = {}) {
         state.notifications.push({ id: crypto.randomUUID(), reminder_id: saved.id, task_id: taskId, space_id: spaceId,
           task_title: task.title, scheduled_at: saved.scheduled_at, created_at: '2026-09-19T10:02:00Z', read_at: null, acknowledged_at: null });
       }
+    }
+    if (options.longHistory) {
+      state.reminders = Array.from({ length: 201 }, (_, index) => ({ ...reminder(),
+        task_title: index === 200 ? 'Permission beyond scan limit' : `Previous reminder ${index + 1}`,
+        status: index === 200 ? 'scheduled' : 'cancelled',
+      }));
     }
     window.fetch = async (input, config = {}) => {
       const url = new URL(String(input), 'https://offline.invalid');
@@ -140,7 +147,14 @@ async function fixture(context, options = {}) {
           ...input, recipient: { account_id: accountId, display_name: 'Alex Morgan' }, channel: 'in_app',
           options: choices, expires_at: '2026-09-19T10:05:00Z' });
       }
-      if (url.pathname === '/api/reminders' && method === 'GET') return list(state.reminders);
+      if (url.pathname === '/api/reminders' && method === 'GET') {
+        if (state.reminderReadError) return failed(state.reminderReadError, 'REMINDER_READ_UNAVAILABLE', 'Reminder list unavailable.');
+        if (!options.longHistory) return list(state.reminders);
+        const offset = Number(url.searchParams.get('cursor') ?? '0');
+        const data = state.reminders.slice(offset, offset + 20);
+        const next = offset + data.length;
+        return reply(data, { pagination: { next_cursor: next < state.reminders.length ? String(next) : null, has_more: next < state.reminders.length } });
+      }
       if (url.pathname === '/api/reminders' && method === 'POST') {
         const key = headers['idempotency-key'];
         if (saves.has(key)) return reply(state.reminders.find(item => item.id === saves.get(key)));
@@ -153,8 +167,13 @@ async function fixture(context, options = {}) {
       if (url.pathname.endsWith('/cancel') && method === 'POST') {
         const saved = state.reminders.find(item => url.pathname === `/api/reminders/${item.id}/cancel`);
         if (!saved) return failed(404, 'NOT_FOUND', 'Reminder not found.');
+        if (state.cancelMismatch) {
+          state.cancelMismatch = false;
+          return reply({ ...saved, id: crypto.randomUUID(), status: 'cancelled' });
+        }
         saved.status = state.cancelSuppressed ? 'suppressed' : 'cancelled';
         saved.reason = state.cancelSuppressed ? 'task_changed' : null;
+        if (state.failCancellation) { state.failCancellation = false; throw new TypeError('Synthetic lost cancellation response'); }
         return reply(saved);
       }
       if (url.pathname === '/api/notifications' && method === 'GET') return reply(state.notifications, {
@@ -173,9 +192,11 @@ async function fixture(context, options = {}) {
     };
   }, { accountId, taskId, spaceId, options });
   await page.addScriptTag({ content: javascript });
-  await page.evaluate(({ screen, taskId }) => window.renderReminderFixture(screen, taskId), { screen: options.screen ?? 'reminders', taskId });
+  await page.evaluate(({ screen, taskId }) => window.renderReminderFixture(screen, taskId), { screen: options.screen ?? 'reminders', taskId: options.allReminders ? undefined : taskId });
   if (options.screen === 'inbox') {
     await page.getByRole('button', { name: 'Acknowledge', exact: true }).waitFor();
+  } else if (options.allReminders) {
+    await page.getByRole('heading', { name: 'Reminders', exact: true, level: 1 }).waitFor();
   } else {
     await page.getByLabel('Reminder date and time', { exact: true }).waitFor();
     await page.getByLabel('Timezone', { exact: true }).locator('option[value="America/New_York"]').waitFor({ state: 'attached' });
@@ -262,6 +283,256 @@ test('offline reminder retry remains available after the task closes or preferen
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+for (const width of [1280, 320]) {
+  test(`manual reminder recovery reaches and cancels item 201 at ${width} px`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    try {
+      const { page, outbound, errors } = await fixture(context, { allReminders: true, longHistory: true });
+      const more = page.getByRole('button', { name: 'Load more reminders', exact: true });
+      for (let loaded = 20; loaded < 201; loaded += 20) {
+        await more.click();
+        await page.waitForFunction(count => document.querySelectorAll('section[aria-labelledby="reminder-list-title"] h3').length === count,
+          Math.min(201, loaded + 20));
+      }
+      const row = page.locator('li').filter({ has: page.getByRole('heading', { name: 'Permission beyond scan limit', exact: true }) });
+      const cancel = row.getByRole('button', { name: 'Cancel reminder: Permission beyond scan limit', exact: true });
+      await cancel.waitFor();
+      assert.equal(await more.count(), 0);
+      const before = await page.evaluate(() => window.reminderFixture.calls);
+      const reads = before.filter(call => call.route === '/api/reminders' && call.method === 'GET');
+      assert.equal(reads.length, 11);
+      assert.ok(reads.every(call => !new URLSearchParams(call.query).has('task_id')));
+      assert.ok(reads.every(call => call.headers['x-account-id'] === accountId));
+      assert.equal(before.filter(call => call.method !== 'GET').length, 0);
+      await cancel.click();
+      const dialog = page.getByRole('dialog', { name: 'Cancel this reminder?', exact: true });
+      await dialog.getByText('Permission beyond scan limit', { exact: true }).waitFor();
+      const confirm = dialog.getByRole('button', { name: 'Cancel reminder', exact: true });
+      if (width === 320) {
+        const originalSize = await confirm.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+        await page.evaluate(() => {
+          const sizes = [...document.querySelectorAll('body, body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+          for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+        });
+        assert.equal(await confirm.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      }
+      await confirm.scrollIntoViewIfNeeded();
+      await confirm.focus();
+      const box = await confirm.boundingBox();
+      assert.ok(box.width >= 44 && box.height >= 44);
+      await page.screenshot({ path: path.join(root, `.local/screenshots/privacy-reminder-recovery-${width}.png`), animations: 'disabled' });
+      assert.equal(await confirm.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2));
+      }), true);
+      await confirm.click();
+      await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).waitFor();
+      await row.getByText('Cancelled', { exact: true }).waitFor();
+      const after = await page.evaluate(() => ({ changes: window.reminderFixture.calls.filter(call => call.method !== 'GET'), target: window.reminderFixture.reminders[200] }));
+      assert.equal(after.changes.length, 1);
+      assert.equal(after.changes[0].method, 'POST');
+      assert.equal(after.changes[0].route, `/api/reminders/${after.target.id}/cancel`);
+      assert.equal(after.changes[0].headers['x-account-id'], accountId);
+      assert.equal(after.target.status, 'cancelled');
+      assert.deepEqual(outbound, []);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
+for (const width of [1280, 320]) {
+  test(`reminder cancellation rejects a wrong-target result and retries the original at ${width} px`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    try {
+      const { page, outbound, errors } = await fixture(context, { seed: true, cancelMismatch: true });
+      await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Cancel this reminder?', exact: true });
+      await dialog.getByRole('button', { name: 'Cancel reminder', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('[role="alert"]')
+        || [...document.querySelectorAll('[role="status"]')].some(element => element.textContent.includes('Reminder cancelled.')));
+      assert.equal(await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).count(), 0);
+      await dialog.getByRole('alert').waitFor();
+      assert.equal(await page.evaluate(() => window.reminderFixture.reminders[0].status), 'scheduled');
+      const retry = dialog.getByRole('button', { name: 'Retry cancellation', exact: true });
+      if (width === 320) {
+        const originalSize = await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+        await page.evaluate(() => {
+          const sizes = [...document.querySelectorAll('body, body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+          for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+        });
+        assert.equal(await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        assert.equal(await retry.evaluate(element => {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            for (const word of walker.currentNode.textContent.matchAll(/\S+/g)) {
+              const range = document.createRange();
+              range.setStart(walker.currentNode, word.index);
+              range.setEnd(walker.currentNode, word.index + word[0].length);
+              if (range.getClientRects().length !== 1) return false;
+            }
+          }
+          return true;
+        }), true, 'Retry words must not break across lines.');
+      }
+      await retry.scrollIntoViewIfNeeded();
+      await retry.focus();
+      const bounds = await retry.boundingBox();
+      assert.ok(bounds.width >= 44 && bounds.height >= 44);
+      await page.screenshot({ path: path.join(root, `.local/screenshots/reminder-cancel-identity-${width}.png`), animations: 'disabled' });
+      assert.equal(await retry.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        return element === document.activeElement
+          && element.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2));
+      }), true);
+      await retry.click();
+      await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).waitFor();
+      const observed = await page.evaluate(() => ({ target: window.reminderFixture.reminders[0], changes: window.reminderFixture.calls.filter(call => call.method !== 'GET') }));
+      assert.equal(observed.target.status, 'cancelled');
+      assert.equal(observed.changes.length, 2);
+      assert.ok(observed.changes.every(call => call.route === `/api/reminders/${observed.target.id}/cancel`
+        && call.method === 'POST' && call.headers['x-account-id'] === accountId));
+      assert.deepEqual(observed.changes[0].body, observed.changes[1].body);
+      assert.deepEqual(outbound, []);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
+for (const status of [403, 503]) {
+  for (const width of [1280, 320]) {
+    test(`reminder cancellation review requires a fresh selection after ${status} recovery at ${width} px`, async () => {
+      const context = await browser.newContext({ viewport: { width, height: 900 } });
+      try {
+        const { page, outbound, errors } = await fixture(context, { seed: true, allReminders: true });
+        await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).click();
+        await page.getByRole('dialog').getByText('Buy groceries', { exact: true }).waitFor();
+        await page.evaluate(async code => {
+          window.reminderFixture.reminderReadError = code;
+          await window.refreshReminderFixture();
+        }, status);
+        await page.getByRole('alert').filter({ hasText: 'Reminder list unavailable.' }).waitFor();
+        assert.equal(await page.getByRole('dialog').count(), 0);
+        assert.equal(await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).count(), 0);
+        await page.evaluate(async () => {
+          window.reminderFixture.reminderReadError = 0;
+          window.reminderFixture.reminders[0].task_title = 'Recovered reminder';
+          await window.refreshReminderFixture();
+        });
+        await page.getByRole('heading', { name: 'Recovered reminder', exact: true }).waitFor();
+        assert.equal(await page.getByRole('dialog').count(), 0, 'Recovery must not reopen an obsolete review.');
+        assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.method !== 'GET').length), 0);
+        await page.getByRole('button', { name: 'Cancel reminder: Recovered reminder', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Cancel this reminder?', exact: true });
+        await dialog.getByText('Recovered reminder', { exact: true }).waitFor();
+        assert.equal(await dialog.getByText('Buy groceries', { exact: true }).count(), 0);
+        await dialog.getByRole('button', { name: 'Cancel reminder', exact: true }).click();
+        await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).waitFor();
+        const observed = await page.evaluate(() => ({ target: window.reminderFixture.reminders[0], changes: window.reminderFixture.calls.filter(call => call.method !== 'GET') }));
+        assert.equal(observed.target.status, 'cancelled');
+        assert.equal(observed.changes.length, 1);
+        assert.equal(observed.changes[0].route, `/api/reminders/${observed.target.id}/cancel`);
+        assert.equal(observed.changes[0].headers['x-account-id'], accountId);
+        assert.deepEqual(outbound, []);
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    });
+  }
+}
+
+for (const change of ['cancelled', 'renamed', 'rescheduled']) {
+  test(`reminder cancellation review closes when a successful refresh shows ${change} state`, async () => {
+    const context = await browser.newContext();
+    try {
+      const { page, outbound, errors } = await fixture(context, { seed: true, allReminders: true });
+      await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).click();
+      await page.getByRole('dialog').getByText('Buy groceries', { exact: true }).waitFor();
+      await page.evaluate(async value => {
+        const reminder = window.reminderFixture.reminders[0];
+        if (value === 'cancelled') reminder.status = 'cancelled';
+        if (value === 'renamed') reminder.task_title = 'Changed reminder';
+        if (value === 'rescheduled') {
+          reminder.scheduled_at = '2026-09-20T10:01:00Z';
+          reminder.local_time = '2026-09-20T15:31:00';
+          reminder.expires_at = '2026-09-21T10:01:00Z';
+        }
+        await window.refreshReminderFixture();
+      }, change);
+      await page.waitForFunction(value => {
+        const list = document.querySelector('section[aria-labelledby="reminder-list-title"]');
+        return value === 'cancelled' ? list.textContent.includes('Cancelled')
+          : value === 'renamed' ? list.textContent.includes('Changed reminder')
+            : !!list.querySelector('time[datetime="2026-09-20T10:01:00Z"]');
+      }, change);
+      assert.equal(await page.getByRole('dialog').count(), 0);
+      assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.method !== 'GET').length), 0);
+      assert.deepEqual(outbound, []);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
+test('reminder cancellation review remains open when the refreshed reminder is unchanged', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { seed: true, allReminders: true });
+    await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Cancel this reminder?', exact: true });
+    await dialog.getByText('Buy groceries', { exact: true }).waitFor();
+    await page.evaluate(async () => { await window.refreshReminderFixture(); });
+    assert.equal(await dialog.count(), 1);
+    assert.equal(await dialog.getByRole('button', { name: 'Cancel reminder', exact: true }).isEnabled(), true);
+    await dialog.getByRole('button', { name: 'Keep reminder', exact: true }).click();
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.method !== 'GET').length), 0);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const status of [0, 403, 503]) {
+  test(`unconfirmed reminder cancellation survives ${status || 'successful'} refresh and retries the original`, async () => {
+    const context = await browser.newContext();
+    try {
+      const { page, outbound, errors } = await fixture(context, { seed: true, allReminders: true, failCancellation: true });
+      await page.getByRole('button', { name: 'Cancel reminder: Buy groceries', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Cancel this reminder?', exact: true });
+      await dialog.getByRole('button', { name: 'Cancel reminder', exact: true }).click();
+      await dialog.getByRole('alert').filter({ hasText: 'No connection' }).waitFor();
+      assert.equal(await page.evaluate(() => window.reminderFixture.reminders[0].status), 'cancelled');
+      assert.equal(await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).count(), 0);
+      if (status) {
+        await page.evaluate(async code => {
+          window.reminderFixture.reminderReadError = code;
+          await window.refreshReminderFixture();
+        }, status);
+        await page.getByRole('alert').filter({ hasText: 'Reminder list unavailable.' }).waitFor();
+        assert.equal(await dialog.count(), status === 403 ? 0 : 1);
+      }
+      await page.evaluate(async () => {
+        window.reminderFixture.reminderReadError = 0;
+        window.reminderFixture.reminders[0].task_title = 'Updated after accepted cancellation';
+        await window.refreshReminderFixture();
+      });
+      await page.getByRole('heading', { name: 'Updated after accepted cancellation', exact: true }).waitFor();
+      await dialog.getByText('Buy groceries', { exact: true }).waitFor();
+      assert.equal(await dialog.getByRole('button', { name: 'Keep reminder', exact: true }).isDisabled(), true);
+      assert.equal(await page.evaluate(() => window.reminderFixture.calls.filter(call => call.method !== 'GET').length), 1);
+      await dialog.getByRole('button', { name: 'Retry cancellation', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'Reminder cancelled.' }).waitFor();
+      const observed = await page.evaluate(() => ({ target: window.reminderFixture.reminders[0], changes: window.reminderFixture.calls.filter(call => call.method !== 'GET') }));
+      assert.equal(observed.target.status, 'cancelled');
+      assert.equal(observed.changes.length, 2);
+      assert.ok(observed.changes.every(call => call.route === `/api/reminders/${observed.target.id}/cancel`
+        && call.method === 'POST' && call.headers['x-account-id'] === accountId));
+      assert.deepEqual(observed.changes[0].body, observed.changes[1].body);
+      assert.deepEqual(outbound, []);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
 
 test('offline reminder cancellation reports suppression rather than claiming cancellation', async () => {
   const context = await browser.newContext();

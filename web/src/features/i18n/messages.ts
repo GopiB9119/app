@@ -1,5 +1,6 @@
 // Telugu and Hindi texts are machine translations awaiting review by a native speaker (DEC-023).
 import * as account from "./areas/account";
+import * as about from "./areas/about";
 import * as agent from "./areas/agent";
 import * as care from "./areas/care";
 import * as chat from "./areas/chat";
@@ -9,6 +10,7 @@ import * as documents from "./areas/documents";
 import * as events from "./areas/events";
 import * as home from "./areas/home";
 import * as inbox from "./areas/inbox";
+import * as polls from "./areas/polls";
 import * as privacy from "./areas/privacy";
 import * as reminders from "./areas/reminders";
 import * as search from "./areas/search";
@@ -236,23 +238,23 @@ const coreHi: Partial<Record<keyof typeof coreEn, string>> = {
 
 // The areas, in this order. An id defined twice would let the later one win silently, so a test refuses duplicates.
 export const core = { en: coreEn, te: coreTe, hi: coreHi };
-export const areas = { account, agent, care, chat, community, data, documents, events, home, inbox, privacy, reminders, search, spaces, tasks };
+export const areas = { about, account, agent, care, chat, community, data, documents, events, home, inbox, polls, privacy, reminders, search, spaces, tasks };
 
 export const en = {
-  ...coreEn, ...account.en, ...agent.en, ...care.en, ...chat.en, ...community.en, ...data.en, ...documents.en,
-  ...events.en, ...home.en, ...inbox.en, ...privacy.en, ...reminders.en, ...search.en, ...spaces.en, ...tasks.en,
+  ...coreEn, ...about.en, ...account.en, ...agent.en, ...care.en, ...chat.en, ...community.en, ...data.en, ...documents.en,
+  ...events.en, ...home.en, ...inbox.en, ...polls.en, ...privacy.en, ...reminders.en, ...search.en, ...spaces.en, ...tasks.en,
 };
 
 export type MessageId = keyof typeof en;
 
 export const te: Partial<Record<MessageId, string>> = {
-  ...coreTe, ...account.te, ...agent.te, ...care.te, ...chat.te, ...community.te, ...data.te, ...documents.te,
-  ...events.te, ...home.te, ...inbox.te, ...privacy.te, ...reminders.te, ...search.te, ...spaces.te, ...tasks.te,
+  ...coreTe, ...about.te, ...account.te, ...agent.te, ...care.te, ...chat.te, ...community.te, ...data.te, ...documents.te,
+  ...events.te, ...home.te, ...inbox.te, ...polls.te, ...privacy.te, ...reminders.te, ...search.te, ...spaces.te, ...tasks.te,
 };
 
 export const hi: Partial<Record<MessageId, string>> = {
-  ...coreHi, ...account.hi, ...agent.hi, ...care.hi, ...chat.hi, ...community.hi, ...data.hi, ...documents.hi,
-  ...events.hi, ...home.hi, ...inbox.hi, ...privacy.hi, ...reminders.hi, ...search.hi, ...spaces.hi, ...tasks.hi,
+  ...coreHi, ...about.hi, ...account.hi, ...agent.hi, ...care.hi, ...chat.hi, ...community.hi, ...data.hi, ...documents.hi,
+  ...events.hi, ...home.hi, ...inbox.hi, ...polls.hi, ...privacy.hi, ...reminders.hi, ...search.hi, ...spaces.hi, ...tasks.hi,
 };
 
 export const dictionaries = { en, te, hi };

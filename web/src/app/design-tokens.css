@@ -23,4 +23,9 @@
   --radius-dialog: 16px;
   --radius-pill: 96px;
   --target-minimum: 44px;
+  --motion-fast: 120ms;
+  --motion-medium: 200ms;
+  --motion-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1);
 }

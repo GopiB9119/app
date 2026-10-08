@@ -59,9 +59,21 @@ test('text colours keep 4.5:1 contrast and control borders 3:1', () => {
   assert.ok(contrastPairs.some(([foreground, background, minimum]) => foreground === 'accent' && background === 'warningSurface' && minimum === 4.5));
 });
 
+test('motion durations and curves reach the web stylesheet only', () => {
+  const css = renderCss(tokens);
+  for (const line of ['--motion-fast: 120ms;', '--motion-medium: 200ms;', '--motion-slow: 320ms;',
+    '--ease-standard: cubic-bezier(0.2, 0, 0, 1);', '--ease-exit: cubic-bezier(0.3, 0, 1, 1);']) assert.ok(css.includes(line), line);
+  assert.doesNotMatch(renderKotlin(tokens), /motion|ease/i);
+  assert.deepEqual(checkTokens({ ...tokens, motion: { ...tokens.motion, fast: 1.5, slow: 5000, easeExit: 'linear; color: red' } }), [
+    'motion.fast must be whole milliseconds from 0 to 1000',
+    'motion.slow must be whole milliseconds from 0 to 1000',
+    'motion.easeExit must be a cubic-bezier() curve',
+  ]);
+});
+
 test('feature stylesheets moved to tokens use only token variables and token corners', () => {
-  // The privacy page (T164) and the reminders and inbox screens joined the guarded stylesheets.
-  assert.equal(tokenStylesheets.length, 9);
+  // The privacy page (T164), the reminders and inbox screens, live agent progress, the Space header and Space polls joined the guarded stylesheets.
+  assert.equal(tokenStylesheets.length, 12);
   assert.deepEqual(findStyleViolations(), []);
   const file = tokenStylesheets[0];
   assert.deepEqual(findStyleViolations({ [file]: [

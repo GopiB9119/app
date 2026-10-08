@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -94,10 +94,16 @@ async function fixture(context, options = {}) {
     const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
     const state = window.spacesFixture = {
       calls: [], unexpected: [], streams: [], receipts: {}, myRequests: [], sent: structuredClone(options.sent ?? {}), nextId: 0,
+      inbox: structuredClone(options.inbox ?? []),
+      inboxNextCursor: options.inboxNextCursor ?? null,
+      sentNextCursor: options.sentNextCursor ?? null,
+      invitationResponse: options.invitationResponse ?? null,
+      invitationCreateResponse: options.invitationCreateResponse ?? null,
+      invitationWithdrawResponse: options.invitationWithdrawResponse ?? null,
       spaces: structuredClone(options.spaces ?? []),
       members: Object.fromEntries(Object.entries(options.members ?? {}).map(([id, list]) => [id, list.map(member => ({ version: 1, ...member }))])),
       groups: structuredClone(options.groups ?? []), joinQueue: structuredClone(options.joinQueue ?? {}),
-      writes: { create: 0, role: 0, remove: 0, settings: 0, join: 0, invite: 0, policy: 0 },
+      writes: { create: 0, role: 0, remove: 0, settings: 0, join: 0, invite: 0, policy: 0, accept: 0, decline: 0, revoke: 0 },
       lose: { ...options.lose }, hold: { ...options.hold }, holding: {}, release: {},
     };
     const find = id => state.spaces.find(item => item.id === id);
@@ -107,7 +113,11 @@ async function fixture(context, options = {}) {
     };
     state.bump = (spaceId, fields) => { Object.assign(find(spaceId), fields); find(spaceId).version = String(Number(find(spaceId).version) + 1); };
     const memberOut = member => ({ account_id: member.account_id, display_name: member.display_name, role: member.role, joined_at: created, etag: `"m-${member.account_id}-v${member.version}"` });
-    const spaceOut = ({ id, name, description, space_type, visibility, member_invites, role, version, created_at }) => ({ id, name, description, space_type, visibility, member_invites: member_invites === true, status: 'active', role, version, created_at });
+    const spaceOut = ({ id, name, description, space_type, visibility, member_invites, role, version, created_at, member_count, member_preview, last_message_at, agent_enabled }) => ({
+      id, name, description, space_type, visibility, member_invites: member_invites === true, status: 'active', role, version, created_at,
+      ...(member_count === undefined ? {} : { member_count }), ...(member_preview === undefined ? {} : { member_preview }),
+      ...(last_message_at === undefined ? {} : { last_message_at }), ...(agent_enabled === undefined ? {} : { agent_enabled }),
+    });
     const settingsEtag = item => `"${String(item.version).padStart(64, '0')}"`;
     const reply = (data, extra = {}, status = 200) => new Response(JSON.stringify({ data, request_id: 'offline-spaces', ...extra }), { status });
     const paged = data => reply(data, { pagination: { next_cursor: null, has_more: false } });
@@ -174,13 +184,37 @@ async function fixture(context, options = {}) {
         lost('create');
         return reply(spaceOut(item), {}, 201);
       }
-      if (path === '/api/invitations' && method === 'GET') return paged([]);
+      if (path === '/api/invitations' && method === 'GET') {
+        if (state.inboxUnavailable) return failed(state.inboxUnavailable, 'UNAVAILABLE', 'Synthetic invitation inbox is unavailable.');
+        return reply(state.inbox.filter(item => item.status === 'pending'), { pagination: { next_cursor: state.inboxNextCursor, has_more: !!state.inboxNextCursor } });
+      }
+      const invitationAction = path.match(/^\/api\/invitations\/([^/]+)\/(accept|decline)$/);
+      if (invitationAction && method === 'POST') {
+        const invitation = state.inbox.find(item => item.id === invitationAction[1]);
+        if (!invitation) return failed(404, 'NOT_FOUND', 'Invitation not found.');
+        const action = invitationAction[2];
+        await hold(action);
+        const status = action === 'accept' ? 'accepted' : 'declined';
+        if (invitation.status !== 'pending' && invitation.status !== status) return failed(409, 'INVITATION_CLOSED', 'This invitation is no longer pending.');
+        if (invitation.status === 'pending') {
+          invitation.status = status;
+          state.writes[action] += 1;
+          if (action === 'accept' && !find(invitation.space_id)) {
+            state.spaces.push({ id: invitation.space_id, name: invitation.space_name, description: '',
+              space_type: 'family', visibility: 'private', role: 'member', version: '1', created_at: created });
+          }
+        }
+        const data = action === 'accept' ? spaceOut(find(invitation.space_id)) : { id: invitation.id, status };
+        lost(action);
+        return reply({ ...data, ...state.invitationResponse });
+      }
       let match = path.match(/^\/api\/spaces\/([^/]+)\/invitations$/);
       if (match && method === 'GET') {
         const item = find(match[1]);
+        if (state.sentUnavailable === match[1]) return failed(state.sentUnavailableStatus ?? 404, 'NOT_FOUND', 'Synthetic invitations are unavailable.');
         // A member who may no longer invite gets "not found"; staleSent lets a test keep answering to prove the Spaces list alone ends the panel.
         if (item?.role === 'member' && item.member_invites !== true && !state.staleSent) return failed(404, 'NOT_FOUND', 'Synthetic invitations are unavailable.');
-        return paged(state.sent[match[1]] ?? []);
+        return reply(state.sent[match[1]] ?? [], { pagination: { next_cursor: state.sentNextCursor, has_more: !!state.sentNextCursor } });
       }
       if (match && method === 'POST') {
         const rejected = needKey();
@@ -192,13 +226,27 @@ async function fixture(context, options = {}) {
         if (replayed) return replayed;
         const invitation = {
           id: `e0e0e0e0-0000-4000-8000-${String(++state.nextId).padStart(12, '0')}`, space_id: item.id, space_name: item.name,
-          inviter_name: 'Alex Morgan', recipient_account_id: body.recipient_account_id, role: 'member', status: 'pending',
+          inviter_name: 'Alex Morgan', recipient_account_id: body.recipient_account_id.toLowerCase(), role: 'member', status: 'pending',
           created_at: created, expires_at: '2026-10-04T10:00:00Z',
         };
         (state.sent[item.id] ??= []).push(invitation);
         state.writes.invite += 1;
         remember('invite', key, config, undefined, invitation);
-        return reply(invitation);
+        lost('invite');
+        return reply({ ...invitation, ...state.invitationCreateResponse });
+      }
+      match = path.match(/^\/api\/spaces\/([^/]+)\/invitations\/([^/]+)\/revoke$/);
+      if (match && method === 'POST') {
+        const invitation = (state.sent[match[1]] ?? []).find(item => item.id === match[2]);
+        if (!invitation) return failed(404, 'NOT_FOUND', 'Invitation not found.');
+        await hold('revoke');
+        if (invitation.status !== 'pending' && invitation.status !== 'revoked') return failed(409, 'INVITATION_CLOSED', 'This invitation is no longer pending.');
+        if (invitation.status === 'pending') {
+          invitation.status = 'revoked';
+          state.writes.revoke += 1;
+        }
+        lost('revoke');
+        return reply({ id: invitation.id, status: 'revoked', ...state.invitationWithdrawResponse });
       }
       match = path.match(/^\/api\/spaces\/([^/]+)\/members$/);
       if (match && method === 'GET') {
@@ -242,6 +290,8 @@ async function fixture(context, options = {}) {
       if (match && method === 'GET') return paged([]);
       match = path.match(/^\/api\/spaces\/([^/]+)\/settings$/);
       if (match && method === 'GET') {
+        await hold('settingsRead');
+        if (state.refuseSettingsRead) return failed(503, 'UNAVAILABLE', 'Synthetic settings reload is unavailable.');
         const item = find(match[1]);
         if (!item || item.role !== 'owner') return failed(403, 'ACCESS_DENIED', 'Synthetic settings are unavailable.');
         return reply({ ...spaceOut(item), role: 'owner', etag: settingsEtag(item) });
@@ -348,6 +398,440 @@ function assertKey(call) {
   assert.match(call.headers['idempotency-key'], uuid);
   assert.equal(call.headers['x-account-id'], me);
 }
+
+for (const [status, width] of [403, 404, 503].flatMap(status => [[status, 1280], [status, 320]])) {
+  test(`spaces: an inbox ${status} removes a stale join review and requires fresh review after recovery at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    const invitation = {
+      id: secondFamilyId, space_id: familyId, space_name: 'Private invitation family', inviter_name: 'Taylor Morgan',
+      recipient_account_id: me, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z',
+    };
+    try {
+      const result = await fixture(context, { inbox: [invitation], inboxNextCursor: 'next-invitation-page' });
+      const { page } = result;
+      if (width === 320) {
+        await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+        assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), 32);
+      }
+      const inbox = page.locator('section[aria-labelledby="invitation-title"]');
+      const more = inbox.getByRole('button', { name: 'Load more invitations', exact: true });
+      await more.waitFor();
+      const row = inbox.getByRole('listitem').filter({ has: page.getByRole('heading', { name: invitation.space_name, exact: true }) });
+      await row.getByRole('button').first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.waitFor();
+      assert.ok((await dialog.innerText()).includes(invitation.space_name));
+      await page.evaluate(code => { window.spacesFixture.inboxUnavailable = code; }, status);
+      await inbox.locator('button').first().dispatchEvent('click');
+      await inbox.locator('[role="alert"]').filter({ hasText: 'Synthetic invitation inbox is unavailable.' }).waitFor();
+      assert.equal(await dialog.count(), 0, 'An unavailable inbox must not leave a cached invitation confirmation open.');
+      assert.equal(await inbox.getByRole('listitem').count(), 0);
+      assert.equal(await more.count(), 0, 'An unavailable inbox must not expose its cached page cursor.');
+      assert.equal((await requests(page, 'POST', `/api/invitations/${invitation.id}/accept`)).length, 0);
+      await assertFits(page, `Invitation inbox ${status} at ${width}px`);
+      if (process.env.COMMUNITY_CAPTURE_DIR && status === 404) {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await inbox.screenshot({ path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `inbox-error-${width}.png`) });
+      }
+
+      await page.evaluate(() => {
+        window.spacesFixture.inboxUnavailable = null;
+        window.spacesFixture.inbox[0].space_name = 'Renamed invitation family';
+      });
+      await inbox.getByRole('button').first().click();
+      const refreshed = inbox.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'Renamed invitation family', exact: true }) });
+      await refreshed.waitFor();
+      assert.equal(await dialog.count(), 0, 'Recovery must not silently reopen the stale review.');
+      assert.equal(await more.isEnabled(), true);
+      await refreshed.getByRole('button').first().click();
+      await dialog.waitFor();
+      assert.ok((await dialog.innerText()).includes('Renamed invitation family'));
+      assert.equal((await dialog.innerText()).includes(invitation.space_name), false);
+      assert.equal((await requests(page, 'POST', `/api/invitations/${invitation.id}/accept`)).length, 0);
+      await assertFits(page, `Recovered invitation review at ${width}px`);
+      if (process.env.COMMUNITY_CAPTURE_DIR && status === 404) {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await dialog.screenshot({ path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `inbox-review-${width}.png`) });
+      }
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const [action, response] of [['accept', { id: groupId }], ['decline', { id: groupId }], ['decline', { status: 'revoked' }]]) {
+  test(`spaces: ${action} rejects a mismatched invitation result ${JSON.stringify(response)}`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Invited family', inviter_name: 'Taylor Morgan',
+      recipient_account_id: me, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { inbox: [invitation], invitationResponse: response });
+      const { page } = result;
+      const inbox = page.locator('section[aria-labelledby="invitation-title"]');
+      const row = inbox.getByRole('listitem').filter({ has: page.getByRole('heading', { name: invitation.space_name, exact: true }) });
+      if (action === 'accept') {
+        await row.getByRole('button', { name: 'Review invitation', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Join Space', exact: true }).click();
+      } else {
+        await row.getByRole('button', { name: `Decline invitation to ${invitation.space_name}`, exact: true }).click();
+      }
+      await page.waitForFunction(action => window.spacesFixture.writes[action] === 1, action);
+      await page.waitForFunction(() => document.querySelector('section[aria-labelledby="invitation-title"] [role="alert"]')
+        || document.querySelector('section[aria-labelledby="invitation-title"] .message.success'));
+      assert.equal(await inbox.locator('.message.success').count(), 0, 'A mismatched response cannot confirm the requested decision.');
+      assert.ok(await inbox.locator('[role="alert"]').count());
+      if (action === 'accept') assert.equal(await page.getByRole('dialog').count(), 1);
+      assert.equal((await requests(page, 'POST', `/api/invitations/${invitation.id}/${action}`)).length, 1);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const action of ['accept', 'decline']) for (const failure of ['lost', 'mismatched']) for (const width of [1280, 320]) {
+  test(`spaces: ${action} retries the same invitation after a ${failure} response at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Invitation retry family', inviter_name: 'Taylor Morgan',
+      recipient_account_id: me, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, {
+        inbox: [invitation], lose: failure === 'lost' ? { [action]: 1 } : {},
+        invitationResponse: failure === 'mismatched' ? { id: groupId } : null,
+      });
+      const { page } = result;
+      if (width === 320) await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      const inbox = page.locator('section[aria-labelledby="invitation-title"]');
+      const row = inbox.getByRole('listitem').filter({ has: page.getByRole('heading', { name: invitation.space_name, exact: true }) });
+      if (action === 'accept') await row.getByRole('button', { name: 'Review invitation', exact: true }).click();
+      const submit = action === 'accept'
+        ? page.getByRole('dialog').getByRole('button', { name: 'Join Space', exact: true })
+        : row.getByRole('button', { name: `Decline invitation to ${invitation.space_name}`, exact: true });
+      await submit.click();
+      const error = failure === 'lost' ? lostAnswer : 'The invitation decision could not be confirmed.';
+      await inbox.locator('[role="alert"]').filter({ hasText: error }).first().waitFor();
+      assert.equal(await inbox.locator('.message.success').count(), 0);
+      assert.equal((await requests(page, 'POST', `/api/invitations/${invitation.id}/${action}`)).length, 1);
+      assert.equal((await writes(page))[action], 1);
+      await assertFits(page, `${action} retry at ${width}px`);
+      await assertReachable(page, submit, `Retry ${action}`);
+      if (process.env.COMMUNITY_CAPTURE_DIR && failure === 'lost') {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        const target = action === 'accept' ? page.getByRole('dialog') : inbox;
+        await target.screenshot({ path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `decision-${action}-retry-${width}.png`) });
+      }
+      await page.evaluate(() => { window.spacesFixture.invitationResponse = null; });
+      await submit.click();
+      await inbox.locator('.message.success').waitFor();
+      assert.equal(await page.getByRole('dialog').count(), 0);
+      assert.equal(await inbox.getByRole('listitem').count(), 0);
+      const attempts = await requests(page, 'POST', `/api/invitations/${invitation.id}/${action}`);
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0].route, attempts[1].route);
+      assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+      assert.equal(attempts[0].headers['x-account-id'], me);
+      assert.deepEqual(attempts[0].headers, attempts[1].headers);
+      assert.equal((await writes(page))[action], 1);
+      assert.equal(await page.evaluate(spaceId => window.spacesFixture.spaces.filter(item => item.id === spaceId).length, familyId), action === 'accept' ? 1 : 0);
+      if (action === 'accept') await page.getByRole('heading', { name: invitation.space_name, exact: true }).waitFor();
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const response of [{ space_id: groupId }, { recipient_account_id: priya }]) for (const width of [1280, 320]) {
+  test(`spaces: invitation creation rejects a mismatched target ${JSON.stringify(response)} and keeps its retry identity at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    try {
+      const result = await fixture(context, {
+        spaces: [space(familyId, 'Morgan family')], invitationCreateResponse: response,
+      });
+      const { page } = result;
+      if (width === 320) {
+        await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+        assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), 32);
+      }
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.locator('section[aria-labelledby="manage-invitations-title"]');
+      await panel.getByLabel('Recipient account ID', { exact: true }).fill(lee);
+      await panel.getByRole('button', { name: 'Create invitation', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('section[aria-labelledby="manage-invitations-title"] [role="alert"]')
+        || document.querySelector('section[aria-labelledby="manage-invitations-title"] .message.success'));
+      assert.equal(await panel.locator('.message.success').count(), 0, 'A response for another target cannot confirm this invitation.');
+      assert.ok(await panel.locator('[role="alert"]').count());
+      assert.equal(await panel.getByLabel('Recipient account ID', { exact: true }).inputValue(), lee);
+      assert.equal(await panel.getByLabel('Recipient account ID', { exact: true }).isDisabled(), true);
+      assert.equal(await panel.getByRole('button', { name: 'Close invitation management', exact: true }).isDisabled(), true);
+      await assertFits(page, `Unconfirmed invitation target at ${width}px`);
+      await assertReachable(page, panel.getByRole('button', { name: 'Retry invitation', exact: true }), 'Retry invitation');
+      if (process.env.COMMUNITY_CAPTURE_DIR && response.space_id) {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await panel.screenshot({ path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `invitation-target-error-${width}.png`) });
+      }
+
+      await page.evaluate(() => { window.spacesFixture.invitationCreateResponse = null; });
+      await panel.getByRole('button', { name: 'Retry invitation', exact: true }).click();
+      await panel.getByText('Invitation created.', { exact: true }).waitFor();
+      const attempts = await requests(page, 'POST', `/api/spaces/${familyId}/invitations`);
+      assert.equal(attempts.length, 2);
+      assertKey(attempts[0]); assertKey(attempts[1]);
+      assert.equal(attempts[0].headers['idempotency-key'], attempts[1].headers['idempotency-key']);
+      assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+      assert.deepEqual(attempts[0].body, { recipient_account_id: lee });
+      assert.equal((await writes(page)).invite, 1);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const [failure, response] of [['lost', null], ['wrong invitation', { id: groupId }], ['wrong status', { status: 'declined' }]]) for (const width of [1280, 320]) {
+  test(`spaces: withdrawal remains unconfirmed after a ${failure} response and retries safely at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+      recipient_account_id: lee, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')], sent: { [familyId]: [invitation] },
+        invitationWithdrawResponse: response, lose: failure === 'lost' ? { revoke: 1 } : {} });
+      const { page } = result;
+      if (width === 320) await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Invite to Morgan family', exact: true });
+      await panel.getByRole('listitem').getByRole('button').click();
+      const dialog = page.getByRole('dialog');
+      const withdraw = dialog.getByRole('button', { name: 'Revoke invitation', exact: true });
+      await withdraw.click();
+      await page.waitForFunction(() => document.querySelector('section[aria-labelledby="manage-invitations-title"] [role="alert"]')
+        || document.querySelector('section[aria-labelledby="manage-invitations-title"] .message.success'));
+      assert.equal(await panel.locator('.message.success').count(), 0);
+      assert.equal(await dialog.count(), 1);
+      assert.equal((await writes(page)).revoke, 1);
+      await assertFits(page, `Unconfirmed withdrawal at ${width}px`);
+      await assertReachable(page, withdraw, 'Retry withdrawal');
+      await page.evaluate(() => { window.spacesFixture.invitationWithdrawResponse = null; });
+      await withdraw.click();
+      await panel.locator('.message.success').waitFor();
+      assert.equal(await dialog.count(), 0);
+      const attempts = await requests(page, 'POST', `/api/spaces/${familyId}/invitations/${invitation.id}/revoke`);
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+      assert.deepEqual(attempts[0].headers, attempts[1].headers);
+      assert.equal((await writes(page)).revoke, 1);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const [failure, response] of [['lost', null], ['wrong invitation', { id: groupId }], ['wrong status', { status: 'declined' }]]) for (const width of [1280, 320]) {
+  test(`spaces: withdrawal retry survives closing and refreshing after a ${failure} response at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+      recipient_account_id: lee, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')], sent: { [familyId]: [invitation] },
+        invitationWithdrawResponse: response, lose: failure === 'lost' ? { revoke: 1 } : {} });
+      const { page } = result;
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Invite to Morgan family', exact: true });
+      await panel.getByRole('listitem').getByRole('button').click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('button', { name: 'Revoke invitation', exact: true }).click();
+      await dialog.getByRole('alert').filter({ hasText: failure === 'lost' ? lostAnswer : 'The invitation withdrawal could not be confirmed.' }).waitFor();
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await panel.getByLabel('Recipient account ID', { exact: true }).fill(taylor);
+      await panel.getByRole('button', { name: 'Refresh sent invitations', exact: true }).click();
+      await panel.getByRole('listitem').getByRole('button').waitFor({ state: 'detached' });
+      assert.equal(await panel.getByRole('listitem').count(), 1);
+      assert.equal(await panel.locator('.message.success').count(), 0);
+      assert.equal(await dialog.count(), 0);
+      const retry = panel.getByRole('button', { name: 'Retry original decision', exact: true });
+      assert.equal(await retry.count(), 1, 'An unconfirmed withdrawal must remain retryable after its pending action disappears.');
+      if (width === 320) {
+        const originalSize = await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+        await page.evaluate(() => {
+          const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+          document.documentElement.style.fontSize = '200%';
+          for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+        });
+        assert.equal(await retry.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+        assert.equal(await retry.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      }
+      await assertFits(page, `Withdrawal reconciliation at ${width}px`);
+      await assertReachable(page, retry, 'Retry original withdrawal');
+      await retry.evaluate(element => { element.focus(); element.scrollIntoView({ block: 'center' }); });
+      assert.equal(await retry.evaluate(element => document.activeElement === element), true);
+      assert.equal(await retry.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+      }), true, 'The retry must not be covered by fixed navigation.');
+      if (process.env.COMMUNITY_CAPTURE_DIR && failure === 'lost') {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `withdrawal-retry-${width}.png`) });
+      }
+      await page.evaluate(() => { window.spacesFixture.invitationWithdrawResponse = null; });
+      await retry.click();
+      await panel.locator('.message.success').waitFor();
+      const attempts = await requests(page, 'POST', `/api/spaces/${familyId}/invitations/${invitation.id}/revoke`);
+      assert.equal(attempts.length, 2);
+      assert.deepEqual(attempts[1], attempts[0]);
+      assert.deepEqual(attempts[0].body, {});
+      assert.equal(attempts[0].headers['x-account-id'], me);
+      assert.equal((await writes(page)).revoke, 1);
+      assert.equal((await writes(page)).invite, 0);
+      assert.equal(await panel.getByLabel('Recipient account ID', { exact: true }).inputValue(), taylor);
+      assert.equal(await retry.count(), 0);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const status of [403, 404, 503]) {
+  test(`spaces: withdrawal retry is hidden while sent invitations return ${status}`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width: 320, height: 900 } });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+      recipient_account_id: lee, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')], sent: { [familyId]: [invitation] }, lose: { revoke: 1 } });
+      const { page } = result;
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Invite to Morgan family', exact: true });
+      await panel.getByRole('listitem').getByRole('button').click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('button', { name: 'Revoke invitation', exact: true }).click();
+      await dialog.getByRole('alert').filter({ hasText: lostAnswer }).waitFor();
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      const retry = panel.getByRole('button', { name: 'Retry original decision', exact: true });
+      await retry.waitFor();
+      await page.evaluate(({ spaceId, status }) => {
+        window.spacesFixture.sentUnavailable = spaceId;
+        window.spacesFixture.sentUnavailableStatus = status;
+      }, { spaceId: familyId, status });
+      await panel.getByRole('button', { name: 'Refresh sent invitations', exact: true }).click();
+      await retry.waitFor({ state: 'detached' });
+      assert.equal(await panel.getByRole('listitem').count(), 0);
+      assert.equal(await dialog.count(), 0);
+      assert.equal((await requests(page, 'POST', `/api/spaces/${familyId}/invitations/${invitation.id}/revoke`)).length, 1);
+      assert.equal((await writes(page)).revoke, 1);
+      await assertFits(page, `Unavailable withdrawal history ${status}`);
+      if (status === 503) {
+        const error = panel.getByRole('alert').filter({ hasText: 'Synthetic invitations are unavailable.' });
+        await page.evaluate(() => { window.spacesFixture.sentUnavailable = null; });
+        await error.getByRole('button', { name: 'Retry', exact: true }).click();
+        await retry.click();
+        await panel.locator('.message.success').waitFor();
+        const attempts = await requests(page, 'POST', `/api/spaces/${familyId}/invitations/${invitation.id}/revoke`);
+        assert.equal(attempts.length, 2);
+        assert.deepEqual(attempts[1], attempts[0]);
+        assert.equal((await writes(page)).revoke, 1);
+      } else {
+        const close = panel.getByRole('button', { name: 'Close invitation management', exact: true });
+        assert.equal(await close.isEnabled(), true);
+        await close.click();
+        assert.equal(await panel.count(), 0);
+      }
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const status of [404, 409]) {
+  test(`spaces: withdrawal retry is not offered after a known ${status} refusal`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+      recipient_account_id: lee, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')], sent: { [familyId]: [invitation] } });
+      const { page } = result;
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Invite to Morgan family', exact: true });
+      await panel.getByRole('listitem').getByRole('button').click();
+      await page.evaluate(({ spaceId, status }) => {
+        if (status === 404) window.spacesFixture.sent[spaceId] = [];
+        else window.spacesFixture.sent[spaceId][0].status = 'accepted';
+      }, { spaceId: familyId, status });
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('button', { name: 'Revoke invitation', exact: true }).click();
+      await panel.getByRole('alert').filter({ hasText: status === 404 ? 'Invitation not found.' : 'This invitation is no longer pending.' }).waitFor();
+      assert.equal(await dialog.count(), 0);
+      assert.equal(await panel.getByRole('button', { name: 'Retry original decision', exact: true }).count(), 0);
+      assert.equal(await panel.locator('.message.success').count(), 0);
+      assert.equal((await writes(page)).revoke, 0);
+      assert.equal((await requests(page, 'POST', `/api/spaces/${familyId}/invitations/${invitation.id}/revoke`)).length, 1);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const width of [1280, 320]) {
+  test(`spaces: sent-invitation read failure clears stale withdrawal controls and requires fresh review at ${width}px`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US', viewport: { width, height: 900 } });
+    const invitation = { id: secondFamilyId, space_id: familyId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+      recipient_account_id: lee, role: 'member', status: 'pending', created_at: created, expires_at: '2026-10-15T10:00:00Z' };
+    try {
+      const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')], sent: { [familyId]: [invitation] }, sentNextCursor: 'next-sent-page' });
+      const { page } = result;
+      if (width === 320) {
+        await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+        assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), 32);
+      }
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Invite to Morgan family', exact: true });
+      const more = panel.getByRole('button', { name: /more.*invitation/i });
+      await more.waitFor();
+      await panel.getByRole('listitem').getByRole('button').click();
+      const dialog = page.getByRole('dialog');
+      await dialog.waitFor();
+      await dialog.getByText(lee, { exact: true }).waitFor();
+      await page.evaluate(spaceId => {
+        window.spacesFixture.sentUnavailable = spaceId;
+        window.spacesFixture.sentUnavailableStatus = 503;
+      }, familyId);
+      await panel.getByRole('button', { name: /Refresh/i }).dispatchEvent('click');
+      const error = panel.getByRole('alert').filter({ hasText: 'Synthetic invitations are unavailable.' });
+      await error.waitFor();
+      assert.equal(await dialog.count(), 0, 'A failed sent list must not retain an actionable cached withdrawal.');
+      assert.equal(await panel.getByRole('listitem').count(), 0);
+      assert.equal(await more.count(), 0, 'A failed sent list must not expose a cached page cursor.');
+      assert.equal((await writes(page)).revoke, 0);
+      await assertFits(page, `Sent invitations unavailable at ${width}px`);
+
+      await page.evaluate(({ spaceId, nextId, recipient }) => {
+        const state = window.spacesFixture;
+        state.sentUnavailable = null;
+        state.sent[spaceId][0].status = 'revoked';
+        state.sent[spaceId].push({ ...state.sent[spaceId][0], id: nextId, recipient_account_id: recipient, status: 'pending' });
+      }, { spaceId: familyId, nextId: groupId, recipient: taylor });
+      await error.getByRole('button', { name: 'Retry', exact: true }).click();
+      const fresh = panel.getByRole('listitem').filter({ hasText: taylor });
+      await fresh.waitFor();
+      assert.equal(await dialog.count(), 0, 'A successful refresh must not reopen the old withdrawal review.');
+      assert.equal(await more.isEnabled(), true);
+      await fresh.getByRole('button').click();
+      await dialog.getByText(taylor, { exact: true }).waitFor();
+      assert.equal(await dialog.getByText(lee, { exact: true }).count(), 0);
+      assert.equal((await writes(page)).revoke, 0);
+      await assertFits(page, `Fresh sent-invitation review at ${width}px`);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+test('spaces: invitation creation accepts the canonical response for an uppercase recipient UUID', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, { spaces: [space(familyId, 'Morgan family')] });
+    const { page } = result;
+    await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+    const panel = page.locator('section[aria-labelledby="manage-invitations-title"]');
+    await panel.getByLabel('Recipient account ID', { exact: true }).fill(lee.toUpperCase());
+    await panel.getByRole('button', { name: 'Create invitation', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('section[aria-labelledby="manage-invitations-title"] [role="alert"]')
+      || document.querySelector('section[aria-labelledby="manage-invitations-title"] .message.success'));
+    assert.equal(await panel.locator('[role="alert"]').count(), 0, 'UUID letter case does not identify a different recipient.');
+    await panel.getByText('Invitation created.', { exact: true }).waitFor();
+    assert.equal((await writes(page)).invite, 1);
+    assert.equal(await page.evaluate(spaceId => window.spacesFixture.sent[spaceId][0].recipient_account_id, familyId), lee);
+    assert.equal((await requests(page, 'POST', `/api/spaces/${familyId}/invitations`)).length, 1);
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
 
 const membersRegion = (page, name) => page.getByRole('region', { name: `Members of ${name}`, exact: true });
 const personRow = (page, region, name) => region.getByRole('listitem').filter({ has: page.getByRole('heading', { name, exact: true, level: 3 }) });
@@ -577,12 +1061,50 @@ test('spaces: the owner saves settings with the reviewed version and a changed v
     assert.notEqual(second.headers['idempotency-key'], first.headers['idempotency-key']);
     assert.equal((await writes(page)).settings, 1);
 
+    await page.evaluate(() => { window.spacesFixture.hold.settingsRead = true; });
     await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).click();
     await dialog.getByText('Discard the unsaved changes and load current settings?', { exact: true }).waitFor();
     await dialog.getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await page.waitForFunction(() => window.spacesFixture.holding.settingsRead);
+    await dialog.getByText('Loading current settings...', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('alert').getByText('This Space changed. Reload and review the name.', { exact: true }).count(), 1, 'The conflict stays visible until current settings have arrived.');
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).inputValue(), 'Morgan family');
+    assert.equal(await description.inputValue(), 'Second edit', 'An unanswered reload must not discard the draft.');
+    assert.equal(await description.isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).isDisabled(), true);
+    await page.evaluate(() => {
+      window.spacesFixture.refuseSettingsRead = true;
+      window.spacesFixture.release.settingsRead();
+    });
+    await dialog.getByRole('alert').getByText('Synthetic settings reload is unavailable.', { exact: true }).waitFor();
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).inputValue(), 'Morgan family');
+    assert.equal(await description.inputValue(), 'Second edit', 'A refused reload must not discard the draft or adopt cached settings.');
+    assert.equal(await description.isDisabled(), false);
+    assert.equal(await dialog.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).isDisabled(), false);
+    assert.equal((await requests(page, 'GET', `/api/spaces/${familyId}/settings`)).length, 2);
+    assert.equal((await requests(page, 'PATCH', `/api/spaces/${familyId}/settings`)).length, 2);
+    assert.equal((await writes(page)).settings, 1);
+
+    await page.evaluate(() => {
+      window.spacesFixture.refuseSettingsRead = false;
+      window.spacesFixture.hold.settingsRead = true;
+    });
+    await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).click();
+    await dialog.getByText('Discard the unsaved changes and load current settings?', { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await page.waitForFunction(() => window.spacesFixture.holding.settingsRead);
+    await dialog.getByText('Loading current settings...', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('alert').count(), 1, 'Retrying the reload is not itself a successful reload.');
+    assert.equal(await description.inputValue(), 'Second edit');
+    assert.equal(await dialog.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true);
+    await page.evaluate(() => window.spacesFixture.release.settingsRead());
+    await dialog.getByRole('alert').waitFor({ state: 'detached' });
     await dialog.getByText('This Space changed. Reload and review the name.', { exact: true }).waitFor({ state: 'detached' });
     assert.equal(await dialog.getByLabel('Space name', { exact: true }).inputValue(), 'Morgan household');
     assert.equal(await description.inputValue(), 'Changed elsewhere');
+    assert.equal((await requests(page, 'GET', `/api/spaces/${familyId}/settings`)).length, 3);
     await dialog.getByLabel('Space name', { exact: true }).fill('Morgan household two');
     await dialog.getByRole('button', { name: 'Save name', exact: true }).click();
     await dialog.getByText('Settings saved. Current name: Morgan household two', { exact: true }).waitFor();
@@ -592,6 +1114,88 @@ test('spaces: the owner saves settings with the reviewed version and a changed v
     assert.equal((await writes(page)).settings, 2);
     await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
     await page.getByRole('heading', { name: 'Morgan household two', exact: true }).waitFor();
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+test('spaces: a refused settings reload hides editing after access is lost', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      spaces: [space(familyId, 'Morgan family')],
+      members: { [familyId]: [person(me, 'Alex Morgan', 'owner')] },
+    });
+    const { page } = result;
+    await page.getByRole('button', { name: 'Settings for Morgan family', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    const description = dialog.locator('textarea[name="settings_description"]');
+    await description.fill('Unsaved description');
+    await page.evaluate(spaceId => window.spacesFixture.bump(spaceId, { name: 'Changed elsewhere' }), familyId);
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await dialog.getByRole('alert').getByText('This Space changed. Reload and review the name.', { exact: true }).waitFor();
+    await page.evaluate(spaceId => {
+      window.spacesFixture.hold.settingsRead = true;
+      window.spacesFixture.bump(spaceId, { role: 'member' });
+    }, familyId);
+    await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Discard changes', exact: true }).click();
+    await page.waitForFunction(() => window.spacesFixture.holding.settingsRead);
+    await dialog.getByText('Loading current settings...', { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('alert').getByText('This Space changed. Reload and review the name.', { exact: true }).count(), 1);
+    assert.equal(await description.inputValue(), 'Unsaved description');
+    assert.equal(await description.isDisabled(), true);
+    await page.evaluate(() => window.spacesFixture.release.settingsRead());
+    await dialog.getByRole('alert').getByText('Synthetic settings are unavailable.', { exact: true }).waitFor();
+    assert.equal(await dialog.getByLabel('Space name', { exact: true }).count(), 0);
+    assert.equal(await description.count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: /^Save / }).count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).count(), 0);
+    assert.equal((await requests(page, 'GET', `/api/spaces/${familyId}/settings`)).length, 2);
+    assert.equal((await requests(page, 'PATCH', `/api/spaces/${familyId}/settings`)).length, 1);
+    assert.equal((await writes(page)).settings, 0);
+    await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+test('spaces: an unconfirmed settings save keeps its original key, body and reviewed version', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, {
+      lose: { settings: 1 },
+      spaces: [space(familyId, 'Morgan family')],
+      members: { [familyId]: [person(me, 'Alex Morgan', 'owner')] },
+    });
+    const { page } = result;
+    await page.getByRole('button', { name: 'Settings for Morgan family', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Space settings', exact: true });
+    const name = dialog.getByLabel('Space name', { exact: true });
+    const description = dialog.locator('textarea[name="settings_description"]');
+    await name.fill('Morgan household');
+    await description.fill('Synthetic draft');
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await dialog.getByRole('alert').getByText(lostAnswer, { exact: true }).waitFor();
+    await dialog.getByText('The result is unconfirmed. Retrying uses the original name, description and review.', { exact: true }).waitFor();
+    assert.equal(await name.isDisabled(), true);
+    assert.equal(await description.isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Close Space settings', exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Reload current settings', exact: true }).count(), 0);
+    assert.equal(await dialog.getByText('Settings saved. Current name: Morgan household', { exact: true }).count(), 0);
+    await page.evaluate(spaceId => window.spacesFixture.bump(spaceId, { name: 'Changed elsewhere' }), familyId);
+    await dialog.getByRole('button', { name: 'Retry original changes', exact: true }).click();
+    await dialog.getByText('Settings saved. Current name: Morgan household', { exact: true }).waitFor();
+    const attempts = await requests(page, 'PATCH', `/api/spaces/${familyId}/settings`);
+    assert.equal(attempts.length, 2);
+    for (const attempt of attempts) {
+      assertKey(attempt);
+      assert.deepEqual(attempt.body, { name: 'Morgan household', description: 'Synthetic draft' });
+      assert.equal(attempt.headers['if-match'], settingsEtag(1));
+    }
+    assert.equal(attempts[0].headers['idempotency-key'], attempts[1].headers['idempotency-key']);
+    assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+    assert.equal((await writes(page)).settings, 1);
+    assert.equal((await requests(page, 'GET', `/api/spaces/${familyId}/settings`)).length, 1);
     await assertOffline(result);
   } finally { await context.close(); }
 });
@@ -729,6 +1333,58 @@ test('spaces: a long name, members and settings fit 320 px at 200% text and keep
     await assertReachable(page, settings.getByRole('button', { name: 'Close Space settings', exact: true }), 'Close Space settings');
     await assertReachable(page, settings.getByRole('button', { name: /^Save / }), 'Save');
     await assertFits(page, 'Space settings after scrolling to its buttons');
+    assert.equal(await page.evaluate(() => window.spacesFixture.calls.filter(call => call.method !== 'GET').length), 0);
+    await assertOffline(result);
+  } finally { await context.close(); }
+});
+
+test('spaces: each Space row says who is here, whether its agent is on and its privacy, and fits 320 px at doubled text', async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'UTC', locale: 'en-US' });
+  try {
+    const result = await fixture(context, { spaces: [
+      space(familyId, 'Morgan family', { member_count: 5, member_preview: ['Sam Lee', 'Priya Rao', 'Taylor Kim'], last_message_at: '2026-10-06T18:30:00Z' }),
+      space(soloId, 'Just me', { space_type: 'solo', member_count: 1, member_preview: [], last_message_at: null, agent_enabled: false }),
+      space(groupId, 'Older answer', { space_type: 'group', role: 'member' }),
+      space(secondFamilyId, 'Small family', { member_count: 2, member_preview: ['Sam Lee'] }),
+    ] });
+    const { page } = result;
+    const row = name => page.getByRole('listitem').filter({ has: page.getByRole('heading', { name, exact: true }) });
+    await row('Morgan family').getByText('5 members: Sam Lee, Priya Rao, Taylor Kim + 1 more', { exact: true }).waitFor();
+    await row('Morgan family').getByText('Agent on', { exact: true }).waitFor();
+    await row('Small family').getByText('2 members: Sam Lee', { exact: true }).waitFor();
+    await row('Just me').getByText('1 member', { exact: true }).waitFor();
+    await row('Just me').getByText('Agent off', { exact: true }).waitFor();
+    const lastMessage = row('Morgan family').locator('time');
+    assert.equal(await lastMessage.getAttribute('datetime'), '2026-10-06T18:30:00Z');
+    assert.equal(await lastMessage.textContent(), 'Last message Oct 6, 2026, 6:30 PM');
+    assert.equal(await row('Just me').locator('time').count(), 0);
+    // A list answer without a count shows no guessed number.
+    await row('Older answer').getByText('Agent on', { exact: true }).waitFor();
+    assert.equal(await row('Older answer').getByText(/members?/).count(), 0);
+    const visiblePrivacy = name => row(name).getByText('Private', { exact: true }).evaluateAll(elements => elements.filter(element => element.checkVisibility()).length);
+    assert.equal(await visiblePrivacy('Morgan family'), 1);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/spaces-row-facts-desktop.png') });
+
+    await page.setViewportSize({ width: 320, height: 700 });
+    // The privacy column is hidden on narrow screens, so the facts line carries it instead.
+    assert.equal(await visiblePrivacy('Morgan family'), 1);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await row('Morgan family').evaluate(element => element.scrollIntoView({ block: 'start' }));
+    await page.screenshot({ path: path.join(root, '.local/screenshots/spaces-row-facts-320.png') });
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    await assertFits(page, 'Spaces list with member and agent facts');
+    const splitLabels = await row('Morgan family').locator('a > span, button > span').evaluateAll(spans => spans
+      .filter(span => /^\S+$/.test(span.textContent.trim()))
+      .filter(span => { const range = document.createRange(); range.selectNodeContents(span); return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size > 1; })
+      .map(span => span.textContent));
+    assert.deepEqual(splitLabels, [], 'One-word action labels must not split across lines at doubled text.');
+    const facts = row('Morgan family').getByText('5 members: Sam Lee, Priya Rao, Taylor Kim + 1 more', { exact: true });
+    await assertReachable(page, facts, 'Member summary');
+    assert.ok(await facts.evaluate(element => parseFloat(getComputedStyle(element).fontSize)) >= 28, 'The member summary must grow with doubled text.');
+    await page.screenshot({ path: path.join(root, '.local/screenshots/spaces-row-facts-320-large-text.png'), fullPage: true });
     assert.equal(await page.evaluate(() => window.spacesFixture.calls.filter(call => call.method !== 'GET').length), 0);
     await assertOffline(result);
   } finally { await context.close(); }
@@ -925,6 +1581,95 @@ test('spaces: a member sees the invite button only when the family or group Spac
     await assertOffline(result);
   } finally { await context.close(); }
 });
+
+for (const role of ['owner', 'admin']) for (const status of [403, 404]) for (const width of [1440, 320]) {
+  test(`spaces: ${role} can close an unconfirmed invitation after ${status} at ${width}px`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, timezoneId: 'UTC', locale: 'en-US' });
+    try {
+      const result = await fixture(context, {
+        lose: { invite: 1 },
+        spaces: [space(familyId, 'Morgan family', { role }), space(groupId, 'Garden club', { space_type: 'group' })],
+      });
+      const { page } = result;
+      if (width === 320) await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      await page.getByLabel('Recipient account ID', { exact: true }).fill(lee);
+      await page.getByRole('button', { name: 'Create invitation', exact: true }).click();
+      await page.getByRole('alert').getByText(lostAnswer, { exact: true }).waitFor();
+      const close = page.getByRole('button', { name: 'Close invitation management', exact: true });
+      assert.equal(await close.isDisabled(), true);
+      assert.equal((await writes(page)).invite, 1);
+      await page.evaluate(({ spaceId, status }) => {
+        window.spacesFixture.sentUnavailable = spaceId;
+        window.spacesFixture.sentUnavailableStatus = status;
+      }, { spaceId: familyId, status });
+      await page.getByRole('button', { name: 'Refresh sent invitations', exact: true }).click();
+      await page.getByRole('alert').getByText(/Synthetic invitations are unavailable\.|Spaces unavailable/).waitFor();
+      assert.equal(await close.isEnabled(), true, 'A denied read must not trap an unconfirmed invitation.');
+      assert.equal(await page.getByLabel('Recipient account ID', { exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Retry invitation', exact: true }).count(), 0);
+      assert.equal((await requests(page, 'POST', `/api/spaces/${familyId}/invitations`)).length, 1);
+      await assertFits(page, 'Denied invitation management');
+      await assertReachable(page, close, 'Close denied invitation management');
+      if (process.env.COMMUNITY_CAPTURE_DIR && role === 'owner' && status === 404) {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await page.getByRole('region', { name: 'Invite to Morgan family', exact: true }).screenshot({
+          path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `invitation-denied-${width}.png`),
+        });
+      }
+      await close.click();
+      await page.getByRole('heading', { name: 'Invite to Morgan family', exact: true }).waitFor({ state: 'detached' });
+      assert.equal(await page.getByRole('button', { name: 'Manage invitations for Garden club', exact: true }).isEnabled(), true);
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
+
+for (const width of [1440, 320]) {
+  test(`spaces: invitation retry preserves the original request after a lost response at ${width}px`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, timezoneId: 'UTC', locale: 'en-US' });
+    try {
+      const result = await fixture(context, { lose: { invite: 1 }, spaces: [space(familyId, 'Morgan family')] });
+      const { page } = result;
+      if (width === 320) await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await page.getByRole('button', { name: 'Manage invitations for Morgan family', exact: true }).click();
+      const recipient = page.getByLabel('Recipient account ID', { exact: true });
+      await recipient.fill(lee);
+      await page.getByRole('button', { name: 'Create invitation', exact: true }).click();
+      await page.getByRole('alert').getByText(lostAnswer, { exact: true }).waitFor();
+      const retry = page.getByRole('button', { name: 'Retry invitation', exact: true });
+      assert.equal(await retry.isEnabled(), true);
+      assert.equal(await recipient.isDisabled(), true);
+      assert.equal(await recipient.inputValue(), lee);
+      assert.equal(await page.getByRole('button', { name: 'Close invitation management', exact: true }).isDisabled(), true);
+      assert.equal((await writes(page)).invite, 1);
+      await assertFits(page, 'Unconfirmed invitation retry');
+      await assertReachable(page, retry, 'Retry the original invitation');
+      if (process.env.COMMUNITY_CAPTURE_DIR) {
+        mkdirSync(process.env.COMMUNITY_CAPTURE_DIR, { recursive: true });
+        await page.getByRole('region', { name: 'Invite to Morgan family', exact: true }).screenshot({
+          path: path.join(process.env.COMMUNITY_CAPTURE_DIR, `invitation-retry-${width}.png`),
+        });
+      }
+      await retry.click();
+      await page.getByText('Invitation created.', { exact: true }).waitFor();
+      const attempts = await requests(page, 'POST', `/api/spaces/${familyId}/invitations`);
+      assert.equal(attempts.length, 2);
+      for (const attempt of attempts) {
+        assertKey(attempt);
+        assert.deepEqual(attempt.body, { recipient_account_id: lee });
+      }
+      assert.equal(attempts[0].headers['idempotency-key'], attempts[1].headers['idempotency-key']);
+      assert.equal(attempts[0].rawBody, attempts[1].rawBody);
+      assert.equal((await writes(page)).invite, 1);
+      assert.equal(await page.evaluate(spaceId => window.spacesFixture.sent[spaceId].length, familyId), 1);
+      assert.equal(await recipient.isEnabled(), true);
+      assert.equal(await recipient.inputValue(), '');
+      await page.getByRole('button', { name: 'Close invitation management', exact: true }).click();
+      await assertOffline(result);
+    } finally { await context.close(); }
+  });
+}
 
 // A member's open panel ends when the sent list answers "not found" or the Spaces list says members may no longer invite.
 for (const [how, staleSent] of [['the sent list answers not found', false], ['the refreshed Spaces list no longer lets members invite', true]]) {

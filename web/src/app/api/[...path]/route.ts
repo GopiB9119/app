@@ -33,6 +33,8 @@ const allowed = new Set([
   "GET me/notification-preferences", "PATCH me/notification-preferences",
 ]);
 const uuidPart = "[a-f0-9-]{36}";
+const pollUuidPart = "[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}";
+const eventPollRoute = new RegExp(`^(?:(GET|POST) events/${pollUuidPart}/polls|GET events/${pollUuidPart}/polls/${pollUuidPart}|PUT events/${pollUuidPart}/polls/${pollUuidPart}/vote|POST events/${pollUuidPart}/polls/${pollUuidPart}/close)$`);
 const communityWrite = new RegExp(`^(PUT me/interests|POST pages|PATCH pages/${uuidPart}|POST pages/${uuidPart}/(follow|unfollow|posts|archive|restore|delete|moderators)|PATCH posts/${uuidPart}|POST posts/${uuidPart}/(publish|delete|like|unlike|save|unsave|comments|pin|unpin)|POST comments/${uuidPart}/delete|POST reports|POST blocks|POST blocks/${uuidPart}/remove|POST pages/${uuidPart}/moderators/${uuidPart}/(accept|decline|withdraw|remove|step-down)|POST pages/${uuidPart}/handover|POST pages/${uuidPart}/handover/${uuidPart}/(accept|decline|cancel)|POST pages/${uuidPart}/help-posts|POST help-posts/${uuidPart}/(resolve|delete|remove|replies|report|keep|approve)|POST pages/${uuidPart}/events|PUT page-events/${uuidPart}|POST page-events/${uuidPart}/(cancel|going|not-going)|POST help-replies/${uuidPart}/end)$`);
 const communityRead = new RegExp(`^GET (me/interests|me/suggested-pages|me/interest-posts|me/pages|me/following|me/saved-posts|me/blocks|me/moderator-roles|me/handover-offers|me/help-posts|me/help-review|help-posts/${uuidPart}/replies|help-posts/${uuidPart}/reports|me/page-events|page-events/${uuidPart}/attendees|feed|pages/${uuidPart}/drafts|pages/${uuidPart}/moderators|pages/${uuidPart}/handover)$`);
 const feedControlRoute = /^(?:(GET|POST) me\/feed-controls|POST me\/feed-controls\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/remove)$/;
@@ -120,25 +122,30 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
   const notificationAction = request.method === "POST" && /^notifications\/[a-f0-9-]{36}\/(read|acknowledge|snooze)$/.test(route);
   const reminderSeries = new RegExp(`^GET reminder-series/${uuidPart}$|^POST reminder-series/${uuidPart}/(pause|resume|skip|cancel|move|replace)$`).test(`${request.method} ${route}`);
   const alerts = new RegExp(`^GET me/alerts$|^POST me/alerts/dismiss$|^(GET|PATCH) me/quiet-hours$|^GET me/care-alerts$|^(GET|POST) events/${uuidPart}/alert$|^POST care/instructions/${uuidPart}/alerts$|^(GET|POST) reminder-backups$|^GET reminder-backups/contacts$|^POST reminder-backups/${uuidPart}/(accept|decline|cancel)$`).test(`${request.method} ${route}`);
-  const messaging = /^(POST spaces\/[a-f0-9-]{36}\/conversations|GET conversations|GET conversations\/[a-f0-9-]{36}(\/messages)?|POST conversations\/[a-f0-9-]{36}\/(messages|read)|POST conversations\/[a-f0-9-]{36}\/messages\/[a-f0-9-]{36}\/(delete|edit|reactions|agent))$/.test(`${request.method} ${route}`);
+  const messaging = /^(POST spaces\/[a-f0-9-]{36}\/conversations|GET conversations|GET conversations\/[a-f0-9-]{36}(\/messages)?|POST conversations\/[a-f0-9-]{36}\/(messages|read|typing)|POST conversations\/[a-f0-9-]{36}\/messages\/[a-f0-9-]{36}\/(delete|edit|reactions|agent))$/.test(`${request.method} ${route}`);
   const community = communityWrite.test(`${request.method} ${route}`) || communityRead.test(`${request.method} ${route}`) || feedControlRoute.test(`${request.method} ${route}`) || pageInsightsRead.test(`${request.method} ${route}`);
   const events = /^((GET|POST) spaces\/[a-f0-9-]{36}\/events|(GET|PATCH) events\/[a-f0-9-]{36}|POST events\/[a-f0-9-]{36}\/(cancel|attendance)|(GET|PUT) events\/[a-f0-9-]{36}\/budget|(PUT|DELETE) events\/[a-f0-9-]{36}\/budget\/split|POST events\/[a-f0-9-]{36}\/expenses|DELETE events\/[a-f0-9-]{36}\/expenses\/[a-f0-9-]{36}|POST events\/[a-f0-9-]{36}\/contributions|(PUT|DELETE) events\/[a-f0-9-]{36}\/contributions\/[a-f0-9-]{36})$/.test(`${request.method} ${route}`);
+  const eventPolls = eventPollRoute.test(`${request.method} ${route}`);
   const care = new RegExp(`^(GET|POST) care/instructions$|^GET care/instructions/${uuidPart}$|^POST care/instructions/${uuidPart}/(stop|reports)$|^GET care/day$`).test(`${request.method} ${route}`);
   const publicCommunity = publicRead.test(`${request.method} ${route}`);
   const groupSearch = request.method === "GET" && route === "discover/spaces";
   const groups = groupSearch || new RegExp(`^GET discover/spaces/${uuidPart}$|^POST spaces/${uuidPart}/(visibility|invite-policy|agent-policy)$|^(GET|POST) spaces/${uuidPart}/join-requests$|^POST spaces/${uuidPart}/join-requests/${uuidPart}/(approve|decline)$|^POST space-join-requests/${uuidPart}/cancel$|^GET me/space-join-requests$`).test(`${request.method} ${route}`);
-  const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}(/web-text)?$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^DELETE agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
+  const agents = new RegExp(`^(GET|POST) agent-runs$|^GET agent-runs/${uuidPart}(/web-text)?$|^POST agent-runs/${uuidPart}/(resume|cancel)$|^POST agent-approvals/${uuidPart}/(approve|reject)$|^GET agent-memories$|^(DELETE|PATCH) agent-memories/${uuidPart}$|^GET agent-tools$`).test(`${request.method} ${route}`);
   const documentAdd = request.method === "POST" && new RegExp(`^spaces/${uuidPart}/documents$`).test(route);
   const documentCommand = documentAdd || (request.method === "POST" && new RegExp(`^documents/${uuidPart}/delete$`).test(route));
   const documentRead = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/documents$|^documents/${uuidPart}$|^search$`).test(route);
   const documents = documentCommand || documentRead;
+  const spacePollList = request.method === "GET" && new RegExp(`^spaces/${uuidPart}/polls$`).test(route);
+  const spacePolls = spacePollList || new RegExp(`^POST spaces/${uuidPart}/polls$|^GET polls/${uuidPart}$|^(PUT|DELETE) polls/${uuidPart}/vote$|^POST polls/${uuidPart}/close$`).test(`${request.method} ${route}`);
   // Platform moderation (DEC-024): the service decides who is a moderator; the proxy only limits the routes.
   const moderation = new RegExp(`^GET me/moderator$|^GET moderation/queue$|^POST moderation/decisions$|^GET moderation/appeals$|^POST moderation/decisions/${uuidPart}/appeal$|^POST moderation/appeals/${uuidPart}/resolve$|^GET me/moderation-notices$|^GET me/reports$`).test(`${request.method} ${route}`);
-  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !care && !publicCommunity && !groups && !agents && !documents && !moderation && !sessionDelete && !exportResource && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (!allowed.has(`${request.method} ${route}`) && !messaging && !community && !events && !eventPolls && !care && !publicCommunity && !groups && !agents && !documents && !spacePolls && !moderation && !sessionDelete && !exportResource && !spaceRead && !spaceSettings && !spaceMembers && !removeMember && !leaveSpace && !ownershipList && !ownershipOffer && !ownershipResponse && !spaceInvitations && !revokeInvitation && !respondInvitation && !taskResource && !taskStatus && !taskChecklist && !reminderCancel && !requestReview && !requestResponse && !notificationAction && !reminderSeries && !alerts) return failure(404, "NOT_FOUND", "Endpoint not found.");
+  if (eventPolls && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Event polls do not accept query parameters.");
   if (route === "live" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Live updates do not accept query parameters.");
   if (agents && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Agent commands do not accept query parameters.");
   if (moderation && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Moderation commands do not accept query parameters.");
   if (documentCommand && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Document commands do not accept query parameters.");
+  if (spacePolls && !spacePollList && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Poll commands do not accept query parameters.");
   if (alerts && request.method !== "GET" && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Alert commands do not accept query parameters.");
   if (groups && !groupSearch && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Group commands do not accept query parameters.");
   if ((reminderSeries || (notificationAction && route.endsWith("/snooze"))) && request.nextUrl.search) return failure(400, "INVALID_REQUEST", "Reminder commands do not accept query parameters.");
@@ -243,6 +250,12 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
         upstreamUrl.searchParams.set(name, value);
       }
     }
+    if (spacePollList) {
+      for (const [name, value] of request.nextUrl.searchParams) {
+        if (!["status", "limit", "cursor"].includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid poll parameters.");
+        upstreamUrl.searchParams.set(name, value);
+      }
+    }
     if (groupSearch) {
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!["q", "limit", "cursor"].includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid search parameters.");
@@ -257,7 +270,7 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       }
     }
     if (agents && request.method === "GET") {
-      const parameters = route === "agent-runs" ? ["space_id", "limit", "cursor"] : [];
+      const parameters = route === "agent-runs" ? ["space_id", "limit", "cursor", "status"] : [];
       for (const [name, value] of request.nextUrl.searchParams) {
         if (!parameters.includes(name) || upstreamUrl.searchParams.has(name)) return failure(400, "INVALID_REQUEST", "Invalid agent parameters.");
         upstreamUrl.searchParams.set(name, value);

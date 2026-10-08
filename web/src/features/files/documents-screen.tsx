@@ -14,6 +14,7 @@ import type { MessageId, MessageValues } from "@/features/i18n/messages";
 import { isUnknown } from "@/features/community/client";
 import { problemText, sessionLost, useViewer } from "@/features/community/shared";
 import { spacesSchema } from "@/features/spaces/client";
+import { SpaceHeader } from "@/features/spaces/space-header";
 import { ACCEPT, MAX_NAME, addDocument, decodeText, deleteDocument, fileProblem, formatSize, isCursorProblem, lineRange, listDocuments, readDocument, splitLines } from "./client";
 import type { AddIntent, SpaceDocument } from "./client";
 import styles from "./documents.module.css";
@@ -124,6 +125,7 @@ function Documents({ user, initial }: { user: Account; initial: View }) {
               </select>
             </label>
           </div>
+          <SpaceHeader space={space} current="documents" />
           <Notice message={notice} />
           <AddDocument key={space.id} user={user} space={space} onLocked={setLocked} onAdded={announce} />
           <DocumentList key={`list-${space.id}`} user={user} space={space} locked={locked} onOpen={id => { setNotice(null); go({ spaceId: space.id, documentId: id }); }} />

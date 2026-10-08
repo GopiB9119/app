@@ -78,6 +78,109 @@ const memory = (overrides = {}) => ({
   source_run_id: runId, created_at: '2026-09-19T10:00:00Z', ...overrides,
 });
 
+test('Agent interaction uses the same versioned message parts for Main and Space runs and legacy responses', () => {
+  const client = load();
+  for (const agentKind of ['main', 'space']) {
+    const scope = agentKind === 'main' ? null : spaceId;
+    const legacy = client.runSchema.parse(run({ agent_kind: agentKind, space_id: scope, approval: approval({ space_id: scope }) }));
+    const interaction = client.agentInteraction(legacy);
+    assert.equal(interaction.schema_version, 1);
+    assert.equal(interaction.run_id, runId);
+    assert.equal(interaction.agent_kind, agentKind);
+    assert.equal(interaction.space_id, scope);
+    assert.deepEqual(Array.from(interaction.messages, message => [message.id, message.role]), [
+      [`${runId}:request`, 'user'], [`${runId}:response`, 'agent'],
+    ]);
+    assert.equal(interaction.messages[0].parts[0].content, legacy.message);
+    assert.equal(interaction.messages[1].parts.find(part => part.type === 'approval').approval.id, approvalId);
+    assert.equal(client.runSchema.safeParse({ ...legacy, interaction }).success, true);
+    const completed = client.runSchema.parse({ ...legacy, answer: '## Result\nDone.', status: 'completed', approval: null });
+    assert.equal(client.agentInteraction(completed).messages[1].id, interaction.messages[1].id);
+    assert.equal(client.agentInteraction(completed).messages[1].parts[0].type, 'markdown');
+  }
+});
+
+test('Agent interaction rejects mismatched scope, text, approvals, identities and unsupported parts or versions', () => {
+  const client = load();
+  const legacy = client.runSchema.parse(run());
+  const original = JSON.parse(JSON.stringify(client.agentInteraction(legacy)));
+  for (const mutate of [
+    value => { value.schema_version = 2; },
+    value => { value.run_id = spaceId; },
+    value => { value.space_id = runId; },
+    value => { value.agent_kind = 'main'; },
+    value => { value.status = 'completed'; },
+    value => { value.messages[0].parts[0].content = 'Unreviewed input'; },
+    value => { value.messages[1].id = `${spaceId}:response`; },
+    value => { value.messages[0].id = `${runId}:request:x`; },
+    value => { value.messages[1].role = 'user'; },
+    value => { value.messages[1].parts.push({ type: 'markdown', content: 'Invented result' }); },
+    value => { value.messages[1].parts.push({ type: 'reasoning', content: 'Private state' }); },
+    value => { value.messages[1].parts.find(part => part.type === 'approval').approval.fields[0].value = 'Changed action'; },
+    value => { value.messages[1].parts.find(part => part.type === 'approval').approval.run_id = spaceId; },
+  ]) {
+    const changed = structuredClone(original);
+    mutate(changed);
+    assert.equal(client.runSchema.safeParse({ ...legacy, interaction: changed }).success, false, JSON.stringify(changed));
+  }
+  const equivalent = structuredClone(original);
+  equivalent.run_id = runId.toUpperCase();
+  equivalent.space_id = spaceId.toUpperCase();
+  equivalent.messages[0].id = `${runId.toUpperCase()}:request`;
+  equivalent.messages[1].parts.find(part => part.type === 'approval').approval.id = approvalId.toUpperCase();
+  assert.equal(client.runSchema.safeParse({ ...legacy, interaction: equivalent }).success, true);
+});
+
+test('Memory edits bind the reviewed identity and version and keep exact retry requests', async () => {
+  const reviewed = memory({ space_id: spaceId, enabled: true, version: '2', etag });
+  const latest = memory({ space_id: spaceId, content: 'Latest preference', enabled: false, version: '4', etag: `"${'b'.repeat(64)}"` });
+  const network = recorder(() => Response.json({ data: latest }));
+  const client = load(network.fetch);
+  const intent = { accountId, memory: reviewed, changes: { content: 'Earlier preference', enabled: true }, key };
+  const result = await client.editMemory(intent);
+  const repeated = await client.editMemory(intent);
+  assert.equal(result.enabled, false);
+  assert.equal(repeated.version, '4');
+  assert.equal(network.calls.length, 2);
+  for (const call of network.calls) {
+    assert.equal(call.url, `/api/agent-memories/${memoryId}`);
+    assert.equal(call.options.method, 'PATCH');
+    assert.equal(call.options.headers['If-Match'], etag);
+    assert.equal(call.options.headers['Idempotency-Key'], key);
+    assert.equal(call.options.headers['X-Account-ID'], accountId);
+    assert.deepEqual(call.body, intent.changes);
+  }
+});
+
+for (const [label, changes] of [
+  ['another memory', { id: runId }], ['another Space', { space_id: runId }],
+  ['another kind', { kind: 'preference', key: 'reminder_time' }], ['another key', { key: 'unexpected' }],
+  ['older version', { version: '1' }], ['unchanged version despite an edit', { version: '2' }],
+  ['missing enabled', { enabled: undefined }], ['missing version', { version: undefined }], ['missing ETag', { etag: undefined }],
+]) test(`Memory edits reject ${label} without confirming the mutation`, async () => {
+  const reviewed = memory({ space_id: spaceId, enabled: true, version: '2', etag });
+  const returned = { ...reviewed, content: 'Edited preference', enabled: false, version: '3', etag: `"${'b'.repeat(64)}"`, ...changes };
+  const client = load(async () => Response.json({ data: returned }));
+  await assert.rejects(client.editMemory({ accountId, memory: reviewed, changes: { content: 'Edited preference', enabled: false }, key }),
+    error => error.code === 'INVALID_RESPONSE');
+});
+
+test('Legacy memories stay readable but cannot be edited without review metadata', async () => {
+  const client = load(async () => Response.json({ data: [memory()] }));
+  assert.equal((await client.readMemories(accountId)).length, 1);
+  await assert.rejects(client.editMemory({ accountId, memory: memory(), changes: { enabled: false }, key }),
+    error => error.code === 'PRECONDITION_REQUIRED');
+});
+
+test('Memory edits preserve a valid no-op and equivalent UUID capitalization', async () => {
+  const reviewed = memory({ space_id: spaceId, enabled: true, version: '9007199254740993', etag });
+  const client = load(async () => Response.json({ data: { ...reviewed, id: memoryId.toUpperCase(), space_id: spaceId.toUpperCase() } }));
+  const result = await client.editMemory({ accountId, memory: reviewed, changes: { enabled: true }, key });
+  assert.equal(result.version, reviewed.version);
+  assert.equal(result.enabled, true);
+  assert.equal(result.id.toLowerCase(), memoryId);
+});
+
 test('Web sources retain provenance and only matching YouTube IDs can be embedded', () => {
   const client = load();
   const source = { title: 'A cooking video', url: 'https://www.youtube.com/watch?v=pKtweGSC2FU', read: false, video_id: 'pKtweGSC2FU' };
@@ -124,12 +227,24 @@ test('Saved web text is bounded, read-only and tied to its requested run', async
   await assert.rejects(wrongRun.readWebText(accountId, runId), error => error.code === 'INVALID_RESPONSE');
 });
 
+test('Web source dates must be timezone-aware and never fabricated for older responses', () => {
+  const client = load();
+  const source = { title: 'Transit report', url: 'https://news.example.org/transit', read: true, video_id: null };
+  assert.equal(client.webSourceSchema.parse(source).retrieved_at, undefined);
+  assert.equal(client.webSourceSchema.parse({ ...source, retrieved_at: null }).retrieved_at, null);
+  const timestamp = '2026-10-08T10:15:00Z';
+  assert.equal(client.webSourceSchema.parse({ ...source, retrieved_at: timestamp }).retrieved_at, timestamp);
+  for (const invalid of ['2026-10-08', '2026-10-08T10:15:00', 'just now', 0]) {
+    assert.equal(client.webSourceSchema.safeParse({ ...source, retrieved_at: invalid }).success, false);
+  }
+});
+
 test('Agent routes pass the BFF only with reviewed methods and parameters', async () => {
   for (const [method, route] of [
     ['POST', 'agent-runs'], ['GET', `agent-runs?space_id=${spaceId}&limit=20`], ['GET', `agent-runs?space_id=${spaceId}&cursor=c`],
     ['GET', `agent-runs/${runId}`], ['GET', `agent-runs/${runId}/web-text`], ['POST', `agent-runs/${runId}/resume`], ['POST', `agent-runs/${runId}/cancel`],
     ['POST', `agent-approvals/${approvalId}/approve`], ['POST', `agent-approvals/${approvalId}/reject`],
-    ['GET', 'agent-memories'], ['DELETE', `agent-memories/${memoryId}`], ['GET', 'agent-tools'],
+    ['GET', 'agent-memories'], ['DELETE', `agent-memories/${memoryId}`], ['PATCH', `agent-memories/${memoryId}`], ['GET', 'agent-tools'],
   ]) {
     const proxy = bff();
     assert.equal((await proxy.request(method, route)).status, 200, `${method} ${route}`);
@@ -141,7 +256,7 @@ test('Agent routes pass the BFF only with reviewed methods and parameters', asyn
   for (const [method, route] of [
     ['DELETE', `agent-runs/${runId}`], ['PATCH', `agent-runs/${runId}`], ['GET', `agent-runs/${runId}/resume`],
     ['POST', `agent-approvals/${approvalId}`], ['GET', `agent-approvals/${approvalId}/approve`], ['POST', `agent-approvals/${approvalId}/edit`],
-    ['POST', 'agent-memories'], ['PATCH', `agent-memories/${memoryId}`], ['GET', `agent-memories/${memoryId}`], ['POST', 'agent-tools'],
+    ['POST', 'agent-memories'], ['PUT', `agent-memories/${memoryId}`], ['GET', `agent-memories/${memoryId}`], ['POST', 'agent-tools'],
     ['GET', 'agent-runs/not-a-uuid'], ['GET', 'agent-runs/not-a-uuid/web-text'], ['POST', `agent-runs/${runId}/web-text`],
     ['GET', 'agent-web-fetches'], ['POST', 'agent-web-fetches'], ['GET', `agent-web-fetches/${runId}`],
     ['POST', `agent-web-fetches/${runId}`], ['GET', 'agent-web-fetches/not-a-uuid'],
@@ -155,6 +270,7 @@ test('Agent routes pass the BFF only with reviewed methods and parameters', asyn
     ['GET', `agent-runs?account_id=${accountId}`], ['GET', `agent-runs?space_id=${spaceId}&space_id=${spaceId}`],
     ['GET', `agent-runs/${runId}?space_id=${spaceId}`], ['GET', 'agent-memories?limit=5'], ['POST', `agent-runs?space_id=${spaceId}`],
     ['POST', `agent-approvals/${approvalId}/approve?force=1`], ['DELETE', `agent-memories/${memoryId}?all=1`],
+    ['PATCH', `agent-memories/${memoryId}?force=1`],
     ['GET', `agent-runs/${runId}/web-text?url=https://news.example.org/transit`],
   ]) {
     assert.equal((await bff().request(method, route)).status, 400, `${method} ${route}`);
@@ -179,12 +295,13 @@ test('Agent responses must be consistent before the screen uses them', () => {
   assert.equal(client.memorySchema.safeParse(memory()).success, true);
   assert.equal(client.memorySchema.safeParse(memory({ kind: 'health' })).success, false);
   assert.equal(client.messageSchema.safeParse('  add a task  ').data, 'add a task');
-  for (const message of ['', '   ', 'x'.repeat(501), 'line one\nline two']) {
+  assert.equal(client.messageSchema.safeParse('line one\nline two').success, true);
+  for (const message of ['', '   ', 'x'.repeat(2001), 'bell\u0007']) {
     assert.equal(client.messageSchema.safeParse(message).success, false, JSON.stringify(message));
   }
 });
 
-for (const kind of ['event', 'document', 'page', 'space', 'interests']) {
+for (const kind of ['event', 'poll', 'document', 'page', 'space', 'interests']) {
   test(`Read-only agent ${kind} evidence survives answers and request history`, async () => {
     const reference = kind === 'interests' ? 'topic:environment' : spaceId;
     const result = run({
@@ -270,6 +387,73 @@ test('A private Agent request is read by its existing run ID route', async () =>
   assert.equal(network.calls[0].options.method, 'GET');
 });
 
+for (const operation of ['read', 'cancel', 'answer', 'approve', 'reject']) {
+  test(`Agent run responses reject another run during ${operation}`, async () => {
+    const result = run({ id: memoryId, status: 'completed', approval: null, outcome: 'answered', answer: 'Another request finished.' });
+    const client = load(async () => Response.json({ data: result }));
+    const pending = run({ status: 'waiting_for_user', approval: null,
+      question: { id: questionId, text: 'What time?', expires_at: '2026-09-19T10:15:00Z' } });
+    const execute = operation === 'read' ? () => client.readRun(accountId, runId)
+      : operation === 'cancel' ? () => client.cancelRun(accountId, runId)
+        : operation === 'answer' ? () => client.answerQuestion(accountId, pending, '6 pm')
+          : () => client.decide({ accountId, approval: approval(), action: operation, key });
+    await assert.rejects(execute(), error => error.status === 502 && error.code === 'INVALID_RESPONSE');
+  });
+}
+
+for (const [label, changes] of [
+  ['another approval run', { approval: approval({ run_id: memoryId }) }],
+  ['another approval Space', { approval: approval({ space_id: memoryId }) }],
+  ['Main kind with a Space', { agent_kind: 'main' }],
+  ['Space kind without a Space', { agent_kind: 'space', space_id: null, approval: approval({ space_id: null }) }],
+]) {
+  test(`Agent run responses reject ${label} before rendering`, async () => {
+    const client = load(async () => Response.json({ data: run(changes) }));
+    await assert.rejects(client.readRun(accountId, runId), error => error.status === 502 && error.code === 'INVALID_RESPONSE');
+  });
+}
+
+for (const operation of ['cancel', 'answer', 'approve', 'reject']) {
+  test(`Agent run responses reject another Space with the same run ID during ${operation}`, async () => {
+    const returned = run({ space_id: memoryId, status: 'completed', approval: null, outcome: 'answered', answer: 'Another Space answer.' });
+    const client = load(async () => Response.json({ data: returned }));
+    const pending = run({ status: 'waiting_for_user', approval: null,
+      question: { id: questionId, text: 'What time?', expires_at: '2026-09-19T10:15:00Z' } });
+    const execute = operation === 'cancel' ? () => client.cancelRun(accountId, runId, spaceId)
+      : operation === 'answer' ? () => client.answerQuestion(accountId, pending, '6 pm')
+        : () => client.decide({ accountId, approval: approval(), action: operation, key });
+    await assert.rejects(execute(), error => error.status === 502 && error.code === 'INVALID_RESPONSE');
+  });
+}
+
+test('Agent response binding permits canonical UUIDs, later states and a newer approval for the same run', async () => {
+  const later = run({ id: runId.toUpperCase(), space_id: spaceId.toUpperCase(), version: '8',
+    approval: approval({ id: memoryId, run_id: runId.toUpperCase(), space_id: spaceId.toUpperCase() }) });
+  const network = recorder(() => Response.json({ data: later }));
+  const client = load(network.fetch);
+  const decided = await client.decide({ accountId, approval: approval(), action: 'approve', key });
+  assert.equal(decided.approval.id, memoryId);
+  assert.equal(decided.version, '8');
+  assert.equal((await client.readRun(accountId, runId)).id.toLowerCase(), runId);
+  const complete = run({ status: 'completed', approval: null, outcome: 'action_completed', answer: 'The earlier action finished.',
+    finished_at: '2026-09-19T10:05:00Z', version: '9' });
+  const stop = load(async () => Response.json({ data: complete }));
+  assert.equal((await stop.cancelRun(accountId, runId.toUpperCase(), spaceId.toUpperCase())).status, 'completed');
+  const pending = run({ status: 'waiting_for_user', approval: null,
+    question: { id: questionId, text: 'What time?', expires_at: '2026-09-19T10:15:00Z' } });
+  assert.equal((await client.answerQuestion(accountId, pending, '6 pm')).approval.id, memoryId);
+});
+
+for (const requestedSpace of [spaceId, null]) {
+  test(`Agent run responses reject another scope when creating ${requestedSpace ? 'Space' : 'Main'} requests`, async () => {
+    const result = run({ agent_kind: requestedSpace ? 'main' : 'space', space_id: requestedSpace ? null : spaceId,
+      status: 'queued', approval: null });
+    const client = load(async () => Response.json({ data: result }));
+    await assert.rejects(client.askAgent({ accountId, spaceId: requestedSpace, message: result.message, key }),
+      error => error.status === 502 && error.code === 'INVALID_RESPONSE');
+  });
+}
+
 test('Asking, answering and deciding send the exact reviewed request', async () => {
   const network = recorder(() => Response.json({ data: run(), request_id: 'r' }));
   const client = load(network.fetch);
@@ -298,16 +482,39 @@ test('Asking, answering and deciding send the exact reviewed request', async () 
   await assert.rejects(client.answerQuestion(accountId, run(), '6 pm'), /no open question/);
 });
 
+test('Space Agent inbox requests include the selected status before pagination', async () => {
+  const network = recorder(() => Response.json({ data: [], pagination: { next_cursor: null, has_more: false } }));
+  const client = load(network.fetch);
+  await client.runPage(accountId, spaceId, null, undefined, 'waiting_for_approval');
+  const requested = new URL(network.calls[0].url, origin);
+  assert.equal(requested.searchParams.get('space_id'), spaceId);
+  assert.equal(requested.searchParams.get('status'), 'waiting_for_approval');
+  assert.equal(requested.searchParams.get('limit'), '20');
+  assert.equal(network.calls[0].options.method, 'GET');
+});
+
+test('Space Agent inbox status is forwarded once by the BFF', async () => {
+  const proxy = bff();
+  assert.equal((await proxy.request('GET', `agent-runs?space_id=${spaceId}&status=working&limit=20`)).status, 200);
+  assert.equal(new URL(proxy.calls.at(-1).url).searchParams.get('status'), 'working');
+  assert.equal((await proxy.request('GET', 'agent-runs?status=working&status=completed')).status, 400);
+  assert.equal((await proxy.request('GET', `agent-runs/${runId}?status=working`)).status, 400);
+});
+
 test('History pages and memories are read and deleted with bounded requests', async () => {
   const network = recorder(url => {
-    if (url.startsWith('/api/agent-runs')) return Response.json({ data: [run()], pagination: { next_cursor: 'next', has_more: true }, request_id: 'r' });
+    if (url.startsWith('/api/agent-runs')) {
+      const continued = new URL(url, origin).searchParams.has('cursor');
+      return Response.json({ data: [run()], pagination: { next_cursor: continued ? null : 'next', has_more: !continued }, request_id: 'r' });
+    }
     if (url === '/api/agent-memories') return Response.json({ data: [memory()], request_id: 'r' });
     return Response.json({ data: { id: memoryId, status: 'deleted' }, request_id: 'r' });
   });
   const client = load(network.fetch);
   const first = await client.runPage(accountId, spaceId, null);
   assert.equal(first.pagination.next_cursor, 'next');
-  await client.runPage(accountId, spaceId, 'next');
+  const last = await client.runPage(accountId, spaceId, 'next');
+  assert.equal(last.pagination.has_more, false);
   assert.equal((await client.readMemories(accountId))[0].content, 'The plumber comes on Fridays');
   assert.deepEqual(await client.forgetMemory(accountId, memoryId), { id: memoryId, status: 'deleted' });
   assert.equal(network.calls[0].url, `/api/agent-runs?space_id=${spaceId}&limit=20`);
@@ -316,6 +523,33 @@ test('History pages and memories are read and deleted with bounded requests', as
   assert.equal(deletion.url, `/api/agent-memories/${memoryId}`);
   assert.equal(deletion.options.method, 'DELETE');
   assert.deepEqual(deletion.body, {});
+});
+
+for (const [name, data, pagination, status, cursor] of [
+  ['another Space', [run({ space_id: memoryId })], null, 'all', null],
+  ['Main record in a Space', [run({ agent_kind: 'main', space_id: null })], null, 'all', null],
+  ['wrong agent kind', [run({ agent_kind: 'main' })], null, 'all', null],
+  ['wrong status', [run()], null, 'completed', null],
+  ['duplicate IDs', [run(), run()], null, 'all', null],
+  ['oversized page', Array.from({ length: 21 }, () => run()), null, 'all', null],
+  ['repeated cursor', [run()], { next_cursor: 'same', has_more: true }, 'all', 'same'],
+  ['empty continuation', [], { next_cursor: 'next', has_more: true }, 'all', null],
+  ['inconsistent continuation', [run()], { next_cursor: 'next', has_more: false }, 'all', null],
+]) test(`Space Agent inbox rejects ${name}`, async () => {
+  const client = load(async () => Response.json({ data, ...(pagination ? { pagination } : {}) }));
+  await assert.rejects(client.runPage(accountId, spaceId, cursor, undefined, status), error => error.code === 'INVALID_RESPONSE');
+});
+
+test('Space Agent inbox accepts canonical UUIDs and each working/failure state', async () => {
+  for (const [filter, states] of [['working', ['queued', 'running', 'verifying']], ['failed', ['failed', 'timed_out', 'expired']]]) {
+    for (const status of states) {
+      const client = load(async () => Response.json({ data: [run({ status, approval: null })] }));
+      const result = await client.runPage(accountId, spaceId.toUpperCase(), null, undefined, filter);
+      assert.equal(result.data[0].status, status);
+    }
+  }
+  const main = load(async () => Response.json({ data: [run({ agent_kind: 'main', space_id: null, status: 'completed', approval: null })] }));
+  assert.equal((await main.runPage(accountId, null, null)).data[0].agent_kind, 'main');
 });
 
 test('Deleting a memory that is already gone counts as deleted, and only that memory may be confirmed', async () => {

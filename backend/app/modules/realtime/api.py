@@ -2,6 +2,7 @@ import time
 from contextlib import asynccontextmanager
 
 import anyio
+from anyio.lowlevel import checkpoint_if_cancelled
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer
@@ -33,9 +34,12 @@ router = APIRouter(
 STREAM = {
     200: {
         "description": (
-            "Server-sent events. `ready` once listening; `change` with a kind (`conversation` or `notifications`), a "
-            "reason and identifiers only; `resync` when hints were lost; `end` with a reason before the stream closes. "
-            "A comment line arrives every 15 seconds. Read the changed data through the other operations."
+            "Server-sent events. `ready` once listening; `change` with a kind (`conversation`, `notifications`, "
+            "`agent` or `search`), a reason and identifiers only. A `change` of kind `typing` instead carries "
+            "conversation, participant and client IDs, a sequence, typing/mention flags and an expiry, never draft "
+            "text; it is transient and is not replayed or read from message history. `resync` means hints were lost; "
+            "`end` gives a reason before the stream closes. A comment line arrives every 15 seconds. "
+            "Read changed persistent data through the other operations; typing does not require a refresh."
         ),
         "content": {"text/event-stream": {"schema": {"type": "string"}}},
     },
@@ -115,4 +119,11 @@ async def live(request: Request):
     service = request.app.state.live
     with anyio.CancelScope(shield=True):
         reservation = await run_in_threadpool(service.acquire, value)
-        return LiveResponse(service, value, reservation)
+    # A request cancelled while acquiring must free its place instead of handing off a response nobody owns.
+    try:
+        await checkpoint_if_cancelled()
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            await run_in_threadpool(service.leases.release, reservation)
+        raise
+    return LiveResponse(service, value, reservation)

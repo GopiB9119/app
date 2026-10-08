@@ -19,14 +19,16 @@ from app.modules.spaces.models import Space
 NAMESPACE = UUID("2f8e4c1a-6b3d-4f5e-9a7c-1d2e3f4a5b6c")
 
 # Every definition names its tools one by one, so a new tool reaches no scope until someone adds it here on purpose.
-# Version 5 (DEC-060): a Space's agent works in its Space only; public community actions belong to the Main Agent.
-# Migration 0053 moves every binding to it. Old runs keep theirs.
+# Version 7 adds poll reads and explicitly reviewed creation inside the current Space.
+# Migration 0062 moves bindings to it; existing identities and recorded runs stay unchanged.
 SPACE_TOOLS = (
     "family.tasks.list", "family.members.list", "spaces.settings.read", "family.events.list", "reminders.list",
+    "events.budget.read", "events.budget.split",
+    "space.poll.read", "space.poll.create",
     "space.search", "documents.list", "documents.read", "agent.memory.read", "web.search", "web.read",
     "tasks.create", "tasks.update", "tasks.complete", "reminders.schedule", "events.create", "agent.memory.save",
 )
-VERSION = 5
+VERSION = 7
 # The person's own agent on the Agent page (DEC-060): the public community, the web and their own memories, and no Space.
 # It cannot read inside a Space; it can only show the person buttons to the chats of their own Spaces.
 MAIN_TOOLS = (

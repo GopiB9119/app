@@ -139,6 +139,7 @@
 .ui-list-item {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: calc(var(--space-unit) * 3);
   min-height: calc(var(--space-unit) * 15);
@@ -171,13 +172,15 @@
 .ui-list-item[data-tone="warning"] .ui-list-leading { background: var(--color-warning-surface); color: var(--color-accent); }
 .ui-list-item[data-tone="success"] .ui-list-leading { background: var(--color-success-surface); color: var(--color-success); }
 .ui-list-item[data-tone="danger"] .ui-list-leading { background: var(--color-danger-surface); color: var(--color-danger); }
-.ui-list-text { display: grid; flex: 1 1 calc(var(--space-unit) * 20); gap: var(--space-unit); min-width: 0; overflow-wrap: anywhere; }
+/* A narrow row moves its action below the text rather than splitting words. */
+.ui-list-text { display: grid; flex: 1 1 calc(var(--space-unit) * 40); gap: var(--space-unit); min-width: 0; overflow-wrap: break-word; }
 .ui-list-title { font-weight: 600; line-height: 1.35; }
 .ui-list-description { color: var(--color-muted); font-size: 14px; line-height: 1.4; }
 .ui-list-link {
   display: inline-flex;
   align-items: center;
   gap: var(--space-unit);
+  margin-inline-start: auto;
   min-height: var(--target-minimum);
   color: var(--color-muted);
   font-size: 15px;

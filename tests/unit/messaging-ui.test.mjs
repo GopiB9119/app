@@ -25,13 +25,19 @@ let css;
 before(async () => {
   const bundled = await build({
     stdin: {
-      contents: `import React from 'react';
+      contents: `import React, { useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
+        import { useQueryClient } from '@tanstack/react-query';
         import { Providers } from './src/app/providers';
         import { MessagesScreen } from './src/features/messaging/messages-screen';
         import './src/app/globals.css';
+        function RosterRefresh() {
+          const client = useQueryClient();
+          useEffect(() => { window.refreshTypingRoster = () => client.refetchQueries({ queryKey: ['members'] }); }, [client]);
+          return null;
+        }
         const root = createRoot(document.getElementById('root'));
-        window.renderMessagingFixture = () => root.render(<Providers><MessagesScreen initialSpaceId="" /></Providers>);`,
+        window.renderMessagingFixture = (props = {}) => root.render(<Providers><RosterRefresh /><MessagesScreen initialSpaceId="" {...props} /></Providers>);`,
       resolveDir: web, sourcefile: 'offline-messaging.tsx', loader: 'tsx',
     },
     bundle: true, write: false, platform: 'browser', format: 'iife', jsx: 'automatic',
@@ -66,8 +72,13 @@ async function fixture(context, options = {}) {
   await page.evaluate(({ accountId, otherId, agentId, chats, options }) => {
     let sequence = 0;
     Object.defineProperty(crypto, 'randomUUID', { value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`, configurable: true });
-    const conversations = chats.map(chat => ({
-      id: chat.id, space_id: chat.spaceId, space_name: chat.title, kind: 'space', title: chat.title, participants: [],
+    const conversations = chats.map((chat, index) => ({
+      id: chat.id, space_id: chat.spaceId, space_name: chat.title,
+      kind: options.directTyping && index === 0 ? 'direct' : 'space',
+      title: options.directTyping && index === 0 ? 'Sam Rivera' : chat.title,
+      participants: options.directTyping && index === 0 ? [
+        { account_id: accountId, display_name: 'Alex Morgan' }, { account_id: otherId, display_name: 'Sam Rivera' },
+      ] : [],
       can_send: true, protection: 'server_encrypted', last_position: '0', read_position: '0', unread_count: 0,
       last_message_at: null, created_at: '2026-09-19T10:00:00Z',
     }));
@@ -105,7 +116,21 @@ async function fixture(context, options = {}) {
       served: new Set(), reads: [], agent: [...(options.agent ?? [])], answered: 0, runs: {}, decisions: {}, created: [],
       loseApprovals: options.loseApprovals ?? 0, holdRunRead: options.holdRunRead ?? false, runReadRequested: false, releaseRunRead: null,
       runReadFailures: [...(options.runReadFailures ?? [])], lastRunReadFailure: null,
+      liveControllers: new Set(), typingFailures: options.typingFailures ?? 0,
+      rosterFailure: 0,
+      holdRoster: options.holdRoster ?? false, releaseRoster: null,
+      holdTyping: options.holdTyping ?? false, releaseTyping: null,
+      heldTypingFailureStatus: 0,
     };
+    state.emitLive = (event, data) => {
+      const bytes = new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      for (const controller of state.liveControllers) controller.enqueue(bytes);
+    };
+    state.emitTyping = (overrides = {}) => state.emitLive('change', {
+      kind: 'typing', conversation_id: chats[0].id, space_id: chats[0].spaceId, account_id: otherId,
+      client_id: otherId, sequence: 1, is_typing: true, mentioned_account_ids: [], mentions_agent: false,
+      expires_at: new Date(Date.now() + 8000).toISOString(), ...overrides,
+    });
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-messaging', ...extra }), { status: 200 });
     const paged = (data, extra = {}) => reply(data, { pagination: { next_cursor: null, has_more: false }, ...extra });
     const failed = (status, code, message) => new Response(JSON.stringify({ error: { code, message }, request_id: 'offline-messaging' }), { status });
@@ -115,7 +140,7 @@ async function fixture(context, options = {}) {
       state.answered += 1;
       state.messages[conversation.id].push({
         id: crypto.randomUUID(), conversation_id: conversation.id, position, sender_account_id: agentId, sender_name: 'Agent',
-        mine: false, from_agent: true, client_message_id: null, status: 'sent', body: `Agent answer ${state.answered}`,
+        mine: false, from_agent: true, client_message_id: null, status: 'sent', body: options.agentAnswer ?? `Agent answer ${state.answered}`,
         created_at: asked.created_at, deleted_at: null,
         reply_to: { message_id: asked.id, status: 'sent', position: asked.position, sender_name: asked.sender_name, excerpt: asked.body },
       });
@@ -128,7 +153,61 @@ async function fixture(context, options = {}) {
       const headers = Object.fromEntries(new Headers(config.headers));
       state.calls.push({ route: url.pathname, method, body, headers });
       if (url.pathname === '/api/me') return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
-      if (url.pathname === '/api/spaces') return paged([]);
+      if (url.pathname === '/api/spaces') return paged(options.spaces ?? []);
+      if (url.pathname === '/api/live' && options.live) {
+        let controller;
+        const stream = new ReadableStream({
+          start(value) {
+            controller = value;
+            state.liveControllers.add(value);
+            value.enqueue(new TextEncoder().encode('event: ready\ndata: {"heartbeat_seconds":15,"max_seconds":1800}\n\n'));
+          },
+          cancel() { state.liveControllers.delete(controller); },
+        });
+        config.signal?.addEventListener('abort', () => {
+          if (state.liveControllers.delete(controller)) controller.error(new DOMException('Aborted', 'AbortError'));
+        }, { once: true });
+        return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (/^\/api\/spaces\/[^/]+\/members$/.test(url.pathname) && options.live) {
+        if (state.rosterFailure) return failed(state.rosterFailure, 'ROSTER_UNAVAILABLE', 'Member names are unavailable.');
+        if (state.holdRoster) {
+          state.holdRoster = false;
+          await new Promise(resolve => { state.releaseRoster = resolve; });
+        }
+        return reply((options.members ?? [
+          { account_id: accountId, display_name: 'Alex Morgan' },
+          { account_id: otherId, display_name: 'Sam Rivera' },
+        ]).map((member, index) => ({
+          ...member, role: index === 0 ? 'owner' : 'member', joined_at: '2026-09-19T10:00:00Z', etag: `"member-${index}"`,
+        })));
+      }
+      const typing = url.pathname.match(/^\/api\/conversations\/([^/]+)\/typing$/);
+      if (typing && method === 'POST' && options.live) {
+        if (state.typingFailures > 0) {
+          state.typingFailures -= 1;
+          return failed(options.typingFailureStatus ?? 503, 'TYPING_UNAVAILABLE', 'Typing temporarily unavailable.');
+        }
+        if (state.holdTyping) {
+          state.holdTyping = false;
+          await new Promise(resolve => { state.releaseTyping = resolve; });
+          if (state.heldTypingFailureStatus) {
+            const status = state.heldTypingFailureStatus;
+            state.heldTypingFailureStatus = 0;
+            return failed(status, 'TYPING_UNAVAILABLE', 'Typing temporarily unavailable.');
+          }
+        }
+        const conversation = state.conversations.find(item => item.id === typing[1]);
+        return reply({
+          ...body, kind: 'typing', conversation_id: conversation.id, space_id: conversation.space_id, account_id: accountId,
+          expires_at: new Date(Date.now() + (body.is_typing ? 8000 : 0)).toISOString(),
+        });
+      }
+      const opening = url.pathname.match(/^\/api\/spaces\/([^/]+)\/conversations$/);
+      if (opening && method === 'POST' && body?.kind === 'space') {
+        const found = state.conversations.find(item => item.space_id === opening[1] && item.kind === 'space');
+        return found ? reply(found) : failed(404, 'NOT_FOUND', 'Space not found.');
+      }
       const runRead = url.pathname.match(/^\/api\/agent-runs\/([^/]+)$/);
       if (runRead && method === 'GET') {
         const found = state.runs[runRead[1]];
@@ -303,10 +382,479 @@ async function fixture(context, options = {}) {
     chats: [{ id: familyChatId, spaceId: familySpaceId, title: 'Morgan family' }, { id: clubChatId, spaceId: clubSpaceId, title: 'Garden club' }],
   });
   await page.addScriptTag({ content: javascript });
-  await page.evaluate(() => window.renderMessagingFixture());
-  await page.getByRole('button', { name: /^Morgan family/ }).waitFor();
+  await page.evaluate(props => window.renderMessagingFixture(props), options.screen ?? {});
+  await page.getByRole('button', { name: options.directTyping ? /^Sam Rivera/ : /^Morgan family/ }).waitFor();
   return { page, outbound, errors, pane: page.getByRole('region', { name: 'Conversation', exact: true }) };
 }
+
+async function openTypingChat(context, options = {}) {
+  const result = await fixture(context, { live: true, ...options });
+  await result.page.getByRole('button', { name: /^Morgan family/ }).click();
+  await result.page.waitForFunction(space => window.messagingFixture.calls.some(call => call.route === `/api/spaces/${space}/members`), familySpaceId);
+  await result.pane.getByRole('heading', { name: 'Morgan family', exact: true }).waitFor();
+  return result;
+}
+
+test('typing publishes only metadata, coalesces keystrokes, follows mentions and stops on blur, idle and send', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, outbound, errors } = await openTypingChat(context);
+    const input = pane.getByLabel('Message', { exact: true });
+    const calls = () => page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')));
+    assert.equal((await calls()).length, 0, 'Opening and focusing a chat do not imply typing.');
+    await input.fill('Private draft one');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 1);
+    const first = (await calls())[0];
+    assert.deepEqual(first.body, {
+      client_id: first.body.client_id, sequence: 1, is_typing: true, mentioned_account_ids: [], mentions_agent: false,
+    });
+    await input.fill('Private draft two');
+    await input.fill('@Sam Rivera @agent help with a private draft');
+    assert.equal((await calls()).length, 1, 'Keystrokes do not each send a request.');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 2);
+    const mentioned = (await calls())[1];
+    assert.deepEqual(mentioned.body.mentioned_account_ids, [otherId]);
+    assert.equal(mentioned.body.mentions_agent, true);
+    assert.equal(mentioned.body.sequence, 2);
+    assert.equal(mentioned.body.client_id, first.body.client_id);
+    assert.equal(JSON.stringify(await calls()).includes('private draft'), false);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call =>
+      call.method === 'POST' && (call.route.endsWith('/messages') || call.route.includes('/agent-runs'))).length), 0);
+
+    await input.blur();
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false);
+    assert.deepEqual((await calls()).at(-1).body.mentioned_account_ids, []);
+    assert.equal((await calls()).at(-1).body.mentions_agent, false);
+    await input.fill('An idle draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === true);
+    const beforeIdle = (await calls()).length;
+    await page.waitForFunction(count => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length > count
+      && window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1).body.is_typing === false, beforeIdle, { timeout: 6000 });
+    assert.equal(await input.inputValue(), 'An idle draft', 'Stopping the animation never discards a draft.');
+    await input.fill('Send this ordinary message');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText('Send this ordinary message', { exact: true }).waitFor();
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('a stop survives a slow start response, repeated stop calls and switching conversations', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors } = await openTypingChat(context, { holdTyping: true });
+    await pane.getByLabel('Message', { exact: true }).fill('Send while typing is pending');
+    await page.waitForFunction(() => typeof window.messagingFixture.releaseTyping === 'function');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText('Send while typing is pending', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), 1);
+    await page.evaluate(() => window.messagingFixture.releaseTyping());
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 2);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1).body.is_typing), false);
+    await pane.getByLabel('Message', { exact: true }).fill('Leave this chat');
+    await page.getByRole('button', { name: /^Garden club/ }).evaluate(element => element.click());
+    await pane.getByRole('heading', { name: 'Garden club', exact: true }).waitFor();
+    await page.waitForFunction(chat => window.messagingFixture.calls.filter(call => call.route === `/api/conversations/${chat}/typing`).at(-1)?.body.is_typing === false, familyChatId);
+    assert.equal(await pane.getByLabel('Message', { exact: true }).inputValue(), '');
+    await page.evaluate(() => window.messagingFixture.emitTyping());
+    assert.equal(await pane.getByText('Sam Rivera is typing', { exact: true }).count(), 0, 'Previous-chat activity stays out of the new chat.');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('typing shows the correct people and mentions, isolates sources, ignores stale updates and clears on access changes', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await openTypingChat(context);
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    for (const wrong of [
+      { account_id: accountId }, { conversation_id: clubChatId }, { space_id: clubSpaceId },
+      { expires_at: '2000-01-01T00:00:00Z' },
+    ]) await page.evaluate(value => window.messagingFixture.emitTyping(value), wrong);
+    assert.equal(await status.locator('p').count(), 0);
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 2 }));
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    await page.evaluate(id => window.messagingFixture.emitTyping({ sequence: 3, mentioned_account_ids: [id], mentions_agent: true }), accountId);
+    await status.getByText('Sam Rivera is typing, mentioning @Alex Morgan and @agent', { exact: true }).waitFor();
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 2 }));
+    assert.equal(await status.getByText('Sam Rivera is typing, mentioning @Alex Morgan and @agent', { exact: true }).count(), 1);
+    await page.evaluate(id => window.messagingFixture.emitTyping({ client_id: id, sequence: 1 }), clubChatId);
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    assert.equal(await status.locator('p').count(), 1, 'Two tabs still name one person.');
+    await page.evaluate(id => window.messagingFixture.emitTyping({ client_id: id, sequence: 2, is_typing: false }), clubChatId);
+    await status.getByText('Sam Rivera is typing, mentioning @Alex Morgan and @agent', { exact: true }).waitFor();
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 4, is_typing: false }));
+    await status.waitFor({ state: 'hidden' });
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 3 }));
+    assert.equal(await status.locator('p').count(), 0, 'An old start cannot revive a stopped source.');
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 5 }));
+    await status.waitFor();
+    await page.evaluate(({ chat, space }) => window.messagingFixture.emitLive('change', {
+      kind: 'conversation', conversation_id: chat, space_id: space, reason: 'access',
+    }), { chat: familyChatId, space: familySpaceId });
+    await status.waitFor({ state: 'hidden' });
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 6 }));
+    await status.waitFor();
+    await page.evaluate(() => window.messagingFixture.emitLive('resync', {}));
+    await status.waitFor({ state: 'hidden' });
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+test('typing expires without a stop and disappears immediately when the live connection is lost', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors } = await openTypingChat(context);
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    await page.evaluate(() => window.messagingFixture.emitTyping({ expires_at: new Date(Date.now() + 60000).toISOString() }));
+    await status.waitFor();
+    const started = Date.now();
+    await status.waitFor({ state: 'hidden', timeout: 9500 });
+    assert.ok(Date.now() - started <= 8500, 'An oversized server expiry is capped at eight seconds, plus the 250 ms cleanup tick.');
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 2 }));
+    await status.waitFor();
+    await page.evaluate(() => {
+      for (const controller of window.messagingFixture.liveControllers) controller.close();
+      window.messagingFixture.liveControllers.clear();
+    });
+    await status.waitFor({ state: 'hidden', timeout: 1000 });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('typing waits for the first roster without delaying messages or replaying early presence', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await openTypingChat(context, { holdRoster: true });
+    await page.waitForFunction(() => typeof window.messagingFixture.releaseRoster === 'function');
+    const input = pane.getByLabel('Message', { exact: true });
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    await page.evaluate(() => window.messagingFixture.emitTyping());
+    await input.fill('Message while names are loading');
+    assert.equal(await status.locator('p').count(), 0);
+    assert.equal(await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), 0);
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText('Message while names are loading', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), 0);
+    await page.evaluate(async () => { window.messagingFixture.releaseRoster(); await window.refreshTypingRoster(); });
+    await input.fill('Fresh draft after the roster');
+    await page.waitForFunction(() => window.messagingFixture.calls.some(call => call.route.endsWith('/typing') && call.body.is_typing));
+    assert.equal(await status.locator('p').count(), 0);
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 2 }));
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.endsWith('/messages')).length), 1);
+    await input.blur();
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+test('typing keeps its source and visible names through an unchanged background roster refresh', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await openTypingChat(context);
+    const input = pane.getByLabel('Message', { exact: true });
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    await page.evaluate(() => window.messagingFixture.emitTyping());
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    await input.fill('First draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 1);
+    await page.evaluate(() => {
+      window.messagingFixture.holdRoster = true;
+      window.pendingRosterRefresh = window.refreshTypingRoster();
+    });
+    await page.waitForFunction(() => typeof window.messagingFixture.releaseRoster === 'function');
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    await input.fill('Draft while the roster refreshes');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 2);
+    await page.evaluate(async () => { window.messagingFixture.releaseRoster(); await window.pendingRosterRefresh; });
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    const calls = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')));
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every(call => call.body.is_typing));
+    assert.equal(calls[0].body.client_id, calls[1].body.client_id);
+    assert.deepEqual(calls.map(call => call.body.sequence), [1, 2]);
+    assert.equal(await input.inputValue(), 'Draft while the roster refreshes');
+    await input.blur();
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+test('typing in a direct chat uses its two participants without a Space roster read', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await fixture(context, { live: true, directTyping: true });
+    await page.evaluate(() => { window.messagingFixture.rosterFailure = 403; });
+    await page.getByRole('button', { name: /^Sam Rivera/ }).click();
+    await pane.getByRole('heading', { name: 'Sam Rivera', exact: true }).waitFor();
+    const input = pane.getByLabel('Message', { exact: true });
+    await input.fill('@Sam Rivera this remains a private draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.some(call => call.route.endsWith('/typing')));
+    await page.evaluate(id => window.messagingFixture.emitTyping({ mentioned_account_ids: [id] }), accountId);
+    await pane.getByRole('status', { name: 'Typing activity' }).getByText('Sam Rivera is typing, mentioning @Alex Morgan', { exact: true }).waitFor();
+    const observed = await page.evaluate(() => ({ typing: window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')),
+      roster: window.messagingFixture.calls.filter(call => /^\/api\/spaces\/[^/]+\/members$/.test(call.route)) }));
+    assert.equal(observed.roster.length, 0);
+    assert.deepEqual(observed.typing[0].body.mentioned_account_ids, [otherId]);
+    assert.equal(JSON.stringify(observed.typing).includes('private draft'), false);
+    assert.equal(await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).count(), 0);
+    await input.blur();
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+for (const failureStatus of [403, 503]) test(`typing roster failure (${failureStatus}) hides cached names and pauses metadata without blocking messages`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await openTypingChat(context);
+    const input = pane.getByLabel('Message', { exact: true });
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    await page.evaluate(id => window.messagingFixture.emitTyping({ mentioned_account_ids: [id], mentions_agent: true }), accountId);
+    await status.getByText('Sam Rivera is typing, mentioning @Alex Morgan and @agent', { exact: true }).waitFor();
+    await input.fill('Keep this draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.some(call => call.route.endsWith('/typing') && call.body.is_typing));
+    await page.evaluate(async code => {
+      window.messagingFixture.rosterFailure = code;
+      await window.refreshTypingRoster();
+    }, failureStatus);
+    await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).waitFor();
+    assert.equal(await status.locator('p').count(), 0, 'Failed roster reads must hide cached names and mentions.');
+    assert.equal(await input.inputValue(), 'Keep this draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false);
+    const activeBefore = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing') && call.body.is_typing).length);
+    await input.fill('Keep this ordinary message');
+    await page.evaluate(id => window.messagingFixture.emitTyping({ sequence: 2, mentioned_account_ids: [id], mentions_agent: true }), accountId);
+    assert.equal(await status.locator('p').count(), 0);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing') && call.body.is_typing).length), activeBefore);
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText('Keep this ordinary message', { exact: true }).waitFor();
+    const sent = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.endsWith('/messages')));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].body.body, 'Keep this ordinary message');
+    await page.evaluate(async () => {
+      window.messagingFixture.rosterFailure = 0;
+      await window.refreshTypingRoster();
+    });
+    await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).waitFor({ state: 'detached' });
+    assert.equal(await status.locator('p').count(), 0, 'A recovered roster must not revive cached presence.');
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 3 }));
+    await status.getByText('Sam Rivera is typing', { exact: true }).waitFor();
+    await input.fill('Fresh activity after recovery');
+    await page.waitForFunction(count => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing') && call.body.is_typing).length > count, activeBefore);
+    await input.blur();
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+for (const stopRejected of [false, true]) test(`typing roster cleanup preserves its queued Stop after a delayed 429 (${stopRejected ? 'rate-limited Stop' : 'accepted Stop'})`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors, outbound } = await openTypingChat(context, { typingFailureStatus: 429 });
+    const input = pane.getByLabel('Message', { exact: true });
+    await input.fill('@Sam Rivera @agent first private draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length === 1);
+    await page.evaluate(() => {
+      window.messagingFixture.holdTyping = true;
+      window.messagingFixture.heldTypingFailureStatus = 429;
+    });
+    await input.fill('@Sam Rivera @agent second private draft');
+    await page.waitForFunction(() => typeof window.messagingFixture.releaseTyping === 'function');
+    await page.evaluate(async rejected => {
+      window.messagingFixture.rosterFailure = 503;
+      await window.refreshTypingRoster();
+      if (rejected) window.messagingFixture.typingFailures = 1;
+    }, stopRejected);
+    await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), 2);
+    await page.evaluate(() => window.messagingFixture.releaseTyping());
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false,
+      undefined, { timeout: 2000 });
+    const calls = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')));
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls.map(call => call.body.sequence), [1, 2, 3]);
+    assert.equal(new Set(calls.map(call => call.body.client_id)).size, 1);
+    assert.deepEqual(calls[2].body, { client_id: calls[0].body.client_id, sequence: 3, is_typing: false, mentioned_account_ids: [], mentions_agent: false });
+    assert.equal(JSON.stringify(calls).includes('private draft'), false);
+    await input.fill('An ordinary message after the limit');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText('An ordinary message after the limit', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), 3);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.endsWith('/messages')).length), 1);
+    assert.deepEqual(errors, []); assert.deepEqual(outbound, []);
+  } finally { await context.close(); }
+});
+
+test('clearing a draft and hiding the tab stop typing without sending or exposing a hidden draft', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors } = await openTypingChat(context);
+    const input = pane.getByLabel('Message', { exact: true });
+    await input.fill('Clear this draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === true);
+    await input.fill('');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false);
+    await input.fill('Keep this hidden draft');
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === true);
+    await page.evaluate(() => {
+      window.messagingFixture.emitTyping();
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).at(-1)?.body.is_typing === false);
+    await page.evaluate(() => window.messagingFixture.emitTyping({ sequence: 2 }));
+    assert.equal(await pane.getByRole('status', { name: 'Typing activity' }).locator('p').count(), 0);
+    assert.equal(await input.inputValue(), 'Keep this hidden draft');
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.endsWith('/messages')).length), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const failureStatus of [404, 429, 503]) test(`typing failure (${failureStatus}) is visible without losing the draft or preventing a message`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const { page, pane, errors } = await openTypingChat(context, { typingFailures: 1, typingFailureStatus: failureStatus });
+    const input = pane.getByLabel('Message', { exact: true });
+    await input.fill('Keep my message');
+    await pane.getByText('Live typing is temporarily unavailable. You can still send messages.', { exact: true }).waitFor();
+    assert.equal(await input.inputValue(), 'Keep my message');
+    if (failureStatus === 429) {
+      const before = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length);
+      await input.fill('Keep my message after a rate limit');
+      assert.equal(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.route.endsWith('/typing')).length), before);
+    }
+    const expected = await input.inputValue();
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByText(expected, { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const reducedMotion of ['no-preference', 'reduce']) test(`typing names wrap at 320 px and 200% text with ${reducedMotion} motion`, async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 800 }, reducedMotion });
+  try {
+    const name = 'Sam Rivera With A Very Long Display Name';
+    const { page, pane, errors } = await openTypingChat(context, { members: [
+      { account_id: accountId, display_name: 'Alex Morgan' }, { account_id: otherId, display_name: name },
+      { account_id: agentId, display_name: 'Priya Rao' },
+    ] });
+    await page.evaluate(id => window.messagingFixture.emitTyping({ mentioned_account_ids: [id], mentions_agent: true }), accountId);
+    const status = pane.getByRole('status', { name: 'Typing activity' });
+    await status.waitFor();
+    await page.evaluate(id => window.messagingFixture.emitTyping({ account_id: id, client_id: id }), agentId);
+    await status.getByText('Priya Rao is typing', { exact: true }).waitFor();
+    const before = await status.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.addStyleTag({ content: 'html, body { font-size: 32px !important; }' });
+    const after = await status.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    assert.ok(after >= before * 2, 'Typing text actually doubles in size.');
+    assert.equal(await status.getAttribute('aria-live'), 'polite');
+    const animations = await status.locator('[aria-hidden="true"] > span').evaluateAll(dots => dots.map(dot => getComputedStyle(dot).animationName));
+    assert.equal(animations.length, 6);
+    assert.ok(animations.every(name => reducedMotion === 'reduce' ? name === 'none' : name !== 'none'));
+    const box = await status.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.y >= 0 && box.y + box.height <= 800, JSON.stringify(box));
+    assert.equal(await status.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const send = await pane.getByRole('button', { name: 'Send', exact: true }).boundingBox();
+    assert.ok(send.width >= 44 && send.height >= 44 && send.y >= 0 && send.y + send.height <= 800, JSON.stringify(send));
+    assert.equal(await pane.getByRole('button', { name: 'Send', exact: true }).evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+    }), true, 'The composer is not clipped behind the footer.');
+    await status.focus();
+    await status.press('End');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Typing activity"]').scrollTop > 0);
+    await status.press('Home');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Typing activity"]').scrollTop === 0);
+    await status.blur();
+    await page.screenshot({ path: path.join(root, `.local/screenshots/messaging-typing-320-large-${reducedMotion}.png`), fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const agentOn of [true, false]) test(`Ask Agent opens the Space chat ${agentOn ? 'with "@agent " ready in the focused composer' : 'with an empty composer when the agent is off'}, sending nothing`, async () => {
+  // Wide enough to keep the conversation list beside the open chat, so the test can switch chats.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 844 } });
+  try {
+    const { page, pane, outbound, errors } = await fixture(context, {
+      screen: { initialSpaceId: familySpaceId, askAgent: true },
+      spaces: [{ id: familySpaceId, name: 'Morgan family', description: '', space_type: 'family', visibility: 'private', status: 'active',
+        role: 'owner', version: '1', created_at: '2026-09-19T10:00:00Z', agent_enabled: agentOn }],
+    });
+    const composer = pane.getByLabel('Message', { exact: true });
+    await composer.waitFor();
+    if (agentOn) {
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-labelledby') === 'composer-label');
+      assert.equal(await composer.inputValue(), '@agent ');
+      assert.deepEqual(await composer.evaluate(element => [element.selectionStart, element.selectionEnd]), [7, 7]);
+      // Leaving and returning does not refill a draft the person did not keep.
+      await composer.fill('');
+      await page.getByRole('button', { name: /^Garden club/ }).click();
+      await page.getByRole('button', { name: /^Morgan family/ }).click();
+      assert.equal(await pane.getByLabel('Message', { exact: true }).inputValue(), '');
+    } else {
+      assert.equal(await composer.inputValue(), '');
+    }
+    assert.deepEqual(await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method !== 'GET').map(call => call.route)), [`/api/spaces/${'359bd05a-c95c-4975-b061-d647e82a6958'}/conversations`]);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const width of [1440, 320]) test(`choosing a Space shows its header once with Chat marked before any chat opens, and nothing is sent (${width} px)`, async () => {
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  try {
+    const spaceId = '359bd05a-c95c-4975-b061-d647e82a6958';
+    const { page, outbound, errors } = await fixture(context, { spaces: [{
+      id: spaceId, name: 'Morgan family', description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner',
+      version: '1', created_at: '2026-09-19T10:00:00Z', member_count: 3, member_preview: ['Sam Rivera', 'Priya Rao'], agent_enabled: true,
+    }] });
+    await page.getByLabel('Space', { exact: true }).selectOption({ label: 'Morgan family' });
+    const header = page.getByRole('region', { name: 'Morgan family Space', exact: true });
+    await header.getByText('3 members: Sam Rivera, Priya Rao', { exact: true }).waitFor();
+    // The phone list and the wide conversation pane each have a copy, but only one is ever shown.
+    assert.equal(await header.count(), 1);
+    assert.equal(await header.locator('a[aria-current="page"]').getAttribute('aria-label'), 'Chat for Morgan family');
+    // The chat is this page, so the header offers no separate Ask Agent link.
+    assert.equal(await header.getByRole('link', { name: 'Ask Agent', exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.every(call => call.method === 'GET')), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('an open Space chat offers the Space sections in a More menu that fits 320 px and closes with Escape', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 720 } });
+  try {
+    const { page, pane, outbound, errors } = await fixture(context);
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    const more = pane.getByRole('button', { name: 'More for Morgan family', exact: true });
+    await more.waitFor();
+    const box = await more.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.height >= 44, JSON.stringify(box));
+    await more.click();
+    const menu = page.getByRole('menu');
+    await menu.waitFor();
+    assert.deepEqual(await menu.getByRole('menuitem').evaluateAll(items => items.map(item => [item.textContent.trim(), item.getAttribute('href')])), [
+      ['Tasks', `/app/tasks?space_id=${familySpaceId}`],
+      ['Events', `/app/events?space_id=${familySpaceId}`],
+      ['Documents', `/app/documents?space_id=${familySpaceId}`],
+      ['Polls', `/app/polls?space_id=${familySpaceId}`],
+      ['Agent tasks', `/app/agent/tasks?space_id=${familySpaceId}`],
+    ]);
+    for (const item of await menu.getByRole('menuitem').all()) {
+      const itemBox = await item.boundingBox();
+      assert.ok(itemBox.x >= 0 && itemBox.x + itemBox.width <= 320 && itemBox.height >= 44, JSON.stringify(itemBox));
+    }
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    assert.equal(await more.evaluate(element => element === document.activeElement), true);
+    for (const control of [pane.getByLabel('Message', { exact: true }), pane.getByRole('button', { name: 'Send', exact: true })]) {
+      const controlBox = await control.boundingBox();
+      assert.ok(controlBox.y + controlBox.height <= 720, JSON.stringify(controlBox));
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 test('chat workspace: the thread scrolls independently and keeps the composer visible on desktop and mobile', async () => {
   for (const [width, height] of [[1440, 900], [390, 844], [320, 720]]) {
@@ -525,6 +1073,103 @@ test('a reply quotes its original, a reaction and an edit are saved, and every c
   }
 });
 
+test('a Space Agent draft exposes data-use details before anything is sent and preserves the draft', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, pane, outbound, errors } = await fixture(context);
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    await pane.getByRole('heading', { name: 'Morgan family', exact: true }).waitFor();
+    const input = pane.getByLabel('Message', { exact: true });
+    await input.fill('Write to sam@agent.example');
+    assert.equal(await pane.getByRole('button', { name: 'AI data use', exact: true }).count(), 0);
+    await input.fill('@agent help with our plans');
+    const trigger = pane.getByRole('button', { name: 'AI data use', exact: true });
+    assert.equal(await trigger.count(), 1, 'A Space Agent needs the same provider disclosure as Main Agent.');
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'AI data use', exact: true });
+    await dialog.waitFor();
+    assert.match(await dialog.textContent(), /Microsoft Azure OpenAI/);
+    assert.match(await dialog.textContent(), /TinyFish/);
+    assert.equal(await dialog.getByRole('link').getAttribute('href'), '/privacy');
+    assert.equal(await dialog.getByRole('link').getAttribute('target'), '_blank');
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await input.inputValue(), '@agent help with our plans');
+    assert.equal(await trigger.evaluate(element => document.activeElement === element), true);
+    const sent = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST'
+      && (call.route.endsWith('/messages') || call.route.startsWith('/api/agent-'))));
+    assert.deepEqual(sent, []);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('an existing private Agent question exposes data use without submitting the typed answer', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, pane, outbound, errors } = await fixture(context, { agent: ['waiting'] });
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    await pane.getByLabel('Message', { exact: true }).fill('@agent update task 12');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    const own = pane.getByRole('listitem').filter({ hasText: '@agent update task 12' });
+    await own.getByRole('button', { name: 'Review here', exact: true }).click();
+    const panel = own.getByRole('region', { name: 'Your private request', exact: true });
+    const answer = panel.getByRole('textbox', { name: 'Your answer', exact: true });
+    await answer.fill('My unsubmitted answer');
+    const trigger = panel.getByRole('button', { name: 'AI data use', exact: true });
+    assert.equal(await trigger.count(), 1, 'An existing private question still needs accessible data-use details.');
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'AI data use', exact: true });
+    await dialog.waitFor();
+    assert.match(await dialog.textContent(), /Microsoft Azure OpenAI/);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await answer.inputValue(), 'My unsubmitted answer');
+    assert.equal(await trigger.evaluate(element => document.activeElement === element), true);
+    const actions = await page.evaluate(() => window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.startsWith('/api/agent-')));
+    assert.deepEqual(actions, []);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('shared agent rich content renders only the shared answer and keeps ordinary messages literal', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 900 } });
+  const content = '## Shared plan\n\n```javascript\nconst shared = true;\n```\n\n![Photo](https://images.example.org/private-tracker.png)';
+  try {
+    const { page, pane, outbound, errors } = await fixture(context, { agent: ['answered'], agentAnswer: content });
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    await pane.getByRole('heading', { name: 'Morgan family', exact: true }).waitFor();
+    await pane.getByLabel('Message', { exact: true }).fill('@agent **keep my request literal**');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    await pane.getByRole('heading', { name: 'Shared plan', exact: true }).waitFor();
+    await pane.getByText('@agent **keep my request literal**', { exact: true }).first().waitFor();
+    assert.equal(await pane.locator('img').count(), 0);
+    assert.equal(await pane.getByRole('button', { name: 'Copy code', exact: true }).count(), 1);
+    assert.equal(await pane.getByRole('button', { name: 'Approve', exact: true }).count(), 0);
+    const action = pane.getByRole('button', { name: 'Copy answer', exact: true });
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.copiedSharedAnswer = text; } } });
+    });
+    await action.scrollIntoViewIfNeeded();
+    await action.click();
+    assert.equal(await page.evaluate(() => window.copiedSharedAnswer), content);
+    assert.equal(await page.evaluate(() => window.messagingFixture.calls.some(call => call.route.startsWith('/api/agent-runs'))), false);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/agent-rich-shared-320.png'), animations: 'disabled' });
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('@agent is answered in the chat, or its author reviews the private request here or can ask again, at 320 px and 200% text (DEC-046, DEC-052)', async () => {
   const hint = "Mention @agent to ask this Space's Agent. Only you see its answer until you share it with everyone, and changes wait for your approval.";
   for (const large of [false, true]) {
@@ -645,8 +1290,9 @@ test('the private request panel shows API record values after rerender and fits 
       'opening a private request never answers or approves automatically');
     await review.click();
     const panel = own.getByRole('region', { name: 'Your private request', exact: true });
-    await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).waitFor();
-    const details = panel.locator('details');
+    await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).waitFor();
+    assert.equal(await panel.locator('code').filter({ hasText: /^Task details$/ }).count(), 1);
+    const details = panel.locator('details').filter({ has: page.locator('summary').getByText('Request details', { exact: true }) });
     await details.locator('summary').click();
     for (const value of ['Plan', 'Sources', 'Actions', 'Activity', 'Read Task 12', 'Task 12: Water the plants',
       'Read the authorized task.', 'The private request was recorded.', '10000000-0000-4000-9000-000000000099']) {
@@ -680,13 +1326,13 @@ test('private run reads show Retry and clear the old record after 403 or 404', a
     const failure = panel.getByRole('alert');
     await failure.waitFor();
     assert.match(await failure.innerText(), /Try again/);
-    assert.equal(await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).count(), 0);
+    assert.equal(await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).count(), 0);
     await failure.getByRole('button', { name: 'Retry', exact: true }).click();
-    await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).waitFor();
+    await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).waitFor();
     await panel.getByRole('button', { name: 'Refresh requests', exact: true }).click();
     await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.startsWith('/api/agent-runs/') && call.method === 'GET').length >= 3);
-    assert.ok(await panel.getByText('This private request is no longer available.', { exact: true }).count() > 0, `404 panel: ${await panel.innerText()}`);
-    assert.equal(await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).count(), 0, '404 clears previously read private data');
+    await panel.getByRole('alert').filter({ hasText: 'This private request is no longer available.' }).waitFor();
+    assert.equal(await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).count(), 0, '404 clears previously read private data');
     await panel.getByRole('button', { name: 'Retry', exact: true }).click();
     await page.waitForFunction(() => window.messagingFixture.calls.filter(call => call.route.startsWith('/api/agent-runs/') && call.method === 'GET').length >= 4);
     const afterForbidden = await page.evaluate(() => {
@@ -695,7 +1341,7 @@ test('private run reads show Retry and clear the old record after 403 or 404', a
       return { failure: window.messagingFixture.lastRunReadFailure, retryDisabled: retry?.disabled, text: panel?.innerText };
     });
     assert.equal(afterForbidden.failure, 403, JSON.stringify(afterForbidden));
-    assert.equal(await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).count(), 0, '403 leaves no private data visible');
+    assert.equal(await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).count(), 0, '403 leaves no private data visible');
     assert.ok(await panel.getByRole('alert').count() > 0, '403 remains visible as a recoverable failure');
     assert.ok(await panel.getByRole('button', { name: 'Retry', exact: true }).isVisible());
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
@@ -726,12 +1372,16 @@ test('the requester answers and explicitly approves here; a lost approval respon
     const approve = panel.getByRole('button', { name: 'Approve', exact: true });
     await approve.click();
     await panel.getByRole('button', { name: 'Approve again', exact: true }).waitFor();
+    // Reopening also reads the current outcome; hold that read to exercise retry while it is still unknown.
+    await page.evaluate(() => { window.messagingFixture.holdRunRead = true; });
     await own.getByRole('button', { name: 'Close review', exact: true }).click();
     assert.equal(await panel.isVisible(), false, 'collapse hides private request controls and values');
     await own.getByRole('button', { name: 'Review here', exact: true }).click();
+    await page.waitForFunction(() => window.messagingFixture.runReadRequested);
     await panel.getByRole('button', { name: 'Approve again', exact: true }).waitFor();
     await panel.getByRole('button', { name: 'Approve again', exact: true }).click();
     await panel.getByText('Done. Updated Task 12.', { exact: true }).waitFor();
+    await page.evaluate(() => window.messagingFixture.releaseRunRead());
     assert.equal(await panel.getByRole('button', { name: 'Approve', exact: true }).count(), 0);
     const observed = await page.evaluate(() => ({
       resume: window.messagingFixture.calls.filter(call => call.route.endsWith('/resume') && call.method === 'POST'),
@@ -747,13 +1397,41 @@ test('the requester answers and explicitly approves here; a lost approval respon
     assert.equal(observed.approvals[0].headers['if-match'], `"${'1'.padStart(64, '0')}"`);
     assert.equal(observed.created.length, 1);
     assert.equal(observed.created[0].tool, 'tasks.update');
-    const details = panel.locator('details');
+    const details = panel.locator('details').filter({ has: page.locator('summary').getByText('Request details', { exact: true }) });
     await details.locator('summary').click();
     await details.getByText('Updated Task 12.', { exact: true }).waitFor();
     await details.getByText(observed.created[0].result, { exact: true }).waitFor();
     await details.getByText('Task 12 was updated.', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '320px at 200% text has no horizontal overflow');
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('reopening a private approval with a lost response confirms its saved outcome without another write', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors, pane } = await fixture(context, { agent: ['waiting'], loseApprovals: 1 });
+    await page.getByRole('button', { name: /^Morgan family/ }).click();
+    await pane.getByLabel('Message', { exact: true }).fill('@agent update task 12');
+    await pane.getByRole('button', { name: 'Send', exact: true }).click();
+    const own = pane.getByRole('listitem').filter({ hasText: '@agent update task 12' });
+    await own.getByRole('button', { name: 'Review here', exact: true }).click();
+    const panel = own.getByRole('region', { name: 'Your private request', exact: true });
+    await panel.getByRole('textbox', { name: 'Your answer', exact: true }).fill('Task 12');
+    await panel.getByRole('button', { name: 'Answer', exact: true }).click();
+    await panel.getByRole('button', { name: 'Approve', exact: true }).click();
+    await panel.getByRole('button', { name: 'Approve again', exact: true }).waitFor();
+    await own.getByRole('button', { name: 'Close review', exact: true }).click();
+    await own.getByRole('button', { name: 'Review here', exact: true }).click();
+    await panel.getByText('Done. Updated Task 12.', { exact: true }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: /^Approve/ }).count(), 0);
+    const state = await page.evaluate(() => ({
+      approvals: window.messagingFixture.calls.filter(call => call.method === 'POST' && call.route.endsWith('/approve')).length,
+      created: window.messagingFixture.created.length,
+    }));
+    assert.deepEqual(state, { approvals: 1, created: 1 });
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
 
@@ -772,7 +1450,7 @@ test('a private run response arriving after switching conversations is not shown
     await pane.getByRole('heading', { name: 'Garden club', exact: true }).waitFor();
     await page.evaluate(() => window.messagingFixture.releaseRunRead?.());
     await page.getByText('Agent answer', { exact: true }).waitFor({ state: 'detached' }).catch(() => {});
-    assert.equal(await pane.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).count(), 0);
+    assert.equal(await pane.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).count(), 0);
     assert.equal(await pane.getByRole('region', { name: 'Your private request', exact: true }).count(), 0);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -789,11 +1467,11 @@ test('deleting the originating message clears its private request and cached res
     const own = pane.getByRole('listitem').filter({ hasText: '@agent list my tasks' });
     await own.getByRole('button', { name: 'Review here', exact: true }).click();
     const panel = own.getByRole('region', { name: 'Your private request', exact: true });
-    await panel.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).waitFor();
+    await panel.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).waitFor();
     await own.getByRole('button', { name: 'Delete message for everyone', exact: true }).click();
     await own.getByRole('button', { name: 'Delete', exact: true }).click();
     await pane.getByText('Message deleted', { exact: true }).waitFor();
-    assert.equal(await pane.getByText('1. Task 12 is due tomorrow. `Task details` stay plain text.', { exact: true }).count(), 0);
+    assert.equal(await pane.getByText('Task 12 is due tomorrow. Task details stay plain text.', { exact: true }).count(), 0);
     assert.equal(await pane.getByRole('button', { name: 'Review here', exact: true }).count(), 0);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }

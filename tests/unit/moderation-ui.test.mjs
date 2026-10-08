@@ -253,6 +253,12 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/me/handover-offers' && method === 'GET') return reply([]);
       if (url.pathname === '/api/me/pages' && method === 'GET') return reply([state.publicPage]);
       if (url.pathname === '/api/me/following' && method === 'GET') return paged([]);
+      // Page events and help posts have nothing to show here.
+      if (url.pathname === `/api/pages/${pageId}/events` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/help-posts` && method === 'GET') return paged([]);
+      if (url.pathname === '/api/me/page-events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/help-posts' && method === 'GET') return paged([]);
+      if (url.pathname === '/api/me/help-review' && method === 'GET') return reply([]);
       state.unexpected.push(call);
       await window.recordUnexpectedCall(call);
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}${url.search}`);

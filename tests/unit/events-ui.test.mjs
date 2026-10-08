@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { loadMessages } from '../i18n-messages.mjs';
 
 const require = createRequire(new URL('../../web/package.json', import.meta.url));
 const { build } = require('esbuild');
@@ -96,6 +97,8 @@ async function fixture(context, options = {}) {
     const spaces = [[spaceId, 'Morgan family'], [clubId, 'Garden club']].map(([id, name]) => ({
       id, name, description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: created,
     }));
+    Object.assign(spaces[0], options.spaceFields ?? {});
+    Object.assign(spaces[1], options.clubFields ?? {});
     state.spaces = spaces;
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-events', ...extra }), { status: 200 });
     const paged = data => reply(data, { pagination: { next_cursor: null, has_more: false } });
@@ -288,6 +291,981 @@ async function fixture(context, options = {}) {
   return { page, outbound, errors };
 }
 
+const pollId = 'ab3d7e52-5a3b-4f0e-9a61-0d4e6f2b7c11';
+const firstChoiceId = 'bc2e8f63-6b4c-4a1f-8b72-1e5f7a3c8d22';
+const secondChoiceId = 'cd3f9074-7c5d-4b20-9c83-2f6a8b4d9e33';
+const pollTag = version => `"${version.toString(16).padStart(64, '0')}"`;
+const pollSeed = (overrides = {}) => ({
+  id: pollId, event_id: eventId, question: 'Which day?',
+  options: [{ id: firstChoiceId, text: 'Saturday', votes: 0 }, { id: secondChoiceId, text: 'Sunday', votes: 0 }],
+  status: 'open', total_votes: 0, my_option_id: null, vote_etag: pollTag(1), can_vote: true, can_close: true,
+  etag: pollTag(2), created_at: '2026-10-07T10:00:00Z', closed_at: null, ...overrides,
+});
+
+async function pollFixture(context, options = {}) {
+  const result = await fixture(context, options);
+  await result.page.evaluate(({ options, initialPolls }) => {
+    const state = window.eventsFixture;
+    const originalFetch = window.fetch;
+    Object.assign(state, {
+      polls: initialPolls, pollCalls: [], pollCreates: {}, pollVotes: {}, pollRevision: 10,
+      losePollCreates: options.losePollCreates ?? 0, losePollVotes: options.losePollVotes ?? 0, losePollCloses: options.losePollCloses ?? 0,
+      pollReadError: options.pollReadError ?? null, pollWriteError: null, pollWriteOverride: null, pollAccessDenied: false,
+      holdPollRead: false, releasePollRead: null, holdPollWrite: false, releasePollWrite: null,
+    });
+    const reply = data => new Response(JSON.stringify({ data, request_id: 'offline-event-polls' }), { status: 200 });
+    const fail = (status, code) => new Response(JSON.stringify({ error: { code, message: 'Synthetic poll refusal.', details: {} } }), { status });
+    const tag = () => `"${(++state.pollRevision).toString(16).padStart(64, '0')}"`;
+    const view = poll => {
+      const event = state.events.find(item => item.id === poll.event_id);
+      const active = event.status === 'scheduled' && !event.ended;
+      const open = active && poll.status === 'open';
+      return { ...poll, status: open ? 'open' : 'closed', closed_at: open ? null : poll.closed_at ?? '2026-10-07T12:00:00Z',
+        can_vote: open, can_close: open && event.can_manage, etag: event.can_manage ? poll.etag : null };
+    };
+    const writeReply = poll => reply({ ...view(poll), ...state.pollWriteOverride });
+    window.fetch = async (input, config = {}) => {
+      const url = new URL(String(input), 'https://offline.invalid');
+      const route = url.pathname.match(/^\/api\/events\/([^/]+)\/polls(?:\/([^/]+))?(?:\/(vote|close))?$/);
+      if (!route) return originalFetch(input, config);
+      const method = config.method ?? 'GET';
+      const body = config.body ? JSON.parse(config.body) : null;
+      const headers = Object.fromEntries(new Headers(config.headers));
+      state.calls.push({ route: url.pathname, method, body, headers });
+      state.pollCalls.push({ route: url.pathname, search: url.search, method, body, rawBody: config.body ?? null, headers });
+      if (method !== 'GET' && state.holdPollWrite) {
+        state.holdPollWrite = false;
+        await new Promise(resolve => { state.releasePollWrite = resolve; });
+      }
+      if (state.pollAccessDenied) return fail(404, 'NOT_FOUND');
+      const event = state.events.find(item => item.id === route[1]);
+      if (!event) return fail(404, 'NOT_FOUND');
+      const poll = route[2] && state.polls.find(item => item.id === route[2] && item.event_id === event.id);
+      if (route[2] && !poll) return fail(404, 'NOT_FOUND');
+      if (method === 'GET') {
+        if (state.pollReadError) return fail(state.pollReadError.status, state.pollReadError.code);
+        const snapshot = structuredClone(poll ? view(poll) : state.polls.filter(item => item.event_id === event.id).map(view));
+        if (state.holdPollRead) {
+          state.holdPollRead = false;
+          return new Promise(resolve => { state.releasePollRead = () => resolve(reply(snapshot)); });
+        }
+        return reply(snapshot);
+      }
+      if (state.pollWriteError) return fail(state.pollWriteError.status, state.pollWriteError.code);
+      const active = event.status === 'scheduled' && !event.ended;
+      if (method === 'POST' && !route[2]) {
+        if (!event.can_manage) return fail(403, 'EVENT_MANAGEMENT_DENIED');
+        const key = headers['idempotency-key'];
+        if (!key) return fail(428, 'PRECONDITION_REQUIRED');
+        if (state.pollCreates[key]) {
+          const previous = state.pollCreates[key];
+          return previous.rawBody === config.body ? writeReply(state.polls.find(item => item.id === previous.id)) : fail(409, 'IDEMPOTENCY_CONFLICT');
+        }
+        if (!active) return fail(409, 'EVENT_CLOSED');
+        if (state.polls.filter(item => item.event_id === event.id).length >= 20) return fail(409, 'POLL_LIMIT_REACHED');
+        const created = { id: crypto.randomUUID(), event_id: event.id, question: body.question,
+          options: body.options.map(text => ({ id: crypto.randomUUID(), text, votes: 0 })), status: 'open', total_votes: 0,
+          my_option_id: null, vote_etag: tag(), etag: tag(), created_at: '2026-10-07T10:00:00Z', closed_at: null };
+        state.polls.push(created);
+        state.pollCreates[key] = { id: created.id, rawBody: config.body };
+        if (state.losePollCreates > 0) { state.losePollCreates -= 1; throw new TypeError('Synthetic lost poll creation response'); }
+        return writeReply(created);
+      }
+      if (method === 'PUT' && route[3] === 'vote') {
+        const key = headers['idempotency-key'];
+        if (!key || !headers['if-match']) return fail(428, 'PRECONDITION_REQUIRED');
+        const signature = JSON.stringify([poll.id, headers['if-match'], config.body]);
+        if (state.pollVotes[key]) return state.pollVotes[key] === signature ? writeReply(poll) : fail(409, 'IDEMPOTENCY_CONFLICT');
+        if (!active || poll.status !== 'open') return fail(409, 'POLL_CLOSED');
+        if (poll.vote_etag !== headers['if-match']) return fail(412, 'POLL_VOTE_CHANGED');
+        if (body.option_id !== null && !poll.options.some(option => option.id === body.option_id)) return fail(422, 'POLL_OPTION_UNKNOWN');
+        for (const option of poll.options) option.votes += Number(option.id === body.option_id) - Number(option.id === poll.my_option_id);
+        poll.my_option_id = body.option_id;
+        poll.total_votes = poll.options.reduce((total, option) => total + option.votes, 0);
+        poll.vote_etag = tag();
+        state.pollVotes[key] = signature;
+        if (state.losePollVotes > 0) { state.losePollVotes -= 1; throw new TypeError('Synthetic lost poll vote response'); }
+        return writeReply(poll);
+      }
+      if (method === 'POST' && route[3] === 'close') {
+        if (!event.can_manage) return fail(403, 'EVENT_MANAGEMENT_DENIED');
+        if (poll.status === 'closed' || !active) return writeReply(poll);
+        if (poll.etag !== headers['if-match']) return fail(412, 'POLL_CHANGED');
+        poll.status = 'closed'; poll.closed_at = '2026-10-07T12:00:00Z'; poll.etag = tag();
+        if (state.losePollCloses > 0) { state.losePollCloses -= 1; throw new TypeError('Synthetic lost poll close response'); }
+        return writeReply(poll);
+      }
+      throw new Error(`Unexpected poll route ${method} ${url.pathname}`);
+    };
+  }, { options, initialPolls: options.polls ?? [pollSeed()] });
+  return result;
+}
+
+async function openPolls(page) {
+  await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+  const panel = page.getByTestId('event-polls');
+  await panel.getByRole('button', { name: 'Polls', exact: true }).click();
+  await panel.getByRole('button', { name: 'Refresh polls', exact: true }).and(page.locator(':enabled')).waitFor();
+  return panel;
+}
+
+async function reviewPoll(page, question = 'Which day?') {
+  await page.getByTestId('event-polls').getByRole('button', { name: 'New poll', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox', { name: 'Question', exact: true }).fill(question);
+  await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('Saturday');
+  await dialog.getByRole('textbox', { name: 'Choice 2', exact: true }).fill('Sunday');
+  await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Review poll', exact: true }).waitFor();
+  return dialog;
+}
+
+const pollWrites = page => page.evaluate(() => window.eventsFixture.pollCalls.filter(call => call.method !== 'GET'));
+
+test('event polls: page scrolling keeps focused controls above resized mobile navigation', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    const save = panel.getByRole('button', { name: 'Save choice', exact: true });
+    const originalSize = await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+    await page.waitForFunction(() => Math.abs(parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom)
+      - document.querySelector('.main-nav').getBoundingClientRect().height) < 1);
+    await save.evaluate(element => element.scrollIntoView({ block: 'end' }));
+    await save.focus();
+    assert.equal(await save.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const navigation = document.querySelector('.main-nav').getBoundingClientRect();
+      return document.activeElement === element && bounds.bottom <= navigation.top + 1
+        && element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+    }), true, 'Doubled-text controls must remain above the measured sticky navigation.');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).scrollPaddingBottom), '0px');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(await pollWrites(page), []);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: create, vote, change, withdraw and close are explicit and event-bound', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { polls: [] });
+    await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+    const panel = page.getByTestId('event-polls');
+    assert.equal(await page.evaluate(() => window.eventsFixture.pollCalls.length), 0, 'Opening an event must not fetch polls.');
+    await panel.getByRole('button', { name: 'Polls', exact: true }).click();
+    await panel.getByText('No polls yet.', { exact: true }).waitFor();
+    const dialog = await reviewPoll(page, '  Which day?  ');
+    assert.equal((await pollWrites(page)).length, 0, 'Review does not create the poll.');
+    await dialog.getByText('Which day?', { exact: true }).waitFor();
+    await dialog.getByText('Event: Picnic', { exact: true }).waitFor();
+    await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+    assert.equal(await dialog.getByRole('textbox', { name: 'Question', exact: true }).inputValue(), '  Which day?  ');
+    await dialog.getByRole('button', { name: 'Add choice', exact: true }).click();
+    await dialog.getByRole('textbox', { name: 'Choice 3', exact: true }).fill('Monday');
+    await dialog.getByRole('button', { name: 'Remove choice 3', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Create poll', exact: true }).click();
+    await panel.getByText('Poll created.', { exact: true }).waitFor();
+    assert.equal(await dialog.count(), 0);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    assert.equal((await pollWrites(page)).length, 1, 'A radio choice is only a draft until Save.');
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByText('Your choice: Saturday', { exact: true }).waitFor();
+    await panel.getByText('Total votes: 1', { exact: true }).waitFor();
+    mkdirSync(path.join(root, '.local/screenshots'), { recursive: true });
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(root, '.local/screenshots/event-polls-desktop.png') });
+    await panel.getByRole('radio', { name: /^Sunday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByText('Your choice: Sunday', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Withdraw', exact: true }).click();
+    await panel.getByText('Your choice is withdrawn.', { exact: true }).waitFor();
+    await panel.getByText('You have not voted.', { exact: true }).waitFor();
+    await panel.getByText('Total votes: 0', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    const review = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    await review.getByText('Which day?', { exact: true }).waitFor();
+    assert.equal((await pollWrites(page)).length, 4, 'Closure requires its own review.');
+    await review.getByRole('button', { name: 'Close poll', exact: true }).click();
+    await panel.getByText('Poll closed.', { exact: true }).waitFor();
+    await panel.getByText('Closed', { exact: true }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'Save choice', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 5);
+    assert.deepEqual(writes[0].body, { question: 'Which day?', options: ['Saturday', 'Sunday'] });
+    assert.equal(writes[3].rawBody, '{"option_id":null}');
+    assert.equal(writes[4].rawBody, '{}');
+    assert.equal(writes[4].headers['idempotency-key'], undefined);
+    assert.equal(new Set(writes.slice(0, 4).map(call => call.headers['idempotency-key'])).size, 4);
+    assert.equal(new Set(writes.slice(1, 4).map(call => call.headers['if-match'])).size, 3);
+    assert.ok(writes.every(call => call.route.startsWith(`/api/events/${eventId}/polls`) && call.headers['x-account-id'] === accountId && call.search === ''));
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: unconfirmed creation keeps exact bytes across dialog closure, reads and filters', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { polls: [], losePollCreates: 1 });
+    let panel = await openPolls(page);
+    const dialog = await reviewPoll(page);
+    await dialog.getByRole('button', { name: 'Create poll', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    await dialog.getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByText('Poll created.', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Past', exact: true }).click();
+    assert.equal(await page.getByTestId('event-polls').count(), 0);
+    await page.getByRole('button', { name: 'Upcoming', exact: true }).click();
+    await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+    panel = page.getByTestId('event-polls');
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText('Poll created.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0]);
+    assert.equal(await page.evaluate(() => window.eventsFixture.polls.length), 1);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: older vote replay returns the newer choice without false success or rollback', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { losePollVotes: 1 });
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    await page.evaluate(({ choice, etag }) => {
+      const poll = window.eventsFixture.polls[0];
+      poll.my_option_id = choice; poll.vote_etag = etag;
+      poll.options.forEach(option => { option.votes = Number(option.id === choice); });
+    }, { choice: secondChoiceId, etag: pollTag(90) });
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByText('Your choice: Sunday', { exact: true }).waitFor();
+    await panel.getByText('Requested choice: Saturday', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText('The current choice is shown. It differs from the earlier request; no newer choice was undone.', { exact: true }).waitFor();
+    assert.equal(await panel.getByText('Your choice is saved.', { exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('radio', { name: /^Sunday/ }).isChecked(), true);
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0]);
+    assert.equal(writes[0].headers['if-match'], pollTag(1));
+    assert.equal(await page.evaluate(() => window.eventsFixture.polls[0].my_option_id), secondChoiceId);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const ending of ['cancelled', 'ended']) test(`event polls: a committed vote remains confirmable after the event is ${ending}`, async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { losePollVotes: 1 });
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    await page.evaluate(ending => {
+      const event = window.eventsFixture.events[0];
+      event.can_manage = false;
+      event.can_respond = false;
+      if (ending === 'cancelled') {
+        event.status = 'cancelled';
+        event.cancelled_at = '2026-10-07T12:00:00Z';
+      } else event.ended = true;
+    }, ending);
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByText('Closed', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Refresh polls', exact: true }).and(page.locator(':enabled')).waitFor();
+    const retry = panel.getByRole('button', { name: 'Retry the same poll request', exact: true });
+    assert.equal(await retry.isEnabled(), true, 'The original vote receipt remains confirmable after event closure.');
+    assert.equal(await panel.getByRole('button', { name: 'Save choice', exact: true }).count(), 0);
+    await retry.click();
+    await panel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2);
+    assert.deepEqual(writes[1], writes[0]);
+    assert.equal(await page.evaluate(() => window.eventsFixture.polls[0].total_votes), 1);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: withdrawal and closure retry unchanged after fresh reads and closed dialogs', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const voted = pollSeed({ my_option_id: firstChoiceId, total_votes: 1,
+      options: [{ id: firstChoiceId, text: 'Saturday', votes: 1 }, { id: secondChoiceId, text: 'Sunday', votes: 0 }] });
+    const { page, outbound, errors } = await pollFixture(context, { polls: [voted], losePollVotes: 1, losePollCloses: 1 });
+    const panel = await openPolls(page);
+    await panel.getByRole('button', { name: 'Withdraw', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByText('You have not voted.', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText('Your choice is withdrawn.', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    await dialog.getByRole('button', { name: 'Close poll', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    await dialog.getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByText('Closed', { exact: true }).waitFor();
+    assert.equal(await panel.getByText('Poll closed.', { exact: true }).count(), 0, 'A read alone does not confirm the unknown close command.');
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText('Poll closed.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 4);
+    assert.deepEqual(writes[1], writes[0]); assert.deepEqual(writes[3], writes[2]);
+    assert.equal(writes[0].rawBody, '{"option_id":null}');
+    assert.equal(writes[2].headers['if-match'], pollTag(2));
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: stale votes and closures require a fresh read and a new explicit review', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await page.evaluate(({ choice, etag }) => {
+      const poll = window.eventsFixture.polls[0];
+      poll.my_option_id = choice; poll.vote_etag = etag; poll.total_votes = 1;
+      poll.options.forEach(option => { option.votes = Number(option.id === choice); });
+    }, { choice: secondChoiceId, etag: pollTag(50) });
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'The poll or your choice changed.' }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Save choice', exact: true }).isDisabled(), true);
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByText('Your choice: Sunday', { exact: true }).waitFor();
+    assert.equal((await pollWrites(page)).length, 1, 'A reload cannot retry or roll back a rejected vote.');
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    await page.evaluate(etag => { window.eventsFixture.polls[0].etag = etag; }, pollTag(70));
+    await dialog.getByRole('button', { name: 'Close poll', exact: true }).click();
+    await dialog.getByRole('alert').filter({ hasText: 'The poll or your choice changed.' }).waitFor();
+    await dialog.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal((await pollWrites(page)).length, 3, 'The refreshed manager ETag still requires a new review.');
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    await dialog.getByRole('button', { name: 'Close poll', exact: true }).click();
+    await panel.getByText('Poll closed.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 4);
+    assert.equal(writes[0].headers['if-match'], pollTag(1));
+    assert.equal(writes[1].headers['if-match'], pollTag(50));
+    assert.notEqual(writes[1].headers['idempotency-key'], writes[0].headers['idempotency-key']);
+    assert.equal(writes[2].headers['if-match'], pollTag(2));
+    assert.equal(writes[3].headers['if-match'], pollTag(70));
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const width of [1280, 320]) for (const change of ['changed', 'missing', 'tally']) {
+  test(`event polls: an unsubmitted closure review is invalidated by a ${change} poll at ${width}px`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, timezoneId: 'UTC' });
+    try {
+      const { page, outbound, errors } = await pollFixture(context);
+      const panel = await openPolls(page);
+      await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+      await dialog.getByText('Which day?', { exact: true }).waitFor();
+      assert.equal((await pollWrites(page)).length, 0);
+      await page.evaluate(({ change, etag }) => {
+        if (change === 'missing') window.eventsFixture.polls = [];
+        else if (change === 'tally') {
+          window.eventsFixture.polls[0].total_votes = 1;
+          window.eventsFixture.polls[0].options[0].votes = 1;
+        }
+        else Object.assign(window.eventsFixture.polls[0], { question: 'Updated question?', etag });
+        document.querySelector('button[aria-label="Refresh events"]').click();
+      }, { change, etag: pollTag(70) });
+      const refreshed = change === 'missing' ? panel.getByText('No polls yet.', { exact: true })
+        : change === 'tally' ? panel.getByText('Total votes: 1', { exact: true })
+          : panel.locator('legend').filter({ hasText: 'Updated question?' });
+      await refreshed.waitFor();
+      assert.equal(await dialog.count(), 0, 'A fresh read must invalidate an obsolete, unsubmitted closure review.');
+      assert.equal((await pollWrites(page)).length, 0, 'Refreshing must not close any poll.');
+      if (change !== 'missing') {
+        await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+        await dialog.getByText(change === 'changed' ? 'Updated question?' : 'Which day?', { exact: true }).waitFor();
+        if (change === 'changed') assert.equal(await dialog.getByText('Which day?', { exact: true }).count(), 0);
+        else await dialog.getByText('Total votes: 1', { exact: true }).waitFor();
+        const confirm = dialog.getByRole('button', { name: 'Close poll', exact: true });
+        if (width === 320) {
+          const originalSize = await confirm.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+          await page.evaluate(() => {
+            const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+            for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+          });
+          assert.equal(await confirm.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), originalSize * 2);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        }
+        await confirm.scrollIntoViewIfNeeded();
+        await confirm.focus();
+        const box = await confirm.boundingBox();
+        assert.ok(box.width >= 44 && box.height >= 44);
+        mkdirSync(path.join(root, '.local/screenshots'), { recursive: true });
+        await page.screenshot({ path: path.join(root, `.local/screenshots/event-poll-close-refreshed-${change}-${width}.png`), animations: 'disabled' });
+        assert.equal(await confirm.evaluate(element => {
+          const bounds = element.getBoundingClientRect();
+          return document.activeElement === element && element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+        }), true);
+        await confirm.click();
+        await panel.getByText('Poll closed.', { exact: true }).waitFor();
+        const writes = await pollWrites(page);
+        assert.equal(writes.length, 1);
+        assert.equal(writes[0].route, `/api/events/${eventId}/polls/${pollId}/close`);
+        assert.equal(writes[0].headers['if-match'], change === 'changed' ? pollTag(70) : pollTag(2));
+        assert.equal(writes[0].headers['x-account-id'], accountId);
+        assert.equal(await page.evaluate(() => window.eventsFixture.polls[0].status), 'closed');
+      }
+      assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
+test('event polls: an unchanged refresh keeps the unsubmitted closure review and blocks sending during the read', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+    await dialog.getByText('Which day?', { exact: true }).waitFor();
+    await page.evaluate(() => {
+      window.eventsFixture.holdPollRead = true;
+      document.querySelector('button[aria-label="Refresh events"]').click();
+    });
+    await page.waitForFunction(() => window.eventsFixture.releasePollRead !== null);
+    const confirm = dialog.getByRole('button', { name: 'Close poll', exact: true });
+    await confirm.and(page.locator(':disabled')).waitFor();
+    assert.equal(await dialog.count(), 1);
+    assert.equal((await pollWrites(page)).length, 0);
+    await page.evaluate(() => window.eventsFixture.releasePollRead());
+    await confirm.and(page.locator(':enabled')).waitFor();
+    await dialog.getByText('Which day?', { exact: true }).waitFor();
+    assert.equal((await pollWrites(page)).length, 0);
+    await confirm.click();
+    await panel.getByText('Poll closed.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].headers['if-match'], pollTag(2));
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: a changed list preserves an unsent creation draft', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await panel.getByRole('button', { name: 'New poll', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: 'Question', exact: true }).fill('My unsent question');
+    await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('Morning');
+    await dialog.getByRole('textbox', { name: 'Choice 2', exact: true }).fill('Evening');
+    await page.evaluate(() => {
+      window.eventsFixture.polls[0].question = 'Changed elsewhere?';
+      document.querySelector('button[aria-label="Refresh events"]').click();
+    });
+    await panel.locator('legend').filter({ hasText: 'Changed elsewhere?' }).waitFor();
+    assert.equal(await dialog.getByRole('textbox', { name: 'Question', exact: true }).inputValue(), 'My unsent question');
+    assert.equal(await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).inputValue(), 'Morning');
+    assert.equal(await dialog.getByRole('textbox', { name: 'Choice 2', exact: true }).inputValue(), 'Evening');
+    assert.equal((await pollWrites(page)).length, 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: failed and denied reads hide cached actions and interrupt an open review', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await page.evaluate(() => { window.eventsFixture.pollReadError = { status: 503, code: 'UNAVAILABLE' }; });
+    await panel.getByRole('button', { name: 'Refresh polls', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'Polls could not load.' }).waitFor();
+    assert.equal(await panel.getByRole('radio').count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    await page.evaluate(() => { window.eventsFixture.pollReadError = null; });
+    await panel.getByRole('button', { name: 'Retry', exact: true }).click();
+    await panel.getByRole('radio', { name: /^Saturday/ }).and(page.locator(':enabled')).waitFor();
+    const dialog = await reviewPoll(page, 'Private review draft');
+    await page.evaluate(() => {
+      window.eventsFixture.pollReadError = { status: 403, code: 'ACCESS_DENIED' };
+      document.querySelector('button[aria-label="Refresh events"]').click();
+    });
+    await dialog.getByRole('alert').filter({ hasText: 'These polls are no longer available to you.' }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Create poll', exact: true }).count(), 0);
+    assert.equal(await dialog.getByText('Private review draft', { exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+    assert.equal(await panel.getByRole('radio').count(), 0);
+    assert.equal((await pollWrites(page)).length, 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const keepDialog of [true, false]) {
+  test(`event polls: unconfirmed closure hides missing target details with its dialog ${keepDialog ? 'open' : 'closed'}`, async () => {
+    const context = await browser.newContext({ timezoneId: 'UTC' });
+    try {
+      const { page, outbound, errors } = await pollFixture(context, { losePollCloses: 1 });
+      const panel = await openPolls(page);
+      await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Review closure', exact: true });
+      await dialog.getByRole('button', { name: 'Close poll', exact: true }).click();
+      await dialog.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+      const saved = await page.evaluate(() => structuredClone(window.eventsFixture.polls[0]));
+      if (!keepDialog) await dialog.getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+      const recovery = keepDialog ? dialog : panel;
+      await page.evaluate(() => { window.eventsFixture.pollReadError = { status: 403, code: 'ACCESS_DENIED' }; });
+      await recovery.getByRole('button', { name: 'Reload polls', exact: true }).click();
+      await recovery.getByRole('alert').filter({ hasText: 'These polls are no longer available to you.' }).first().waitFor();
+      assert.equal(await recovery.getByText('Which day?', { exact: true }).count(), 0);
+      await page.evaluate(() => { window.eventsFixture.pollReadError = null; window.eventsFixture.polls = []; });
+      await recovery.getByRole('button', { name: 'Reload polls', exact: true }).click();
+      await panel.getByText('No polls yet.', { exact: true }).waitFor();
+      assert.equal(await recovery.getByText('Which day?', { exact: true }).count(), 0, 'A successful empty list must not reveal the unavailable poll snapshot.');
+      assert.equal(await recovery.getByText('Saturday: 0', { exact: true }).count(), 0);
+      assert.equal(await recovery.getByText('Total votes: 0', { exact: true }).count(), 0);
+      assert.equal(await recovery.getByRole('button', { name: 'Retry the same poll request', exact: true }).isDisabled(), true);
+      assert.equal((await pollWrites(page)).length, 1);
+      await page.evaluate(poll => { window.eventsFixture.polls = [poll]; }, saved);
+      await recovery.getByRole('button', { name: 'Reload polls', exact: true }).click();
+      await recovery.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+      await recovery.getByText('Which day?', { exact: true }).first().waitFor();
+      await recovery.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+      await panel.getByText('Poll closed.', { exact: true }).waitFor();
+      const writes = await pollWrites(page);
+      assert.equal(writes.length, 2);
+      assert.deepEqual(writes[1], writes[0]);
+      assert.equal(await page.evaluate(() => window.eventsFixture.polls[0].status), 'closed');
+      assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
+test('event polls: lost admission is rechecked on exact replay and never reported as success', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { losePollVotes: 1 });
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await page.evaluate(() => { window.eventsFixture.pollAccessDenied = true; });
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByRole('alert').filter({ hasText: 'These polls are no longer available to you.' }).first().waitFor();
+    assert.equal(await panel.getByRole('radio').count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Save choice', exact: true }).count(), 0);
+    assert.equal(await panel.getByText('Your choice is saved.', { exact: true }).count(), 0);
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0]);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: event grants, not the Space role, control management and refresh revokes an open review', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { event: { can_manage: false, etag: null } });
+    const panel = await openPolls(page);
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    await page.evaluate(() => { Object.assign(window.eventsFixture.event, { can_manage: true, etag: '"event-2"' }); });
+    await panel.getByRole('button', { name: 'Refresh polls', exact: true }).click();
+    const dialog = await reviewPoll(page);
+    await page.evaluate(() => {
+      Object.assign(window.eventsFixture.event, { can_manage: false, etag: null });
+      document.querySelector('button[aria-label="Refresh events"]').click();
+    });
+    await dialog.getByRole('alert').filter({ hasText: 'Only the event organizer or Space owner' }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Create poll', exact: true }).count(), 0);
+    await dialog.getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Close poll', exact: true }).count(), 0);
+    assert.equal((await pollWrites(page)).length, 1);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const [state, changes] of [
+  ['ended', { ended: true, can_respond: false }],
+  ['cancelled', { status: 'cancelled', cancelled_at: '2026-10-07T09:00:00Z', can_respond: false, can_manage: false, etag: null }],
+]) test(`event polls: ${state} events show closed read-only polls`, async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    await page.evaluate(changes => { Object.assign(window.eventsFixture.event, changes); }, changes);
+    const panel = await openPolls(page);
+    await panel.getByText('Closed', { exact: true }).waitFor();
+    await panel.getByText('This event or poll is closed. No more changes are allowed.', { exact: true }).waitFor();
+    assert.equal(await panel.getByRole('radio', { name: /^Saturday/ }).isDisabled(), true);
+    for (const name of ['New poll', 'Save choice', 'Withdraw', 'Close poll']) assert.equal(await panel.getByRole('button', { name, exact: true }).count(), 0);
+    assert.equal((await pollWrites(page)).length, 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: late reads and unresolved commands stay bound to the original event across Space switches', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { losePollVotes: 1 });
+    const secondEventId = 'ef3f9074-7c5d-4b20-9c83-2f6a8b4d9e44';
+    await page.evaluate(({ id, space, poll }) => {
+      const state = window.eventsFixture;
+      state.events.push({ ...state.event, id, space_id: space, space_name: 'Garden club', title: 'Planting day' });
+      state.polls.push(poll);
+    }, { id: secondEventId, space: clubId, poll: pollSeed({ id: secondChoiceId, event_id: secondEventId, question: 'Which seeds?' }) });
+    let panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await page.evaluate(() => { window.eventsFixture.holdPollRead = true; });
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await page.waitForFunction(() => window.eventsFixture.releasePollRead !== null);
+    await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption(clubId);
+    await page.getByRole('button', { name: 'Planting day', exact: true }).click();
+    panel = page.getByTestId('event-polls');
+    await panel.getByRole('button', { name: 'Polls', exact: true }).click();
+    await panel.getByRole('group', { name: 'Which seeds?', exact: true }).waitFor();
+    await page.evaluate(() => window.eventsFixture.releasePollRead());
+    assert.equal(await panel.getByRole('group', { name: 'Which day?', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).count(), 0);
+    await page.getByRole('combobox', { name: 'Space', exact: true }).selectOption(spaceId);
+    await page.getByRole('button', { name: 'Picnic', exact: true }).click();
+    panel = page.getByTestId('event-polls');
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0]);
+    assert.ok(writes.every(call => call.route.startsWith(`/api/events/${eventId}/polls/`)));
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+for (const kind of ['create', 'vote', 'close']) test(`event polls: mismatched ${kind} confirmation stays unknown until an unchanged retry succeeds`, async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { polls: kind === 'create' ? [] : [pollSeed()] });
+    const panel = await openPolls(page);
+    await page.evaluate(override => { window.eventsFixture.pollWriteOverride = override; }, kind === 'create'
+      ? { question: 'Wrong question' } : kind === 'vote' ? { event_id: clubId } : { status: 'open', closed_at: null, can_vote: true, can_close: true });
+    if (kind === 'create') {
+      const dialog = await reviewPoll(page);
+      await dialog.getByRole('button', { name: 'Create poll', exact: true }).click();
+    } else if (kind === 'vote') {
+      await panel.getByRole('radio', { name: /^Saturday/ }).check();
+      await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    } else {
+      await panel.getByRole('button', { name: 'Close poll', exact: true }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Close poll', exact: true }).click();
+    }
+    await page.getByRole('alert').filter({ hasText: 'The result is not confirmed.' }).waitFor();
+    if (kind !== 'vote') await page.getByRole('dialog').getByRole('button', { name: 'Close poll dialog', exact: true }).click();
+    for (const text of ['Poll created.', 'Your choice is saved.', 'Poll closed.']) assert.equal(await panel.getByText(text, { exact: true }).count(), 0);
+    await page.evaluate(() => { window.eventsFixture.pollWriteOverride = null; });
+    await panel.getByRole('button', { name: 'Reload polls', exact: true }).click();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).and(page.locator(':enabled')).waitFor();
+    await panel.getByRole('button', { name: 'Retry the same poll request', exact: true }).click();
+    await panel.getByText(kind === 'create' ? 'Poll created.' : kind === 'vote' ? 'Your choice is saved.' : 'Poll closed.', { exact: true }).waitFor();
+    const writes = await pollWrites(page);
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1], writes[0]);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: creation validates Unicode lengths, distinct choices and the two-to-eight choice bounds', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context, { polls: [] });
+    const panel = await openPolls(page);
+    await panel.getByRole('button', { name: 'New poll', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const question = dialog.getByRole('textbox', { name: 'Question', exact: true });
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    assert.equal(await question.evaluate(element => element === document.activeElement), true);
+    assert.equal(await dialog.getByRole('button', { name: 'Remove choice 1', exact: true }).isDisabled(), true);
+    await question.fill('Which day?');
+    await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill(' Same ');
+    await dialog.getByRole('textbox', { name: 'Choice 2', exact: true }).fill('same');
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    assert.equal((await pollWrites(page)).length, 0);
+    await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('A');
+    await dialog.getByRole('textbox', { name: 'Choice 2', exact: true }).fill('B');
+    await question.fill('x'.repeat(121));
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    await question.fill('\u{1f642}'.repeat(120));
+    await dialog.getByText('120 / 120 characters', { exact: true }).waitFor();
+    await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('x'.repeat(81));
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    await dialog.getByRole('alert').waitFor();
+    await dialog.getByRole('textbox', { name: 'Choice 1', exact: true }).fill('\u{1f642}'.repeat(80));
+    await dialog.getByText('80 / 80 characters', { exact: true }).waitFor();
+    for (let index = 3; index <= 8; index += 1) {
+      await dialog.getByRole('button', { name: 'Add choice', exact: true }).click();
+      const input = dialog.getByRole('textbox', { name: `Choice ${index}`, exact: true });
+      assert.equal(await input.evaluate(element => element === document.activeElement), true);
+      await input.fill(`Choice ${index}`);
+    }
+    assert.equal(await dialog.getByRole('button', { name: 'Add choice', exact: true }).isDisabled(), true);
+    await dialog.getByRole('button', { name: 'Remove choice 8', exact: true }).click();
+    assert.equal(await dialog.getByRole('textbox', { name: 'Choice 7', exact: true }).evaluate(element => element === document.activeElement), true);
+    await dialog.getByRole('button', { name: 'Add choice', exact: true }).click();
+    await dialog.getByRole('textbox', { name: 'Choice 8', exact: true }).fill('Last choice');
+    await dialog.getByRole('button', { name: 'Review', exact: true }).click();
+    assert.equal(await dialog.getByRole('listitem').count(), 8);
+    assert.equal((await pollWrites(page)).length, 0);
+    await dialog.getByRole('button', { name: 'Create poll', exact: true }).click();
+    await panel.getByText('Poll created.', { exact: true }).waitFor();
+    const [write] = await pollWrites(page);
+    assert.equal([...write.body.question].length, 120);
+    assert.equal([...write.body.options[0]].length, 80);
+    assert.equal(write.body.options.length, 8);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: loading disables stale actions and an in-flight vote locks event navigation', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await pollFixture(context);
+    const panel = await openPolls(page);
+    await panel.getByRole('radio', { name: /^Saturday/ }).check();
+    await page.evaluate(() => { window.eventsFixture.holdPollRead = true; });
+    await panel.getByRole('button', { name: 'Refresh polls', exact: true }).click();
+    await page.waitForFunction(() => window.eventsFixture.releasePollRead !== null);
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).and(page.locator(':disabled')).waitFor();
+    await panel.getByRole('status').filter({ hasText: 'Loading polls' }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByRole('button', { name: 'Close poll', exact: true }).isDisabled(), true);
+    await page.evaluate(() => window.eventsFixture.releasePollRead());
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).and(page.locator(':enabled')).waitFor();
+    await page.evaluate(() => { window.eventsFixture.holdPollWrite = true; });
+    await panel.getByRole('button', { name: 'Save choice', exact: true }).click();
+    await page.waitForFunction(() => window.eventsFixture.releasePollWrite !== null);
+    await page.getByRole('button', { name: 'Past', exact: true }).and(page.locator(':disabled')).waitFor();
+    for (const name of ['Close event', 'Edit event', 'New event', 'Past', 'Upcoming', 'Refresh events']) {
+      assert.equal(await page.getByRole('button', { name, exact: true }).isDisabled(), true, name);
+    }
+    assert.equal(await page.getByRole('combobox', { name: 'Space', exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByRole('radio', { name: /^Saturday/ }).isDisabled(), true);
+    assert.equal((await pollWrites(page)).length, 1);
+    await page.evaluate(() => window.eventsFixture.releasePollWrite());
+    await panel.getByText('Your choice is saved.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Past', exact: true }).and(page.locator(':enabled')).waitFor();
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('event polls: twenty polls is a complete bounded list with no creation or pagination control', async () => {
+  const context = await browser.newContext({ timezoneId: 'UTC' });
+  try {
+    const polls = Array.from({ length: 20 }, (_, index) => pollSeed({ id: `ab3d7e52-5a3b-4f0e-9a61-${index.toString(16).padStart(12, '0')}`, question: `Question ${index + 1}` }));
+    const { page, outbound, errors } = await pollFixture(context, { polls });
+    const panel = await openPolls(page);
+    await panel.getByText('This event already has 20 polls.', { exact: true }).waitFor();
+    assert.equal(await panel.getByRole('group').count(), 20);
+    assert.equal(await panel.getByRole('button', { name: 'New poll', exact: true }).count(), 0);
+    assert.equal(await panel.getByRole('button', { name: 'Show more', exact: true }).count(), 0);
+    assert.equal((await pollWrites(page)).length, 0);
+    assert.equal(await page.evaluate(() => window.eventsFixture.pollCalls.every(call => call.search === '' && call.method === 'GET')), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+async function doublePollFonts(page) {
+  await page.evaluate(() => {
+    const elements = [...document.querySelectorAll('body, body *')];
+    for (const element of elements) if (element.hasAttribute('data-poll-base-font')) element.style.removeProperty('font-size');
+    const sizes = elements.map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+    for (const [element, size] of sizes) {
+      element.setAttribute('data-poll-base-font', String(size));
+      element.style.setProperty('font-size', `${size * 2}px`, 'important');
+    }
+  });
+}
+
+async function assertPollReachable(page, region) {
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'No document overflow at 320px and measured 200% text.');
+  const geometry = await region.locator('button, input, label:has(input[type="radio"])').evaluateAll(elements => elements.map(element => {
+    const target = element.matches('input[type="radio"]') ? element.closest('label') : element;
+    const box = target.getBoundingClientRect();
+    return { name: element.getAttribute('aria-label') ?? element.getAttribute('name') ?? element.textContent, left: box.left, right: box.right, width: box.width, height: box.height };
+  }));
+  assert.ok(geometry.length > 0);
+  assert.deepEqual(geometry.filter(box => box.left < -0.5 || box.right > 320.5 || box.width < 43.5 || box.height < 43.5), [], JSON.stringify(geometry));
+  const textProblems = await region.getByRole('button').evaluateAll(buttons => buttons.flatMap(button => {
+    const bounds = button.getBoundingClientRect();
+    const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+    const problems = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement.closest('svg')) continue;
+      for (const match of node.textContent.matchAll(/\S+/g)) {
+        const range = document.createRange(); range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length);
+        const rects = [...range.getClientRects()];
+        const font = parseFloat(getComputedStyle(node.parentElement).fontSize);
+        if (rects.some(rect => rect.left < bounds.left - 0.5 || rect.right > bounds.right + 0.5)
+          || Math.max(...rects.map(rect => rect.top)) - Math.min(...rects.map(rect => rect.top)) > font * 0.8) problems.push(match[0]);
+      }
+    }
+    return problems;
+  }));
+  assert.deepEqual(textProblems, [], 'Button words must fit without splitting.');
+  for (const control of await region.locator('button:enabled, input:enabled').all()) {
+    await control.click({ trial: true });
+    await control.focus();
+    assert.equal(await control.evaluate(element => element === document.activeElement), true, 'Control must accept keyboard focus.');
+    assert.equal(await control.evaluate(element => {
+      const target = element.matches('input[type="radio"]') ? element.closest('label') : element;
+      const box = target.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return hit === target || target.contains(hit);
+    }), true, 'Control must remain pointer reachable.');
+  }
+}
+
+for (const language of ['en', 'te', 'hi']) test(`event polls: ${language} ballots and dialogs fit 320px at measured double text with focus and 44px targets`, async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 800 }, timezoneId: 'UTC' });
+  try {
+    const { messages, diagnostics } = loadMessages();
+    assert.deepEqual(diagnostics, []);
+    const text = (id, values) => messages.translate(language, id, values);
+    const { page, outbound, errors } = await pollFixture(context, { polls: [pollSeed({ my_option_id: firstChoiceId, total_votes: 1,
+      options: [{ id: firstChoiceId, text: 'Saturday', votes: 1 }, { id: secondChoiceId, text: 'Sunday', votes: 0 }] })] });
+    const panel = await openPolls(page);
+    if (language !== 'en') {
+      await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption(language);
+      await page.waitForFunction(value => document.documentElement.lang === value, language);
+    }
+    const save = panel.getByRole('button', { name: text('events.polls.saveChoice'), exact: true });
+    const base = await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await doublePollFonts(page);
+    assert.equal(await save.evaluate(element => parseFloat(getComputedStyle(element).fontSize)), base * 2);
+    assert.equal(await page.evaluate(() => parseFloat(getComputedStyle(document.body).fontSize)), 32);
+    await assertPollReachable(page, panel);
+    const first = panel.getByRole('radio', { name: /^Saturday/ });
+    await first.focus();
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await panel.getByRole('radio', { name: /^Sunday/ }).isChecked(), true);
+    assert.equal((await pollWrites(page)).length, 0, 'Keyboard navigation does not submit a vote.');
+    mkdirSync(path.join(root, '.local/screenshots'), { recursive: true });
+    await panel.getByRole('group', { name: 'Which day?', exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(root, `.local/screenshots/event-polls-320-200-${language}.png`) });
+    await panel.getByRole('button', { name: text('events.polls.close'), exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: text('events.polls.reviewClose'), exact: true });
+    await doublePollFonts(page);
+    await assertPollReachable(page, dialog);
+    await page.keyboard.press('Tab');
+    assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await panel.getByRole('button', { name: text('events.polls.close'), exact: true }).evaluate(element => element === document.activeElement), true);
+    await panel.getByRole('button', { name: text('events.polls.new'), exact: true }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: text('events.polls.question'), exact: true }).fill('Which day?');
+    await dialog.getByRole('textbox', { name: text('events.polls.option', { number: 1 }), exact: true }).fill('Saturday');
+    await dialog.getByRole('textbox', { name: text('events.polls.option', { number: 2 }), exact: true }).fill('Sunday');
+    await doublePollFonts(page);
+    const input = dialog.getByRole('textbox', { name: text('events.polls.question'), exact: true });
+    const inputFont = await input.evaluate(element => ({ size: parseFloat(getComputedStyle(element).fontSize), base: Number(element.getAttribute('data-poll-base-font')) }));
+    assert.ok(inputFont.base > 0);
+    assert.equal(inputFont.size, inputFont.base * 2);
+    await assertPollReachable(page, dialog);
+    await input.focus();
+    await page.screenshot({ path: path.join(root, `.local/screenshots/event-polls-create-320-200-${language}.png`) });
+    await dialog.getByRole('button', { name: text('events.polls.review'), exact: true }).click();
+    await doublePollFonts(page);
+    await assertPollReachable(page, dialog);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await panel.getByRole('button', { name: text('events.polls.new'), exact: true }).evaluate(element => element === document.activeElement), true);
+    assert.equal((await pollWrites(page)).length, 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('space header: Events says where you are and who is here, links the Space sections, and fits 320 px at doubled text', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, {
+      spaceFields: { member_count: 4, member_preview: ['Sam Lee', 'Priya Rao'], agent_enabled: true }, clubFields: { agent_enabled: false },
+    });
+    const header = page.getByRole('region', { name: 'Morgan family Space', exact: true });
+    await header.getByText('4 members: Sam Lee, Priya Rao + 1 more', { exact: true }).waitFor();
+    for (const text of ['Family', 'Private', 'Agent on']) await header.getByText(text, { exact: true }).waitFor();
+    const sections = header.getByRole('navigation', { name: 'Sections of Morgan family', exact: true });
+    assert.deepEqual(await sections.getByRole('link').evaluateAll(links => links.map(link => [link.getAttribute('aria-label'), link.getAttribute('href'), link.getAttribute('aria-current')])), [
+      ['Chat for Morgan family', `/app/messages?space_id=${spaceId}`, null],
+      ['Tasks for Morgan family', `/app/tasks?space_id=${spaceId}`, null],
+      ['Events for Morgan family', `/app/events?space_id=${spaceId}`, 'page'],
+      ['Documents for Morgan family', `/app/documents?space_id=${spaceId}`, null],
+      ['Polls for Morgan family', `/app/polls?space_id=${spaceId}`, null],
+    ]);
+    const ask = header.getByRole('link', { name: 'Ask Agent', exact: true });
+    assert.equal(await ask.getAttribute('href'), `/app/messages?space_id=${spaceId}&ask=agent`);
+    const privacy = header.locator('details');
+    assert.equal(await privacy.evaluate(element => element.open), false);
+    await privacy.getByText('Who can see what', { exact: true }).click();
+    assert.deepEqual(await privacy.locator('li').allTextContents(), [
+      'Members of this Space see its chat, tasks, events and documents from the time each person joined.',
+      "Only you see the Agent's answers to you and what it remembers about you, unless you choose to share an answer.",
+      'Only you see your medicines. The owner and admins cannot.',
+      'A direct chat is seen only by its two people.',
+    ]);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/space-header-events-desktop.png') });
+
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.evaluate(() => {
+      const sizes = [...document.querySelectorAll('body *')].map(element => [element, parseFloat(getComputedStyle(element).fontSize)]);
+      for (const [element, size] of sizes) element.style.fontSize = `${size * 2}px`;
+    });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'The Space header must fit 320 px at doubled text.');
+    for (const link of [...await sections.getByRole('link').all(), ask]) {
+      await link.scrollIntoViewIfNeeded();
+      const box = await link.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= 320.5 && box.height >= 44, JSON.stringify(box));
+    }
+    await header.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(root, '.local/screenshots/space-header-events-320-large-text.png') });
+
+    // A Space whose agent is off offers no Ask Agent button.
+    await page.getByLabel('Space', { exact: true }).selectOption({ label: 'Garden club' });
+    const club = page.getByRole('region', { name: 'Garden club Space', exact: true });
+    await club.getByText('Agent off', { exact: true }).waitFor();
+    assert.equal(await club.getByRole('link', { name: 'Ask Agent', exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => window.eventsFixture.calls.every(call => call.method === 'GET')), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('event draft: closing an unsaved form asks first and cancel keeps the exact fields', async () => {
   const context = await browser.newContext({ timezoneId: 'UTC' });
   try {
@@ -406,6 +1384,8 @@ test('event draft: an active save disables navigation until the server confirms'
     await editor.getByLabel('Starts').fill('2026-10-12T18:30');
     await editor.getByRole('button', { name: 'Create event' }).click();
     await page.waitForFunction(() => window.eventsFixture.releaseSave !== null);
+    // The held request can arrive before React shows the saving state; wait for that state, then check all of it.
+    await editor.getByRole('button', { name: 'Close form', exact: true }).and(page.locator(':disabled')).waitFor();
     assert.equal(await editor.getByRole('button', { name: 'Close form', exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole('combobox', { name: 'Space' }).isDisabled(), true);
     assert.equal(await page.getByRole('button', { name: 'Past', exact: true }).isDisabled(), true);
