@@ -225,19 +225,25 @@ function Invoke-Suite([string]$Name) {
         [IO.File]::WriteAllText($log, '', $utf8)
         foreach ($command in $definition.Commands) {
             Write-Host "[$Name] $command"
-            $part = Join-Path $Output "$Name.part.log"
+            $part = Join-Path $Output "$Name.$([guid]::NewGuid().ToString('N')).part.log"
             $batch = Join-Path $Output "$Name.cmd"
             # A batch file keeps the command exactly as written; PowerShell 5 rewrites quotes in native arguments.
-            [IO.File]::WriteAllText($batch, "@echo off`r`ncd /d `"$root`"`r`ncall $command > `"$part`" 2>&1`r`nexit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText($batch, "@echo off`r`ncd /d `"$root`"`r`n(call $command) > `"$part`" 2>&1`r`nexit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
             # Wait for cmd.exe itself, not the end of an output pipe: a process the command leaves behind,
             # such as a Gradle daemon, inherits that pipe and keeps it open for hours (T207).
             $process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', "`"$batch`"") -NoNewWindow -PassThru
             $null = $process.Handle
             $process.WaitForExit()
             $code = $process.ExitCode
-            $text = [IO.File]::ReadAllText($part, [Text.Encoding]::UTF8)
+            $stream = [IO.File]::Open($part, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8)
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
             [IO.File]::AppendAllText($log, "> $command`r`n$text`r`n> exit code $code`r`n`r`n", $utf8)
-            Remove-Item -LiteralPath $part, $batch
+            Remove-Item -LiteralPath $batch
+            try { Remove-Item -LiteralPath $part -ErrorAction Stop }
+            catch [IO.IOException] {
+                [IO.File]::AppendAllText($log, "Retained output file held by a child process: $part`r`n", $utf8)
+            }
             if ($code -ne 0) { $result = 'failed' }
             try {
                 $counts = Read-Counts $definition.Kind $text $since
@@ -299,6 +305,7 @@ function Read-GitEvidence([string[]]$Arguments) {
         return $text
     } catch {
         $evidenceErrors.Add("Source-state evidence unavailable: $($_.Exception.Message)")
+        return $null
     } finally {
         $ErrorActionPreference = $previous
     }

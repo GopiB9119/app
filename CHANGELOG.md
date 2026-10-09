@@ -2,6 +2,21 @@
 
 Notable changes to requirements, documentation structure and the product, newest first. Each entry says what changed and links to the decision or evidence.
 
+## 2026-10-09
+
+### Backend/Web Setup Verification
+
+- Rechecked the existing backend/web setup without Android work or changes to the separate website. Package installation remains blocked by HTTPS handshake failures; Docker Desktop and a WSL distribution are absent, and port 3000 serves the concurrent static website preview.
+- Verified the earlier Windows runner repairs with **39/39** checks and passed **11/11** design-token plus **69/69** golden-evaluator checks. These are offline tooling results, not application end-to-end qualification.
+- Bounded the backend install task's build-subprocess retries/timeouts through inherited pip environment settings and verified the effective configuration. Preserved concurrent changes and recorded [current runtime state, commands and prerequisites](infra/README.md#windows-setup-check-2026-10-09); no backend service, container or existing-web preview was started.
+
+### New Website Responsive Layout
+
+- Updated only the new `website/` experience. Android and backend source were not changed.
+- Mobile navigation, composers, profile statistics, Plan categories, Settings navigation and News filters now reflow instead of forcing dense fixed grids. Space and Agent conversations remain reachable on short screens, mobile controls keep a 44 px minimum target, and decorative glass/continuous animation work is reduced on small viewports.
+- Local browser checks covered all eight website pages at 320, 375, 768 and 1440 px plus 200% browser zoom with no page-level horizontal overflow. Mobile Space, Community, Plan, Settings and News interactions passed without browser errors; short 320 x 400 Space and Agent conversations remained usable. Mobile page loads were 295–1,089 ms in the local preview, with zero horizontal overflow; this is local synthetic evidence, not a low-end-device or production performance claim.
+- JavaScript syntax checks passed for all five website scripts and design-token regressions passed **11/11**. The historical governance files referenced by repository instructions remain absent, the shared worktree has unrelated concurrent changes, and the website-only preview was running at `http://127.0.0.1:3000` at the final check.
+
 ## 2026-10-08
 
 ### Account Downloads And Verification Follow-Up

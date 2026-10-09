@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#85bce9">
+	<title>Spaces | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/spaces-sky.jpg" as="image">
+	<link rel="stylesheet" href="styles.css">
+	<link rel="stylesheet" href="screens.css">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+</head>
+<body class="screen-page spaces-screen" data-page="spaces">
+	<a class="skip-link" href="#main">Skip to your space</a>
+	<header id="screen-header" class="screen-header"></header>
+	<aside class="space-rail"><p id="spaces-label">Spaces</p><nav id="space-navigation" aria-labelledby="spaces-label"></nav></aside>
+	<main id="main" class="screen-main spaces-main" tabindex="-1">
+		<h1 class="spaces-title"><span>Good morning,</span><span><span data-profile-name>Gopi</span>.</span></h1>
+		<p class="spaces-subtitle">What would you like to do today?</p>
+		<header id="space-chat-header" class="space-chat-header" hidden>
+			<div><h1 id="space-chat-title">Family</h1><p>Your space, together.</p></div>
+		</header>
+		<section id="screen-conversation" class="screen-conversation" role="log" aria-live="polite" aria-label="Space conversation" hidden></section>
+		<div class="spaces-composer-wrap">
+			<div id="space-mentions" class="space-mentions" role="listbox" aria-label="Mention a person or Agent" hidden></div>
+			<form id="screen-message-form" class="screen-composer" aria-label="Message your space">
+				<input id="message-input" name="message" type="text" role="combobox" aria-label="Message Family" aria-autocomplete="list" aria-expanded="false" aria-controls="space-mentions" aria-describedby="space-composer-hint" placeholder="Message Family..." maxlength="2000" autocomplete="off">
+				<div class="composer-actions">
+					<button class="screen-icon-button" type="button" data-screen-action="mention" aria-label="Mention a person or Agent" title="Mention a person or Agent">@</button>
+					<button class="screen-icon-button" type="button" data-screen-action="attach" aria-label="Attach a file" title="Attach a file"><svg class="icon" aria-hidden="true"><use href="#plus"/></svg></button>
+					<button class="screen-icon-button composer-mic" type="button" data-screen-action="voice" aria-label="Voice input" title="Voice input"><svg class="icon" aria-hidden="true"><use href="#mic"/></svg></button>
+					<button class="screen-icon-button composer-send" type="submit" aria-label="Send message" title="Send message" disabled hidden><svg class="icon" aria-hidden="true"><use href="#arrow-up"/></svg></button>
+				</div>
+			</form>
+			<div id="space-agent-tools" class="space-agent-tools" aria-label="Agent tools" hidden>
+				<p>Agent tools <span>Local preview</span></p>
+				<div class="agent-tool-links" role="group" aria-label="Open an Agent tool"></div>
+			</div>
+			<p id="space-composer-hint" class="space-composer-hint">Type @ to mention someone or ask @agent. Mentions stay on this device.</p>
+		</div>
+		<input id="message-file" type="file" accept="image/jpeg,image/png,image/webp,.pdf,.txt" aria-label="Choose an attachment" hidden>
+		<div id="composer-attachment" class="composer-attachment" hidden></div>
+	</main>
+</body>
+</html>

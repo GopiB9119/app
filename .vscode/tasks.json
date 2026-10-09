@@ -2,6 +2,55 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Community Platform: install backend packages",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pip",
+				"install",
+				"--retries",
+				"0",
+				"--timeout",
+				"15",
+				"./backend[test]"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"PIP_RETRIES": "0",
+					"PIP_TIMEOUT": "15",
+					"PIP_DISABLE_PIP_VERSION_CHECK": "1"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify Windows runner",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"scripts/verify.mjs",
+				"--suite",
+				"runner"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
 			"label": "Community Platform: start local backend",
 			"type": "shell",
 			"command": "docker",

@@ -2,6 +2,31 @@
 
 Local synthetic work only. Production deployment and external providers are not enabled by this launcher.
 
+## Windows Setup Check (2026-10-09)
+
+Scope is the existing `web/`, backend and supporting tooling only. Android was neither changed nor tested, and the concurrent
+`website/` work was preserved. Historical runtime checkpoints below do not establish service availability on this Windows host.
+
+- Node `v24.20.0` and Python 3.12 are available, including the root `.venv` interpreter. Both package installs failed:
+	`npm.cmd --prefix web ci --no-audit --no-fund --prefer-offline --fetch-retries=0 --fetch-timeout=15000` encountered an
+	HTTPS handshake failure at `registry.npmjs.org`; the backend install task failed fetching its setuptools build dependency
+	from `files.pythonhosted.org`. Windows curl reproduced the npm-host TLS failure. Certificate validation was not disabled.
+- Docker is absent from PATH and its standard Desktop installation path; WSL lists no installed distribution. No API or
+	PostgreSQL listener was found on the standard ports. Port 3000 belongs to a Python static server for `website/`, not Next.js;
+	that process was left running. No backend, worker, container or existing-web preview was started in this continuation.
+- The [backend install task](../.vscode/tasks.json) now passes zero retries, a 15-second timeout and disabled pip version checks
+	through environment variables so build-isolation subprocesses inherit them. A direct virtualenv pip configuration check passed.
+- Fresh checks: [Windows runner 39/39](../.local/verify/20261009-103012/summary.md), and
+	[design tokens 11/11 plus golden evaluator 69/69](../.local/verify/web-backend-20261009-offline/summary.md). These 119 offline
+	passes validate tooling, not application startup, browser-to-database journeys or model quality. The earlier runner fixes
+	retain chained-command output, tolerate child-held log files and report unavailable Git evidence explicitly.
+- Remaining prerequisites: working HTTPS package downloads, owner-installed/running Docker Desktop, and a coordinated switch
+	from the `website/` preview before starting `web/` at the required `http://127.0.0.1:3000`. Backend tests, web types/build and
+	browser end-to-end tests remain unverified. No data reset, key replacement, provider call or deployment occurred.
+
+Checks ran on commit `153db79` with an uncommitted, concurrently changing worktree, not a frozen release candidate.
+Historical governance documents are still absent and were not recreated.
+
 ## Account Downloads And Focused Follow-Up (2026-10-08)
 
 The continuation closed a real operational gap: the retained runtime had API, mail and reminder workers but **no export worker**,

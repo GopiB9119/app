@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#79b8ec">
+	<meta name="description" content="Travel, lifestyle, and community stories selected for your day.">
+	<title>News | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/news-travel.jpg" as="image">
+	<link rel="stylesheet" href="styles.css?v=20261009-layout">
+	<link rel="stylesheet" href="screens.css?v=20261009-layout">
+	<link rel="stylesheet" href="news.css?v=20261009-layout">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+	<script src="news.js" defer></script>
+</head>
+<body class="screen-page news-screen" data-page="news">
+	<a class="skip-link" href="#main">Skip to news</a>
+	<header id="screen-header" class="screen-header"></header>
+
+	<main id="main" class="news-main" tabindex="-1">
+		<header class="news-page-heading">
+			<span class="news-page-icon"><svg class="icon" aria-hidden="true"><use href="#newspaper"/></svg></span>
+			<div><p>YOUR DAILY UPDATE</p><h1>News</h1><span>Stories selected for your day.</span></div>
+		</header>
+
+		<nav class="news-filters" aria-label="News categories">
+			<button data-news-filter="all" aria-pressed="true">All stories</button>
+			<button data-news-filter="travel" aria-pressed="false">Travel</button>
+			<button data-news-filter="lifestyle" aria-pressed="false">Lifestyle</button>
+			<button data-news-filter="community" aria-pressed="false">Community</button>
+			<button data-news-filter="tech-science" aria-pressed="false">Tech &amp; Science</button>
+			<button data-news-filter="business" aria-pressed="false">Business</button>
+			<button data-news-filter="health" aria-pressed="false">Health</button>
+			<button data-news-filter="arts-culture" aria-pressed="false">Arts &amp; Culture</button>
+			<button data-news-filter="sports" aria-pressed="false">Sports</button>
+			<button data-news-filter="entertainment" aria-pressed="false">Entertainment</button>
+		</nav>
+
+		<section class="news-featured" aria-labelledby="featured-heading" data-news-story="travel">
+			<button class="featured-story" data-action="article" data-id="travel">
+				<img src="image/news-travel.jpg" width="760" height="430" alt="Green cliffs above a turquoise bay">
+				<span class="featured-overlay">
+					<span class="news-story-category travel-category">Travel</span>
+					<strong id="featured-heading">Best weekend getaways near Bangalore in 2026</strong>
+					<span>Travel Today <span aria-hidden="true">&middot;</span> 2 hours ago <span aria-hidden="true">&middot;</span> 4 min read</span>
+				</span>
+			</button>
+			<aside class="news-briefing" aria-label="Today’s briefing">
+				<div class="news-briefing-heading"><span class="briefing-icon"><svg class="icon" aria-hidden="true"><use href="#clock"/></svg></span><div><p>Today’s briefing</p><strong>Wednesday, Oct 8</strong></div></div>
+				<ul>
+					<li><span>01</span><p>A quick escape can make a long week feel lighter.</p></li>
+					<li><span>02</span><p>Small daily habits are helping people focus better.</p></li>
+					<li><span>03</span><p>Local communities are planning more outdoor events.</p></li>
+				</ul>
+			</aside>
+		</section>
+
+		<section class="latest-news" aria-labelledby="latest-heading">
+			<div class="latest-news-header"><div><p>FRESH STORIES</p><h2 id="latest-heading">Latest updates</h2></div><span id="news-result-count">9 stories</span></div>
+			<div class="news-page-grid">
+				<button class="news-page-card" data-action="article" data-id="travel" data-news-story="travel">
+					<img src="image/news-travel.jpg" width="380" height="220" alt="Green cliffs and a turquoise bay">
+					<span class="news-page-card-copy"><span class="news-story-category travel-category">Travel</span><strong>Best weekend getaways near Bangalore in 2026</strong><span>Fresh destinations for a short break from the city.</span><small>Travel Today <span aria-hidden="true">&middot;</span> 2 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="lifestyle" data-news-story="lifestyle">
+					<img src="image/news-lifestyle.jpg" width="380" height="220" alt="An open laptop on a sunny desk">
+					<span class="news-page-card-copy"><span class="news-story-category lifestyle-category">Lifestyle</span><strong>5 simple ways to stay productive this month</strong><span>Small routines that leave more room for focused work.</span><small>Mindful Living <span aria-hidden="true">&middot;</span> 5 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="community" data-news-story="community">
+					<img src="image/news-community.jpg" width="380" height="220" alt="Friends watching the sunset together">
+					<span class="news-page-card-copy"><span class="news-story-category community-category">Community</span><strong>Local community events you shouldn’t miss</strong><span>Simple ways to meet people and enjoy your neighborhood.</span><small>City Updates <span aria-hidden="true">&middot;</span> 1 day ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="tech-science" data-news-story="tech-science">
+					<img src="image/space-work.jpg" width="380" height="220" alt="A modern laptop in a bright workspace">
+					<span class="news-page-card-copy"><span class="news-story-category tech-category">Tech &amp; Science</span><strong>Everyday AI tools are becoming more useful</strong><span>How thoughtful automation is helping people organize daily life.</span><small>Future Desk <span aria-hidden="true">&middot;</span> 3 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="business" data-news-story="business">
+					<img src="image/booking-sky.jpg" width="380" height="220" alt="A city skyline beneath a clear blue sky">
+					<span class="news-page-card-copy"><span class="news-story-category business-category">Business</span><strong>Small businesses are building stronger local networks</strong><span>Independent teams are finding new ways to grow together.</span><small>Business Daily <span aria-hidden="true">&middot;</span> 4 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="health" data-news-story="health">
+					<img src="image/community-lake.jpg" width="380" height="220" alt="A calm lake surrounded by green trees">
+					<span class="news-page-card-copy"><span class="news-story-category health-category">Health</span><strong>Why a short daily walk can reset your routine</strong><span>Simple movement, fresh air, and consistent breaks add up.</span><small>Healthy Living <span aria-hidden="true">&middot;</span> 6 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="arts-culture" data-news-story="arts-culture">
+					<img src="image/community-drive.jpg" width="380" height="220" alt="A colorful road through a scenic landscape">
+					<span class="news-page-card-copy"><span class="news-story-category arts-category">Arts &amp; Culture</span><strong>Local creators bring new color to familiar places</strong><span>Neighborhood art, music, and stories are drawing people together.</span><small>Culture Notes <span aria-hidden="true">&middot;</span> 8 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="sports" data-news-story="sports">
+					<img src="image/community-mountains.jpg" width="380" height="220" alt="Hikers crossing a green mountain landscape">
+					<span class="news-page-card-copy"><span class="news-story-category sports-category">Sports</span><strong>Weekend outdoor groups welcome new participants</strong><span>Running, cycling, and hiking clubs are opening their next sessions.</span><small>Active City <span aria-hidden="true">&middot;</span> 10 hours ago</small></span>
+				</button>
+				<button class="news-page-card" data-action="article" data-id="entertainment" data-news-story="entertainment">
+					<img src="image/space-friends.jpg" width="380" height="220" alt="Friends enjoying an evening together">
+					<span class="news-page-card-copy"><span class="news-story-category entertainment-category">Entertainment</span><strong>What families and friends are watching this weekend</strong><span>Comforting stories and lighthearted picks for a relaxed evening.</span><small>Screen Time <span aria-hidden="true">&middot;</span> 12 hours ago</small></span>
+				</button>
+			</div>
+			<p class="news-empty" id="news-empty" hidden>No stories are available in this category yet.</p>
+		</section>
+	</main>
+
+	<dialog id="detail-dialog" aria-labelledby="dialog-title"><div class="dialog-header"><div><p class="dialog-eyebrow" id="dialog-eyebrow">A little inspiration for your day</p><h2 id="dialog-title"></h2></div><button class="round-button dialog-close" data-action="close" aria-label="Close dialog" title="Close"><svg class="icon" aria-hidden="true"><use href="#x"/></svg></button></div><div id="dialog-content"></div></dialog>
+	<div class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

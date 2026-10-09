@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#85bce9">
+	<title>Settings | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/settings-sky.jpg" as="image">
+	<link rel="stylesheet" href="styles.css">
+	<link rel="stylesheet" href="screens.css">
+	<link rel="stylesheet" href="settings.css">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+	<script src="settings.js" defer></script>
+</head>
+<body class="screen-page settings-page" data-page="settings">
+	<svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true">
+		<symbol id="shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+		<symbol id="palette" viewBox="0 0 24 24"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+		<symbol id="link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+		<symbol id="laptop" viewBox="0 0 24 24"><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2zM20.054 15.987H3.946"/></symbol>
+		<symbol id="log-out" viewBox="0 0 24 24"><path d="m16 17 5-5-5-5M21 12H9M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></symbol>
+		<symbol id="mail" viewBox="0 0 24 24"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/><rect x="2" y="4" width="20" height="16" rx="2"/></symbol>
+		<symbol id="phone" viewBox="0 0 24 24"><path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"/></symbol>
+		<symbol id="download" viewBox="0 0 24 24"><path d="M12 15V3M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5 5 5 5-5"/></symbol>
+	</svg>
+	<a class="skip-link" href="#settings-main">Skip to settings</a>
+	<header id="screen-header" class="screen-header"></header>
+	<div class="settings-layout">
+		<aside class="settings-sidebar" aria-label="Settings navigation">
+			<div class="settings-brand"><span class="settings-brand-icon"><svg class="icon" aria-hidden="true"><use href="#settings"/></svg></span><div><h2>Settings</h2><p>Manage your account, preferences and connected services.</p></div></div>
+			<nav class="settings-nav" aria-label="Settings">
+				<a class="settings-nav-item is-active" href="#account" data-settings-tab="account" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#user"/></svg><span>Account</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#notifications" data-settings-tab="notifications"><svg class="icon" aria-hidden="true"><use href="#bell"/></svg><span>Notifications</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#agents" data-settings-tab="agents"><svg class="icon" aria-hidden="true"><use href="#bot"/></svg><span>Agents</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#privacy" data-settings-tab="privacy"><svg class="icon" aria-hidden="true"><use href="#shield-check"/></svg><span>Privacy &amp; Security</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#language" data-settings-tab="language"><svg class="icon" aria-hidden="true"><use href="#globe"/></svg><span>Language</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#appearance" data-settings-tab="appearance"><svg class="icon" aria-hidden="true"><use href="#palette"/></svg><span>Appearance</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#services" data-settings-tab="services"><svg class="icon" aria-hidden="true"><use href="#link"/></svg><span>Connected Services</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<a class="settings-nav-item" href="#devices" data-settings-tab="devices"><svg class="icon" aria-hidden="true"><use href="#laptop"/></svg><span>Devices</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></a>
+				<button class="settings-nav-item settings-signout" data-settings-action="sign-out"><svg class="icon" aria-hidden="true"><use href="#log-out"/></svg><span>Sign Out</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></button>
+			</nav>
+		</aside>
+		<main id="settings-main" class="settings-main" aria-labelledby="settings-title" tabindex="-1">
+			<header class="settings-heading"><h1 id="settings-title">Account Settings</h1><p id="settings-subtitle">Manage your profile information and account details.</p></header>
+			<div id="settings-content">
+				<div id="settings-account-content" class="settings-account-content">
+					<section class="settings-card settings-account" aria-labelledby="information-heading">
+						<div class="settings-card-header"><h2 id="information-heading">Profile Information</h2><button class="settings-photo-button" data-settings-action="photo"><svg class="icon" aria-hidden="true"><use href="#camera"/></svg>Change Photo</button></div>
+						<form id="settings-account-form" class="settings-profile-grid">
+							<div class="settings-photo-wrap"><img class="settings-portrait" src="image/profile-portrait.jpg" data-profile-photo="image/profile-portrait.jpg" width="168" height="168" alt="Gopi"><button class="settings-photo-camera" type="button" data-settings-action="photo" aria-label="Change account photo" title="Change photo"><svg class="icon" aria-hidden="true"><use href="#camera"/></svg></button></div>
+							<label class="settings-field settings-name">Name<input class="settings-input" name="name" value="Gopi" maxlength="40" autocomplete="name" required></label>
+							<label class="settings-field settings-about">About<textarea class="settings-input" name="about" maxlength="450" rows="3" aria-label="About">Explorer &bull; Builder &bull; Learner
+I love exploring new places, building useful tools,
+and connecting with like-minded people.</textarea></label>
+							<label class="settings-field settings-location">Location<span class="settings-icon-field"><svg class="icon" aria-hidden="true"><use href="#map-pin"/></svg><select class="settings-input" name="location"><option>Bangalore, India</option><option>Mumbai, India</option><option>Delhi, India</option><option>Hyderabad, India</option><option>Chennai, India</option></select></span></label>
+							<label class="settings-field settings-joined">Joined<span class="settings-icon-field"><svg class="icon" aria-hidden="true"><use href="#calendar"/></svg><input class="settings-input" value="Oct 2, 2026" readonly aria-label="Joined"></span></label>
+						</form>
+					</section>
+					<section class="settings-card settings-statistics" aria-labelledby="statistics-heading">
+						<h2 id="statistics-heading">Statistics Overview</h2>
+						<div class="settings-stats-grid">
+							<button class="settings-stat stat-spaces" data-action="spaces"><svg class="icon" aria-hidden="true"><use href="#users"/></svg><strong>4</strong><span>Spaces</span></button>
+							<button class="settings-stat stat-neighbors" data-action="community"><svg class="icon" aria-hidden="true"><use href="#users"/></svg><strong id="settings-neighbors">126</strong><span>Neighbors<br>Following</span></button>
+							<button class="settings-stat stat-followers" data-action="profile"><svg class="icon" aria-hidden="true"><use href="#heart"/></svg><strong>1,294</strong><span>Followers</span></button>
+							<button class="settings-stat stat-plans" data-action="plans"><svg class="icon" aria-hidden="true"><use href="#trophy"/></svg><strong>250</strong><span>Plans Completed</span></button>
+						</div>
+					</section>
+					<section class="settings-card settings-details" aria-labelledby="additional-heading">
+						<h2 id="additional-heading">Additional Details</h2>
+						<div class="settings-detail-list">
+							<button data-settings-action="edit-detail" data-field="email" aria-label="Edit email"><svg class="icon" aria-hidden="true"><use href="#mail"/></svg><span class="settings-detail-label">Email</span><span class="settings-detail-value" data-contact="email">gopi@example.com</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></button>
+							<button data-settings-action="edit-detail" data-field="phone" aria-label="Edit phone"><svg class="icon" aria-hidden="true"><use href="#phone"/></svg><span class="settings-detail-label">Phone</span><span class="settings-detail-value" data-contact="phone">+91 98765 43210</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></button>
+							<button data-settings-action="edit-detail" data-field="birthDate" aria-label="Edit date of birth"><svg class="icon" aria-hidden="true"><use href="#calendar"/></svg><span class="settings-detail-label">Date of Birth</span><span class="settings-detail-value" data-contact="birthDate">May 15, 2000</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></button>
+							<button data-settings-action="edit-detail" data-field="region" aria-label="Edit region"><svg class="icon" aria-hidden="true"><use href="#globe"/></svg><span class="settings-detail-label">Region</span><span class="settings-detail-value" data-contact="region">India (IST)</span><svg class="icon settings-chevron" aria-hidden="true"><use href="#chevron-right"/></svg></button>
+						</div>
+					</section>
+				</div>
+			</div>
+		</main>
+	</div>
+	<input id="settings-photo-file" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose account photo" hidden>
+</body>
+</html>

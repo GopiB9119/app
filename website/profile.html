@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#79b8ec">
+	<title>Profile | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/profile-sky.jpg" as="image">
+	<link rel="stylesheet" href="styles.css">
+	<link rel="stylesheet" href="screens.css">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+</head>
+<body class="screen-page profile-screen" data-page="profile">
+	<a class="skip-link" href="#main">Skip to your profile</a>
+	<header id="screen-header" class="screen-header"></header>
+	<main id="main" class="screen-main profile-main" tabindex="-1">
+		<section class="profile-surface profile-summary" aria-labelledby="profile-name">
+			<div class="profile-photo-wrap"><img class="profile-portrait" src="image/profile-portrait.jpg" data-profile-photo="image/profile-portrait.jpg" width="164" height="164" alt="Gopi"><button class="profile-camera" data-screen-action="profile-photo" aria-label="Change profile photo" title="Change profile photo"><svg class="icon" aria-hidden="true"><use href="#camera"/></svg></button></div>
+			<div class="profile-details"><h1 id="profile-name" class="profile-name" data-profile-name>Gopi</h1><p class="profile-tagline" data-profile-tagline>Explorer &bull; Builder &bull; Learner</p><div class="profile-metadata"><span><svg class="icon" aria-hidden="true"><use href="#map-pin"/></svg><span data-profile-location>Bangalore, India</span></span><span><svg class="icon" aria-hidden="true"><use href="#calendar"/></svg>Joined Oct 2, 2026</span></div><p class="profile-summary-bio" data-profile-bio>I love exploring new places, building useful tools, and connecting with like-minded people.</p></div>
+			<button class="edit-profile-button" data-screen-action="edit-profile"><svg class="icon" aria-hidden="true"><use href="#pencil"/></svg>Edit Profile</button>
+			<input id="profile-photo-file" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose profile photo" hidden>
+		</section>
+		<section class="profile-surface profile-statistics" aria-label="Profile statistics">
+			<button class="stat-spaces" data-screen-action="profile-spaces"><svg class="icon" aria-hidden="true"><use href="#users"/></svg><strong>4</strong><span>Spaces</span></button>
+			<button class="stat-neighbors" data-screen-action="profile-connections" data-id="neighbors"><svg class="icon" aria-hidden="true"><use href="#users"/></svg><strong id="neighbors-count">126</strong><span>Neighbors<br>Following</span></button>
+			<button class="stat-followers" data-screen-action="profile-connections" data-id="followers"><svg class="icon" aria-hidden="true"><use href="#heart"/></svg><strong>1,294</strong><span>Followers</span></button>
+			<button class="stat-plans" data-screen-action="completed-plans"><svg class="icon" aria-hidden="true"><use href="#trophy"/></svg><strong>250</strong><span>Plans<br>Completed</span></button>
+		</section>
+		<section class="profile-surface profile-about" aria-labelledby="about-heading"><span class="profile-about-icon"><svg class="icon" aria-hidden="true"><use href="#user"/></svg></span><div class="profile-about-copy"><h2 id="about-heading">About Me</h2><p data-profile-about>I love exploring new places, building useful tools, and connecting with like-minded people. Always curious to learn and meet new people.</p></div><button class="edit-about-button" data-screen-action="edit-about"><svg class="icon" aria-hidden="true"><use href="#pencil"/></svg>Edit About</button></section>
+		<section class="profile-surface profile-spaces" aria-labelledby="my-spaces-heading">
+			<div class="profile-section-header"><svg class="icon" aria-hidden="true"><use href="#layers"/></svg><h2 id="my-spaces-heading">My Spaces</h2><button class="text-link" data-screen-action="profile-spaces">View all <svg class="icon" aria-hidden="true"><use href="#arrow-right"/></svg></button></div>
+			<div class="profile-spaces-grid">
+				<button class="profile-space-card" data-action="space" data-id="Family"><img src="image/space-family.jpg" width="188" height="76" alt="A family home surrounded by trees"><span class="profile-space-caption"><strong>Family</strong><small>8 members</small></span></button>
+				<button class="profile-space-card" data-action="space" data-id="Couple"><img src="image/space-friends.jpg" width="188" height="76" alt="Two people together at sunset"><span class="profile-space-caption"><strong>Couple</strong><small>2 members</small></span></button>
+				<button class="profile-space-card" data-action="space" data-id="Group"><img src="image/space-work.jpg" width="188" height="76" alt="A bright shared workspace"><span class="profile-space-caption"><strong>Group</strong><small>12 members</small></span></button>
+				<button class="profile-space-card" data-action="space" data-id="Solo"><img src="image/space-travel.jpg" width="188" height="76" alt="A peaceful lake between green mountain peaks"><span class="profile-space-caption"><strong>Solo</strong><small>1 member</small></span></button>
+			</div>
+		</section>
+	</main>
+</body>
+</html>

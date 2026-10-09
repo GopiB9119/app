@@ -1,0 +1,248 @@
+.settings-page { background-image: url("image/settings-sky.jpg"); color: #091460; --settings-opacity: .88; --settings-muted: #788bb8; }
+.settings-page .screen-header { width: 94.8%; height: 60px; margin-top: 24px; }
+.settings-page .screen-header-left { gap: 35px; }
+.settings-page .screen-home, .settings-page .screen-bell { width: 60px; height: 60px; }
+.settings-page .screen-page-pill { min-height: 60px; padding: 12px 24px; gap: 14px; font-size: 20px; }
+.settings-page .screen-page-pill .icon { width: 31px; height: 31px; }
+.settings-page .header-actions { gap: 32px; }
+.settings-layout { display: grid; grid-template-columns: 24.6% minmax(0, 1fr); gap: 2.15%; align-items: start; width: 94.1%; max-width: 1800px; margin: 20px auto 16px; }
+.settings-sidebar { margin-top: 8px; padding: 20px; border: 1px solid var(--panel-border); border-radius: 20px; background: var(--panel); backdrop-filter: blur(20px); }
+.settings-brand { display: flex; align-items: start; gap: 17px; }
+.settings-brand-icon { display: grid; place-items: center; width: 60px; height: 60px; flex-shrink: 0; border-radius: 22px; color: #0d1b73; background: var(--panel); }
+.settings-brand-icon .icon { width: 38px; height: 38px; stroke-width: 1.8; }
+.settings-brand h2 { margin-top: 3px; font-size: 26px; font-weight: 600; line-height: 1.2; }
+.settings-brand p { margin-top: 8px; color: var(--panel-muted); font-size: 15px; line-height: 1.4; }
+.settings-nav { display: grid; margin-top: 14px; }
+.settings-nav-item { display: flex; align-items: center; gap: 23px; width: 100%; min-height: 63px; padding: 12px 20px; border-bottom: 1px solid #d7e2f280; color: #0b175c; font-size: 18px; text-align: left; text-decoration: none; }
+.settings-nav-item > .icon { width: 28px; height: 28px; stroke-width: 1.8; }
+.settings-nav-item > span { flex: 1; min-width: 0; }
+.settings-nav-item > .settings-chevron { width: 21px; height: 21px; color: #8499bf; }
+.settings-nav-item:hover { background: var(--panel-hover); }
+.settings-nav-item.is-active { border-color: transparent; border-radius: 14px; color: #fff; background: var(--panel-selected); }
+.settings-nav-item.is-active > span { color: #0b175c; }
+.settings-nav-item.is-active > .icon:not(.settings-chevron) { filter: drop-shadow(0 1px 1px var(--panel-muted)); }
+.settings-nav-item.is-active > .settings-chevron { color: #007aff; }
+.settings-signout { border-bottom: 0; }
+.settings-signout > .icon:first-child { color: #620459; }
+.settings-main { min-width: 0; min-height: 894px; padding: 24px 21px 22px; border: 1px solid var(--panel-border); border-radius: 18px; background: var(--panel); backdrop-filter: blur(16px); }
+.settings-main:focus { outline: none; }
+.settings-heading { padding-inline: 10px; margin-bottom: 16px; }
+.settings-heading h1 { font-size: 32px; font-weight: 600; line-height: 1.2; }
+.settings-heading p { margin-top: 3px; color: var(--panel-muted); font-size: 20px; line-height: 1.3; }
+.settings-account-content, .settings-sections { display: grid; gap: 16px; }
+.settings-card { min-width: 0; padding: 18px 24px 16px; border: 1px solid var(--panel-border); border-radius: 18px; background: rgba(var(--panel-rgb), var(--settings-opacity)); }
+.settings-card h2 { font-size: 22px; line-height: 1.2; font-weight: 600; }
+.settings-card-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 42px; }
+.settings-account { padding: 16px 24px 20px; }
+.settings-photo-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 42px; padding: 9px 19px; color: #0074ff; border: 1px solid #c8e6ff; border-radius: 30px; background: var(--panel); font-size: 16px; }
+.settings-photo-button .icon { width: 22px; height: 22px; }
+.settings-photo-button:hover { background: var(--panel-hover); }
+.settings-profile-grid { display: grid; grid-template-columns: 200px minmax(0, .65fr) minmax(0, 1fr); gap: 10px 24px; margin-top: 5px; }
+.settings-photo-wrap { position: relative; align-self: center; justify-self: center; grid-column: 1; grid-row: 1 / 3; width: 172px; height: 172px; }
+.settings-portrait { display: block; width: 100%; height: 100%; border: 3px solid #fff; border-radius: 50%; object-fit: cover; }
+.settings-photo-camera { position: absolute; right: -1px; bottom: 2px; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: var(--panel); box-shadow: 0 3px 9px #1842870c; color: #10206e; }
+.settings-photo-camera .icon { width: 27px; height: 27px; }
+.settings-field { display: flex; flex-direction: column; gap: 6px; align-self: start; min-width: 0; color: #7c8fba; font-size: 16px; line-height: 1.25; }
+.settings-name { grid-column: 2; grid-row: 1; }
+.settings-about { grid-column: 3; grid-row: 1; }
+.settings-location { grid-column: 2; grid-row: 2; }
+.settings-joined { grid-column: 3; grid-row: 2; max-width: 260px; }
+.settings-input { width: 100%; min-width: 0; min-height: 42px; padding: 9px 14px; color: #0a185b; border: 1px solid #d8e6f8; border-radius: 9px; background: #ffffff1f; font-size: 16px; line-height: 1.35; }
+.settings-input:focus { border-color: #82bbff; outline: 2px solid #7fbaff38; outline-offset: 1px; }
+.settings-input:invalid:not(:placeholder-shown) { box-shadow: none; }
+textarea.settings-input { height: 84px; min-height: 84px; resize: vertical; padding: 8px 14px; color: #7184b4; line-height: 1.35; }
+.settings-icon-field { display: flex; position: relative; min-width: 0; }
+.settings-icon-field > .icon { position: absolute; left: 15px; top: 11px; width: 23px; height: 23px; color: #122171; pointer-events: none; }
+.settings-icon-field > .settings-input { padding-left: 51px; }
+.settings-icon-field select { padding-right: 27px; cursor: pointer; }
+.settings-statistics > h2, .settings-details > h2 { margin-bottom: 12px; }
+.settings-stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+.settings-stat { display: flex; flex-direction: column; align-items: center; justify-content: start; gap: 3px; min-width: 0; min-height: 124px; padding: 12px 8px 8px; border-radius: 12px; }
+.settings-stat > .icon { width: 28px; height: 28px; stroke-width: 2; }
+.settings-stat > strong { color: #0b145c; font-size: 24px; line-height: 1.2; font-weight: 600; }
+.settings-stat > span { color: #8392bb; font-size: 16px; line-height: 1.2; }
+.settings-stat.stat-spaces { background: var(--panel); }
+.settings-stat.stat-neighbors { background: var(--panel); }
+.settings-stat.stat-followers { background: var(--panel); }
+.settings-stat.stat-plans { background: var(--panel); }
+.settings-stat:hover { background: var(--panel-hover); box-shadow: inset 0 0 0 1px #bacee8; }
+.settings-details { padding: 18px 28px 12px; }
+.settings-detail-list { display: grid; }
+.settings-detail-list > button { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1.1fr) 22px; align-items: center; gap: 22px; width: 100%; min-height: 50px; padding: 10px 18px; border: 1px solid #e2eaf7; border-radius: 9px; background: var(--panel); text-align: left; font-size: 16px; }
+.settings-detail-list > button + button { margin-top: -1px; }
+.settings-detail-list > button:hover { background: var(--panel-hover); }
+.settings-detail-list .icon { width: 25px; height: 25px; }
+.settings-detail-value { color: #7b8db7; overflow-wrap: anywhere; }
+.settings-detail-list .settings-chevron { width: 19px; height: 19px; color: #899cc0; }
+.settings-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; min-height: 84px; padding: 19px 0; }
+.settings-row + .settings-row { border-top: 1px solid #e2eaf5; }
+.settings-row-copy { flex: 1; min-width: 0; }
+.settings-row-copy > strong { display: block; font-size: 17px; font-weight: 550; line-height: 1.4; }
+.settings-row-copy > p { margin-top: 5px; color: #7a8fb2; font-size: 14px; line-height: 1.5; }
+.settings-row > .icon { width: 29px; height: 29px; flex-shrink: 0; color: #4066a7; }
+.settings-switch { appearance: none; position: relative; flex-shrink: 0; width: 46px; height: 26px; margin: 0; border: 0; border-radius: 20px; background: #c4cede; cursor: pointer; }
+.settings-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.settings-switch:checked { background: #2580ff; }
+.settings-switch:checked::after { transform: translateX(20px); }
+.settings-switch:disabled { opacity: .45; cursor: not-allowed; }
+.settings-row select { max-width: 250px; }
+.settings-note { margin-top: 15px; color: #8395b4; font-size: 13px; line-height: 1.6; }
+.settings-badge { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; padding: 6px 10px; border-radius: 7px; background: #e0f6e9; color: #188151; font-size: 12px; }
+.settings-badge.is-muted { background: #edf2f8; color: #7c8ba4; }
+.settings-danger-button { color: #be3357; border-color: #efcbd3; }
+.settings-action-row { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 20px; }
+.settings-range { display: flex; align-items: center; gap: 14px; width: min(280px, 45%); }
+.settings-range input { width: 100%; min-width: 0; accent-color: #217aff; }
+.settings-range output { min-width: 38px; color: #5a79a4; font-size: 14px; }
+.settings-date-preview { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 18px; padding: 20px; border-radius: 8px; background: var(--panel); color: var(--panel-muted); }
+.settings-segmented { display: flex; flex-shrink: 0; gap: 4px; padding: 4px; background: var(--panel); border-radius: 8px; }
+.settings-segmented > button { min-width: 84px; padding: 9px 12px; border-radius: 5px; font-size: 13px; }
+.settings-segmented > button[aria-pressed="true"] { color: #086dff; background: var(--panel-selected); }
+.settings-compact .settings-row { min-height: 64px; padding-block: 12px; }
+.settings-reduced-motion *, .settings-reduced-motion *::before, .settings-reduced-motion *::after { animation: none !important; transition: none !important; }
+
+@media (max-width: 1250px) {
+  .settings-page .screen-header { height: 45px; margin-top: 18px; }
+  .settings-page .screen-header-left { gap: 25px; }
+  .settings-page .screen-home, .settings-page .screen-bell { width: 45px; height: 45px; }
+  .settings-page .screen-page-pill { min-height: 45px; padding: 9px 18px; gap: 10px; font-size: 15px; }
+  .settings-page .screen-page-pill .icon { width: 24px; height: 24px; }
+  .settings-page .header-actions { gap: 23px; }
+  .settings-layout { margin: 15px auto; }
+  .settings-sidebar { margin-top: 6px; padding: 15px; border-radius: 15px; }
+  .settings-brand { gap: 12px; }
+  .settings-brand-icon { width: 45px; height: 45px; border-radius: 17px; }
+  .settings-brand-icon .icon { width: 30px; height: 30px; }
+  .settings-brand h2 { font-size: 20px; margin-top: 2px; }
+  .settings-brand p { font-size: 11px; line-height: 1.4; margin-top: 6px; }
+  .settings-nav { margin-top: 12px; }
+  .settings-nav-item { min-height: 47px; padding: 9px 14px; gap: 18px; font-size: 14px; }
+  .settings-nav-item > .icon { width: 23px; height: 23px; }
+  .settings-nav-item > .settings-chevron { width: 17px; height: 17px; }
+  .settings-nav-item.is-active { border-radius: 11px; }
+  .settings-main { min-height: 670px; padding: 18px 16px 16px; border-radius: 14px; }
+  .settings-heading { padding-inline: 7px; margin-bottom: 12px; }
+  .settings-heading h1 { font-size: 24px; }
+  .settings-heading p { font-size: 15px; margin-top: 2px; }
+  .settings-account-content, .settings-sections { gap: 12px; }
+  .settings-card { padding: 13px 18px 12px; border-radius: 14px; }
+  .settings-card h2 { font-size: 16px; }
+  .settings-card-header { min-height: 32px; gap: 10px; }
+  .settings-account { padding: 12px 18px 12px; }
+  .settings-photo-button { min-height: 32px; padding: 7px 14px; gap: 7px; font-size: 12px; }
+  .settings-photo-button .icon { width: 17px; height: 17px; }
+  .settings-profile-grid { grid-template-columns: 150px minmax(0, .65fr) minmax(0, 1fr); gap: 8px 18px; margin-top: 4px; }
+  .settings-photo-wrap { width: 129px; height: 129px; }
+  .settings-photo-camera { width: 39px; height: 39px; }
+  .settings-photo-camera .icon { width: 21px; height: 21px; }
+  .settings-field { gap: 4px; font-size: 12px; }
+  .settings-input { min-height: 32px; padding: 6px 10px; border-radius: 7px; font-size: 12px; }
+  textarea.settings-input { min-height: 63px; height: 63px; padding: 6px 10px; }
+  .settings-icon-field > .icon { left: 11px; top: 8px; width: 18px; height: 18px; }
+  .settings-icon-field > .settings-input { padding-left: 37px; }
+  .settings-icon-field select { padding-right: 15px; }
+  .settings-joined { max-width: 195px; }
+  .settings-statistics > h2, .settings-details > h2 { margin-bottom: 9px; }
+  .settings-stats-grid { gap: 13px; }
+  .settings-stat { min-height: 93px; padding: 8px 6px 6px; gap: 2px; border-radius: 9px; }
+  .settings-stat > .icon { width: 22px; height: 22px; }
+  .settings-stat > strong { font-size: 20px; }
+  .settings-stat > span { font-size: 12px; }
+  .settings-details { padding: 12px 21px 9px; }
+  .settings-detail-list > button { grid-template-columns: 23px minmax(0, 1fr) minmax(0, 1.1fr) 17px; gap: 16px; min-height: 38px; padding: 7px 13px; font-size: 12px; border-radius: 7px; }
+  .settings-detail-list .icon { width: 20px; height: 20px; }
+  .settings-detail-list .settings-chevron { width: 15px; height: 15px; }
+}
+
+@media (max-width: 1000px) {
+  .settings-layout { grid-template-columns: 225px minmax(0, 1fr); gap: 20px; width: calc(100% - 40px); }
+  .settings-brand p { font-size: 12px; }
+  .settings-nav-item { padding-inline: 10px; gap: 12px; font-size: 13px; }
+  .settings-profile-grid { grid-template-columns: 100px minmax(0, 1fr); }
+  .settings-photo-wrap { width: 100px; height: 100px; grid-row: 1 / 3; }
+  .settings-name { grid-column: 2; grid-row: 1; }
+  .settings-about { grid-column: 1 / -1; grid-row: 3; }
+  .settings-location { grid-column: 2; grid-row: 2; }
+  .settings-joined { grid-column: 1 / -1; grid-row: 4; max-width: none; }
+  .settings-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-detail-list > button { grid-template-columns: 23px minmax(0, 1fr) 17px; gap: 8px 12px; padding-block: 10px; }
+  .settings-detail-list > button > .icon:first-child { grid-column: 1; grid-row: 1 / 3; }
+  .settings-detail-label { grid-column: 2; grid-row: 1; }
+  .settings-detail-value { grid-column: 2; grid-row: 2; }
+  .settings-detail-list > button > .settings-chevron { grid-column: 3; grid-row: 1 / 3; }
+  .settings-row { gap: 14px; }
+  .settings-row > select { max-width: 190px; }
+  .settings-row-copy > strong { font-size: 15px; }
+  .settings-row-copy > p { font-size: 13px; }
+}
+
+@media (max-width: 700px) {
+  .settings-page .screen-header { width: calc(100% - 32px); margin-top: 20px; }
+  .settings-page .screen-header-left { gap: 12px; }
+  .settings-page .screen-home, .settings-page .screen-bell { width: 40px; height: 40px; }
+  .settings-page .screen-page-pill { min-height: 40px; padding-inline: 13px; font-size: 13px; gap: 8px; }
+  .settings-page .screen-page-pill .icon { width: 21px; height: 21px; }
+  .settings-page .header-actions { gap: 12px; }
+  .settings-layout { display: block; width: calc(100% - 28px); margin: 20px 14px; }
+  .settings-sidebar { margin-top: 0; padding: 15px 12px 11px; }
+  .settings-brand { gap: 13px; padding-inline: 3px; }
+  .settings-brand-icon { width: 42px; height: 42px; }
+  .settings-brand h2 { font-size: 19px; }
+  .settings-brand p { max-width: 250px; font-size: 12px; }
+  .settings-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: 15px; }
+  .settings-nav-item { flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 69px; padding: 8px 4px; border: 0; border-radius: 8px; text-align: center; font-size: 11px; line-height: 1.3; }
+  .settings-nav-item > span { flex: none; }
+  .settings-nav-item > .icon { width: 21px; height: 21px; }
+  .settings-nav-item > .settings-chevron { display: none; }
+  .settings-nav-item.is-active { border-radius: 8px; }
+  .settings-main { min-height: 0; margin-top: 16px; padding: 20px 12px 12px; }
+  .settings-heading { padding-inline: 5px; margin-bottom: 19px; }
+  .settings-heading h1 { font-size: 23px; }
+  .settings-heading p { font-size: 13px; line-height: 1.5; margin-top: 6px; }
+  .settings-card { padding: 16px 14px; }
+  .settings-card h2 { font-size: 15px; }
+  .settings-card-header { gap: 8px; }
+  .settings-photo-button { font-size: 10px; padding-inline: 9px; gap: 5px; }
+  .settings-photo-button .icon { width: 15px; height: 15px; }
+  .settings-profile-grid { grid-template-columns: 85px minmax(0, 1fr); gap: 14px; margin-top: 16px; }
+  .settings-photo-wrap { width: 85px; height: 85px; }
+  .settings-photo-camera { width: 32px; height: 32px; right: -3px; }
+  .settings-photo-camera .icon { width: 18px; height: 18px; }
+  .settings-field { font-size: 12px; }
+  .settings-input { font-size: 13px; min-height: 36px; }
+  .settings-icon-field > .settings-input { padding-left: 31px; }
+  .settings-icon-field > .icon { left: 9px; top: 10px; width: 17px; height: 17px; }
+  textarea.settings-input { min-height: 94px; font-size: 13px; line-height: 1.5; }
+  .settings-stats-grid { gap: 10px; }
+  .settings-stat { min-height: 97px; }
+  .settings-detail-list > button { gap: 6px 10px; }
+  .settings-row { min-height: 80px; flex-wrap: wrap; gap: 12px; }
+  .settings-row-copy { min-width: 150px; }
+  .settings-row > select { max-width: 100%; width: 100%; }
+  .settings-range { width: 100%; }
+  .settings-row > .settings-segmented { width: 100%; }
+  .settings-segmented > button { flex: 1; min-width: 0; }
+  .settings-note { font-size: 12px; }
+  .settings-date-preview { padding: 14px; font-size: 13px; }
+}
+
+@media (max-width: 540px) {
+  .settings-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-nav-item { min-height: 72px; }
+  .settings-page .screen-bell,
+  .settings-page .avatar-button,
+  .settings-page .screen-home { width: 44px; height: 44px; }
+}
+
+@media (max-width: 359px) {
+  .settings-page .screen-header-left { gap: 8px; }
+  .settings-page .header-actions { gap: 8px; }
+  .settings-page .screen-page-pill { padding-inline: 10px; }
+  .settings-page .screen-bell, .settings-page .avatar-button { width: 44px; height: 44px; }
+  .settings-profile-grid { grid-template-columns: 1fr; }
+  .settings-photo-wrap, .settings-name, .settings-location, .settings-about, .settings-joined { grid-column: 1; grid-row: auto; }
+  .settings-photo-wrap { width: 110px; height: 110px; }
+  .settings-card-header { flex-wrap: wrap; }
+  .settings-card { padding-inline: 12px; }
+  .settings-detail-list > button { padding-inline: 9px; }
+}

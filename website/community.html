@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#79b8ec">
+	<title>Community | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/community-sky.jpg" as="image">
+	<link rel="stylesheet" href="styles.css">
+	<link rel="stylesheet" href="screens.css">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+</head>
+<body class="screen-page community-screen" data-page="community">
+	<a class="skip-link" href="#main">Skip to community</a>
+	<header id="screen-header" class="screen-header"></header>
+	<main id="main" class="screen-main community-main" tabindex="-1">
+		<header class="community-brand"><span class="community-brand-icon"><svg class="icon" aria-hidden="true"><use href="#globe"/></svg></span><div><h1>Community</h1><p>Real people. Around you.</p></div></header>
+		<button class="create-post-button" data-screen-action="create-post"><svg class="icon" aria-hidden="true"><use href="#circle-plus"/></svg>Create Post</button>
+		<div class="community-tabs" role="group" aria-label="Community views">
+			<button data-screen-action="community-tab" data-id="nearby" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="#map-pin"/></svg>Nearby</button>
+			<button data-screen-action="community-tab" data-id="people" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#users"/></svg>People</button>
+			<button data-screen-action="community-tab" data-id="help" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#hand-heart"/></svg>Help</button>
+		</div>
+		<section id="community-feed" class="community-feed" aria-label="Community feed" aria-live="polite"></section>
+	</main>
+</body>
+</html>
