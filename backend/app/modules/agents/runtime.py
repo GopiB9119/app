@@ -583,16 +583,23 @@ class AgentRuntime:
         return getattr(self.agent.model, "call_tokens", CALL_TOKENS) - output
 
     def fit(self, base, history, transcript, tools, output=OUTPUT):
-        """deepagents' summarisation, kept simple: drop the oldest history, then shorten older tool results."""
+        """Drop old history and read results while retaining action and control receipts."""
         def size():
             return estimate_tokens({"messages": base + history + transcript, "tools": tools})
         while size() > self.budget(output) and history:
             history = history[2:]
+        read_calls = {
+            call["id"]
+            for message in transcript if message.get("role") == "assistant"
+            for call in message.get("tool_calls") or []
+            if (tool := TOOLS.get(call.get("function", {}).get("name"))) is not None and tool.effect == "read"
+        }
         tool_positions = [index for index, message in enumerate(transcript) if message.get("role") == "tool"]
         for index in tool_positions[:-2]:
             if size() <= self.budget(output):
                 break
-            transcript[index] = {**transcript[index], "content": '{"trimmed":"Older result removed to save room; call the tool again if needed."}'}
+            if transcript[index].get("tool_call_id") in read_calls:
+                transcript[index] = {**transcript[index], "content": '{"trimmed":"Older read result removed to save room; read this source again if needed."}'}
         return base + history + transcript
 
     def trimmed(self, messages, tools):

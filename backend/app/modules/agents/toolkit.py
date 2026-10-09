@@ -51,6 +51,7 @@ LISTED = 30
 LIST_RESULT_TEXT = 3000
 MAX_NOTES = 50
 DOCUMENT_TEXT = 6000
+DOCUMENT_RESULT_TEXT = 4000
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 # Words that mark a memory nobody should keep in an assistant: secrets, card and identity numbers.
 SENSITIVE = re.compile(
@@ -338,7 +339,15 @@ def prepare_create_task(ctx, args):
 
 
 def execute_create_task(ctx, payload, key):
-    view, _etag = domain(ctx.agent.tasks.create, ctx.token, CreateTask.model_validate(payload), key)
+    tasks = ctx.agent.tasks
+    if ctx.database is not None:
+        ctx.agent.identity.authenticate(ctx.database, ctx.token, lock=True)
+        ctx.agent.check_context(ctx.database, ctx.token, ctx.database.get(AgentRun, ctx.run_id))
+        tasks = copy(tasks)
+        tasks.identity = copy(tasks.identity)
+        tasks.sessions = sessionmaker(bind=ctx.database.connection(), expire_on_commit=False, join_transaction_mode="create_savepoint")
+        tasks.identity.sessions = tasks.sessions
+    view, _etag = domain(tasks.create, ctx.token, CreateTask.model_validate(payload), key)
     return Done(view.id, f"Created the task \u201c{view.title}\u201d.", {"task_id": view.id, "title": view.title})
 
 
@@ -678,7 +687,15 @@ def prepare_create_event(ctx, args):
 
 def execute_create_event(ctx, payload, key):
     body = CreateEvent.model_validate({name: value for name, value in payload.items() if name != "space_id"})
-    view = domain(ctx.agent.events.create, ctx.token, payload["space_id"], body, key)
+    events = ctx.agent.events
+    if ctx.database is not None:
+        ctx.agent.identity.authenticate(ctx.database, ctx.token, lock=True)
+        ctx.agent.check_context(ctx.database, ctx.token, ctx.database.get(AgentRun, ctx.run_id))
+        events = copy(events)
+        events.identity = copy(events.identity)
+        events.sessions = sessionmaker(bind=ctx.database.connection(), expire_on_commit=False, join_transaction_mode="create_savepoint")
+        events.identity.sessions = events.sessions
+    view = domain(events.create, ctx.token, payload["space_id"], body, key)
     return Done(str(view.id), f"Created the event \u201c{view.title}\u201d.", {"event_id": str(view.id), "title": view.title})
 
 
@@ -803,14 +820,22 @@ def read_document(ctx, args):
     if str(document.space_id) != ctx.space_id:
         raise ToolProblem("NOT_FOUND", "That document isn't in this Space.")
     lines = (document.content or "").splitlines()[args.start_line - 1:]
+    if not lines:
+        raise ToolProblem("invalid_start_line", f"Line {args.start_line} is not available in this document. Use next_start_line from a previous page or open the Documents screen.")
+    data = {"name": document.name, "total_lines": document.line_count}
     text, used = [], 0
     for number, line in enumerate(lines, start=args.start_line):
         if used + len(line) > DOCUMENT_TEXT:
             break
+        candidate = {**data, "text": "\n".join([*text, f"{number}: {line}"]),
+                     "next_start_line": number + 1 if number < (document.line_count or 0) else None}
+        if len(json.dumps({"result": candidate}, ensure_ascii=False, default=str, separators=(",", ":"))) > DOCUMENT_RESULT_TEXT:
+            break
         text.append(f"{number}: {line}")
         used += len(line) + 1
-    data = {"name": document.name, "total_lines": document.line_count, "text": "\n".join(text),
-            "next_start_line": args.start_line + len(text) if args.start_line + len(text) <= (document.line_count or 0) else None}
+        data = candidate
+    if not text:
+        raise ToolProblem("result_too_large", f"Line {args.start_line} is too large to read whole within the tool result limit. Open the Documents screen to review it; do not retry the same line.")
     return Outcome(data, f"Read the document \u201c{clip(document.name, 80)}\u201d.", [evidence("document", document.id, document.name)])
 
 
@@ -1166,17 +1191,24 @@ class CommentArgs(Args):
 
 
 def prepare_comment(ctx, args):
-    post = read_post(ctx, args.post_id)
-    if post.status != "published" or post.page_status != "active" or post.page_limited:
-        raise ToolProblem("comments_closed", "Comments aren't open on this post.")
-    body = validated(CreateComment, {"body": args.text})
-    fields = [("Post", post.title or clip(post.body, 80)), ("Page", post.page_name), ("Your comment", body.body),
-              ("Who can see it", "Everyone who can see the post")]
-    return Proposal({"post_id": post.id, "body": body.body}, fields, "Post this comment as you.")
+    community = ctx.agent.community
+    with community.sessions() as database:
+        viewer = domain(community.viewer, database, ctx.token)
+        post, page = domain(community.visible_post, database, viewer, str(args.post_id))
+        if post.status != "published" or page.status != "active" or page.moderation_limited_at is not None:
+            raise ToolProblem("comments_closed", "Comments aren't open on this post.")
+        body = validated(CreateComment, {"body": args.text})
+        fields = [("Post", post.title or clip(post.body, 80)), ("Page", page.name), ("Your comment", body.body),
+                  ("Who can see it", "Everyone who can see the post")]
+        return Proposal({"post_id": post.id, "etag": community.post_etag(post), "body": body.body}, fields, "Post this comment as you.")
 
 
 def execute_comment(ctx, payload, key):
-    comment = domain(public_service(ctx).create_comment, ctx.token, payload["post_id"], CreateComment(body=payload["body"]), key)
+    community = public_service(ctx)
+    user, _session = community.identity.authenticate(ctx.database, ctx.token)
+    current, _page = domain(community.visible_post, ctx.database, user, payload["post_id"], lock=True)
+    domain(community.require_etag, payload.get("etag"), community.post_etag(current), "post")
+    comment = domain(community.create_comment, ctx.token, payload["post_id"], CreateComment(body=payload["body"]), key)
     return Done(comment.id, "Posted your comment.", {"comment_id": comment.id})
 
 

@@ -2,6 +2,224 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Community Platform: verify manual account and Space journeys",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test", "--test-concurrency=1",
+				"--test-name-pattern=^(website wording|checklist|solo|space settings|calendar|invitations|ownership|members|rejoin|task filters|reminders|notification preference retry|live reminders fallback|reminder requests|post search|events|care|groups|couples|roles|invite permission|calendar views|event capacity|event budget):",
+				"--test-reporter=spec", "--test-reporter=junit",
+				"--test-reporter-destination=stdout", "--test-reporter-destination=.local/old-web-manual-account-space-20261009.xml",
+				"tests/e2e/identity.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": { "FORCE_COLOR": "0", "COMMUNITY_WEB_URL": "http://127.0.0.1:3000", "COMMUNITY_MAIL_URL": "http://127.0.0.1:8025" }
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify remaining manual web journeys",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test", "--test-concurrency=1",
+				"--test-reporter=spec", "--test-reporter=junit",
+				"--test-reporter-destination=stdout", "--test-reporter-destination=.local/old-web-extended-manual-recovery-20261009.xml",
+				"tests/e2e/alerts.test.mjs", "tests/e2e/scheduling.test.mjs", "tests/e2e/search.test.mjs",
+				"tests/e2e/page-events.test.mjs", "tests/e2e/help-posts.test.mjs", "tests/e2e/classification.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"FORCE_COLOR": "0",
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3000",
+					"COMMUNITY_MAIL_URL": "http://127.0.0.1:8025"
+				}
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify current Agent snapshot",
+			"type": "shell",
+			"command": "& {\n$ErrorActionPreference = 'Stop'\n$root = (Get-Location).Path\n$stamp = (Get-Date -Format 'yyyyMMdd-HHmmssfff') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)\n$directory = Join-Path $root ('.local/old-web-agent-' + $stamp)\n$source = Join-Path $directory 'backend'\n$reports = Join-Path $directory 'reports'\nNew-Item -ItemType Directory -Path $source, $reports | Out-Null\n$files = @(git ls-files -- backend/app backend/migrations backend/tests backend/pyproject.toml backend/alembic.ini)\nif ($LASTEXITCODE -ne 0) { throw 'Source inventory failed.' }\n$captured = foreach ($file in $files) {\n  if ($file -notmatch '^backend/(app/.*\\.py|migrations/.*\\.py|tests/.*\\.py|pyproject\\.toml|alembic\\.ini)$') { continue }\n  $entry = Get-Item -LiteralPath $file\n  if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Source links are not accepted.' }\n  $before = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash\n  $target = Join-Path $directory $file\n  New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null\n  Copy-Item -LiteralPath $file -Destination $target\n  if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $before -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $before) { throw 'Source moved during capture.' }\n  [pscustomobject]@{ Path = $file; SHA256 = $before }\n}\n$captured | ConvertTo-Json -Depth 3 | Out-File -LiteralPath (Join-Path $directory 'inputs.json') -Encoding utf8\nWrite-Output ('Source snapshot: ' + $directory)\n$docker = 'C:/Program Files/Docker/Docker/resources/bin/docker.exe'\n& $docker run --rm --pull never --network community-platform_default --mount ('type=bind,source=' + $source + ',target=/app,readonly') --mount ('type=bind,source=' + $reports + ',target=/reports') --workdir /app -e COMMUNITY_ENVIRONMENT=test -e COMMUNITY_DATABASE_URL=postgresql+psycopg://community_test:synthetic-tests-only@test-db:5432/community_test -e COMMUNITY_AGENT_MODEL_URL= -e COMMUNITY_AGENT_MODEL_NAME= -e COMMUNITY_AGENT_MODEL_KEY= -e COMMUNITY_AGENT_WEB_KEY= community-platform-tests pytest -q --tb=short -p no:cacheprovider --junitxml=/reports/agent.xml tests/test_agent_runtime.py tests/test_agent_llm.py tests/test_agent_kinds.py tests/test_agent_auto_approve.py tests/test_agent_mentions.py tests/test_agent_registry.py tests/test_agent_metrics.py\n$exitCode = $LASTEXITCODE\n$changedSource = @($captured | Where-Object { (Get-FileHash -LiteralPath (Join-Path $directory $_.Path) -Algorithm SHA256).Hash -ne $_.SHA256 } | ForEach-Object { $_.Path })\n$changedWorkspace = @($captured | Where-Object { -not (Test-Path -LiteralPath $_.Path) -or (Get-FileHash -LiteralPath $_.Path -Algorithm SHA256).Hash -ne $_.SHA256 } | ForEach-Object { $_.Path })\n$result = [pscustomobject]@{ ExitCode = $exitCode; CapturedInputs = @($captured).Count; ChangedSnapshot = $changedSource; ChangedWorkspace = $changedWorkspace; Report = (Join-Path $reports 'agent.xml') }\n$result | ConvertTo-Json -Depth 4 | Out-File -LiteralPath (Join-Path $directory 'result.json') -Encoding utf8\n$result | ConvertTo-Json -Depth 4\nif ($exitCode -ne 0 -or $changedSource.Count -gt 0 -or $changedWorkspace.Count -gt 0) { throw 'Agent qualification failed or source changed; evidence retained.' }\n}",
+			"options": { "cwd": "${workspaceFolder}" },
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: collect old web evidence",
+			"type": "shell",
+			"command": "& {\n$ErrorActionPreference = 'Stop'\n$root = (Get-Location).Path\n$reports = @('backend/.local/old-web-backend-full-20261009.xml', '.local/old-web-components-20261009.xml', '.local/old-web-client-20261009.xml', '.local/old-web-api-transport-reviewed-20261009.xml', '.local/old-web-smoke-20261009.xml')\n$results = foreach ($report in $reports) {\n  $full = Join-Path $root $report\n  if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { [pscustomobject]@{ Report = $report; State = 'Not finalized' }; continue }\n  $document = New-Object System.Xml.XmlDocument\n  try { $document.Load($full) } catch { [pscustomobject]@{ Report = $report; State = 'Invalid or incomplete XML' }; continue }\n  $cases = $document.SelectNodes('//testcase')\n  if ($cases.Count -lt 1) { throw 'An empty report is not verification.' }\n  $failed = $document.SelectNodes('//testcase[failure or error]')\n  $skipped = $document.SelectNodes('//testcase[skipped]')\n  [pscustomobject]@{ Report = $report; State = 'Finalized'; Tests = $cases.Count; Failed = $failed.Count; Skipped = $skipped.Count; FailingNames = @($failed | ForEach-Object { $_.name }) }\n}\n$inputs = Get-Content -LiteralPath '.local/old-web-backend-inputs-20261009.json' -Raw | ConvertFrom-Json\n$changed = foreach ($inputFile in $inputs) {\n  if ($inputFile.Path -notmatch '^backend/(app/.*\\.py|migrations/.*\\.py|tests/.*\\.py|pyproject\\.toml|Dockerfile)$') { throw 'Unexpected manifest path.' }\n  if (-not (Test-Path -LiteralPath $inputFile.Path -PathType Leaf)) { $inputFile.Path; continue }\n  if ((Get-FileHash -LiteralPath $inputFile.Path -Algorithm SHA256).Hash -ne $inputFile.SHA256) { $inputFile.Path }\n}\n$services = @(& 'C:/Program Files/Docker/Docker/resources/bin/docker.exe' ps --filter 'name=community-platform' --format '{{.Names}}|{{.Status}}')\nif ($LASTEXITCODE -ne 0) { throw 'Docker status failed.' }\n$health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health/ready' -TimeoutSec 15 -MaximumRedirection 0\n$record = [pscustomobject]@{ CheckedAt = [DateTime]::UtcNow.ToString('o'); Reports = @($results); BackendInputs = @($inputs).Count; ChangedBackendInputs = @($changed); ApiStatus = $health.status; Services = $services }\n$output = '.local/old-web-evidence-' + (Get-Date -Format 'yyyyMMdd-HHmmssfff') + '.json'\n$record | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $output -Encoding utf8\nWrite-Output $output\n$record | ConvertTo-Json -Depth 6\n}",
+			"options": { "cwd": "${workspaceFolder}" },
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify API persistence",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test", "--test-concurrency=1", "--test-name-pattern=^api transport",
+				"--test-reporter=spec", "--test-reporter=junit",
+				"--test-reporter-destination=stdout", "--test-reporter-destination=.local/old-web-api-transport-reviewed-20261009.xml",
+				"tests/e2e/identity.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": { "FORCE_COLOR": "0", "COMMUNITY_API_URL": "http://127.0.0.1:8000", "COMMUNITY_MAIL_URL": "http://127.0.0.1:8025" }
+			},
+			"presentation": { "panel": "dedicated", "reveal": "always" },
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect offline web archives",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"-e",
+				"const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'); const npmRequire=require('node:module').createRequire(path.join(path.dirname(process.execPath),'node_modules/npm/package.json')); const cache=npmRequire('cacache'); const web=path.resolve('web'),cachePath=path.join(process.env.LOCALAPPDATA,'npm-cache/_cacache'); const lockBytes=fs.readFileSync(path.join(web,'package-lock.json')); const lock=JSON.parse(lockBytes); const supports=(values,current)=>!Array.isArray(values)||(!values.includes('!'+current)&&(!values.some(value=>!value.startsWith('!'))||values.includes(current)||values.includes('any'))); (async()=>{ const missing=[]; for(const [name,entry] of Object.entries(lock.packages)){ if(!name.startsWith('node_modules/')||!supports(entry.os,process.platform)||!supports(entry.cpu,process.arch)||fs.existsSync(path.join(web,name,'package.json'))) continue; const item={name:name.slice(13),version:entry.version,integrity:entry.integrity,archiveVerified:false}; if(entry.integrity){ try{ const present=await cache.get.hasContent(cachePath,entry.integrity); if(present&&present.size<=33554432){ const bytes=await cache.get.byDigest(cachePath,entry.integrity); item.archiveVerified=bytes.length>0; item.archiveBytes=bytes.length; } }catch(error){ item.cacheError=error.code??error.name; } } missing.push(item); } const report={checkedAt:new Date().toISOString(),lockSha256:crypto.createHash('sha256').update(lockBytes).digest('hex'),missingPackages:missing.length,verifiedCachedArchives:missing.filter(item=>item.archiveVerified).length,networkRequests:0,missing}; const output='.local/old-web-offline-archives-'+Date.now()+'.json'; fs.writeFileSync(output,JSON.stringify(report,null,2)+'\\n',{flag:'wx'}); console.log(JSON.stringify({output,...report},null,2)); })().catch(error=>{ console.error(error.code??error.name); process.exitCode=1; });"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: qualify old backend",
+			"type": "process",
+			"command": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+			"args": [
+				"compose",
+				"--env-file",
+				"NUL",
+				"-f",
+				"infra/compose.yaml",
+				"--profile",
+				"test",
+				"run",
+				"--rm",
+				"--pull",
+				"never",
+				"--name",
+				"old-web-backend-20261009",
+				"tests",
+				"pytest",
+				"-q",
+				"--tb=short",
+				"-p",
+				"no:cacheprovider",
+				"--junitxml=.local/old-web-backend-full-20261009.xml"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: smoke test old web",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-name-pattern=^(auth forms|mobile):",
+				"--test-reporter=spec",
+				"--test-reporter=junit",
+				"--test-reporter-destination=stdout",
+				"--test-reporter-destination=.local/old-web-smoke-recovery-20261009.xml",
+				"tests/e2e/identity.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"FORCE_COLOR": "0",
+					"COMMUNITY_WEB_URL": "http://127.0.0.1:3000",
+					"COMMUNITY_MAIL_URL": "http://127.0.0.1:8025"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: check package transport",
+			"type": "process",
+			"command": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+			"args": [
+				"run",
+				"--rm",
+				"--pull",
+				"never",
+				"--read-only",
+				"--cap-drop=ALL",
+				"community-platform-tests",
+				"python3",
+				"-c",
+				"import json,urllib.request; response=urllib.request.urlopen('https://registry.npmjs.org/web-namespaces',timeout=15); package=json.load(response); print(json.dumps({'status':response.status,'package':package['name']}))"
+			],
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify old web clients",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-reporter=spec",
+				"--test-reporter=junit",
+				"--test-reporter-destination=stdout",
+				"--test-reporter-destination=.local/old-web-client-20261009.xml",
+				"tests/*-client.test.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"FORCE_COLOR": "0"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
 			"label": "Community Platform: install backend packages",
 			"type": "process",
 			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
@@ -1038,6 +1256,82 @@
 			"label": "Community Platform: verify live web information answers",
 			"type": "shell",
 			"command": "& {\n    $code = @'\nfrom alembic.config import Config\nfrom alembic.script import ScriptDirectory\nfrom sqlalchemy import text\nfrom app.config import Settings\nfrom app.main import create_app\nfrom app.modules.agents.prompts import PROMPT_VERSION\nsettings = Settings()\nassert settings.agent_model_call_tokens == 10000 and settings.agent_model_token_limit == 2000000\nassert settings.agent_model_usage_dir\nassert settings.agent_model_key.get_secret_value() and settings.agent_web_key.get_secret_value(), 'Both existing providers must be configured'\nassert PROMPT_VERSION == 'agent-react-2026-10-06-14'\napp = create_app(settings)\nwith app.state.sessions() as session:\n    assert set(session.scalars(text('select version_num from alembic_version'))) == set(ScriptDirectory.from_config(Config('alembic.ini')).get_heads())\nprint('Matched source/schema; existing providers and budgets verified. This task does not reload the API.')\napp.state.agents.close()\napp.state.engine.dispose()\n'@\n    $code | & docker exec -i community-platform-api-1 python3 -\n    if ($LASTEXITCODE -ne 0) { throw 'Agent preflight failed; no live test performed' }\n    $ready = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health/ready' -TimeoutSec 15\n    if ($ready.status -ne 'ready') { throw 'The API must already be ready before testing' }\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        $report = '.local/agent-web-information-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n        & node --test --test-concurrency=1 '--test-name-pattern=^llm (web information|news information|web extraction):' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-llm.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'Live information journey failed; preserve its report and run records' }\n    } finally { $env:COMMUNITY_AGENT_MODEL_LIVE = $previous }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: restore locked web packages",
+			"type": "shell",
+			"command": "npm.cmd --prefix web install --ignore-scripts --no-audit --no-fund --prefer-offline --fetch-retries=0 --fetch-timeout=15000",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Community Platform: verify Agent context compaction",
+			"type": "shell",
+			"command": "docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_runtime.py -k context_compaction --junitxml=.local/agent-compaction-20261009.xml",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify comment parent review 20261009 d53da4bc",
+			"type": "shell",
+			"command": "docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_runtime.py::test_comment_review_rejects_changed_parent_without_posting --junitxml=.local/agent-comment-review-20261009.xml",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify current Agent backend 20261009 d53da4bc",
+			"type": "process",
+			"command": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+			"args": [
+				"compose",
+				"--env-file",
+				"NUL",
+				"-f",
+				"infra/compose.yaml",
+				"--profile",
+				"test",
+				"run",
+				"--rm",
+				"--no-deps",
+				"--pull",
+				"never",
+				"--name",
+				"agent-resume-task-20261009-d53da4bc",
+				"-e",
+				"PYTHONDONTWRITEBYTECODE=1",
+				"tests",
+				"python3",
+				"-m",
+				"pytest",
+				"-q",
+				"--tb=short",
+				"--show-capture=no",
+				"-p",
+				"no:cacheprovider",
+				"-o",
+				"faulthandler_timeout=90",
+				"--durations=5",
+				"tests/test_agent_runtime.py",
+				"tests/test_agent_llm.py",
+				"tests/test_agent_auto_approve.py",
+				"tests/test_agent_kinds.py",
+				"tests/test_agent_registry.py",
+				"tests/test_agent_mentions.py",
+				"tests/test_agent_metrics.py",
+				"--junitxml=.local/agent-resume-regression-task-20261009.xml"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"

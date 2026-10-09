@@ -123,6 +123,8 @@ def test_real_openapi_export_and_check_need_no_database_or_application_key(tmp_p
     before = output.read_bytes(), output.stat().st_mtime_ns
     document = json.loads(before[0])
     assert document["paths"]["/v1/me"]["get"]["security"]
+    assert document["paths"]["/v1/auth/login"]["post"]["responses"]["422"]["description"] == "Unprocessable Entity"
+    assert document["paths"]["/v1/spaces/{space_id}/documents"]["post"]["responses"]["413"]["description"] == "Request Entity Too Large"
     cli.main(["--output", str(output), "check-openapi"], settings)
 
     assert (output.read_bytes(), output.stat().st_mtime_ns) == before
