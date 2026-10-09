@@ -170,7 +170,7 @@ test('Events count the Space, the author and the people who answered in characte
   assert.equal(accepts(events.attendeeSchema, attendee(emoji(81))), false);
 });
 
-test('Agent requests, summaries and notes count characters, and the request form takes the full 500', () => {
+test('Agent requests, summaries and notes count characters, and the request form takes the full 2,000', () => {
   const agents = client('features/agents/client.ts');
   const approval = summary => ({
     id: approvalId, run_id: runId, space_id: spaceId, tool_name: 'tasks.create', risk: 'medium', summary, fields: [],
@@ -184,13 +184,13 @@ test('Agent requests, summaries and notes count characters, and the request form
     answer: null, question: null, approval: approval('Create this task.'), plan: [], tool_calls: [], evidence: [], events: [],
     created_at: instant, updated_at: instant, finished_at: null, version: '2',
   });
-  assert.equal(accepts(agents.runSchema, run(emoji(500))), true);
-  assert.equal(accepts(agents.runSchema, run(emoji(501))), false);
+  assert.equal(accepts(agents.runSchema, run(emoji(2000))), true);
+  assert.equal(accepts(agents.runSchema, run(emoji(2001))), false);
   const memory = content => ({ id: memoryId, kind: 'note', key: null, label: 'Note', content, source: 'approved_request', source_run_id: runId, created_at: instant });
   assert.equal(accepts(agents.memorySchema, memory(emoji(200))), true);
   assert.equal(accepts(agents.memorySchema, memory(emoji(201))), false);
-  assert.equal(agents.messageSchema.safeParse(emoji(500)).success, true);
-  const tooLong = agents.messageSchema.safeParse(emoji(501));
+  assert.equal(agents.messageSchema.safeParse(emoji(2000)).success, true);
+  const tooLong = agents.messageSchema.safeParse(emoji(2001));
   assert.equal(tooLong.success, false);
-  assert.equal(tooLong.error.issues[0].message, 'Keep a request under 500 characters.');
+  assert.equal(tooLong.error.issues[0].message, 'Keep a message under 2,000 characters.');
 });

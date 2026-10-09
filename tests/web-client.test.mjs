@@ -621,6 +621,99 @@ test('Group clients send exact intents and reject inconsistent directory and req
   assert.equal(calls.at(-1).options.body, '{"name":"Hikers"}');
 });
 
+function invitationResult(overrides = {}) {
+  return {
+    id: invitationId, space_id: spaceId, space_name: 'Morgan family', inviter_name: 'Alex Morgan',
+    recipient_account_id: accountId, role: 'member', status: 'pending',
+    created_at: '2026-09-19T10:00:00Z', expires_at: '2026-10-04T10:00:00Z', ...overrides,
+  };
+}
+
+test('Invitation lists reject another recipient or Space before returning private details', async () => {
+  for (const [route, item] of [
+    ['invitations', invitationResult({ recipient_account_id: invitationId })],
+    [`spaces/${spaceId}/invitations`, invitationResult({ space_id: invitationId })],
+  ]) {
+    const client = ownershipClient(async () => Response.json({
+      data: [item], pagination: { next_cursor: null, has_more: false },
+    }));
+    await assert.rejects(client.invitationPage(route, accountId, null, new AbortController().signal), {
+      status: 502, code: 'INVALID_RESPONSE',
+    });
+  }
+});
+
+for (const route of ['invitations', `spaces/${spaceId}/invitations`]) {
+  for (const [problem, data, cursor, pagination] of [
+    ['duplicate records', [invitationResult(), invitationResult({ inviter_name: 'Conflicting sender' })], null, { next_cursor: null, has_more: false }],
+    ['a repeated cursor', [invitationResult()], 'same+cursor', { next_cursor: 'same+cursor', has_more: true }],
+    ['an empty page that claims more', [], null, { next_cursor: 'next-page', has_more: true }],
+    ['more rows than requested', Array.from({ length: 21 }, (_, index) => invitationResult({
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    })), null, { next_cursor: null, has_more: false }],
+  ]) {
+    test(`Invitation pagination rejects ${problem} for ${route}`, async () => {
+      const client = ownershipClient(async () => Response.json({ data, pagination }));
+      await assert.rejects(client.invitationPage(route, accountId, cursor, new AbortController().signal), {
+        status: 502, code: 'INVALID_RESPONSE',
+      });
+    });
+  }
+}
+
+for (const route of ['invitations', `spaces/${spaceId}/invitations`]) {
+  test(`Invitation lists preserve a valid 20-row page, scope and cancellation signal for ${route}`, async () => {
+    const data = Array.from({ length: 20 }, (_, index) => invitationResult({
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      recipient_account_id: route === 'invitations' ? accountId : invitationId,
+      status: route === 'invitations' ? 'pending' : ['pending', 'accepted', 'declined', 'revoked', 'expired'][index % 5],
+    }));
+    const calls = [];
+    const controller = new AbortController();
+    const client = ownershipClient(async (url, options) => {
+      calls.push({ url, options });
+      return Response.json({ data, pagination: { next_cursor: 'next+cursor', has_more: true } });
+    });
+
+    const result = await client.invitationPage(route, accountId, 'previous+cursor', controller.signal);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(result.data)), data);
+    assert.equal(result.pagination.next_cursor, 'next+cursor');
+    assert.equal(result.pagination.has_more, true);
+    assert.equal(calls.length, 1);
+    const url = new URL(calls[0].url, origin);
+    assert.equal(url.pathname, `/api/${route}`);
+    assert.equal(url.searchParams.get('limit'), '20');
+    assert.equal(url.searchParams.get('cursor'), 'previous+cursor');
+    assert.equal(calls[0].options.method, 'GET');
+    assert.equal(calls[0].options.headers['X-Account-ID'], accountId);
+    assert.equal(calls[0].options.cache, 'no-store');
+    assert.equal(calls[0].options.credentials, 'same-origin');
+    assert.equal(calls[0].options.signal, controller.signal);
+  });
+
+  test(`Invitation lists allow a genuinely empty final page for ${route}`, async () => {
+    const client = ownershipClient(async () => Response.json({
+      data: [], pagination: { next_cursor: null, has_more: false },
+    }));
+    const result = await client.invitationPage(route, accountId, null, new AbortController().signal);
+    assert.equal(result.data.length, 0);
+    assert.equal(result.pagination.has_more, false);
+    assert.equal(result.pagination.next_cursor, null);
+  });
+}
+
+test('Invitation list cancellation stays cancelled instead of becoming an offline error', async () => {
+  const controller = new AbortController();
+  const client = ownershipClient((_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+  }));
+  const pending = client.invitationPage('invitations', accountId, null, controller.signal);
+  const checked = assert.rejects(pending, { name: 'AbortError' });
+  controller.abort();
+  await checked;
+});
+
 test('Invitation BFF exposes only the six authenticated method/path combinations', async () => {
   const routes = [
     ['GET', 'invitations'],

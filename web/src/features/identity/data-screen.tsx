@@ -7,6 +7,7 @@ import { Download, LoaderCircle, LogOut, RefreshCw, Trash2, UserRound, X } from 
 import { z } from "zod";
 import { Account, ApiError, api, doneSchema, userSchema } from "./client";
 import { Shell } from "./shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { translate, type Language } from "@/features/i18n/messages";
 import styles from "./data.module.css";
@@ -38,11 +39,12 @@ export function DataScreen() {
   const queryClient = useQueryClient();
   const [deletion, setDeletion] = useState<{ purgeAfter: string; timezone: string } | null>(null);
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }), enabled: !deletion });
+  const hydrated = useHydrated();
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) window.location.replace("/login");
   }, [profile.error]);
   if (deletion) return <main className={`account-main ${styles.main}`}><section className={styles.status} role="status"><p>{t("data.deletionNotice", { date: formatDate(deletion.purgeAfter, deletion.timezone, language) })}</p><Link className="text-button" href="/login">{t("data.signIn")}</Link></section></main>;
-  if (profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("data.loadingAccount")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("data.loadingAccount")}</main></Shell>;
   if (!profile.data) return <Shell account><main className="auth-main"><h1>{t("data.unavailable")}</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />{t("data.retry")}</button></main></Shell>;
   return <DataDetails key={profile.data.data.id} user={profile.data.data} onDeleted={purgeAfter => {
     setDeletion({ purgeAfter, timezone: profile.data.data.timezone });

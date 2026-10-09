@@ -30,6 +30,8 @@ ERASE = (
     ("agent_tool_calls", "DELETE FROM agent_tool_calls WHERE run_id IN (SELECT id FROM agent_runs WHERE account_id = :a)"),
     ("agent_approvals", "DELETE FROM agent_approvals WHERE account_id = :a OR run_id IN (SELECT id FROM agent_runs WHERE account_id = :a)"),
     ("agent_events", "DELETE FROM agent_run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE account_id = :a)"),
+    # Their @agent requests in chats (DEC-046); the agent's replies are erased with their own messages below.
+    ("agent_mentions", "DELETE FROM conversation_agent_mentions WHERE account_id = :a"),
     ("agent_runs", "DELETE FROM agent_runs WHERE account_id = :a"),
     # An ownership or page handover offer, kept for the other person, still names the session it was made from; that
     # row keeps its identifier and nothing else, and every other session row goes.
@@ -70,6 +72,8 @@ ERASE = (
     ("lock_pages", "SELECT id FROM public_pages WHERE id IN (SELECT page_id FROM public_page_follows WHERE account_id = :a "
                    "UNION SELECT page_id FROM public_posts WHERE id IN (SELECT post_id FROM public_post_reactions WHERE account_id = :a "
                    "UNION SELECT post_id FROM public_post_comments WHERE author_id = :a) "
+                   "UNION SELECT page_id FROM help_posts WHERE author_id = :a OR id IN (SELECT post_id FROM help_replies WHERE author_id = :a) "
+                   "UNION SELECT page_id FROM page_events WHERE created_by = :a OR id IN (SELECT event_id FROM page_event_responses WHERE account_id = :a) "
                    "UNION SELECT id FROM public_pages WHERE owner_id = :a) ORDER BY id FOR UPDATE"),
     ("like_counts", "UPDATE public_posts SET like_count = like_count - 1 WHERE id IN (SELECT post_id FROM public_post_reactions WHERE account_id = :a) AND like_count > 0"),
     ("likes", "DELETE FROM public_post_reactions WHERE account_id = :a"),
@@ -81,9 +85,27 @@ ERASE = (
     ("comments", "UPDATE public_post_comments SET status = 'deleted', body = NULL, ended_at = COALESCE(ended_at, :now) WHERE author_id = :a AND status = 'visible'"),
     ("posts", "UPDATE public_posts SET status = 'deleted', title = NULL, body = NULL, deleted_at = COALESCE(deleted_at, :now), updated_at = :now WHERE (author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)) AND status <> 'deleted'"),
     ("post_terms", "DELETE FROM post_terms WHERE post_id IN (SELECT id FROM public_posts WHERE author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a))"),
+    # Help requests and offers (D3): their replies elsewhere are withdrawn, and their posts, with the replies to them, are erased.
+    ("help_reply_counts", "UPDATE help_posts p SET reply_count = GREATEST(p.reply_count - r.n, 0) FROM (SELECT post_id, count(*) AS n FROM help_replies "
+                          "WHERE author_id = :a AND status = 'active' GROUP BY post_id) r WHERE p.id = r.post_id"),
+    ("help_replies", "UPDATE help_replies SET status = 'withdrawn', body = NULL, ended_at = COALESCE(ended_at, :now) WHERE author_id = :a AND status = 'active'"),
+    ("help_post_replies", "UPDATE help_replies SET status = 'removed', body = NULL, ended_at = COALESCE(ended_at, :now) WHERE status = 'active' AND post_id IN "
+                          "(SELECT id FROM help_posts WHERE author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a))"),
+    ("help_post_reports", "UPDATE help_reports SET status = 'closed', outcome = 'deleted', closed_at = :now WHERE status = 'received' AND post_id IN "
+                          "(SELECT id FROM help_posts WHERE author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a))"),
+    ("help_posts", "UPDATE help_posts SET status = 'deleted', title = NULL, details = NULL, place = NULL, need_by = NULL, helped_reply_id = NULL, "
+                   "reply_count = 0, ended_at = COALESCE(ended_at, :now), updated_at = :now, version = version + 1 "
+                   "WHERE (author_id = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)) AND status <> 'deleted'"),
     ("page_terms", "DELETE FROM page_terms WHERE page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)"),
-    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', topic = 'other', description = '', rules = '', handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
+    # Page events (D4): their going answers go, and events they published, or on their own pages, are erased.
+    ("page_event_counts", "UPDATE page_events SET going_count = GREATEST(going_count - 1, 0) WHERE id IN (SELECT event_id FROM page_event_responses WHERE account_id = :a)"),
+    ("page_event_going", "DELETE FROM page_event_responses WHERE account_id = :a OR event_id IN "
+                         "(SELECT id FROM page_events WHERE created_by = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a))"),
+    ("page_events", "UPDATE page_events SET status = 'deleted', title = NULL, details = NULL, venue = NULL, going_count = 0, version = version + 1, "
+                    "updated_at = :now WHERE (created_by = :a OR page_id IN (SELECT id FROM public_pages WHERE owner_id = :a)) AND status <> 'deleted'"),
+    ("pages", "UPDATE public_pages SET status = 'archived', name = 'Deleted page', topic = 'other', description = '', rules = '', help_open = false, handle = 'deleted-' || substr(md5(id), 1, 20), follower_count = 0, version = version + 1, updated_at = :now WHERE owner_id = :a"),
     ("reports", "UPDATE content_reports SET details = '' WHERE reporter_id = :a"),
+    ("help_report_notes", "UPDATE help_reports SET details = '' WHERE reporter_id = :a"),
     ("moderator", "DELETE FROM platform_moderators WHERE account_id = :a"),
     # Page roles (DEC-025, T112): the person steps down on other pages and their open invitations end; on their own
     # pages, which the purge archives, every role goes; handover offers that are still open end too.
@@ -105,6 +127,9 @@ ERASE = (
     ("messages", "UPDATE conversation_messages SET deleted_at = :now, body_cipher = NULL, revision = revision + 1 WHERE sender_id = :a AND deleted_at IS NULL"),
     ("read_states", "DELETE FROM conversation_read_states WHERE account_id = :a"),
     ("event_answers", "DELETE FROM space_event_responses WHERE account_id = :a"),
+    # Their poll votes go; polls they asked in shared Spaces stay for the others, like events.
+    ("poll_votes", "DELETE FROM space_poll_votes WHERE account_id = :a"),
+    ("event_poll_votes", "DELETE FROM event_poll_votes WHERE account_id = :a"),
     # Expenses they recorded keep the amount and category for the others, without the note or who recorded it (DEC-039).
     ("expense_notes", "UPDATE event_expenses SET note = '', recorder_id = NULL, recorder_admission_id = NULL WHERE recorder_id = :a"),
     # Their promises go, because nobody can keep them now; what they gave stays in the totals without the note or name (DEC-041).
@@ -134,6 +159,12 @@ ERASE = (
                      "starts_at = created_at, local_start = to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI'), "
                      "ends_at = NULL, local_end = NULL, updated_at = :now WHERE space_id = ANY(:alone)"),
     ("alone_chunks", "DELETE FROM space_document_chunks WHERE space_id = ANY(:alone)"),
+    ("alone_poll_options", "UPDATE space_poll_options SET label = 'Deleted choice' WHERE poll_id IN (SELECT id FROM space_polls WHERE space_id = ANY(:alone))"),
+    ("alone_polls", "UPDATE space_polls SET question = 'Deleted poll', updated_at = :now WHERE space_id = ANY(:alone)"),
+    ("alone_event_poll_options", "UPDATE event_poll_options SET text = 'Deleted choice ' || position WHERE poll_id IN "
+                                  "(SELECT id FROM event_polls WHERE event_id IN (SELECT id FROM space_events WHERE space_id = ANY(:alone)))"),
+    ("alone_event_polls", "UPDATE event_polls SET question = 'Deleted poll' WHERE event_id IN "
+                          "(SELECT id FROM space_events WHERE space_id = ANY(:alone))"),
     ("alone_documents", "UPDATE space_documents SET status = 'deleted', name = NULL, media_type = NULL, size_bytes = NULL, line_count = NULL, sha256 = NULL, content = NULL, deleted_at = :now, deleted_by_id = :a WHERE space_id = ANY(:alone) AND status = 'active'"),
     ("alone_spaces", "UPDATE spaces SET status = 'archived', name = 'Deleted Space', description = '', visibility = 'private', version = version + 1 WHERE id = ANY(:alone)"),
     ("memberships", "UPDATE space_memberships SET status = 'removed' WHERE account_id = :a AND status = 'active'"),

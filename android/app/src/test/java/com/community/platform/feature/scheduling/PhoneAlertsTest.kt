@@ -29,9 +29,12 @@ class PhoneAlertsTest {
         override var primed = false
         override var alerted: List<String> = emptyList()
         override var unread = 0
-        override fun turnOn(accountId: String) { this.accountId = accountId; primed = false; alerted = emptyList(); unread = 0 }
-        override fun record(primed: Boolean, alerted: List<String>, unread: Int) { this.primed = primed; this.alerted = alerted; this.unread = unread }
-        override fun clear() { accountId = null; primed = false; alerted = emptyList(); unread = 0 }
+        override var unreadMarker: String? = null
+        override fun turnOn(accountId: String) { this.accountId = accountId; primed = false; alerted = emptyList(); unread = 0; unreadMarker = null }
+        override fun record(primed: Boolean, alerted: List<String>, unread: Int, unreadMarker: String?) {
+            this.primed = primed; this.alerted = alerted; this.unread = unread; this.unreadMarker = unreadMarker
+        }
+        override fun clear() { accountId = null; primed = false; alerted = emptyList(); unread = 0; unreadMarker = null }
     }
 
     class RecordingNotifier : Notifier {
@@ -57,11 +60,12 @@ class PhoneAlertsTest {
     class FakeSource : AlertSource {
         var items = listOf<InboxNotificationDto>()
         var unread = 0
+        var marker: String? = null
         var failure: Exception? = null
         var reads = 0
         var onRead: (() -> Unit)? = null
         override suspend fun inbox(accountId: String): List<InboxNotificationDto> { reads += 1; onRead?.invoke(); failure?.let { throw it }; return items }
-        override suspend fun unreadMessages(accountId: String): Int { failure?.let { throw it }; return unread }
+        override suspend fun unreadMessages(accountId: String): UnreadMessages { failure?.let { throw it }; return UnreadMessages(unread, marker) }
     }
 
     private fun item(id: String, title: String = "Task $id", created: Instant = now.minusSeconds(600), read: Boolean = false) = InboxNotificationDto(
@@ -112,6 +116,58 @@ class PhoneAlertsTest {
         checker.check()
         assertEquals(1, notifier.messagesCancelled)
         assertEquals(listOf(2, 5), notifier.messages)
+    }
+
+    @Test fun differentUnreadMessagesAtTheSameCountAreNotifiedOnce() = runBlocking {
+        turnedOnAndPrimed()
+        source.unread = 1
+        source.marker = "a".repeat(64)
+        checker.check()
+        source.marker = "b".repeat(64)
+        checker.check()
+        assertEquals(listOf(1, 1), notifier.messages)
+        val restarted = AlertChecker(alerts, prefs, notifier, source, { signedIn }, { now })
+        restarted.check()
+        assertEquals("The new unread state is not alerted again after restarting the checker.", listOf(1, 1), notifier.messages)
+    }
+
+    @Test fun anOlderServerAndTheFirstMarkerDoNotRealertAnUnchangedCount() = runBlocking {
+        source.unread = 1
+        turnedOnAndPrimed()
+        checker.check()
+        assertTrue(notifier.messages.isEmpty())
+        source.marker = "a".repeat(64)
+        checker.check()
+        assertTrue("The first marker establishes the baseline for previously saved preferences.", notifier.messages.isEmpty())
+        source.marker = "b".repeat(64)
+        checker.check()
+        assertEquals(listOf(1), notifier.messages)
+        alerts.turnOff()
+        assertNull(prefs.unreadMarker)
+        alerts.turnOn(otherId)
+        signedIn = otherId
+        checker.check()
+        assertEquals("A different account primes its own unread state.", listOf(1), notifier.messages)
+    }
+
+    @Test fun failedChecksPreserveTheMarkerAndZeroUnreadCancelsTheAlert() = runBlocking {
+        source.unread = 1
+        source.marker = "a".repeat(64)
+        turnedOnAndPrimed()
+        source.marker = "b".repeat(64)
+        source.failure = IOException("synthetic network loss")
+        checker.check()
+        assertEquals("a".repeat(64), prefs.unreadMarker)
+        assertTrue(notifier.messages.isEmpty())
+        source.failure = null
+        checker.check()
+        assertEquals(listOf(1), notifier.messages)
+        source.unread = 0
+        source.marker = "c".repeat(64)
+        checker.check()
+        assertEquals(1, notifier.messagesCancelled)
+        assertEquals(listOf(1), notifier.messages)
+        assertEquals(source.marker, prefs.unreadMarker)
     }
 
     @Test fun nothingIsPostedForAnotherAccountOrWhenAlertsAreOffOrNotAllowed() = runBlocking {

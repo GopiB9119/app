@@ -253,6 +253,12 @@ async function fixture(context, options = {}) {
       if (url.pathname === '/api/me/handover-offers' && method === 'GET') return reply([]);
       if (url.pathname === '/api/me/pages' && method === 'GET') return reply([state.publicPage]);
       if (url.pathname === '/api/me/following' && method === 'GET') return paged([]);
+      // Page events and help posts have nothing to show here.
+      if (url.pathname === `/api/pages/${pageId}/events` && method === 'GET') return reply([]);
+      if (url.pathname === `/api/pages/${pageId}/help-posts` && method === 'GET') return paged([]);
+      if (url.pathname === '/api/me/page-events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/help-posts' && method === 'GET') return paged([]);
+      if (url.pathname === '/api/me/help-review' && method === 'GET') return reply([]);
       state.unexpected.push(call);
       await window.recordUnexpectedCall(call);
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}${url.search}`);
@@ -517,6 +523,44 @@ test('moderation: No action sends an empty optional note and enforces the 1000-c
     await card.getByRole('button', { name: 'Record decision', exact: true }).click();
     await result.page.getByText('Decision recorded.', { exact: true }).waitFor();
     assert.deepEqual(commands(result, '/api/moderation/decisions')[0].body, { target_type: 'post', target_id: postId, action: 'no_action', reason: 'privacy', note: '' });
+    assertClean(result);
+  } finally { await context.close(); }
+});
+
+test('T110 moderation: a new report on content already decided shows when the queue loads again', async () => {
+  const context = await browser.newContext();
+  try {
+    const result = await fixture(context);
+    const { page } = result;
+    const reload = async () => {
+      const reads = await page.evaluate(() => window.moderationFixture.queueStartReads);
+      await page.getByRole('tab', { name: 'Appeals', exact: true }).click();
+      await appealCard(page).waitFor();
+      await page.getByRole('tab', { name: 'Reports', exact: true }).click();
+      await page.waitForFunction(count => window.moderationFixture.queueStartReads > count, reads);
+    };
+    await reportCard(page).getByRole('radio', { name: 'No action', exact: true }).check();
+    await reportCard(page).getByRole('button', { name: 'Record decision', exact: true }).click();
+    await page.getByText('Decision recorded.', { exact: true }).waitFor();
+    // An answer read before the decision committed still lists the decided group; it stays hidden.
+    await page.evaluate(items => { window.moderationFixture.queue = items; }, [queueItem, pageQueueItem]);
+    await reload();
+    await page.getByRole('article', { name: 'Page report', exact: true }).waitFor();
+    assert.equal(await reportCard(page).count(), 0, 'The group just decided must not come back.');
+    // Someone reports the post again after the decision: the server lists a new group with a later first report.
+    const again = { ...queueItem, preview: { ...queueItem.preview, title: 'Reported again' }, report_count: 3,
+      reasons: [{ reason: 'harassment', count: 3 }], first_reported_at: '2026-10-02T03:00:00Z' };
+    await page.evaluate(items => { window.moderationFixture.queue = items; }, [again]);
+    await reload();
+    const card = reportCard(page);
+    await card.getByRole('heading', { name: 'Reported again', exact: true }).waitFor();
+    assert.equal(await card.getByRole('radio', { name: 'No action', exact: true }).isChecked(), false, 'The new group starts without the earlier choice.');
+    await card.getByRole('radio', { name: 'Hide', exact: true }).check();
+    await card.getByRole('button', { name: 'Record decision', exact: true }).click();
+    await page.getByText('No reports are waiting.', { exact: true }).waitFor();
+    const sent = commands(result, '/api/moderation/decisions');
+    assert.deepEqual(sent.map(call => call.body.action), ['no_action', 'hide']);
+    assert.notEqual(sent[1].headers['idempotency-key'], sent[0].headers['idempotency-key'], 'A decision on the new group is a new command.');
     assertClean(result);
   } finally { await context.close(); }
 });

@@ -116,8 +116,16 @@ export async function taskPage(accountId: string, spaceId: string, status: TaskS
     if (value) query.set(name, value);
   }
   if (cursor) query.set("cursor", cursor);
-  const result = await api(`tasks?${query}`, z.array(taskItemSchema).max(50), { accountId, signal });
+  const result = await api(`tasks?${query}`, z.array(taskItemSchema).max(20), { accountId, signal });
   if (!result.pagination) throw new ApiError(502, "INVALID_RESPONSE", "Task pagination is missing.");
+  if (result.data.some(task => task.space_id.toLowerCase() !== spaceId.toLowerCase()
+    || (status && task.status !== status)
+    || (filters.due_from && (task.due_date === null || task.due_date < filters.due_from))
+    || (filters.due_to && (task.due_date === null || task.due_date > filters.due_to)))
+    || new Set(result.data.map(task => task.id.toLowerCase())).size !== result.data.length
+    || (result.pagination.has_more && (result.data.length === 0 || result.pagination.next_cursor === cursor))) {
+    throw new ApiError(502, "INVALID_RESPONSE", "Reload tasks to continue.");
+  }
   return { data: result.data, pagination: result.pagination };
 }
 
@@ -127,19 +135,29 @@ export function taskAssignees(accountId: string, spaceId: string, taskId: string
   return api(`tasks/assignees?${query}`, assigneesSchema, { accountId, signal });
 }
 
-export async function sendTask(intent: TaskIntent, accountId: string): Promise<TaskItem> {
+export async function sendTask(intent: TaskIntent, accountId: string, spaceId?: string): Promise<TaskItem> {
   const result = await api(intent.path, taskSchema, {
     method: intent.method, body: intent.body, accountId,
     headers: { "Idempotency-Key": intent.key, ...(intent.etag ? { "If-Match": intent.etag } : {}) },
   });
   const parsed = taskItemSchema.safeParse({ ...result.data, etag: result.etag });
-  if (!parsed.success) throw new ApiError(502, "INVALID_RESPONSE", "The task result could not be confirmed.");
+  const expectedTaskId = /^tasks\/([^/]+)(?:\/status)?$/.exec(intent.path)?.[1];
+  const expectedSpaceId = intent.path === "tasks" ? intent.body.space_id : undefined;
+  if (!parsed.success
+    || (expectedTaskId && parsed.data.id.toLowerCase() !== expectedTaskId.toLowerCase())
+    || (spaceId && parsed.data.space_id.toLowerCase() !== spaceId.toLowerCase())
+    || (typeof expectedSpaceId === "string" && parsed.data.space_id.toLowerCase() !== expectedSpaceId.toLowerCase())) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The task result could not be confirmed.");
+  }
   return parsed.data;
 }
 
-export async function readTask(identifier: string, accountId: string): Promise<TaskItem> {
+export async function readTask(identifier: string, accountId: string, spaceId?: string): Promise<TaskItem> {
   const result = await api(`tasks/${identifier}`, taskSchema, { accountId });
   const parsed = taskItemSchema.safeParse({ ...result.data, etag: result.etag });
-  if (!parsed.success) throw new ApiError(502, "INVALID_RESPONSE", "Reload the task to continue.");
+  if (!parsed.success || parsed.data.id.toLowerCase() !== identifier.toLowerCase()
+    || (spaceId && parsed.data.space_id.toLowerCase() !== spaceId.toLowerCase())) {
+    throw new ApiError(502, "INVALID_RESPONSE", "Reload the task to continue.");
+  }
   return parsed.data;
 }

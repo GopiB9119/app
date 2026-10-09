@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -42,6 +42,7 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   const [timezones, setTimezones] = useState<string[]>(startingTimezones);
   const [zoneLoad, setZoneLoad] = useState({ attempt: 0, failed: false });
   const [initialZone] = useState(() => signUpTimezone(startingTimezones));
+  const timezoneChosen = useRef(false);
   const [requestIntent, setRequestIntent] = useState<{ email: string; key: string } | null>(null);
   const form = useForm<Fields>({ resolver: zodResolver(inputSchema), defaultValues: { email: "", password: "", code: "", display_name: "", timezone: initialZone } });
   const [pendingDeletion, setPendingDeletion] = useState<string | null>(null);
@@ -56,15 +57,17 @@ export function AuthScreen({ mode }: { mode: Mode }) {
   }, [mode, form.watch]);
 
   useEffect(() => {
+    if (mode !== "register") return;
     const controller = new AbortController();
     api("timezones", z.array(z.string()), { signal: controller.signal })
       .then(result => setTimezones(result.data))
       .catch(() => { if (!controller.signal.aborted) setZoneLoad(load => ({ ...load, failed: true })); });
     return () => controller.abort();
-  }, [zoneLoad.attempt]);
+  }, [mode, zoneLoad.attempt]);
   // After the new options render, so a select already on screen (as after Retry) can show the chosen zone.
   useEffect(() => {
-    if (form.getValues("timezone") === initialZone) form.setValue("timezone", signUpTimezone(timezones));
+    if (!timezoneChosen.current) form.setValue("timezone", signUpTimezone(timezones));
+    setZoneLoad(load => load.failed ? { ...load, failed: false } : load);
   }, [timezones]);
 
   async function submit(fields: Fields) {
@@ -138,14 +141,15 @@ export function AuthScreen({ mode }: { mode: Mode }) {
       {mode !== "recover" && !challenge && <nav className="auth-tabs" aria-label={t("shell.accountAccess")}><Link href="/login" aria-current={mode === "login" ? "page" : undefined}>{t("auth.signIn")}</Link><Link href="/register" aria-current={mode === "register" ? "page" : undefined}>{t("auth.createAccount")}</Link></nav>}
       <form className="auth-form" method="post" onSubmit={form.handleSubmit(submit)} noValidate>
         {!challenge && <label>{t("auth.email")}<div className="input-with-icon"><Mail size={18} aria-hidden /><input type="email" autoComplete="email" placeholder="alex@example.test" disabled={!interactive} {...form.register("email")} aria-invalid={!!form.formState.errors.email} aria-describedby="email-error" /></div><FieldError id="email-error" message={form.formState.errors.email?.message} /></label>}
+        {mode === "register" && !challenge && <div className="auth-notice"><p>{t("about.signUpAge")}</p><p><Link href="/privacy">{t("about.privacyLink")}</Link><Link href="/terms">{t("about.termsLink")}</Link></p></div>}
         {challenge && <>
           <div className="verification-summary"><Mail size={20} aria-hidden /><span>{t("auth.emailVerification")} <strong>{t("auth.codeRequested")}</strong></span><span className="step-label">02 / 02</span></div>
           <label>{t("auth.code")}<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} className="code-input" placeholder="000000" {...form.register("code")} aria-invalid={!!form.formState.errors.code} aria-describedby="code-error" /><FieldError id="code-error" message={form.formState.errors.code?.message} /></label>
           {mode === "register" && <label>{t("auth.displayName")}<input autoComplete="name" maxLength={160} {...form.register("display_name")} aria-invalid={!!form.formState.errors.display_name} aria-describedby="name-error" /><FieldError id="name-error" message={form.formState.errors.display_name?.message} values={{ limit: 80 }} /></label>}
         </>}
         {passwordShown && <label><span id="password-label">{t(mode === "login" ? "auth.password" : "auth.newPassword")}</span><div className="password-field"><input type={visible ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} maxLength={128} disabled={!interactive} {...form.register("password")} aria-labelledby="password-label" aria-invalid={!!form.formState.errors.password} aria-describedby="password-hint password-error" /><button className="icon-button" type="button" disabled={!interactive} onClick={() => setVisible(!visible)} aria-label={t(visible ? "auth.hidePassword" : "auth.showPassword")} title={t(visible ? "auth.hidePassword" : "auth.showPassword")}>{visible ? <EyeOff size={19} /> : <Eye size={19} />}</button></div><span id="password-hint" className="field-hint">{mode !== "login" ? t("auth.passwordHint") : ""}</span><FieldError id="password-error" message={form.formState.errors.password?.message} /></label>}
-        {challenge && mode === "register" && <label><span id="signup-timezone-label">{t("auth.timezone")}</span><select aria-labelledby="signup-timezone-label" {...form.register("timezone")}>{timezones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>}
-        {challenge && mode === "register" && zoneLoad.failed && <TimezoneListProblem message={t("auth.timezoneProblem")} retryLabel={t("auth.retry")} retry={() => setZoneLoad(load => ({ attempt: load.attempt + 1, failed: false }))} />}
+        {challenge && mode === "register" && <label><span id="signup-timezone-label">{t("auth.timezone")}</span><select aria-labelledby="signup-timezone-label" {...form.register("timezone", { onChange: () => { timezoneChosen.current = true; } })}>{timezones.map(zone => <option key={zone} value={zone}>{zone.replaceAll("_", " ")}</option>)}</select></label>}
+        {challenge && mode === "register" && zoneLoad.failed && <TimezoneListProblem message={t("auth.timezoneProblem")} retryLabel={t("auth.retry")} retry={() => setZoneLoad(load => ({ ...load, attempt: load.attempt + 1 }))} />}
         {message && <div role="alert" className="message error">{message}</div>}
         {mode === "login" && pendingDeletion && <div role="alert" className="message error"><div><p>{t("auth.deletionPending", { date: formatDateTime(language, pendingDeletion, { dateStyle: "long", timeStyle: "short" }) })}</p><button className="primary-button" type="button" disabled={cancellingDeletion || form.formState.isSubmitting} onClick={cancelDeletion}>{cancellingDeletion ? <LoaderCircle size={19} className="spin" aria-hidden /> : <ArrowRight size={19} aria-hidden />}{t("auth.cancelDeletion")}</button></div></div>}
         {notice && <div role="status" className="message success"><Check size={18} />{t(notice)}<Link href="/login">{t("auth.signIn")}</Link></div>}

@@ -13,6 +13,8 @@ import {
 } from "./client";
 import type { Classification, CreateIntent, PageChanges, PublicPage, PublicPost, ReportTarget, Topic } from "./client";
 import { ModeratorPin, PageManagement, PageStateNotice } from "./page-management";
+import { HelpSection } from "./help-posts";
+import { PageEvents } from "./page-events";
 import { CommunityFrame, Failure, Loading, PostCard, ReportDialog, problemText, sessionLost, useCommunityTime, useTextProblem, useViewer } from "./shared";
 import { ClassificationChips, ClassificationEditor, TaxonomyStatus, TermMultiPicker, TopicSelect, unavailableTerms, useTaxonomy } from "./taxonomy-controls";
 import styles from "./community.module.css";
@@ -176,6 +178,11 @@ function PageView({ viewer, reference }: { viewer: Account | null; reference: st
         </PostCard>;
       })}
     </section>}
+    {!deleted && <PageEvents key={`events-${current.id}`} viewer={viewer} page={current} />}
+    {!deleted && <HelpSection key={`help-${current.id}`} viewer={viewer} page={current} onPageChanged={updated => {
+      queryClient.setQueryData(["public-page", reference, viewer?.id ?? null], updated);
+      refresh();
+    }} />}
     {!deleted && <section className={styles.stack} aria-labelledby="posts-heading">
       <h2 id="posts-heading">{t("community.posts")}</h2>
       {current.blocked && <p className={styles.notice}>{t("community.pageBlocked")}</p>}

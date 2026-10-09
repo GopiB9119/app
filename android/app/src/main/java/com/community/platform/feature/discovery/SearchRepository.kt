@@ -23,14 +23,15 @@ class SearchRepository @Inject constructor(private val api: SearchApi, private v
         identifier(id); text(name, 80); require(expected == null || expected == id)
     }
 
-    fun results(value: SearchResultsDto, query: String, spaceId: String?): SearchResultsDto = try {
+    fun results(value: SearchResultsDto, query: String, spaceId: String?, limit: Int = 20): SearchResultsDto = try {
+        require(limit in 1..100 && value.limit == limit)
         require(value.query == query && value.spaceId == spaceId)
         value.spaceId?.let(::identifier)
-        require(value.documents.size <= 20 && value.tasks.size <= 20 && value.events.size <= 20)
+        require(value.documents.size <= limit && value.tasks.size <= limit && value.events.size <= limit)
         require(value.moreDocuments != null && value.moreTasks != null && value.moreEvents != null)
-        require(value.moreDocuments != true || value.documents.size == 20)
-        require(value.moreTasks != true || value.tasks.size == 20)
-        require(value.moreEvents != true || value.events.size == 20)
+        require(value.moreDocuments != true || value.documents.size == limit)
+        require(value.moreTasks != true || value.tasks.size == limit)
+        require(value.moreEvents != true || value.events.size == limit)
         require(value.tasks.map { it.taskId }.distinct().size == value.tasks.size)
         require(value.events.map { it.eventId }.distinct().size == value.events.size)
         value.documents.forEach {
@@ -47,6 +48,7 @@ class SearchRepository @Inject constructor(private val api: SearchApi, private v
         }
         value.tasks.forEach {
             identifier(it.taskId); scope(it.spaceId, it.spaceName, spaceId); text(it.title, 200); text(it.excerpt, 242, empty = true)
+            require(it.excerptIn in setOf("notes", "checklist"))
             require(it.status in setOf("open", "in_progress", "completed", "cancelled"))
             it.dueDate?.let { date -> require(Regex("\\d{4}-\\d{2}-\\d{2}").matches(date)); LocalDate.parse(date) }
         }
@@ -61,10 +63,10 @@ class SearchRepository @Inject constructor(private val api: SearchApi, private v
       catch (_error: NullPointerException) { invalid() }
       catch (_error: DateTimeException) { invalid() }
 
-    suspend fun search(accountId: String, query: String, spaceId: String?): SearchResultsDto = accounts.authorized(accountId) {
+    suspend fun search(accountId: String, query: String, spaceId: String?, limit: Int = 20): SearchResultsDto = accounts.authorized(accountId) {
         val normalized = normalizedSearchQuery(query)
-        require(searchProblem(normalized) == null)
+        require(searchProblem(normalized) == null && limit in 1..100)
         spaceId?.let(::identifier)
-        results(accounts.result(api.search(it, normalized, spaceId)), normalized, spaceId)
+        results(accounts.result(api.search(it, normalized, spaceId, limit.takeUnless { count -> count == 20 })), normalized, spaceId, limit)
     }
 }

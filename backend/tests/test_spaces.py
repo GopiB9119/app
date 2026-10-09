@@ -487,6 +487,30 @@ def test_membership_roster_has_only_current_private_member_fields(client, app):
     assert [item["account_id"] for item in rows] == [owner["user"]["id"]]
 
 
+def test_space_list_counts_and_names_only_current_members_of_each_listed_space(client, app):
+    owner, member, space_id, _invitation_id, _reviewed = membership_fixture(client, app)
+    solo_id = create_space(client, owner, name="Just me", space_type="solo").json()["data"]["id"]
+
+    def listed(actor, field):
+        return {item["id"]: item[field] for item in client.get("/v1/spaces", headers=auth(actor)).json()["data"]}
+
+    with app.state.sessions.begin() as database:
+        database.get(User, member["user"]["id"]).display_name = "Sam Lee"
+    assert listed(owner, "member_count") == {space_id: 2, solo_id: 1}
+    assert listed(member, "member_count") == {space_id: 2}
+    # Each person sees the others, never their own name.
+    assert listed(owner, "member_preview") == {space_id: ["Sam Lee"], solo_id: []}
+    assert listed(member, "member_preview") == {space_id: ["Alex Morgan"]}
+    # Single-Space and creation responses keep their existing shape.
+    single = client.get(f"/v1/spaces/{space_id}", headers=auth(owner)).json()["data"]
+    assert "member_count" not in single and "member_preview" not in single
+    with app.state.sessions.begin() as database:
+        database.get(SpaceMembership, (space_id, member["user"]["id"])).status = "removed"
+    assert listed(owner, "member_count") == {space_id: 1, solo_id: 1}
+    assert listed(owner, "member_preview") == {space_id: [], solo_id: []}
+    assert listed(member, "member_count") == {}
+
+
 @pytest.mark.parametrize("operation", ["remove", "leave"])
 def test_membership_command_requires_key_current_review_and_empty_authority_body(client, app, operation):
     owner, member, space_id, _invitation_id, reviewed = membership_fixture(client, app)

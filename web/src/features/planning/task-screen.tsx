@@ -4,13 +4,16 @@ import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ZodError } from "zod";
-import { Ban, Bell, CalendarDays, Check, ClipboardList, Flag, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
+import { Ban, Bell, Bot, CalendarDays, Check, ClipboardList, Flag, ListChecks, LoaderCircle, LockKeyhole, Pencil, Play, Plus, RefreshCw, RotateCcw, Save, UserRound, UsersRound, X } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
+import { isUnknown } from "@/features/community/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { spacesSchema } from "@/features/spaces/client";
+import { SpaceHeader } from "@/features/spaces/space-header";
 import { dueRange, localDate, readTask, sendTask, statusLabels, taskAssignees, taskBody, taskDraft, taskPage } from "./client";
 import type { DueChoice, FamilyTask, TaskDraft, TaskIntent, TaskItem, TaskPriority, TaskStatus } from "./client";
 import styles from "./tasks.module.css";
@@ -18,6 +21,7 @@ import { TaskChecklist } from "./checklist";
 
 const statusTexts = { open: "tasks.statusOpen", in_progress: "tasks.statusInProgress", completed: "tasks.statusCompleted", cancelled: "tasks.statusCancelled" } as const;
 const actionTexts = { open: "tasks.reopen", in_progress: "tasks.start", completed: "tasks.complete", cancelled: "tasks.cancel" } as const;
+const shortTexts = { open: "tasks.short.reopen", in_progress: "tasks.short.start", completed: "tasks.short.complete", cancelled: "tasks.short.cancel" } as const;
 const changedTexts = { open: "tasks.changedOpen", in_progress: "tasks.changedInProgress", completed: "tasks.changedCompleted", cancelled: "tasks.changedCancelled" } as const;
 const priorityTexts = { high: "tasks.priorityHigh", normal: "tasks.priorityNormal", low: "tasks.priorityLow" } as const;
 const dueTexts = { "": "tasks.anyDate", before: "tasks.beforeToday", today: "tasks.today", week: "tasks.nextWeek" } as const;
@@ -36,16 +40,17 @@ function useAccountGuard(error: Error | null) {
   }, [error, queryClient]);
 }
 
-export function TaskScreen({ initialSpaceId = "" }: { initialSpaceId?: string }) {
+export function TaskScreen({ initialSpaceId = "", initialTaskId = "" }: { initialSpaceId?: string; initialTaskId?: string }) {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useAccountGuard(profile.error);
-  if (profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.loadingScreen")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.loadingScreen")}</main></Shell>;
   if (profile.isError || !profile.data) return <Shell account><main className={styles.main}><h1>{t("tasks.unavailable")}</h1><p className="message error" role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} aria-hidden />{t("tasks.retry")}</button></main></Shell>;
-  return <TaskWorkspace key={profile.data.data.id} user={profile.data.data} initialSpaceId={initialSpaceId} />;
+  return <TaskWorkspace key={profile.data.data.id} user={profile.data.data} initialSpaceId={initialSpaceId} initialTaskId={initialTaskId} />;
 }
 
-function TaskWorkspace({ user, initialSpaceId }: { user: Account; initialSpaceId: string }) {
+function TaskWorkspace({ user, initialSpaceId, initialTaskId }: { user: Account; initialSpaceId: string; initialTaskId: string }) {
   const t = useText();
   const [spaceId, setSpaceId] = useState(initialSpaceId);
   const [busy, setBusy] = useState(false);
@@ -55,6 +60,7 @@ function TaskWorkspace({ user, initialSpaceId }: { user: Account; initialSpaceId
     if (!spaceId && spaces.data?.data[0]) setSpaceId(spaces.data.data[0].id);
   }, [spaceId, spaces.data]);
   const selected = spaces.data?.data.find(space => space.id === spaceId);
+  const usableSpaces = !!spaces.data && (!spaces.isError || isUnknown(spaces.error));
   return <Shell account><main className={styles.main}>
     <nav className={styles.navigation} aria-label={t("tasks.workspace")}>
       <Link href="/app/settings/account"><UserRound size={18} aria-hidden />{t("tasks.account")}</Link>
@@ -64,16 +70,17 @@ function TaskWorkspace({ user, initialSpaceId }: { user: Account; initialSpaceId
     <div className={styles.heading}><div><span className="section-kicker">{t(selected?.space_type === "solo" ? "tasks.personalPlanning" : "tasks.sharedPlanning")}</span><h1>{t(selected?.space_type === "solo" ? "tasks.myTasks" : "tasks.familyTasks")}</h1></div><span className={styles.private}><LockKeyhole size={16} aria-hidden />{t("tasks.private")}</span></div>
     {spaces.isPending && <p role="status">{t("tasks.loadingSpaces")}</p>}
     {spaces.isError && <div className="message error" role="alert">{spaces.error.message}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />{t("tasks.retry")}</button></div>}
-    {!spaces.isPending && !spaces.isError && <>
+    {usableSpaces && <>
       {spaces.data?.data.length === 0 ? <div className={styles.empty}><UsersRound size={32} aria-hidden /><h2>{t("tasks.noSpaces")}</h2><Link href="/app/spaces">{t("tasks.openSpaces")}</Link></div> : <>
         <label className={styles.spaceSelector}><span id="task-space-label">{t(selected?.space_type === "solo" ? "tasks.soloSpace" : "tasks.familySpace")}</span><select aria-labelledby="task-space-label" value={spaceId} disabled={busy} onChange={event => setSpaceId(event.target.value)}>{!selected && <option value={spaceId}>{t("tasks.selectSpace")}</option>}{spaces.data?.data.map(space => <option value={space.id} key={space.id}>{space.name}</option>)}</select></label>
-        {selected ? <TaskBoard key={selected.id} user={user} spaceId={selected.id} onBusy={setBusy} /> : <p className="message error" role="alert">{t("tasks.spaceUnavailable")}</p>}
+        {selected && <SpaceHeader space={selected} current="tasks" />}
+        {selected ? <TaskBoard key={selected.id} user={user} spaceId={selected.id} agentOn={selected.agent_enabled} focusTaskId={selected.id === initialSpaceId ? initialTaskId : ""} onBusy={setBusy} /> : <p className="message error" role="alert">{t("tasks.spaceUnavailable")}</p>}
       </>}
     </>}
   </main></Shell>;
 }
 
-function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; onBusy: (value: boolean) => void }) {
+function TaskBoard({ user, spaceId, agentOn, focusTaskId, onBusy }: { user: Account; spaceId: string; agentOn: boolean; focusTaskId: string; onBusy: (value: boolean) => void }) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
@@ -100,8 +107,23 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
     queryKey: ["taskAssignees", user.id, spaceId, "new"],
     queryFn: ({ signal }) => taskAssignees(user.id, spaceId, undefined, signal),
   });
+  // The task a search result names is read by itself, so it shows even when it is not on the first pages (DEC-051).
+  const opened = useQuery({
+    queryKey: ["tasks", user.id, spaceId, "opened", focusTaskId],
+    queryFn: () => readTask(focusTaskId, user.id, spaceId), enabled: Boolean(focusTaskId), retry: false,
+  });
+  useAccountGuard(opened.error);
+  const found = !opened.isError && opened.data?.space_id === spaceId ? opened.data : null;
+  const foundId = found?.id;
+  const foundGone = Boolean(focusTaskId) && (opened.isError || (opened.data !== undefined && opened.data.space_id !== spaceId));
+  useEffect(() => {
+    if (!foundId) return;
+    const row = document.getElementById(`task-${foundId}`);
+    row?.scrollIntoView({ block: "center" });
+    row?.querySelector<HTMLElement>("h3")?.focus();
+  }, [foundId]);
   const changeStatus = useMutation({
-    mutationFn: (intent: TaskIntent) => sendTask(intent, user.id),
+    mutationFn: (intent: TaskIntent) => sendTask(intent, user.id, spaceId),
     onMutate: () => { setNotice(""); setUncertain(true); },
     onSuccess: async task => {
       setUncertain(false); setReview(null); setNotice(t(changedTexts[task.status]));
@@ -132,12 +154,15 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
   }
 
   if (blocked) return <div className="message error" role="alert">{accessError?.message ?? tasks.error?.message}<Link href="/app/spaces">{t("tasks.returnSpaces")}</Link></div>;
-  const rows = [...new Map(tasks.data?.pages.flatMap(page => page.data).map(task => [task.id, task] as const) ?? []).values()];
+  const listed = [...new Map(tasks.data?.pages.flatMap(page => page.data).map(task => [task.id, task] as const) ?? []).values()];
+  const rows = found && !listed.some(task => task.id === found.id) ? [found, ...listed] : listed;
+  const refreshing = tasks.isFetching || opened.isFetching;
   return <>
     {notice && <p className="message success" role="status"><Check size={17} aria-hidden />{notice}</p>}
+    {foundGone && <div className="message error" role="alert">{t("tasks.fromSearchGone")}<button className="text-button" disabled={opened.isFetching} onClick={() => opened.refetch()}><RefreshCw size={16} className={opened.isFetching ? "spin" : ""} aria-hidden />{t("tasks.retry")}</button></div>}
     <div className={styles.workspace}>
       <section className={styles.taskSection} aria-labelledby="tasks-title">
-        <div className={styles.sectionHeading}><h2 id="tasks-title">{t("tasks.title")}</h2><button className="icon-button" title={t("tasks.refresh")} aria-label={t("tasks.refresh")} disabled={tasks.isFetching || locked} onClick={() => tasks.refetch()}><RefreshCw size={18} className={tasks.isFetching ? "spin" : ""} aria-hidden /></button></div>
+        <div className={styles.sectionHeading}><h2 id="tasks-title">{t("tasks.title")}</h2><button className="icon-button" title={t("tasks.refresh")} aria-label={t("tasks.refresh")} disabled={refreshing || locked} onClick={() => { void tasks.refetch(); if (focusTaskId) void opened.refetch(); }}><RefreshCw size={18} className={refreshing ? "spin" : ""} aria-hidden /></button></div>
         <div className={styles.filters}>
           <label className={styles.filter}><span id="task-filter-label">{t("tasks.status")}</span><select aria-labelledby="task-filter-label" value={filter} disabled={locked} onChange={event => { setFilter(event.target.value as TaskStatus | ""); setNotice(""); changeStatus.reset(); }}><option value="">{t("tasks.allStatuses")}</option>{Object.keys(statusLabels).map(value => <option key={value} value={value}>{t(statusTexts[value as TaskStatus])}</option>)}</select></label>
           <label className={styles.filter}><span id="task-assignee-filter-label">{t("tasks.assignedTo")}</span><select aria-labelledby="task-assignee-filter-label" name="task_assignee_filter" value={assigneeFilter} disabled={locked} onChange={event => { setAssigneeFilter(event.target.value); setNotice(""); changeStatus.reset(); }}>
@@ -149,26 +174,31 @@ function TaskBoard({ user, spaceId, onBusy }: { user: Account; spaceId: string; 
         {tasks.isPending && <p role="status" aria-busy="true">{t("tasks.loadingList")}</p>}
         {tasks.isError && <div className="message error" role="alert">{tasks.error.message}<button className="text-button" onClick={() => tasks.refetch()}><RefreshCw size={16} aria-hidden />{t("tasks.retry")}</button></div>}
         {changeStatus.isError && !review && <p className="message error" role="alert">{changeStatus.error.message}</p>}
-        {!tasks.isPending && !tasks.isError && rows.length === 0 && <div className={styles.empty}><ClipboardList size={30} strokeWidth={1.5} aria-hidden /><h3>{t("tasks.noTasks")}</h3></div>}
-        {!tasks.isError && <ul className={styles.taskList}>{rows.map(task => <li key={task.id}>
-          <div className={styles.taskRow}><h3>{task.title}</h3><span className={styles.taskStatus} data-status={task.status}>{t(statusTexts[task.status])}</span></div>
+        {!tasks.isPending && !tasks.isError && rows.length === 0 && (filter || assigneeFilter || dueFilter
+          ? <div className={styles.empty}><ClipboardList size={30} strokeWidth={1.5} aria-hidden /><h3>{t("tasks.noTasks")}</h3><p>{t("tasks.emptyFiltered")}</p></div>
+          : <div className={styles.empty}><ClipboardList size={30} strokeWidth={1.5} aria-hidden /><h3>{t("tasks.emptyTitle")}</h3>
+            <p>{t(agentOn ? "tasks.emptyHintAgent" : "tasks.emptyHint")}</p>
+            {agentOn && <Link className="secondary-button" href={`/app/messages?space_id=${spaceId}&ask=agent`}><Bot size={17} aria-hidden />{t("spaces.header.askAgent")}</Link>}</div>)}
+        {!tasks.isError && <ul className={styles.taskList}>{rows.map(task => <li key={task.id} id={`task-${task.id}`} className={task.id === foundId ? styles.found : undefined} aria-current={task.id === foundId ? "location" : undefined}>
+          {task.id === foundId && <p className={styles.fromSearch}>{t("tasks.fromSearch")}</p>}
+          <div className={styles.taskRow}><h3 tabIndex={task.id === foundId ? -1 : undefined}>{task.title}</h3><span className={styles.taskStatus} data-status={task.status}>{t(statusTexts[task.status])}</span></div>
           <div className={styles.taskMetadata}>{task.priority !== "normal" && <span className={styles.priority} data-priority={task.priority}><Flag size={15} aria-hidden />{t(task.priority === "high" ? "tasks.highPriority" : "tasks.lowPriority")}</span>}<span><UserRound size={15} aria-hidden />{task.assignee?.display_name ?? t(task.assignee_unavailable ? "tasks.assigneeUnavailable" : "tasks.unassigned")}</span><span><CalendarDays size={15} aria-hidden />{task.due_date ? formatDateOnly(task.due_date, language) : t("tasks.noDueDate")}</span></div>
           {task.description && <details className={styles.notes}><summary>{t("tasks.notes")}</summary><p>{task.description}</p></details>}
           {task.completed_at && <p className={styles.completedAt}>{t("tasks.completedAt", { date: new Intl.DateTimeFormat(language === "en" ? "en" : `${language}-IN`, { dateStyle: "medium", timeStyle: "short", timeZone: user.timezone }).format(new Date(task.completed_at)) })}</p>}
           <div className={styles.taskActions}>
-            <button className="icon-button" title={t("tasks.checklistTitle", { title: task.title })} aria-label={t("tasks.checklistTitle", { title: task.title })} disabled={locked} onClick={() => setChecklistTaskId(task.id)}><ListChecks size={18} aria-hidden /></button>
-            {["open", "in_progress"].includes(task.status) && !locked && <Link className="icon-button" href={`/app/reminders?task_id=${task.id}`} title={t("tasks.remind")} aria-label={t("tasks.remindTitle", { title: task.title })}><Bell size={18} aria-hidden /></Link>}
-            {task.permissions.can_edit && <button className="icon-button" title={t("tasks.edit")} aria-label={t("tasks.editTitle", { title: task.title })} disabled={locked} onClick={() => { setEditing(task); setNotice(""); }}><Pencil size={18} aria-hidden /></button>}
+            <button className="icon-button" title={t("tasks.checklistTitle", { title: task.title })} aria-label={t("tasks.checklistTitle", { title: task.title })} disabled={locked} onClick={() => setChecklistTaskId(task.id)}><ListChecks size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("tasks.short.checklist")}</span></button>
+            {["open", "in_progress"].includes(task.status) && !locked && <Link className="icon-button" href={`/app/reminders?task_id=${task.id}`} title={t("tasks.remind")} aria-label={t("tasks.remindTitle", { title: task.title })}><Bell size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("tasks.remind")}</span></Link>}
+            {task.permissions.can_edit && <button className="icon-button" title={t("tasks.edit")} aria-label={t("tasks.editTitle", { title: task.title })} disabled={locked} onClick={() => { setEditing(task); setNotice(""); }}><Pencil size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("tasks.short.edit")}</span></button>}
             {task.permissions.allowed_statuses.map(target => {
               const Icon = target === "completed" ? Check : target === "in_progress" ? Play : target === "open" ? RotateCcw : Ban;
               return <button key={target} className="icon-button" title={t(actionTexts[target])} aria-label={t("tasks.actionTitle", { action: t(actionTexts[target]), title: task.title })} disabled={locked} onClick={() => {
                 changeStatus.reset(); setNotice("");
                 setReview({ task, target, intent: { path: `tasks/${task.id}/status`, method: "POST", key: crypto.randomUUID(), body: { status: target }, etag: task.etag } });
-              }}><Icon size={18} aria-hidden /></button>;
+              }}><Icon size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t(shortTexts[target])}</span></button>;
             })}
           </div>
         </li>)}</ul>}
-        {tasks.hasNextPage && <button className="text-button" disabled={tasks.isFetching || locked} onClick={() => tasks.fetchNextPage()}>{t("tasks.more")}</button>}
+        {!tasks.isError && tasks.hasNextPage && <button className="text-button" disabled={tasks.isFetching || locked} onClick={() => tasks.fetchNextPage()}>{t("tasks.more")}</button>}
       </section>
       <section className={styles.createSection} aria-labelledby="new-task-title"><div className={styles.sectionHeading}><Plus size={20} aria-hidden /><h2 id="new-task-title">{t("tasks.new")}</h2></div><TaskForm user={user} spaceId={spaceId} disabled={editing !== null || review !== null} onBusy={setCreateBusy} onFailure={setAccessError} onSaved={task => saved(task, false)} /></section>
     </div>
@@ -199,7 +229,7 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
     queryFn: ({ signal }) => taskAssignees(user.id, spaceId, basis?.id, signal),
   });
   const mutation = useMutation({
-    mutationFn: (command: TaskIntent) => sendTask(command, user.id),
+    mutationFn: (command: TaskIntent) => sendTask(command, user.id, spaceId),
     onSuccess: async result => { setIntent(null); setError(""); if (!basis) setDraft(taskDraft()); await onSaved(result); },
     onError: problem => {
       setError(problem.message);
@@ -252,7 +282,7 @@ function TaskForm({ user, spaceId, initial, disabled = false, onBusy, onFailure,
     if (!basis) return;
     setReloading(true);
     try {
-      const current = await readTask(basis.id, user.id);
+      const current = await readTask(basis.id, user.id, spaceId);
       setBasis(current); setDraft(taskDraft(current)); setConflict(false); setError(""); mutation.reset();
       await assignees.refetch();
     } catch (problem) { setError((problem as Error).message); if (isAccessError(problem as Error)) onFailure(problem as Error); }

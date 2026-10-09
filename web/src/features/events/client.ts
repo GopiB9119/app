@@ -206,3 +206,97 @@ export async function respondToEvent(accountId: string, eventId: string, respons
   if (event.my_response !== response || event.my_response_outdated) throw new ApiError(502, "INVALID_RESPONSE", "Your response could not be confirmed.");
   return event;
 }
+
+export const MAX_POLL_QUESTION = 120;
+export const MAX_POLL_OPTION = 80;
+export const MAX_POLL_OPTIONS = 8;
+export const MAX_EVENT_POLLS = 20;
+const pollUuid = uuid.transform(value => value.toLowerCase());
+const pollEtag = z.string().regex(/^"[0-9a-fA-F]{64}"$/);
+const pollText = (maximum: number) => chars(1, maximum).refine(value => !!value.trim() && !controls.test(value));
+const pollTextKey = (value: string) => [...value.toLowerCase()]
+  .map(character => character === "\u0131" ? character : character.toUpperCase().toLowerCase()).join("");
+const pollBodySchema = z.object({
+  question: pollText(MAX_POLL_QUESTION), options: z.array(pollText(MAX_POLL_OPTION)).min(2).max(MAX_POLL_OPTIONS),
+}).refine(value => new Set(value.options.map(pollTextKey)).size === value.options.length);
+export type PollBody = { readonly question: string; readonly options: readonly string[] };
+export type PollCreateIntent = { readonly accountId: string; readonly eventId: string; readonly key: string; readonly body: PollBody };
+export type PollVoteIntent = {
+  readonly accountId: string; readonly eventId: string; readonly pollId: string; readonly key: string;
+  readonly voteEtag: string; readonly body: { readonly option_id: string | null };
+};
+export type PollCloseIntent = { readonly accountId: string; readonly eventId: string; readonly pollId: string; readonly etag: string };
+export const pollSchema = z.object({
+  id: pollUuid, event_id: pollUuid, question: pollText(MAX_POLL_QUESTION),
+  options: z.array(z.object({ id: pollUuid, text: pollText(MAX_POLL_OPTION), votes: count.safe() })).min(2).max(MAX_POLL_OPTIONS),
+  status: z.enum(["open", "closed"]), total_votes: count.safe(), my_option_id: pollUuid.nullable(),
+  vote_etag: pollEtag, can_vote: z.boolean(), can_close: z.boolean(), etag: pollEtag.nullable(),
+  created_at: timestamp, closed_at: timestamp.nullable(),
+}).superRefine((value, context) => {
+  if (new Set(value.options.map(option => option.id)).size !== value.options.length
+    || new Set(value.options.map(option => pollTextKey(option.text))).size !== value.options.length
+    || value.total_votes !== value.options.reduce((total, option) => total + option.votes, 0)
+    || (value.my_option_id !== null && !value.options.some(option => option.id === value.my_option_id))
+    || (value.status === "closed") !== (value.closed_at !== null)
+    || (value.status === "closed" && (value.can_vote || value.can_close)) || (value.can_close && value.etag === null)) {
+    context.addIssue({ code: "custom", message: "Inconsistent poll." });
+  }
+});
+export type PollView = z.infer<typeof pollSchema>;
+
+export function pollBody(question: string, options: readonly string[]): PollBody {
+  const clean = (value: string) => value.trim().replace(/\s+/g, " ");
+  return { question: clean(question), options: options.map(clean) };
+}
+
+export function validPollBody(body: PollBody) {
+  return pollBodySchema.safeParse(body).success;
+}
+
+function checkPoll(poll: PollView, eventId: string, pollId?: string) {
+  if (poll.event_id !== eventId.toLowerCase() || (pollId && poll.id !== pollId.toLowerCase())) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The poll does not match your request.");
+  }
+  return poll;
+}
+
+export async function listEventPolls(accountId: string, eventId: string, signal?: AbortSignal) {
+  const result = await api(`events/${eventId}/polls`, z.array(pollSchema).max(MAX_EVENT_POLLS), { accountId, signal });
+  if (result.pagination?.has_more || new Set(result.data.map(poll => poll.id)).size !== result.data.length) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The poll list is incomplete.");
+  }
+  return result.data.map(poll => checkPoll(poll, eventId));
+}
+
+export async function readEventPoll(accountId: string, eventId: string, pollId: string, signal?: AbortSignal) {
+  const result = await api(`events/${eventId}/polls/${pollId}`, pollSchema, { accountId, signal });
+  return checkPoll(result.data, eventId, pollId);
+}
+
+export async function createEventPoll(intent: PollCreateIntent) {
+  const result = await api(`events/${intent.eventId}/polls`, pollSchema, {
+    method: "POST", accountId: intent.accountId, body: intent.body, headers: { "Idempotency-Key": intent.key },
+  });
+  const poll = checkPoll(result.data, intent.eventId);
+  if (poll.question !== intent.body.question || JSON.stringify(poll.options.map(option => option.text)) !== JSON.stringify(intent.body.options)) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The created poll does not match your review.");
+  }
+  return poll;
+}
+
+export async function voteEventPoll(intent: PollVoteIntent) {
+  const result = await api(`events/${intent.eventId}/polls/${intent.pollId}/vote`, pollSchema, {
+    method: "PUT", accountId: intent.accountId, body: intent.body,
+    headers: { "If-Match": intent.voteEtag, "Idempotency-Key": intent.key },
+  });
+  return checkPoll(result.data, intent.eventId, intent.pollId);
+}
+
+export async function closeEventPoll(intent: PollCloseIntent) {
+  const result = await api(`events/${intent.eventId}/polls/${intent.pollId}/close`, pollSchema, {
+    method: "POST", accountId: intent.accountId, body: {}, headers: { "If-Match": intent.etag },
+  });
+  const poll = checkPoll(result.data, intent.eventId, intent.pollId);
+  if (poll.status !== "closed") throw new ApiError(502, "INVALID_RESPONSE", "The poll closure could not be confirmed.");
+  return poll;
+}

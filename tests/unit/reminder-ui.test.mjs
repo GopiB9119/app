@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -31,6 +31,11 @@ before(async () => {
     outfile: path.join(root, '.local/reminder-fixture.js'), loader: { '.otf': 'dataurl' },
     define: { 'process.env.NODE_ENV': '"development"' },
     plugins: [{ name: 'offline-only', setup(builder) {
+      if (process.env.COMMUNITY_PREFERENCE_RETRY_MUTANT === 'new-key') builder.onLoad({ filter: /notification-screen\.tsx$/ }, args => {
+        const source = readFileSync(args.path, 'utf8');
+        assert.ok(source.includes('"Idempotency-Key": command.key'));
+        return { contents: source.replace('"Idempotency-Key": command.key', '"Idempotency-Key": crypto.randomUUID()'), loader: 'tsx', resolveDir: path.dirname(args.path) };
+      });
       builder.onResolve({ filter: /^next\/link$/ }, () => ({ path: 'link', namespace: 'offline' }));
       builder.onLoad({ filter: /^link$/, namespace: 'offline' }, () => ({ contents: 'import React from "react"; export default function Link({children,...props}) { return <a {...props}>{children}</a>; }', loader: 'jsx', resolveDir: web }));
       builder.onResolve({ filter: /^\/fonts\// }, args => ({ path: path.join(web, 'public', args.path.slice(1)) }));
@@ -64,7 +69,7 @@ async function fixture(context, options = {}) {
       local_time: reminder.local_time, timezone: reminder.timezone, scheduled_at: reminder.scheduled_at, dispatch_expires_at: reminder.expires_at,
       expires_at: '2026-09-22T10:00:00Z', created_at: '2026-09-19T10:00:00Z', resolved_at: null, status: 'pending', source_changed: false, reminder_id: null, version: '1', channel: 'in_app' };
     const state = window.reminderFixture = { calls: [], reminders: options.seed ? [reminder] : [], notifications: options.inbox ? [notification] : [], requests: options.requestInbox || options.requestSent ? [proposal] : [],
-      preferences: true, generation: 1, holdNextPreferences: false, held: null, heldSettled: false, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap, timezoneFailures: options.timezoneFailures ?? 0 };
+      preferences: true, generation: 1, preferenceFailure: options.preferenceFailure ?? null, holdNextPreferences: false, held: null, heldSettled: false, failSave: !!options.failSave, failRequestSave: !!options.failRequestSave, failRequestAccept: !!options.failRequestAccept, failAck: !!options.failAck, denied: false, gap: !!options.gap, timezoneFailures: options.timezoneFailures ?? 0 };
     const receipts = new Map();
     const response = (data, extra = {}, headers = {}) => new Response(JSON.stringify({ data, request_id: 'offline-reminder', ...extra }), { status: 200, headers });
     const failure = (status, code, message) => new Response(JSON.stringify({ error: { code, message, details: {} }, request_id: 'offline-reminder' }), { status });
@@ -114,9 +119,11 @@ async function fixture(context, options = {}) {
       }
       if (url.pathname === '/api/me/notification-preferences') {
         if (method === 'PATCH') {
+          if (state.preferenceFailure === 'before') { state.preferenceFailure = null; throw new TypeError('Synthetic preference request lost before receipt'); }
           if (headers['if-match'] !== `"preferences-${state.generation}"`) return failure(412, 'PRECONDITION_FAILED', 'Preferences changed.');
           state.preferences = body.in_app_reminders_enabled;
           state.generation += 1;
+          if (state.preferenceFailure === 'after') { state.preferenceFailure = null; throw new TypeError('Synthetic committed preference reply lost'); }
         } else if (state.holdNextPreferences) {
           // A held read answers with the setting as it was when the read began, once released; aborting it rejects it.
           state.holdNextPreferences = false;
@@ -253,6 +260,53 @@ test('offline inbox preferences use a confirmed version and denied refresh remov
     await page.getByRole('button', { name: 'Refresh inbox' }).click();
     await page.getByRole('alert').filter({ hasText: 'Task access is unavailable.' }).waitFor();
     assert.equal(await page.getByRole('heading', { name: 'Buy groceries', exact: true }).count(), 0);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline preference retry: a lost request keeps its key, exact value and reviewed version until confirmed', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 } });
+  try {
+    const { page, outbound, errors } = await fixture(context, { inbox: true, preferenceFailure: 'before' });
+    const preferences = page.getByRole('region', { name: 'Preferences', exact: true });
+    const toggle = preferences.getByRole('checkbox', { name: 'In-app task reminders', exact: true });
+    await toggle.click();
+    await preferences.getByRole('alert').filter({ hasText: 'No connection' }).waitFor();
+    assert.equal(await toggle.isDisabled(), true, 'An unconfirmed preference cannot be replaced by another change');
+    assert.equal(await toggle.isChecked(), true, 'The new value is not confirmed yet');
+    const retry = preferences.getByRole('button', { name: 'Retry', exact: true });
+    await retry.click();
+    await preferences.getByRole('checkbox', { name: 'In-app task reminders', checked: false, exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('[aria-labelledby="preference-title"] input[type="checkbox"]').disabled);
+    const writes = await page.evaluate(() => window.reminderFixture.calls.filter(call => call.route === '/api/me/notification-preferences' && call.method === 'PATCH'));
+    assert.equal(writes.length, 2);
+    assert.match(writes[0].headers['idempotency-key'] ?? '', /^[0-9a-f-]{36}$/);
+    assert.deepEqual(writes[0], writes[1]);
+    assert.equal(writes[0].headers['if-match'], '"preferences-1"');
+    assert.deepEqual(writes[0].body, { in_app_reminders_enabled: false });
+    assert.equal(await page.evaluate(() => window.reminderFixture.generation), 2);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('offline preference retry: a lost committed reply retains the reviewed version and safely reports the stale retry', async () => {
+  const context = await browser.newContext();
+  try {
+    const { page, outbound, errors } = await fixture(context, { inbox: true, preferenceFailure: 'after' });
+    const preferences = page.getByRole('region', { name: 'Preferences', exact: true });
+    const toggle = preferences.getByRole('checkbox', { name: 'In-app task reminders', exact: true });
+    await toggle.click();
+    await preferences.getByRole('alert').filter({ hasText: 'No connection' }).waitFor();
+    assert.equal(await toggle.isDisabled(), true);
+    await preferences.getByRole('button', { name: 'Retry', exact: true }).click();
+    await preferences.getByRole('alert').filter({ hasText: 'Preferences changed.' }).waitFor();
+    await preferences.getByRole('checkbox', { name: 'In-app task reminders', checked: false, exact: true }).waitFor();
+    const writes = await page.evaluate(() => window.reminderFixture.calls.filter(call => call.route === '/api/me/notification-preferences' && call.method === 'PATCH'));
+    assert.equal(writes.length, 2);
+    assert.deepEqual(writes[0], writes[1]);
+    assert.equal(writes[1].headers['if-match'], '"preferences-1"');
+    assert.equal(await page.evaluate(() => window.reminderFixture.generation), 2, 'A retry must not repeat the already committed preference effect');
+    assert.equal(await preferences.getByRole('button', { name: 'Retry', exact: true }).count(), 0);
     assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

@@ -67,14 +67,21 @@ async function fixture(context, options = {}) {
   page.on('pageerror', error => errors.push(error.message));
   await page.setContent('<html><head><title>Offline Home</title></head><body><div id="root"></div></body></html>');
   await page.addStyleTag({ content: css });
-  await page.evaluate(({ accountId, familyId, groupId, taskId, failing }) => {
+  await page.evaluate(({ accountId, familyId, groupId, taskId, failing, delayed, invitationRecipient }) => {
     const today = new Date().toISOString().slice(0, 10);
     const later = new Date(Date.now() + 86400000 * 3).toISOString();
     const created = '2026-09-19T10:00:00Z';
-    const state = window.homeFixture = { calls: [], unexpected: [], failing: new Set(failing) };
+    const state = window.homeFixture = { calls: [], unexpected: [], agentScopes: [], failing: new Set(failing), invitationRecipient };
+    const held = new Set(delayed);
+    const waiting = new Map();
+    state.release = pathname => {
+      held.delete(pathname);
+      for (const resolve of waiting.get(pathname) ?? []) resolve();
+      waiting.delete(pathname);
+    };
     const spaces = [
-      { id: familyId, name: 'Morgan family', description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: created },
-      { id: groupId, name: 'Garden club', description: '', space_type: 'group', visibility: 'public', status: 'active', role: 'owner', version: '1', created_at: created },
+      { id: familyId, name: 'Morgan family', description: '', space_type: 'family', visibility: 'private', status: 'active', role: 'owner', version: '1', created_at: created, member_count: 3, member_preview: ['Sam Lee', 'Priya Rao'] },
+      { id: groupId, name: 'Garden club', description: '', space_type: 'group', visibility: 'public', status: 'active', role: 'owner', version: '1', created_at: created, agent_enabled: false },
     ];
     const entries = [
       { id: taskId, space_id: familyId, title: 'Water the plants', date: today, kind: 'task', task_id: taskId, scheduled_at: null, timezone: null, status: 'open', source_changed: false, series_id: null },
@@ -86,13 +93,31 @@ async function fixture(context, options = {}) {
         scheduled_at: `${today}T20:00:00Z`, timezone: 'UTC', source_changed: false, status: 'cancelled', series_id: null },
     ];
     const person = (id, name) => ({ account_id: id, display_name: name });
+    const agentRun = (id, space_id, status, fields) => ({
+      id, agent_kind: space_id ? 'space' : 'main', space_id, message: 'Synthetic request', status, outcome: null, stop_reason: null, intent: null,
+      answer: null, sources: [], question: null, approval: null, plan: [], todos: [], handoffs: [], tool_calls: [], evidence: [], events: [],
+      created_at: created, updated_at: created, finished_at: null, version: '1', ...fields,
+    });
+    const mainApproval = agentRun('0a1d6f3c-1111-4c1e-8f4e-000000000031', null, 'waiting_for_approval', { approval: {
+      id: '0a1d6f3c-1111-4c1e-8f4e-000000000032', run_id: '0a1d6f3c-1111-4c1e-8f4e-000000000031', space_id: null, tool_name: 'pages.create_post', risk: 'medium',
+      summary: 'Publish a post on Riverside garden', fields: [], status: 'pending', reason: null, result_ref: null, created_at: created, expires_at: later,
+      decided_at: null, version: '1', etag: `"${'a'.repeat(64)}"`,
+    } });
+    const familyQuestion = agentRun('0a1d6f3c-1111-4c1e-8f4e-000000000033', familyId, 'waiting_for_user', {
+      question: { id: '0a1d6f3c-1111-4c1e-8f4e-000000000034', text: 'Which Saturday works for dinner?', expires_at: later },
+    });
     const reply = (data, extra = {}) => new Response(JSON.stringify({ data, request_id: 'offline-home', ...extra }), { status: 200 });
     const paged = (data, extra = {}) => reply(data, { pagination: { next_cursor: null, has_more: false }, ...extra });
     const unavailable = () => new Response(JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic outage.' }, request_id: 'offline-home' }), { status: 503 });
     const sources = {
       '/api/spaces': () => paged(spaces),
+      '/api/agent-runs': url => {
+        const scope = url.searchParams.get('space_id');
+        state.agentScopes.push(`${scope ?? 'main'}:${url.searchParams.get('status')}`);
+        return paged(scope === null ? [mainApproval] : scope === familyId ? [familyQuestion] : []);
+      },
       '/api/invitations': () => paged([{ id: 'a1d6f3c2-1111-4c1e-8f4e-000000000001', space_id: '9d0f3c2a-2222-4c1e-8f4e-000000000002', space_name: 'Lee household',
-        inviter_name: 'Sam Lee', recipient_account_id: accountId, role: 'member', status: 'pending', created_at: created, expires_at: later }]),
+        inviter_name: 'Sam Lee', recipient_account_id: state.invitationRecipient, role: 'member', status: 'pending', created_at: created, expires_at: later }]),
       [`/api/spaces/${groupId}/join-requests`]: () => reply([{ id: 'b2d6f3c2-3333-4c1e-8f4e-000000000003', account_id: 'c3d6f3c2-4444-4c1e-8f4e-000000000004',
         display_name: 'Priya Shah', note: 'I grow tomatoes.', created_at: created, expires_at: later }]),
       '/api/reminder-requests': () => paged([{ id: 'd4d6f3c2-5555-4c1e-8f4e-000000000005', task_id: taskId, space_id: familyId, task_title: 'Take out the bins',
@@ -122,6 +147,9 @@ async function fixture(context, options = {}) {
         return new Response(new ReadableStream({ start(controller) { config.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('Aborted', 'AbortError')); } catch {} }); } }), { headers: { 'Content-Type': 'text/event-stream' } });
       }
       state.calls.push(`${method} ${url.pathname}`);
+      if (held.has(url.pathname)) await new Promise(resolve => {
+        waiting.set(url.pathname, [...(waiting.get(url.pathname) ?? []), resolve]);
+      });
       if (url.pathname === '/api/me' && method === 'GET') {
         return reply({ id: accountId, display_name: 'Alex Morgan', email: 'alex@example.test', timezone: 'UTC', email_verified: true, version: 1 });
       }
@@ -129,16 +157,90 @@ async function fixture(context, options = {}) {
       if (!source) { state.unexpected.push(`${method} ${url.pathname}`); throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`); }
       return state.failing.has(url.pathname) ? unavailable() : source(url);
     };
-  }, { accountId, familyId, groupId, taskId, failing: options.failing ?? [] });
+  }, { accountId, familyId, groupId, taskId, failing: options.failing ?? [], delayed: options.delayed ?? [], invitationRecipient: options.invitationRecipient ?? accountId });
   await page.addScriptTag({ content: javascript });
   await page.evaluate(() => window.renderHomeFixture());
-  await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
-  await page.waitForFunction(() => !document.querySelector('main [aria-busy="true"]'));
+  if (options.waitForData !== false) {
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('main [aria-busy="true"]'));
+  }
   return { page, outbound, errors };
 }
 
 const section = (page, name) => page.getByRole('region', { name, exact: true });
 const rows = async (page, name) => (await section(page, name).getByRole('listitem').allInnerTexts()).map(text => text.replace(/\s+/g, ' ').trim());
+
+test('Home loading reserves content space, respects reduced motion, and resolves sections independently', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, reducedMotion: 'reduce', timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { delayed: ['/api/me', '/api/feed'], waitForData: false });
+    await page.locator('main [role="status"]').waitFor();
+    assert.ok(await page.locator('main [data-slot="skeleton"]').count() >= 6);
+    assert.equal(await page.locator('main [data-slot="skeleton"]').first().evaluate(element => getComputedStyle(element).animationName), 'none');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.evaluate(() => window.homeFixture.release('/api/me'));
+    await page.getByRole('heading', { name: 'Home', exact: true, level: 1 }).waitFor();
+    const pages = section(page, 'From pages you follow');
+    await pages.getByRole('status').waitFor();
+    await section(page, 'Your Spaces').getByRole('listitem').filter({ hasText: 'Morgan family' }).waitFor();
+    assert.equal(await pages.locator('[data-slot="skeleton"]').count(), 6);
+    await page.evaluate(() => window.homeFixture.release('/api/feed'));
+    await pages.getByRole('link', { name: 'Read Planting day 1', exact: true }).waitFor();
+    assert.equal(await pages.getByRole('status').count(), 0);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('shared UI: navigation menu supports keyboard focus, Escape, and small screens without making writes', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    const trigger = page.getByRole('button', { name: 'More', exact: true });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const menu = page.getByRole('menu');
+    await menu.waitFor();
+    const items = menu.getByRole('menuitem');
+    assert.deepEqual(await items.allTextContents(), ['Calendar', 'Tasks', 'Events', 'Reminders', 'Documents', 'Medicines']);
+    assert.equal(await items.first().evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(() => document.querySelector('[role="menuitem"][href="/app/tasks"]') === document.activeElement);
+    assert.equal(await items.nth(1).evaluate(element => element === document.activeElement), true);
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="menuitem"]')].every(element => {
+      const box = element.getBoundingClientRect();
+      return box.x >= 0 && box.right <= innerWidth && box.height >= 44;
+    }));
+    for (const item of await items.all()) {
+      const box = await item.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.height >= 44, JSON.stringify(box));
+    }
+    assert.equal(await items.nth(1).getAttribute('href'), '/app/tasks');
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('shared UI: header icons have keyboard tooltips and a working skip link', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context);
+    const search = page.getByRole('link', { name: 'Search', exact: true });
+    await search.focus();
+    await page.getByRole('tooltip', { name: 'Search', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('tooltip').waitFor({ state: 'hidden' });
+    const skip = page.getByRole('link', { name: 'Skip to content', exact: true });
+    await skip.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#app-content').evaluate(element => element === document.activeElement), true);
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
 
 test('Home shows each section from its own source, and one failing source leaves the others in place', async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, timezoneId: 'UTC' });
@@ -147,18 +249,24 @@ test('Home shows each section from its own source, and one failing source leaves
     const pages = section(page, 'From pages you follow');
     await pages.getByRole('alert').filter({ hasText: "Couldn't load posts from pages you follow." }).waitFor();
     assert.deepEqual(await rows(page, 'Needs attention'), [
+      'Agent needs your approval: Publish a post on Riverside garden Main Agent Review',
+      'Agent asked: Which Saturday works for dinner? Morgan family Answer',
       'Sam Lee invited you to Lee household Review invitation',
       'Priya Shah asks to join Garden club Review request',
       'Jordan Morgan asks to remind you: Take out the bins 1 Dec, 08:00 Review request',
       'Reminder: Call the plumber 2 Dec, 09:00 Open inbox',
     ]);
+    // Only the requester's own waiting requests, and never for a Space whose agent is off.
+    assert.deepEqual((await page.evaluate(() => window.homeFixture.agentScopes)).sort(), [`${familyId}:needs_you`, 'main:needs_you'].sort());
+    assert.match(await page.locator('.ui-page-description').textContent(), /^Good (morning|afternoon|evening), Alex Morgan\.$/);
+    await section(page, 'Needs attention').getByText('6 things need your attention.', { exact: true }).waitFor();
     // Only active entries, the task first, then by time; the cancelled event is left out.
     assert.deepEqual(await rows(page, 'Today'), [
       'Today Water the plants Task due · Morgan family Open',
       '18:00 Water the plants Reminder · Morgan family Open',
       '19:00 Family dinner Event · Morgan family Open',
     ]);
-    assert.deepEqual(await rows(page, 'Your Spaces'), ['Morgan family Family · Owner Tasks', 'Garden club Group · Owner Tasks']);
+    assert.deepEqual(await rows(page, 'Your Spaces'), ['Morgan family Family · Owner · 3 members · Agent on Tasks', 'Garden club Group · Owner · Agent off Tasks']);
     const links = Object.fromEntries(await page.locator('main a').evaluateAll(items => items.map(item => [item.getAttribute('aria-label') ?? item.textContent.trim(), item.getAttribute('href')])));
     assert.equal(links.Calendar, '/app/calendar');
     assert.equal(links.Medicines, '/app/care');
@@ -166,6 +274,8 @@ test('Home shows each section from its own source, and one failing source leaves
     assert.equal(links['View all Spaces'], '/app/spaces');
     assert.equal(links['View all posts from pages you follow'], '/app/home');
     assert.equal(links['Open Family dinner'], `/app/events?space_id=${familyId}`);
+    assert.equal(links.Review, '/app/agent');
+    assert.equal(links.Answer, `/app/agent/tasks?space_id=${familyId}`);
     // The failed source is retried on its own.
     const before = await page.evaluate(() => window.homeFixture.calls.length);
     await page.evaluate(() => window.homeFixture.failing.clear());
@@ -183,6 +293,69 @@ test('Home shows each section from its own source, and one failing source leaves
   } finally { await context.close(); }
 });
 
+test('Home rejects an invitation for another account and retries that source without hiding other work', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { invitationRecipient: groupId });
+    const attention = section(page, 'Needs attention');
+    const failure = attention.getByRole('alert').filter({ hasText: "Couldn't check invitations." });
+    await failure.waitFor();
+    assert.equal(await page.getByText('Sam Lee invited you to Lee household', { exact: true }).count(), 0);
+    assert.deepEqual(await rows(page, 'Needs attention'), [
+      'Agent needs your approval: Publish a post on Riverside garden Main Agent Review',
+      'Agent asked: Which Saturday works for dinner? Morgan family Answer',
+      'Priya Shah asks to join Garden club Review request',
+      'Jordan Morgan asks to remind you: Take out the bins 1 Dec, 08:00 Review request',
+      'Reminder: Call the plumber 2 Dec, 09:00 Open inbox',
+    ]);
+    assert.equal(await section(page, 'Your Spaces').getByRole('listitem').count(), 2);
+    assert.equal(await section(page, 'From pages you follow').getByRole('listitem').count(), 3);
+    const before = await page.evaluate(() => window.homeFixture.calls.length);
+    await page.evaluate(id => { window.homeFixture.invitationRecipient = id; }, accountId);
+    await failure.getByRole('button', { name: 'Retry', exact: true }).click();
+    await attention.getByText('Sam Lee invited you to Lee household', { exact: true }).waitFor();
+    await failure.waitFor({ state: 'detached' });
+    assert.deepEqual(await page.evaluate(count => window.homeFixture.calls.slice(count), before), ['GET /api/invitations']);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(await page.evaluate(() => window.homeFixture.unexpected), []);
+    assert.deepEqual(outbound, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('Home keeps other work visible when Agent requests cannot be checked, and retries only them', async () => {
+  const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
+  try {
+    const { page, outbound, errors } = await fixture(context, { failing: ['/api/agent-runs'] });
+    const attention = section(page, 'Needs attention');
+    const failure = attention.getByRole('alert').filter({ hasText: "Couldn't check Agent requests." });
+    await failure.waitFor();
+    assert.equal(await attention.getByText(/^Agent (needs|asked)/).count(), 0);
+    assert.equal(await attention.getByRole('listitem').count(), 4);
+    const before = await page.evaluate(() => window.homeFixture.calls.length);
+    await page.evaluate(() => window.homeFixture.failing.clear());
+    await failure.getByRole('button', { name: 'Retry', exact: true }).click();
+    await attention.getByText('Agent asked: Which Saturday works for dinner?', { exact: true }).waitFor();
+    await failure.waitFor({ state: 'detached' });
+    const splitWords = await attention.locator('[data-slot="item-title"]').evaluateAll(titles => titles.flatMap(title => {
+      const text = title.firstChild;
+      if (!text || text.nodeType !== Node.TEXT_NODE) return [];
+      return [...text.data.matchAll(/\S+/g)].filter(match => {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        return new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size > 1;
+      }).map(match => match[0]);
+    }));
+    assert.deepEqual(splitWords, [], 'Words in Needs attention titles must not split at 320 px.');
+    assert.deepEqual([...new Set(await page.evaluate(count => window.homeFixture.calls.slice(count), before))], ['GET /api/agent-runs']);
+    assert.equal(await page.evaluate(() => window.homeFixture.calls.every(call => call.startsWith('GET '))), true);
+    assert.deepEqual(await page.evaluate(() => window.homeFixture.unexpected), []);
+    await page.screenshot({ path: path.join(root, '.local/screenshots/home-agent-needs-you-320.png'), fullPage: true });
+    assert.deepEqual(outbound, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('without the Spaces list Home still shows the other sections, and it fits at 320 px with 200% text', async () => {
   const context = await browser.newContext({ viewport: { width: 320, height: 844 }, timezoneId: 'UTC' });
   try {
@@ -190,7 +363,8 @@ test('without the Spaces list Home still shows the other sections, and it fits a
     // Without the Spaces list, join requests and today's plans cannot be checked; the other sources still answer.
     await section(page, 'Your Spaces').getByRole('alert').filter({ hasText: "Couldn't load your Spaces." }).waitFor();
     assert.equal(await section(page, 'Needs attention').getByRole('alert').filter({ hasText: "Couldn't check join requests." }).count(), 1);
-    assert.equal(await section(page, 'Needs attention').getByRole('listitem').count(), 3);
+    // The Main Agent's waiting request still shows; Space agents need the list.
+    assert.equal(await section(page, 'Needs attention').getByRole('listitem').count(), 4);
     assert.equal(await section(page, 'From pages you follow').getByRole('listitem').count(), 3);
     const normal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.body).fontSize));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Home at 320px');
@@ -198,9 +372,22 @@ test('without the Spaces list Home still shows the other sections, and it fits a
     assert.equal(await page.evaluate(() => Number.parseFloat(getComputedStyle(document.body).fontSize)), normal * 2);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Home at 320px and 200% text');
     const main = page.getByRole('navigation', { name: 'Main', exact: true });
+    const doubled = await main.locator('span').evaluateAll(elements => {
+      const sizes = elements.map(element => Number.parseFloat(getComputedStyle(element).fontSize));
+      elements.forEach((element, index) => { element.style.fontSize = `${sizes[index] * 2}px`; });
+      return elements.every((element, index) => Number.parseFloat(getComputedStyle(element).fontSize) === sizes[index] * 2);
+    });
+    assert.equal(doubled, true, 'Navigation labels must actually use 200% text');
     for (const label of ['Home', 'Spaces', 'Messages', 'Discover', 'Profile']) {
-      const box = await main.getByRole('link', { name: label, exact: true }).boundingBox();
+      const link = main.getByRole('link', { name: label, exact: true });
+      const box = await link.boundingBox();
       assert.ok(box.x >= 0 && box.x + box.width <= 320 && box.height >= 44, `${label} fits and is at least 44 px tall`);
+      const lines = await link.locator('span').evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      });
+      assert.equal(lines, 1, `${label} must not split a word across lines`);
     }
     await page.screenshot({ path: path.join(root, '.local/screenshots/home-offline-320-large.png'), fullPage: true });
     assert.deepEqual(await page.evaluate(() => window.homeFixture.unexpected), []);

@@ -41,6 +41,12 @@ interface MessagingApi {
     @POST("v1/conversations/{id}/messages/{messageId}/reactions")
     suspend fun react(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: ReactDto): Response<EnvelopeDto<MessageDto>>
 
+    @POST("v1/conversations/{id}/messages/{messageId}/agent")
+    suspend fun askAgent(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: Map<String, String>): Response<EnvelopeDto<MessageDto>>
+
+    @POST("v1/conversations/{id}/messages/{messageId}/agent/share")
+    suspend fun shareAgentAnswer(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Path("messageId") messageId: String, @Body body: Map<String, String>): Response<EnvelopeDto<MessageDto>>
+
     @POST("v1/conversations/{id}/read")
     suspend fun markRead(@Header("Authorization") authorization: String, @Path("id") conversationId: String, @Body body: MarkReadDto): Response<EnvelopeDto<ConversationDto>>
 }
@@ -102,6 +108,13 @@ class MessagingRepository @Inject constructor(private val api: MessagingApi, pri
         Instant.parse(value.createdAt)
         value.deletedAt?.let(Instant::parse)
         value.editedAt?.let(Instant::parse)
+        // The agent writes nobody's own message, and only the author is told what became of their request (DEC-046).
+        require(!(value.fromAgent && value.mine))
+        value.agentRequest?.let { request ->
+            require(value.mine && request.status in AGENT_REQUEST_STATUSES)
+            request.runId?.let(::identifier)
+            require(request.runId != null || request.status !in setOf("answered", "private", "waiting"))
+        }
         // Each reaction once, in the fixed order, counted, and none on a deleted message (DEC-033).
         val order = value.reactionList.map { REACTIONS.indexOf(it.reaction) }
         require(order.all { it >= 0 } && order.zipWithNext().all { (left, right) -> left < right } && value.reactionList.all { it.count >= 1 })
@@ -127,12 +140,13 @@ class MessagingRepository @Inject constructor(private val api: MessagingApi, pri
         val unread = envelope.unreadCount ?: invalid("The conversation list is incomplete.")
         validate {
             require(items.size <= 20 && unread >= 0)
+            envelope.unreadMarker?.let { require(it.matches(Regex("[0-9a-f]{64}"))) }
             require(pagination.hasMore == (pagination.nextCursor != null))
             pagination.nextCursor?.let { next -> require(next.isNotBlank() && next.length <= 2048 && next != cursor && items.isNotEmpty()) }
             require(items.map { it.id }.distinct().size == items.size)
         }
         items.forEach { conversation(it, accountId) }
-        ConversationPage(items, pagination.nextCursor, unread)
+        ConversationPage(items, pagination.nextCursor, unread, envelope.unreadMarker)
     }
 
     suspend fun read(accountId: String, conversationId: String): ConversationDto = accounts.authorized(accountId) {
@@ -186,6 +200,20 @@ class MessagingRepository @Inject constructor(private val api: MessagingApi, pri
         require(reaction in REACTIONS)
         val result = message(accounts.result(api.react(it, conversationId, messageId, ReactDto(reaction, on))), accountId, conversationId)
         if (result.id != messageId || (result.reactionList.find { item -> item.reaction == reaction }?.mine ?: false) != on) invalid("The reaction could not be confirmed.")
+        result
+    }
+
+    /** The author asks again about an @agent message that got no answer; once it is answered, asking changes nothing (DEC-046). */
+    suspend fun askAgentAgain(accountId: String, conversationId: String, messageId: String): MessageDto = accounts.authorized(accountId) {
+        val result = message(accounts.result(api.askAgent(it, conversationId, messageId, emptyMap())), accountId, conversationId)
+        if (result.id != messageId || !result.mine || result.agentRequest == null) invalid("The agent request could not be confirmed.")
+        result
+    }
+
+    /** The author shows the agent's private answer to everyone in the chat (DEC-061); sharing again changes nothing. */
+    suspend fun shareAgentAnswer(accountId: String, conversationId: String, messageId: String): MessageDto = accounts.authorized(accountId) {
+        val result = message(accounts.result(api.shareAgentAnswer(it, conversationId, messageId, emptyMap())), accountId, conversationId)
+        if (result.id != messageId || !result.mine || result.agentRequest?.status != "answered") invalid("Sharing the answer could not be confirmed.")
         result
     }
 

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { TimezoneListProblem } from "@/features/identity/timezone-list-problem";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { translate, type Language } from "@/features/i18n/messages";
@@ -27,8 +28,9 @@ export { displayInstant, protectedReminderError, ReminderDialog, useReminderAcco
 export function ReminderScreen({ taskId = "" }: { taskId?: string }) {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useReminderAccountGuard(profile.error);
-  if (profile.isPending) return <Shell account><main className="account-loading"><LoaderCircle className="spin" aria-hidden />{t("reminders.loading")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading"><LoaderCircle className="spin" aria-hidden />{t("reminders.loading")}</main></Shell>;
   if (profile.isError || !profile.data) return <Shell account><main className={styles.main}><h1>{t("reminders.unavailable")}</h1><p className="message error" role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} />{t("reminders.retry")}</button></main></Shell>;
   return <ReminderWorkspace key={profile.data.data.id} user={profile.data.data} taskId={taskId} />;
 }
@@ -52,7 +54,9 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
     getNextPageParam: page => page.pagination.next_cursor ?? undefined,
   });
   const cancellation = useMutation({
-    mutationFn: (record: Reminder) => api(`reminders/${record.id}/cancel`, reminderSchema, { method: "POST", accountId: user.id, body: {} }),
+    mutationFn: (record: Reminder) => api(`reminders/${record.id}/cancel`,
+      reminderSchema.refine(result => result.id.toLowerCase() === record.id.toLowerCase()),
+      { method: "POST", accountId: user.id, body: {} }),
     onMutate: () => { setUncertain(true); setNotice(""); },
     onSuccess: async result => {
       setCancel(null); setUncertain(false);
@@ -67,6 +71,12 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
   useReminderAccountGuard(accessError ?? records.error);
   const denied = !!accessError || protectedReminderError(records.error);
   const rows = [...new Map(records.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
+  const staleCancellation = !!cancel && !uncertain && !cancellation.isPending && (denied || records.isError
+    || !rows.some(item => item.id.toLowerCase() === cancel.id.toLowerCase() && item.status === "scheduled"
+      && !(item.series_id && !item.follow_up_of) && item.task_title === cancel.task_title
+      && item.timezone === cancel.timezone && Date.parse(item.scheduled_at) === Date.parse(cancel.scheduled_at)));
+  const cancelReview = staleCancellation ? null : cancel;
+  useEffect(() => { if (staleCancellation) setCancel(null); }, [staleCancellation]);
   return <Shell account><main className={styles.main} onClickCapture={event => {
     if (locked && event.target instanceof Element && event.target.closest("a")) event.preventDefault();
   }}>
@@ -99,10 +109,11 @@ function ReminderWorkspace({ user, taskId }: { user: Account; taskId: string }) 
     {!denied && <SeriesList user={user} taskId={taskId} disabled={formLocked || requestLocked || !!cancel} onLocked={setSeriesLocked} onDenied={setAccessError} onNotice={setNotice} />}
     {!denied && <ReminderRequests user={user} disabled={formLocked || seriesLocked || !!cancel} onLocked={setRequestLocked} onDenied={setAccessError} onNotice={setNotice} />}
     {!denied && <BackupPeople user={user} taskId={taskId} disabled={formLocked || seriesLocked || requestLocked || !!cancel} onLocked={setBackupLocked} onDenied={setAccessError} onNotice={setNotice} />}
-    {cancel && !denied && <ReminderDialog title={t("reminders.cancelTitle")} closeLabel={t("reminders.closeDialog")} locked={cancellation.isPending || uncertain} onClose={() => setCancel(null)}>
-      <p className={styles.reviewTitle}>{cancel.task_title}</p><p>{displayInstant(cancel.scheduled_at, cancel.timezone, language)}</p>
+    {cancelReview && !denied && <ReminderDialog title={t("reminders.cancelTitle")} closeLabel={t("reminders.closeDialog")} locked={cancellation.isPending || uncertain} onClose={() => setCancel(null)}>
+      <p className={styles.reviewTitle}>{cancelReview.task_title}</p><p>{displayInstant(cancelReview.scheduled_at, cancelReview.timezone, language)}</p>
       {cancellation.isError && <p className="message error" role="alert">{cancellation.error.message}</p>}
-      <div className="dialog-actions"><button className="secondary-button" disabled={cancellation.isPending || uncertain} onClick={() => setCancel(null)}>{t("reminders.keep")}</button><button className="primary-button" disabled={cancellation.isPending} onClick={() => cancellation.mutate(cancel)}><X size={17} />{t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")}</button></div>
+      <div className="dialog-actions"><button className="secondary-button" disabled={cancellation.isPending || uncertain} onClick={() => setCancel(null)}>{t("reminders.keep")}</button><button className="primary-button" disabled={cancellation.isPending} onClick={() => cancellation.mutate(cancelReview)}
+        aria-label={t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")} title={t(cancellation.isError && uncertain ? "reminders.retryCancel" : "reminders.cancel")}><X size={17} />{t(cancellation.isError && uncertain ? "reminders.retry" : "reminders.cancel")}</button></div>
     </ReminderDialog>}
   </main></Shell>;
 }

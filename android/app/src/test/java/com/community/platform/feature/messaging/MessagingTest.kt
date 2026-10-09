@@ -2,9 +2,23 @@ package com.community.platform.feature.messaging
 
 import androidx.lifecycle.viewModelScope
 import com.community.platform.IdentityModule
+import com.community.platform.feature.agents.AgentApi
+import com.community.platform.feature.agents.AgentApprovalDto
+import com.community.platform.feature.agents.AgentAnswerDto
+import com.community.platform.feature.agents.AgentAskDto
+import com.community.platform.feature.agents.AgentCommand
+import com.community.platform.feature.agents.AgentDeletedDto
+import com.community.platform.feature.agents.AgentFieldDto
+import com.community.platform.feature.agents.AgentIssue
+import com.community.platform.feature.agents.AgentMemoryDto
+import com.community.platform.feature.agents.AgentRepository
+import com.community.platform.feature.agents.AgentRunDto
+import com.community.platform.feature.agents.AgentQuestionDto
 import com.community.platform.feature.identity.EnvelopeDto
 import com.community.platform.feature.identity.IdentityFailure
 import com.community.platform.feature.identity.PaginationDto
+import com.community.platform.feature.scheduling.ReminderRepositoryTest
+import com.community.platform.feature.scheduling.RepositoryAlertSource
 import com.community.platform.feature.spaces.SpaceMemberDto
 import com.community.platform.feature.spaces.SpaceRepositoryTest
 import com.google.gson.Gson
@@ -28,6 +42,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -39,6 +54,82 @@ import java.io.IOException
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+
+internal class MessagingAgentApi : AgentApi {
+    val runs = mutableMapOf<String, AgentRunDto>()
+    val runReads = mutableListOf<String>()
+    val decisions = mutableListOf<Triple<String, String, String>>()
+    val answers = mutableListOf<Pair<String, AgentAnswerDto>>()
+    private val decided = mutableMapOf<Pair<String, String>, AgentRunDto>()
+    var readFailure = 0
+    var readGate: CompletableDeferred<Unit>? = null
+    var readStarted: CompletableDeferred<Unit>? = null
+    var readFinished: CompletableDeferred<Unit>? = null
+    var loseApprovalResponse = false
+    var loseApprovalBeforeCommit = false
+    var effects = 0
+
+    private fun <Value> ok(value: Value): Response<EnvelopeDto<Value>> = Response.success(EnvelopeDto(value, null))
+    private fun <Value> unavailable(): Response<EnvelopeDto<Value>> = Response.error(501,
+        """{"error":{"code":"UNAVAILABLE","message":"Synthetic unavailable"}}""".toResponseBody("application/json".toMediaType()))
+    private fun <Value> failed(status: Int): Response<EnvelopeDto<Value>> = Response.error(status,
+        """{"error":{"code":"NOT_FOUND","message":"Synthetic missing"}}""".toResponseBody("application/json".toMediaType()))
+
+    override suspend fun ask(authorization: String, key: String, body: AgentAskDto) = unavailable<AgentRunDto>()
+    override suspend fun runs(authorization: String, spaceId: String?, cursor: String?, limit: Int) = unavailable<List<AgentRunDto>>()
+    override suspend fun getRun(authorization: String, runId: String): Response<EnvelopeDto<AgentRunDto>> {
+        runReads += runId
+        readStarted?.complete(Unit)
+        try {
+            readGate?.await()
+            if (readFailure != 0) return failed(readFailure)
+            return runs[runId]?.let(::ok) ?: failed(404)
+        } finally { readFinished?.complete(Unit) }
+    }
+    override suspend fun answer(authorization: String, runId: String, body: AgentAnswerDto): Response<EnvelopeDto<AgentRunDto>> {
+        answers += runId to body
+        val current = runs[runId] ?: return failed(404)
+        if (current.question?.id != body.questionId) return failed(409)
+        val now = "2026-10-05T09:00:00Z"
+        val approval = AgentApprovalDto("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", runId, current.spaceId, "tasks.update", "low",
+            "Update only the task title.", listOf(AgentFieldDto("Title", body.answer), AgentFieldDto("Due date", "2026-10-06")),
+            "pending", null, null, now, "2026-10-05T10:00:00Z", null, "1", "\"${"a".repeat(64)}\"")
+        val changed = current.copy(status = "waiting_for_approval", question = null, approval = approval, updatedAt = now)
+        runs[runId] = changed
+        return ok(changed)
+    }
+    override suspend fun stop(authorization: String, runId: String, body: Map<String, String>) = unavailable<AgentRunDto>()
+    override suspend fun approve(authorization: String, approvalId: String, key: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<AgentRunDto>> {
+        decisions += Triple(approvalId, key, etag)
+        decided[approvalId to key]?.let { return ok(it) }
+        if (loseApprovalBeforeCommit) { loseApprovalBeforeCommit = false; throw IOException("Synthetic lost approval response before commit") }
+        val current = runs.values.firstOrNull { it.approval?.id == approvalId } ?: return failed(404)
+        val approval = current.approval ?: return failed(404)
+        if (approval.etag != etag || approval.status != "pending") return failed(409)
+        effects += 1
+        val changed = current.copy(status = "completed", outcome = "action_completed", answer = "Updated the task title.",
+            updatedAt = "2026-10-05T09:00:00Z", finishedAt = "2026-10-05T09:00:00Z",
+            approval = approval.copy(status = "approved", decidedAt = "2026-10-05T09:00:00Z", resultRef = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                version = "2", etag = "\"${"b".repeat(64)}\""))
+        runs[current.id] = changed
+        decided[approvalId to key] = changed
+        if (loseApprovalResponse) { loseApprovalResponse = false; throw IOException("Synthetic lost approval response") }
+        return ok(changed)
+    }
+    override suspend fun reject(authorization: String, approvalId: String, etag: String, body: Map<String, String>): Response<EnvelopeDto<AgentRunDto>> {
+        val current = runs.values.firstOrNull { it.approval?.id == approvalId } ?: return failed(404)
+        val approval = current.approval ?: return failed(404)
+        if (approval.etag != etag || approval.status != "pending") return failed(409)
+        val now = "2026-10-05T09:00:00Z"
+        val changed = current.copy(status = "cancelled", stopReason = "rejected", answer = "Nothing was changed.", finishedAt = now,
+            updatedAt = now, approval = approval.copy(status = "rejected", reason = "rejected", decidedAt = now, version = "2",
+                etag = "\"${"c".repeat(64)}\""))
+        runs[current.id] = changed
+        return ok(changed)
+    }
+    override suspend fun memories(authorization: String) = unavailable<List<AgentMemoryDto>>()
+    override suspend fun forget(authorization: String, memoryId: String) = unavailable<AgentDeletedDto>()
+}
 
 internal suspend fun MessagingViewModel.finishTestWork() {
     bind(null)
@@ -126,7 +217,11 @@ class MessagingTest {
             val saved = stored.firstOrNull { it.clientMessageId == key } ?: message(stored.size + 1, mine = true, key = key, body = body.body).let { created ->
                 val original = body.replyTo?.let { id -> stored.firstOrNull { it.id == id } }
                 if (original == null) created else created.copy(replyTo = ReplyDto(original.id, "sent", original.position, original.senderName, original.body))
-            }.also(::add)
+            }.let { created ->
+                // An @agent message is answered before the send returns (DEC-046); agentOutcomes lists what becomes of each.
+                val outcome = if (mentionsAgent(created.body.orEmpty())) agentOutcomes.removeFirstOrNull() else null
+                if (outcome == null) created else created.copy(agentRequest = AgentRequestDto(outcome, if (outcome in setOf("answered", "private", "waiting")) UUID.randomUUID().toString() else null))
+            }.also { created -> add(created); if (created.agentRequest?.status == "answered") answerAgent(created) }
             return if (dropAfterCommit) failed(503) else ok(saved)
         }
 
@@ -168,6 +263,39 @@ class MessagingTest {
             stored[index] = stored[index].copy(reactions = next, revision = stored[index].version + 1)
             return ok(stored[index])
         }
+
+        // @agent in a chat (DEC-046).
+        val agentOutcomes = ArrayDeque<String>()
+        val agentAsks = mutableListOf<String>()
+
+        /** The Space's agent replies under the request, as a message nobody in the chat wrote. */
+        fun answerAgent(asked: MessageDto) = add(message(stored.size + 1, body = "Agent answer ${stored.count { it.fromAgent } + 1}").copy(
+            senderName = "Agent", fromAgent = true, replyTo = ReplyDto(asked.id, "sent", asked.position, asked.senderName, asked.body)))
+
+        override suspend fun askAgent(authorization: String, conversationId: String, messageId: String, body: Map<String, String>): Response<EnvelopeDto<MessageDto>> {
+            agentAsks += messageId
+            val index = stored.indexOfFirst { it.id == messageId && it.agentRequest != null }
+            if (index < 0) return failed(404, "NOT_FOUND")
+            if (stored[index].agentRequest?.status in setOf("pending", "failed")) {
+                stored[index] = stored[index].copy(agentRequest = AgentRequestDto("answered", UUID.randomUUID().toString()))
+                answerAgent(stored[index])
+            }
+            return ok(stored[index])
+        }
+
+        val shares = mutableListOf<String>()
+
+        // DEC-061: sharing turns a private answer into one everyone in the chat reads.
+        override suspend fun shareAgentAnswer(authorization: String, conversationId: String, messageId: String, body: Map<String, String>): Response<EnvelopeDto<MessageDto>> {
+            shares += messageId
+            val index = stored.indexOfFirst { it.id == messageId && it.agentRequest != null }
+            if (index < 0) return failed(404, "NOT_FOUND")
+            if (stored[index].agentRequest?.status == "private") {
+                stored[index] = stored[index].copy(agentRequest = stored[index].agentRequest!!.copy(status = "answered"))
+                answerAgent(stored[index])
+            }
+            return ok(stored[index])
+        }
     }
 
     private val api = FakeApi()
@@ -182,7 +310,7 @@ class MessagingTest {
     private suspend fun idle(current: MessagingViewModel) = withTimeout(5000) { current.state.first { !it.busy } }
 
     private suspend fun ready(visible: Boolean = true, open: Boolean = true): MessagingViewModel {
-        val current = MessagingViewModel(repository, fixture.repository); model = current
+        val current = MessagingViewModel(repository, fixture.repository, agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId)
         if (visible) current.resume()
         idle(current)
@@ -193,6 +321,168 @@ class MessagingTest {
     private fun invalid(block: suspend () -> Unit) {
         val failure = assertThrows(IdentityFailure::class.java) { runBlocking { block() } }
         assertEquals("INVALID_RESPONSE", failure.code)
+    }
+
+    private val agentRunId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    private fun reviewRun(id: String = agentRunId, needsTitle: Boolean = false): AgentRunDto {
+        val now = "2026-10-05T09:00:00Z"
+        val approval = if (needsTitle) null else AgentApprovalDto("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", id, fixture.spaceId,
+            "tasks.update", "low", "Update only the task title.",
+            listOf(AgentFieldDto("Task", "Water the plants"), AgentFieldDto("Title", "Water the garden"), AgentFieldDto("Due date", "6 October 2026")),
+            "pending", null, null, now, "2026-10-05T10:00:00Z", null, "1", "\"${"a".repeat(64)}\"")
+        return AgentRunDto(id, fixture.spaceId, "Change the task title and keep its due date", if (needsTitle) "waiting_for_user" else "waiting_for_approval",
+            null, null, null, if (needsTitle) AgentQuestionDto("dddddddd-dddd-4ddd-8ddd-dddddddddddd", "What should the task be called?", "2026-10-05T10:00:00Z") else null,
+            approval, now, now, null, "1")
+    }
+
+    private fun sourceFor(runId: String, status: String = "private", position: Int = 1) =
+        message(position, mine = true, key = UUID(8, position.toLong()).toString(), body = "@agent Change the task title").copy(
+            agentRequest = AgentRequestDto(status, runId),
+        )
+
+    private suspend fun readyWithAgent(agentApi: MessagingAgentApi): MessagingViewModel {
+        val current = MessagingViewModel(repository, fixture.repository, agentRuns = AgentRepository(agentApi, fixture.accounts)); model = current
+        current.bind(fixture.accountId); current.resume(); idle(current)
+        current.select(current.state.value.conversations.first()); idle(current)
+        return current
+    }
+
+    @Test fun privateReviewLoadsOnlyFromTheRequestersOwnMessage() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val run = reviewRun()
+        agentApi.runs[run.id] = run
+        val other = message(1).copy(agentRequest = null)
+        val source = sourceFor(run.id, position = 2)
+        api.add(other); api.add(source)
+        val current = readyWithAgent(agentApi)
+
+        current.openAgentReview(other.id); idle(current)
+        assertTrue(agentApi.runReads.isEmpty())
+        assertNull(current.state.value.chat!!.agentReview)
+
+        current.openAgentReview(source.id); idle(current)
+        val review = current.state.value.chat!!.agentReview!!
+        assertEquals(listOf(run.id), agentApi.runReads)
+        assertEquals("tasks.update", review.run!!.approval!!.toolName)
+        assertEquals("Water the garden", review.run!!.approval!!.fields[1].value)
+        assertEquals("Update only the task title.", review.run!!.approval!!.summary)
+    }
+
+    @Test fun taskTitleAnswerUsesTheExactQuestionAndShowsTheReturnedUpdateReview() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val run = reviewRun(needsTitle = true)
+        agentApi.runs[run.id] = run
+        val source = sourceFor(run.id, status = "waiting")
+        api.add(source)
+        val current = readyWithAgent(agentApi)
+        current.openAgentReview(source.id); idle(current)
+
+        assertEquals("What should the task be called?", current.state.value.chat!!.agentReview!!.run!!.question!!.text)
+        val oversized = "\uD83D\uDE00".repeat(501)
+        current.agentReviewAnswer(oversized)
+        current.answerAgentReview(); idle(current)
+        assertEquals(oversized, current.state.value.chat!!.agentReview!!.answer)
+        assertTrue(agentApi.answers.isEmpty())
+        current.agentReviewAnswer("  Picnic groceries  ")
+        current.answerAgentReview(); idle(current)
+        assertEquals(AgentAnswerDto("dddddddd-dddd-4ddd-8ddd-dddddddddddd", "Picnic groceries"), agentApi.answers.single().second)
+        val review = current.state.value.chat!!.agentReview!!.run!!
+        assertEquals("tasks.update", review.approval!!.toolName)
+        assertEquals("Picnic groceries", review.approval!!.fields.first { it.label == "Title" }.value)
+        assertEquals("2026-10-06", review.approval!!.fields.first { it.label == "Due date" }.value)
+    }
+
+    @Test fun unknownApprovalKeepsItsKeyAndEtagAcrossClosingAndReopeningReview() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val run = reviewRun()
+        agentApi.runs[run.id] = run
+        val source = sourceFor(run.id)
+        api.add(source)
+        val current = readyWithAgent(agentApi)
+        current.openAgentReview(source.id); idle(current)
+        agentApi.loseApprovalBeforeCommit = true
+        current.decideAgentReview(true); idle(current)
+        val command = current.state.value.chat!!.agentReview!!.command as AgentCommand.Decide
+        assertEquals(AgentIssue.UNCERTAIN, current.state.value.chat!!.agentReview!!.issue)
+        assertTrue(current.state.value.chat!!.agentReview!!.run!!.awaitingApproval)
+
+        current.closeAgentReview()
+        current.openAgentReview(source.id); idle(current)
+        assertEquals(command, current.state.value.chat!!.agentReview!!.command)
+        current.decideAgentReview(false)
+        assertEquals(1, agentApi.decisions.size)
+        current.retryAgentReview(); idle(current)
+
+        assertEquals(agentApi.decisions[0], agentApi.decisions[1])
+        assertEquals(command.key, agentApi.decisions[1].second)
+        assertEquals(command.etag, agentApi.decisions[1].third)
+        assertEquals(1, agentApi.effects)
+        assertEquals("completed", current.state.value.chat!!.agentReview!!.run!!.status)
+        assertNull(current.state.value.chat!!.agentReview!!.command)
+    }
+
+    @Test fun staleRunReadDoesNotReopenAClosedPanel() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val run = reviewRun()
+        agentApi.runs[run.id] = run
+        agentApi.readStarted = CompletableDeferred()
+        agentApi.readGate = CompletableDeferred()
+        agentApi.readFinished = CompletableDeferred()
+        val source = sourceFor(run.id)
+        api.add(source)
+        val current = readyWithAgent(agentApi)
+        current.openAgentReview(source.id)
+        withTimeout(5000) { agentApi.readStarted!!.await() }
+        current.closeAgentReview()
+        agentApi.readGate!!.complete(Unit)
+        withTimeout(5000) { agentApi.readFinished!!.await() }
+        assertNull(current.state.value.chat!!.agentReview)
+    }
+
+    @Test fun missingRunAndDeletedSourceClearThePrivateReview() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val source = sourceFor(agentRunId)
+        api.add(source)
+        val current = readyWithAgent(agentApi)
+        current.openAgentReview(source.id); idle(current)
+        assertNull(current.state.value.chat!!.agentReview)
+
+        val run = reviewRun(id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+        val replacement = sourceFor(run.id, position = 2)
+        agentApi.runs[run.id] = run
+        api.add(replacement)
+        current.pollNow(); idle(current)
+        current.openAgentReview(replacement.id); idle(current)
+        assertNotNull(current.state.value.chat!!.agentReview)
+
+        api.stored[1] = api.stored[1].copy(status = "deleted", body = null, deletedAt = "2026-10-05T09:01:00Z", agentRequest = null)
+        current.pollNow(); idle(current)
+        assertNull(current.state.value.chat!!.agentReview)
+    }
+
+    @Test fun conversationAccessLossAndAccountChangeClearPrivateReviewState() = runBlocking {
+        val agentApi = MessagingAgentApi()
+        val run = reviewRun()
+        agentApi.runs[run.id] = run
+        val source = sourceFor(run.id)
+        api.add(source)
+        val current = readyWithAgent(agentApi)
+        current.openAgentReview(source.id); idle(current)
+        current.closeChat()
+        assertNull(current.state.value.chat)
+
+        current.select(current.state.value.conversations.first()); idle(current)
+        current.openAgentReview(source.id); idle(current)
+        assertNotNull(current.state.value.chat!!.agentReview)
+        api.readFailure = 404
+        current.pollNow(); idle(current)
+        assertTrue(current.state.value.chat!!.denied)
+        assertNull(current.state.value.chat!!.agentReview)
+
+        current.bind(fixture.recipientId)
+        idle(current)
+        assertNull(current.state.value.chat)
+        assertTrue(current.state.value.requiresSignIn)
     }
 
     @Test fun rejectsInconsistentConversationFacts() {
@@ -516,7 +806,8 @@ class MessagingTest {
             override suspend fun markRead(authorization: String, conversationId: String, body: MarkReadDto): Response<EnvelopeDto<ConversationDto>> =
                 api.markRead(authorization, conversationId, body).also { marked.complete(Unit) }
         }
-        val current = MessagingViewModel(MessagingRepository(held, fixture.accounts), fixture.repository); model = current
+        val current = MessagingViewModel(MessagingRepository(held, fixture.accounts), fixture.repository,
+            agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId); current.resume(); idle(current)
         assertEquals(2, current.state.value.unreadCount)
         holding.set(true)
@@ -542,7 +833,7 @@ class MessagingTest {
     }
 
     @Test fun entrySpaceOpensItsSpaceChat() = runBlocking {
-        val current = MessagingViewModel(repository, fixture.repository); model = current
+        val current = MessagingViewModel(repository, fixture.repository, agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId, fixture.spaceId); idle(current)
         assertEquals(listOf(OpenConversationDto("space")), api.opens)
         assertEquals(conversationId, current.state.value.chat?.conversation?.id)
@@ -583,11 +874,41 @@ class MessagingTest {
                 entered.complete(Unit); release.await(); return api.conversations(authorization, cursor, limit)
             }
         }
-        val current = MessagingViewModel(MessagingRepository(delayed, fixture.accounts), fixture.repository); model = current
+        val current = MessagingViewModel(MessagingRepository(delayed, fixture.accounts), fixture.repository,
+            agentRuns = AgentRepository(MessagingAgentApi(), fixture.accounts)); model = current
         current.bind(fixture.accountId)
         withTimeout(5000) { entered.await() }
         current.bind(null); release.complete(Unit)
         assertEquals(MessagingState(), current.state.value)
+    }
+
+    @Test fun conversationUnreadMarkersAreParsedValidatedAndOptionalForOlderServers() = runBlocking {
+        var marker: String? = "a".repeat(64)
+        val requests = mutableListOf<Request>()
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val payload = EnvelopeDto(listOf(spaceChat), null, PaginationDto(null, false), 1, marker)
+            okhttp3.Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(payload).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = MessagingRepository(IdentityModule.messaging(http, Gson()), fixture.accounts)
+        val page = wire.conversations(fixture.accountId)
+        assertEquals(1, page.unreadCount)
+        assertEquals(marker, page.unreadMarker)
+        val source = RepositoryAlertSource(ReminderRepositoryTest.Fixture().repository, wire)
+        val unread = source.unreadMessages(fixture.accountId)
+        assertEquals(page.unreadCount, unread.count)
+        assertEquals(marker, unread.marker)
+        marker = null
+        assertNull(wire.conversations(fixture.accountId).unreadMarker)
+        assertNull(source.unreadMessages(fixture.accountId).marker)
+        for (invalidMarker in listOf("", "a".repeat(63), "g".repeat(64), "a".repeat(65))) {
+            marker = invalidMarker
+            invalid { wire.conversations(fixture.accountId) }
+        }
+        assertTrue(requests.all { it.method == "GET" && it.url.encodedPath == "/v1/conversations" })
+        assertTrue(requests.all { it.header("Authorization") == "Bearer ${fixture.token}" })
     }
 
     @Test fun wireCarriesIdempotencyKeyAndStrictBodies() = runBlocking {
@@ -633,5 +954,84 @@ class MessagingTest {
         size = 100
         assertThrows(IOException::class.java) { runBlocking { wire.messages(fixture.accountId, conversationId) } }
         assertTrue(wire.read(fixture.accountId, conversationId).canSend)
+    }
+
+    @Test fun onlyTheWordAtAgentAsksTheAgentAsTheServerReadsIt() {
+        for (text in listOf("@agent help", "@Agent, help", "Thanks @agent!", "hey\n@agent\nhelp")) assertTrue(text, mentionsAgent(text))
+        for (text in listOf("write to sam@agent.example", "@agents meet at six", "the agent can help", "x.@agent", "\u0C05@agent")) assertFalse(text, mentionsAgent(text))
+    }
+
+    @Test fun agentRepliesAndRequestsMustBeConsistent() {
+        val runId = "8c3fbd31-2c9a-4f88-9d5d-4c4ca09c4d04"
+        val asked = message(2, mine = true, body = "@agent help")
+        val reply = message(3).copy(senderName = "Agent", fromAgent = true, replyTo = ReplyDto(asked.id, "sent", "2", "Alex", "@agent help"))
+        for (valid in listOf(asked.copy(agentRequest = AgentRequestDto("answered", runId)), asked.copy(agentRequest = AgentRequestDto("off", null)), reply)) {
+            api.rawPage = listOf(valid)
+            assertEquals(valid, runBlocking { repository.messages(fixture.accountId, conversationId) }.items.single())
+        }
+        for (bad in listOf(
+            reply.copy(agentRequest = AgentRequestDto("answered", runId)), message(3).copy(agentRequest = AgentRequestDto("pending", null)),
+            asked.copy(agentRequest = AgentRequestDto("private", null)), asked.copy(agentRequest = AgentRequestDto("lost", null)),
+            asked.copy(agentRequest = AgentRequestDto("answered", "run-1")), asked.copy(fromAgent = true),
+        )) {
+            api.rawPage = listOf(bad)
+            invalid { repository.messages(fixture.accountId, conversationId) }
+        }
+    }
+
+    // DEC-046: the agent answers before the send returns, so its reply is fetched at once, without waiting for the next poll.
+    @Test fun anAgentReplyShowsAtOnceAndARequestWithoutAnAnswerCanBeAskedAgain(): Unit = runBlocking {
+        val current = ready()
+        api.agentOutcomes += listOf("answered", "failed")
+        current.draft("@agent what is due today"); current.send(); idle(current)
+        val answered = current.state.value.chat!!.messages
+        assertEquals(listOf("@agent what is due today", "Agent answer 1"), answered.map { it.body })
+        assertEquals("answered", answered.first().agentRequest?.status)
+        assertTrue(answered.last().fromAgent && !answered.last().mine)
+
+        current.draft("@agent what is on this week"); current.send(); idle(current)
+        val failed = current.state.value.chat!!.messages.last()
+        assertEquals("failed", failed.agentRequest?.status)
+        current.askAgentAgain(failed); idle(current)
+        val after = current.state.value.chat!!.messages
+        assertEquals(listOf(failed.id), api.agentAsks)
+        assertEquals("answered", after.single { it.id == failed.id }.agentRequest?.status)
+        assertEquals("Agent answer 2", after.last().body)
+        // Once answered, and for the agent's own reply, asking again sends nothing.
+        current.askAgentAgain(after.single { it.id == failed.id }); current.askAgentAgain(after.last()); idle(current)
+        assertEquals(1, api.agentAsks.size)
+    }
+
+    // DEC-061: an answer is private until its author shares it; sharing an answered request sends nothing.
+    @Test fun aPrivateAgentAnswerIsSharedOnlyByItsAuthorAndOnlyOnce(): Unit = runBlocking {
+        val current = ready()
+        api.agentOutcomes += listOf("private")
+        current.draft("@agent list my tasks"); current.send(); idle(current)
+        val asked = current.state.value.chat!!.messages.single()
+        assertEquals("private", asked.agentRequest?.status)
+        current.shareAgentAnswer(asked); idle(current)
+        val after = current.state.value.chat!!.messages
+        assertEquals(listOf(asked.id), api.shares)
+        assertEquals("answered", after.single { it.id == asked.id }.agentRequest?.status)
+        assertEquals("Agent answer 1", after.last().body)
+        current.shareAgentAnswer(after.single { it.id == asked.id }); current.shareAgentAnswer(after.last()); idle(current)
+        assertEquals(1, api.shares.size)
+    }
+
+    @Test fun askingTheAgentAgainPostsAnEmptyBodyAndMustConfirmTheSameRequest(): Unit = runBlocking {
+        val requests = mutableListOf<Request>()
+        val bodies = mutableListOf<String>()
+        val asked = message(2, mine = true, body = "@agent help").copy(agentRequest = AgentRequestDto("answered", UUID(8, 1).toString()))
+        val http = IdentityModule.http().newBuilder().addInterceptor { chain ->
+            val request = chain.request(); requests += request
+            val buffer = Buffer(); request.body?.writeTo(buffer); bodies += buffer.readUtf8()
+            okhttp3.Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(Gson().toJson(EnvelopeDto(asked, null)).toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val wire = MessagingRepository(IdentityModule.messaging(http, Gson()), fixture.accounts)
+        assertEquals("answered", wire.askAgentAgain(fixture.accountId, conversationId, asked.id).agentRequest?.status)
+        assertEquals("POST /v1/conversations/$conversationId/messages/${asked.id}/agent", "${requests[0].method} ${requests[0].url.encodedPath}")
+        assertEquals("{}", bodies[0])
+        invalid { wire.askAgentAgain(fixture.accountId, conversationId, message(3).id) }
     }
 }

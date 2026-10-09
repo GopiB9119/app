@@ -4,6 +4,7 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstrai
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.modules.agents.models import AgentRun
 from app.modules.identity.models import User
 from app.modules.spaces.models import Space
 
@@ -112,4 +113,39 @@ class ConversationReadState(Base):
     account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
     admission_id: Mapped[str] = mapped_column(String(36))
     read_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+# What became of a message that asked the agent (DEC-046). The first three put a reply in the chat.
+MENTION_STATUSES = ("answered", "private", "waiting", "pending", "off", "limited", "too_long", "failed")
+REPLIED = MENTION_STATUSES[:3]
+
+
+class ConversationAgentMention(Base):
+    """A chat message that mentions @agent: its author's agent request in that Space, and the agent's reply in the chat."""
+
+    __tablename__ = "conversation_agent_mentions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN (" + ", ".join(f"'{status}'" for status in MENTION_STATUSES) + ")", name="ck_conversation_agent_mention_status",
+        ),
+        CheckConstraint(
+            "(status IN (" + ", ".join(f"'{status}'" for status in REPLIED) + ")) = (reply_message_id IS NOT NULL)",
+            name="ck_conversation_agent_mention_reply",
+        ),
+        CheckConstraint("reply_message_id IS NULL OR run_id IS NOT NULL", name="ck_conversation_agent_mention_run"),
+        UniqueConstraint("reply_message_id", name="uq_conversation_agent_mention_reply"),
+        Index("ix_conversation_agent_mention_agent_run", "run_id"),
+        Index("ix_conversation_agent_mention_account", "account_id"),
+        Index("ix_conversation_agent_mention_conversation", "conversation_id"),
+    )
+
+    message_id: Mapped[str] = mapped_column(ForeignKey(ConversationMessage.id), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey(Conversation.id))
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    admission_id: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(16))
+    run_id: Mapped[str | None] = mapped_column(ForeignKey(AgentRun.id))
+    reply_message_id: Mapped[str | None] = mapped_column(ForeignKey(ConversationMessage.id))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

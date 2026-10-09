@@ -1,16 +1,22 @@
 import re
 import unicodedata
+from datetime import date
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_serializer, model_validator
 
-from app.modules.community.models import FEED_CONTROL_KINDS, INTEREST_DIMENSIONS, MODERATOR_STATES, REPORT_REASONS, TAXONOMY_DIMENSIONS
+from app.modules.community.models import (
+    FEED_CONTROL_KINDS, HELP_KINDS, HELP_REPLY_STATES, HELP_REPORT_REASONS, INTEREST_DIMENSIONS, MODERATOR_STATES, REPORT_REASONS,
+    TAXONOMY_DIMENSIONS,
+)
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.spaces.schemas import Pagination
 
 # A code from the shared vocabulary (GET /v1/taxonomy). Whether it is a current term is checked against the database.
 Code = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
+# A page's main topic column holds 20 characters; nesting puts this limit after Code's, so it wins.
+TopicCode = Annotated[Code, Field(max_length=20)]
 ReportReason = Literal[REPORT_REASONS]
 HANDLE = re.compile(r"[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){1,28}[a-z0-9]")
 RESERVED_HANDLES = {
@@ -73,7 +79,7 @@ class CreatePage(Input):
     handle: str = Field(min_length=3, max_length=30)
     name: str = Field(min_length=1, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
     description: str = Field(default="", max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
-    topic: Code = Field(max_length=20, description="The main topic: a current topic code from GET /v1/taxonomy.")
+    topic: TopicCode = Field(description="The main topic: a current topic code from GET /v1/taxonomy.")
     classification: ClassificationInput | None = None
 
     @field_validator("handle")
@@ -100,8 +106,9 @@ class CreatePage(Input):
 class UpdatePage(Input):
     name: str | None = Field(default=None, max_length=160, description="1 to 80 characters on one line, after spaces are collapsed.")
     description: str | None = Field(default=None, max_length=1000, description="Up to 500 characters, after surrounding spaces are removed.")
-    topic: Code | None = Field(default=None, max_length=20, description="The main topic: a current topic code from GET /v1/taxonomy.")
+    topic: TopicCode | None = Field(default=None, description="The main topic: a current topic code from GET /v1/taxonomy.")
     rules: str | None = Field(default=None, max_length=4000, description="Up to 2,000 characters, after line endings are normalized and surrounding spaces removed; empty removes the rules.")
+    help_open: bool | None = Field(default=None, description="Let followers post requests for help and offers of help.")
     classification: ClassificationInput | None = None
 
     @field_validator("name")
@@ -278,6 +285,7 @@ class PageView(ModeratedView):
     etag: str | None
     limited: bool = Field(False, description="A platform moderator limited the page: new posts and comments are paused (DEC-040).")
     limit: LimitMark | None = Field(None, description="Why it is limited; only its owner sees this.")
+    help_open: bool = Field(False, description="Followers may post requests for help and offers of help.")
 
 
 class PostView(ModeratedView):
@@ -411,6 +419,149 @@ class PostList(Envelope[list[PostView]]):
 
 
 class CommentList(Envelope[list[CommentView]]):
+    pagination: Pagination
+
+
+# Contact details stay out of public help posts; people share them in a private reply.
+CONTACT = re.compile(
+    r"https?://|www\.|\b[a-z0-9-]+\.(?:com|in|net|org|co|io|app|me|link|xyz|shop|store|info|biz)\b|[\w.+-]+@[\w-]+\.\w"
+    r"|(?<!\d)(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)|\+\d{1,3}[\s-]?\d{6,12}",
+    re.IGNORECASE,
+)
+
+
+def public_text(value: str, limit: int, multiline: bool, empty: bool = False) -> str:
+    value = clean_text(value, limit, multiline, empty)
+    if CONTACT.search(value):
+        raise ValueError("Leave out links, email addresses and phone numbers. Share them in a private reply instead.")
+    return value
+
+
+class CreateHelpPost(Input):
+    kind: Literal[HELP_KINDS] = Field(description="request: the author needs help; offer: the author can help.")
+    title: str = Field(min_length=1, max_length=240, description="1 to 120 characters on one line.")
+    details: str = Field(default="", max_length=2000, description="Up to 1,000 characters. No links, email addresses or phone numbers.")
+    place: Code | None = Field(default=None, description="An area: a place code from GET /v1/taxonomy. Never an address.")
+    need_by: date | None = Field(default=None, description="Requests only: the last day help is useful, up to 180 days ahead.")
+
+    @field_validator("title")
+    @classmethod
+    def valid_title(cls, value: str) -> str:
+        return public_text(value, 120, multiline=False)
+
+    @field_validator("details")
+    @classmethod
+    def valid_details(cls, value: str) -> str:
+        return public_text(value, 1000, multiline=True, empty=True)
+
+    @model_validator(mode="after")
+    def request_date(self):
+        if self.kind == "offer" and self.need_by is not None:
+            raise ValueError("Only a request has a need-by date.")
+        return self
+
+
+class ResolveHelpPost(Input):
+    outcome: Literal["helped", "closed"]
+    reply_id: UUID | None = Field(default=None, description="With helped: the reply that helped, if one did.")
+
+    @model_validator(mode="after")
+    def helped_reply(self):
+        if self.outcome == "closed" and self.reply_id is not None:
+            raise ValueError("Name a reply only when it helped.")
+        return self
+
+
+class CreateHelpReply(Input):
+    body: str = Field(min_length=1, max_length=1000, description="1 to 500 characters, seen only by the post's author and the page's owner and moderators.")
+
+    @field_validator("body")
+    @classmethod
+    def valid_body(cls, value: str) -> str:
+        return clean_text(value, 500, multiline=True)
+
+
+class ReportHelpPost(Input):
+    reason: Literal[HELP_REPORT_REASONS]
+    details: str = Field(default="", max_length=2000, description="Up to 1,000 characters, seen by the page's owner and moderators.")
+
+    @field_validator("details")
+    @classmethod
+    def valid_details(cls, value: str) -> str:
+        return clean_text(value, 1000, multiline=True, empty=True)
+
+
+class KeepHelpPost(Input):
+    reports: int = Field(ge=1, le=10000, description="How many open reports the reviewer saw. If more arrived, nothing changes.")
+
+
+class HelpReportView(BaseModel):
+    id: str
+    post_id: str
+    reason: Literal[HELP_REPORT_REASONS]
+    status: Literal["received", "closed"]
+    created_at: AwareDatetime
+
+
+class HelpReportCount(BaseModel):
+    reason: Literal[HELP_REPORT_REASONS]
+    count: int = Field(ge=1)
+
+
+class HelpReportNote(BaseModel):
+    """An open report as the page's owner and moderators see it: never who sent it."""
+
+    id: str
+    reason: Literal[HELP_REPORT_REASONS]
+    details: str | None = Field(description="The reporter's note, or null when they left none.")
+    created_at: AwareDatetime
+
+
+class HelpPostView(BaseModel):
+    id: str
+    page_id: str
+    page_handle: str
+    page_name: str
+    kind: Literal[HELP_KINDS]
+    title: str
+    details: str | None = Field(description="Null once the page's owner or a moderator removed the post.")
+    place: str | None
+    need_by: date | None
+    status: Literal["open", "pending", "helped", "closed", "removed"] = Field(description="pending: waiting for the page's review; seen only by the author and the page's managers.")
+    author_name: str
+    author_new: bool = Field(description="The author's account is less than 30 days old. A fact, not a score.")
+    reply_count: int = Field(ge=0, description="Current private replies.")
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    ended_at: AwareDatetime | None
+    mine: bool
+    can_manage: bool = Field(description="The page's owner or an active moderator: may read the replies and remove the post.")
+    replied: bool = Field(description="The viewer has a current reply on this post.")
+    reported: bool = Field(description="The viewer has a report on this post that is still waiting for review.")
+    reports: list[HelpReportCount] | None = Field(description="Open reports by reason, for the page's owner and moderators only.")
+    helped_reply_id: str | None = Field(description="The reply that helped; shown to the author and the page's managers only.")
+    etag: str | None = Field(description="For the author and the page's managers.")
+
+
+class HelpPostOutcome(BaseModel):
+    id: str
+    status: Literal["deleted"]
+
+
+class HelpReplyView(BaseModel):
+    id: str
+    post_id: str
+    author_name: str
+    author_new: bool = Field(description="The replier's account is less than 30 days old.")
+    body: str | None = Field(description="Null once withdrawn or removed.")
+    status: Literal[HELP_REPLY_STATES]
+    created_at: AwareDatetime
+    ended_at: AwareDatetime | None
+    mine: bool
+    helped: bool = Field(description="The author marked this reply as the one that helped.")
+
+
+class HelpPostList(Envelope[list[HelpPostView]]):
     pagination: Pagination
 
 

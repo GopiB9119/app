@@ -26,7 +26,13 @@ const onlyFamiliesAndGroupsLetMembersInvite = (space: { member_invites: boolean;
 export const spaceSchema = spaceShape.refine(onlyGroupsArePublic, { message: "Only group Spaces can be public." })
   .refine(onlyFamiliesAndGroupsLetMembersInvite, { message: "Only family and group Spaces can let members invite." });
 
-export const spacesSchema = z.array(spaceSchema).max(50);
+// List rows also carry the current member count and up to three other members' names; single-Space responses do not.
+export const spacesSchema = z.array(spaceSchema.and(z.object({
+  member_count: z.number().int().min(1).max(50).optional(),
+  member_preview: z.array(chars(1, 80)).max(3).optional(),
+  last_message_at: z.string().datetime({ offset: true }).nullable().optional(),
+}))).max(50);
+export type ListedSpace = z.infer<typeof spacesSchema>[number];
 
 export type FamilySpace = z.infer<typeof spaceSchema>;
 export const spaceSettingsSchema = spaceShape.extend({ role: z.literal("owner"), etag: z.string().regex(/^"[a-f0-9]{64}"$/) })
@@ -216,11 +222,18 @@ export const invitationOutcomeSchema = z.object({
 });
 export type FamilyInvitation = z.infer<typeof invitationSchema>;
 
-export async function invitationPage(path: string, accountId: string, cursor: string | null, signal: AbortSignal) {
+export async function invitationPage(path: "invitations" | `spaces/${string}/invitations`, accountId: string, cursor: string | null, signal: AbortSignal) {
   const query = new URLSearchParams({ limit: "20" });
   if (cursor) query.set("cursor", cursor);
-  const result = await api(`${path}?${query}`, z.array(invitationSchema).max(50), { accountId, signal });
+  const result = await api(`${path}?${query}`, z.array(invitationSchema).max(20), { accountId, signal });
   if (!result.pagination) throw new ApiError(502, "INVALID_RESPONSE", "Invitation pagination is missing.");
+  if ((cursor && result.pagination.next_cursor === cursor) || (result.pagination.has_more && result.data.length === 0)
+    || new Set(result.data.map(item => item.id)).size !== result.data.length) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The invitation list could not be confirmed.");
+  }
+  if (result.data.some(item => path === "invitations" ? item.recipient_account_id !== accountId : `spaces/${item.space_id}/invitations` !== path)) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The invitations do not match this account or Space.");
+  }
   return { data: result.data, pagination: result.pagination };
 }
 

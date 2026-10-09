@@ -288,6 +288,12 @@ async function fixture(context, options = {}) {
         id: '11111111-1111-4111-8111-111111111111', page_id: pageId, page_handle: state.page.handle, page_name: state.page.name,
         status: 'active', created_at: created, expires_at: null, resolved_at: created, etag: '"role-1"',
       }] : []);
+      if (url.pathname === `/api/pages/${pageId}/help-posts` && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false } });
+      if (url.pathname === '/api/me/help-posts' && method === 'GET') return reply([], { pagination: { next_cursor: null, has_more: false } });
+      if (url.pathname === `/api/pages/${pageId}/events` && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/page-events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/discover/events' && method === 'GET') return reply([]);
+      if (url.pathname === '/api/me/help-review' && method === 'GET') return reply([]);
       throw new Error(`Offline fixture has no endpoint for ${method} ${url.pathname}`);
     };
   }, { accountId, pageId, postId, commentId, manage: options.manage ?? true, options });
@@ -1662,6 +1668,8 @@ test('on an archived page the feed offers no new Like or Save, keeps undoing the
     await kept.getByRole('button', { name: /^Like/ }).click();
     await page.waitForFunction(() => window.archivedFixture.calls.some(call => call.method === 'POST'));
     await kept.getByRole('button', { name: 'Saved', exact: true }).waitFor();
+    // The request leaves before its answer is shown; under load the screen can still be catching up.
+    await kept.getByRole('button', { name: /^Like/ }).waitFor({ state: 'detached' });
     assert.equal(await kept.getByRole('button', { name: /^Like/ }).count(), 0, 'With the like undone, a read-only post offers no new Like.');
     const commands = await page.evaluate(() => window.archivedFixture.calls.filter(call => call.method === 'POST').map(call => [call.route, call.body]));
     assert.deepEqual(commands, [[`/api/posts/${archivedIds.kept}/unlike`, {}]]);

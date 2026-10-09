@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, SmallInteger, String, Text,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, SmallInteger, String, Text,
     UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -105,6 +105,8 @@ class PublicPage(Base):
     name: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(Text)
     rules: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # The owner's choice to take help requests and offers from followers (D3).
+    help_open: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     topic: Mapped[str] = mapped_column(String(20))
     topic_dimension: Mapped[str] = mapped_column(String(20), default="topic", server_default="topic")
     owner_id: Mapped[str] = mapped_column(ForeignKey(User.id))
@@ -347,6 +349,160 @@ class SavedPost(Base):
     __table_args__ = (Index("ix_public_saved_account", "account_id", "created_at"),)
 
     post_id: Mapped[str] = mapped_column(ForeignKey(PublicPost.id), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+HELP_KINDS = ("request", "offer")
+HELP_REPLY_STATES = ("active", "withdrawn", "removed")
+
+
+class HelpPost(Base):
+    """A request for help or an offer of help on a page that takes them (D3). Its replies stay private."""
+
+    __tablename__ = "help_posts"
+    __table_args__ = (
+        ForeignKeyConstraint(["place_dimension", "place"], ["taxonomy_terms.dimension", "taxonomy_terms.code"], name="fk_help_post_place"),
+        CheckConstraint(f"kind IN ({listed(HELP_KINDS)})", name="ck_help_post_kind"),
+        CheckConstraint("place_dimension = 'place'", name="ck_help_post_place_dimension"),
+        CheckConstraint(
+            "(status IN ('open', 'pending') AND ended_at IS NULL AND title IS NOT NULL AND details IS NOT NULL) OR "
+            "(status IN ('helped', 'closed') AND ended_at IS NOT NULL AND title IS NOT NULL AND details IS NOT NULL) OR "
+            "(status = 'removed' AND ended_at IS NOT NULL AND title IS NOT NULL AND details IS NULL) OR "
+            "(status = 'deleted' AND ended_at IS NOT NULL AND title IS NULL AND details IS NULL AND place IS NULL AND need_by IS NULL)",
+            name="ck_help_post_state",
+        ),
+        CheckConstraint("helped_reply_id IS NULL OR status = 'helped'", name="ck_help_post_helped"),
+        CheckConstraint("reply_count >= 0 AND version >= 1", name="ck_help_post_counts"),
+        UniqueConstraint("author_id", "creation_key", name="uq_help_post_creation"),
+        Index("ix_help_post_page", "page_id", "status", "created_at", "id"),
+        Index("ix_help_post_author", "author_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id))
+    author_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    kind: Mapped[str] = mapped_column(String(8))
+    title: Mapped[str | None] = mapped_column(String(120))
+    details: Mapped[str | None] = mapped_column(Text)
+    # An area from the shared places, never an address.
+    place_dimension: Mapped[str] = mapped_column(String(20), default="place", server_default="place")
+    place: Mapped[str | None] = mapped_column(String(64))
+    need_by: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10))
+    reply_count: Mapped[int] = mapped_column(Integer)
+    helped_reply_id: Mapped[str | None] = mapped_column(String(36))
+    version: Mapped[int] = mapped_column(Integer)
+    creation_key: Mapped[str] = mapped_column(String(36))
+    creation_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class HelpReply(Base):
+    """One person's answer to a help post, seen only by them, the post's author and the page's owner and moderators."""
+
+    __tablename__ = "help_replies"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({listed(HELP_REPLY_STATES)})", name="ck_help_reply_status"),
+        CheckConstraint("(status = 'active') = (body IS NOT NULL AND ended_at IS NULL)", name="ck_help_reply_body"),
+        UniqueConstraint("author_id", "creation_key", name="uq_help_reply_creation"),
+        Index("uq_help_reply_active", "post_id", "author_id", unique=True, postgresql_where=text("status = 'active'")),
+        Index("ix_help_reply_post", "post_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    post_id: Mapped[str] = mapped_column(ForeignKey(HelpPost.id))
+    author_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    body: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(10))
+    creation_key: Mapped[str] = mapped_column(String(36))
+    creation_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# A help post can be a scam, so that reason comes first; the rest match the platform's reasons.
+HELP_REPORT_REASONS = ("scam", *REPORT_REASONS)
+HELP_REPORT_OUTCOMES = ("removed", "kept", "deleted")
+
+
+class HelpReport(Base):
+    """A report of a help post. It goes to the page's owner and moderators, who remove the post or keep it."""
+
+    __tablename__ = "help_reports"
+    __table_args__ = (
+        CheckConstraint(f"reason IN ({listed(HELP_REPORT_REASONS)})", name="ck_help_report_reason"),
+        CheckConstraint(
+            "(status = 'received' AND outcome IS NULL AND closed_at IS NULL) OR "
+            f"(status = 'closed' AND outcome IN ({listed(HELP_REPORT_OUTCOMES)}) AND closed_at IS NOT NULL)",
+            name="ck_help_report_state",
+        ),
+        Index("uq_help_report_open", "post_id", "reporter_id", unique=True, postgresql_where=text("status = 'received'")),
+        Index("ix_help_report_post", "post_id", "status"),
+        Index("ix_help_report_reporter", "reporter_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    post_id: Mapped[str] = mapped_column(ForeignKey(HelpPost.id))
+    reporter_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    reason: Mapped[str] = mapped_column(String(24))
+    details: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(10))
+    outcome: Mapped[str | None] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+PAGE_EVENT_STATES = ("scheduled", "cancelled", "deleted")
+
+
+class PageEvent(Base):
+    """An event a public page publishes (D4). Going is intent, not proof of attendance; who is going stays with the managers."""
+
+    __tablename__ = "page_events"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({listed(PAGE_EVENT_STATES)})", name="ck_page_event_status"),
+        CheckConstraint("(status = 'deleted') = (title IS NULL)", name="ck_page_event_erased"),
+        CheckConstraint("status <> 'cancelled' OR cancelled_at IS NOT NULL", name="ck_page_event_cancelled"),
+        CheckConstraint("ends_at IS NULL OR ends_at > starts_at", name="ck_page_event_order"),
+        CheckConstraint("capacity IS NULL OR capacity BETWEEN 1 AND 10000", name="ck_page_event_capacity"),
+        CheckConstraint("going_count >= 0 AND version >= 1", name="ck_page_event_counts"),
+        UniqueConstraint("created_by", "creation_key", name="uq_page_event_creation"),
+        Index("ix_page_event_page", "page_id", "status", "starts_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey(PublicPage.id))
+    created_by: Mapped[str] = mapped_column(ForeignKey(User.id))
+    title: Mapped[str | None] = mapped_column(String(120))
+    details: Mapped[str | None] = mapped_column(Text)
+    # The exact place; shown only to people going and the page's managers unless the page makes it public.
+    venue: Mapped[str | None] = mapped_column(String(200))
+    venue_public: Mapped[bool] = mapped_column(Boolean)
+    timezone: Mapped[str] = mapped_column(String(64))
+    local_start: Mapped[str] = mapped_column(String(16))
+    local_end: Mapped[str | None] = mapped_column(String(16))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    capacity: Mapped[int | None] = mapped_column(Integer)
+    going_count: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10))
+    version: Mapped[int] = mapped_column(Integer)
+    creation_key: Mapped[str] = mapped_column(String(36))
+    creation_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    schedule_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PageEventResponse(Base):
+    __tablename__ = "page_event_responses"
+    __table_args__ = (Index("ix_page_event_response_account", "account_id", "created_at"),)
+
+    event_id: Mapped[str] = mapped_column(ForeignKey(PageEvent.id), primary_key=True)
     account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

@@ -8,6 +8,7 @@ import { ArrowLeft, ArrowRight, Bell, CalendarClock, CalendarDays, ClipboardList
 import { api, ApiError, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import { spacesSchema } from "@/features/spaces/client";
 import { adjacentMonth, calendarFile, calendarRange, calendarRangePage, calendarSource, calendarSources, compareCalendarEntries, dateInZone, shiftDate, viewRange } from "./calendar-client";
@@ -37,8 +38,9 @@ function useCalendarAccountGuard(error: Error | null) {
 export function CalendarScreen({ initialSpaceId = "" }: { initialSpaceId?: string }) {
   const t = useText();
   const account = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useCalendarAccountGuard(account.error);
-  if (account.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.calendarLoadingScreen")}</main></Shell>;
+  if (!hydrated || account.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("tasks.calendarLoadingScreen")}</main></Shell>;
   if (account.isError) return <Shell account><main className={styles.main}><h1>{t("tasks.calendarUnavailable")}</h1><p className="message error" role="alert">{account.error.message}</p><button className="secondary-button" onClick={() => account.refetch()}><RefreshCw size={18} aria-hidden />{t("tasks.retry")}</button></main></Shell>;
   return <CalendarWorkspace key={account.data.data.id} user={account.data.data} initialSpaceId={initialSpaceId} />;
 }
@@ -158,7 +160,10 @@ function CalendarAgenda({ accountId, spaceId, solo, view, range, timezone, selec
   }
   return <div className={view === "month" ? styles.workspace : styles.single}>
     {view === "month" && <section className={styles.monthGrid} aria-label={t("tasks.calendarDates")}>
-      <div className={styles.weekdays} aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => <span key={day}>{language === "en" ? day : new Intl.DateTimeFormat(`${language}-IN`, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 8, 20 + index)))}</span>)}</div>
+      <div className={styles.weekdays} aria-hidden="true">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day, index) => {
+        const weekday = (width: "short" | "narrow") => new Intl.DateTimeFormat(language === "en" ? "en" : `${language}-IN`, { weekday: width, timeZone: "UTC" }).format(new Date(Date.UTC(2026, 8, 20 + index)));
+        return <span key={day} data-narrow={weekday("narrow")}>{language === "en" ? day : weekday("short")}</span>;
+      })}</div>
       <div className={styles.dates}>
         {Array.from({ length: firstDay }, (_, index) => <span key={`blank-${index}`} />)}
         {Array.from({ length: days }, (_, index) => {

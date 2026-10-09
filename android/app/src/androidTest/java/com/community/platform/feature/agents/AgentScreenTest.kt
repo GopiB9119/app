@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.community.platform.CommunityTheme
+import com.community.platform.feature.InLanguage
 import com.community.platform.feature.spaces.SpaceDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -58,9 +59,87 @@ class AgentScreenTest {
         approval, "2026-10-01T09:00:00Z", "2026-10-01T09:00:00Z", null, "2")
     private val asking = proposed.copy(message = "Remind me about water the plants", status = "waiting_for_user", approval = null,
         question = AgentQuestionDto(questionId, "What time should I remind you?", "2026-10-01T09:15:00Z"))
+    private val recorded = proposed.copy(status = "completed", answer = "TEST: One current task is visible.",
+        updatedAt = "2026-10-01T09:05:00Z", finishedAt = "2026-10-01T09:05:00Z",
+        plan = listOf(AgentPlanStepDto("test-read", "TEST: Read current tasks", AgentPlanKind.CHECK, null, AgentPlanStatus.DONE)),
+        evidence = listOf(AgentEvidenceDto(AgentEvidenceKind.TASK, spaceId, "TEST: Water the plants")),
+        toolCalls = listOf(AgentToolCallDto("test-call", 1, "tasks.list", "1", AgentToolEffect.READ, AgentToolRisk.LOW,
+            AgentToolStatus.SUCCEEDED, "TEST: Found one current task.", "TEST-OPAQUE-RESULT-REF", "TEST-ERROR-CODE", null,
+            "2026-10-01T09:03:00Z")),
+        events = listOf(AgentEventDto(1, "run_started", "TEST: Request accepted", "2026-10-01T09:00:01Z")))
     private val memory = AgentMemoryDto(memoryId, "note", null, "Note", "The spare key is under the blue pot", "approved_request", runId, "2026-10-01T09:00:00Z")
     private fun ready(vararg runs: AgentRunDto) = AgentState(accountId = accountId, spaces = listOf(space), spacesLoaded = true, spaceId = spaceId,
         runs = runs.toList(), runsLoaded = true)
+
+    @Test fun completedRunStatusesMatchWebInAllLanguagesAtNarrowWidthAndLargeText() {
+        val refused = recorded.copy(outcome = "refused", intent = "unknown")
+        val unknown = recorded.copy(id = "10000000-0000-4000-9000-000000000004", outcome = "answered", intent = "unknown")
+        val answered = recorded.copy(id = "10000000-0000-4000-9000-000000000005", outcome = "answered", intent = "task")
+        val failed = recorded.copy(id = "10000000-0000-4000-9000-000000000006", status = "failed")
+        val runs = listOf(refused, unknown, answered, failed)
+        val expected = mapOf(
+            "en" to listOf("Can't do that", "Not understood", "Done", "Could not finish"),
+            "te" to listOf("చేయలేను", "అర్థం కాలేదు", "పూర్తయింది", "పూర్తి చేయలేకపోయింది"),
+            "hi" to listOf("नहीं कर सकता", "समझ नहीं आया", "पूरा हुआ", "पूरा नहीं कर सका"),
+        )
+        var language by mutableStateOf("en")
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                Box(Modifier.width(320.dp).fillMaxHeight()) {
+                    CommunityTheme { InLanguage(language) { AgentScreen(ready(*runs.toTypedArray()), AgentActions()) } }
+                }
+            }
+        }
+        for ((locale, labels) in expected) {
+            compose.runOnIdle { language = locale }
+            for ((run, label) in runs.zip(labels)) {
+                val tag = "agent-status-${run.id}"
+                compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag(tag))
+                compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed().assertTextContains(label)
+            }
+        }
+    }
+
+    @Test fun executionDetailsShowServerRecordsOnlyAfterOpeningDisclosure() {
+        compose.setContent { CommunityTheme { AgentScreen(ready(recorded), AgentActions(), timezone = "UTC") } }
+        compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag("agent-records-toggle-$runId"))
+        compose.onNodeWithTag("agent-records-plan-$runId").assertDoesNotExist()
+        compose.onNodeWithTag("agent-records-toggle-$runId").assertTextContains("Request details").performClick()
+        compose.onNodeWithText("Plan").assertExists()
+        compose.onNodeWithTag("agent-plan-step-$runId-0").assertTextContains("TEST: Read current tasks")
+        compose.onNodeWithText("Sources").assertExists()
+        compose.onNodeWithTag("agent-source-$runId-0").assertTextContains("Task: TEST: Water the plants")
+        compose.onNodeWithText("Actions").assertExists()
+        compose.onNodeWithTag("agent-action-$runId-0").assertTextContains("tasks.list", substring = true)
+            .assertTextContains("Succeeded", substring = true).assertTextContains("TEST: Found one current task.")
+        compose.onNodeWithText("Activity").assertExists()
+        compose.onNodeWithTag("agent-event-$runId-0").assertTextContains("TEST: Request accepted").assertTextContains("Run started")
+        compose.onNodeWithTag("agent-record-time-$runId-0", useUnmergedTree = true).performScrollTo().assertIsDisplayed().assertTextContains("2026", substring = true)
+        compose.onNodeWithTag("agent-run-updated-$runId", useUnmergedTree = true).assertTextContains("2026", substring = true)
+        compose.onNodeWithTag("agent-run-finished-$runId", useUnmergedTree = true).assertTextContains("2026", substring = true)
+        compose.onNodeWithText("TEST-OPAQUE-RESULT-REF").assertDoesNotExist()
+        compose.onNodeWithText("TEST-ERROR-CODE").assertDoesNotExist()
+    }
+
+    @Test fun executionDetailsRemainReachableAt320DpAnd200PercentText() {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                Box(Modifier.width(320.dp).fillMaxHeight()) { CommunityTheme { AgentScreen(ready(recorded), AgentActions(), timezone = "UTC") } }
+            }
+        }
+        compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag("agent-records-toggle-$runId"))
+        compose.onNodeWithTag("agent-records-toggle-$runId").performScrollTo().performClick()
+        for (tag in listOf("agent-records-plan-$runId", "agent-records-sources-$runId", "agent-records-actions-$runId",
+            "agent-records-activity-$runId")) {
+            compose.onNodeWithTag("agent-content").performScrollToNode(hasTestTag(tag))
+            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            val parent = compose.onNodeWithTag("agent-content").fetchSemanticsNode().boundsInRoot
+            val child = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(tag, child.left >= parent.left && child.right <= parent.right)
+        }
+    }
 
     @Test fun theExactChangeIsShownAndOnlyATapOnApproveDecides() {
         val decisions = mutableListOf<Pair<String, Boolean>>()

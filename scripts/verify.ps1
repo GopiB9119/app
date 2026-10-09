@@ -11,7 +11,7 @@ The script changes nothing in the repository. It writes only under the output fo
 tools already use, and it restores the environment variables it sets.
 
 .PARAMETER Suite
-The suites to run, separated by commas: runner, records, structure, tokens, contracts, typecheck, client, unit, backend, android, device, live.
+The suites to run, separated by commas: runner, records, structure, tokens, golden, contracts, typecheck, client, unit, backend, android, device, live.
 The default is every suite except two: live, which needs the web preview and the local services (COMMUNITY_WEB_URL,
 by default http://127.0.0.1:3000), and device, which starts its own Android emulator for about half an hour
 (scripts\verify-android-device.ps1).
@@ -29,21 +29,22 @@ The folder for the logs and the summary. The default is .local\verify\<date-time
 npm run verify -- -Suite live
 #>
 param(
-    [string[]]$Suite = @('runner', 'records', 'structure', 'tokens', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android'),
+    [string[]]$Suite = @('runner', 'records', 'structure', 'tokens', 'golden', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android'),
     [string]$Output
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
-$order = @('runner', 'records', 'structure', 'tokens', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
+$order = @('runner', 'records', 'structure', 'tokens', 'golden', 'contracts', 'typecheck', 'client', 'unit', 'backend', 'android', 'device', 'live')
 $suites = @{
     runner    = @{ Title = 'Verification runner'; Kind = 'node'; Commands = @('powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.test.ps1') }
     # Records only grow: no task, decision, checkpoint or changelog section may disappear, in the working copy or the last commit.
-    records   = @{ Title = 'Records kept'; Kind = 'node'; Commands = @('npm run test:records', 'npm run check:records') }
-    structure = @{ Title = 'Structure'; Kind = 'node'; Commands = @('npm run test:structure', 'npm run check:structure') }
-    tokens    = @{ Title = 'Design tokens'; Kind = 'node'; Commands = @('npm run test:tokens', 'npm run check:tokens') }
-    contracts = @{ Title = 'OpenAPI contract'; Kind = 'pytest'; Commands = @('npm run test:openapi', 'npm run check:openapi') }
+    records   = @{ Title = 'Records kept'; Kind = 'node'; Commands = @('npm run test:records', 'npm run check:records'); Checks = @('npm run check:records') }
+    structure = @{ Title = 'Structure'; Kind = 'node'; Commands = @('npm run test:structure', 'npm run check:structure'); Checks = @('npm run check:structure') }
+    tokens    = @{ Title = 'Design tokens'; Kind = 'node'; Commands = @('npm run test:tokens', 'npm run check:tokens'); Checks = @('npm run check:tokens') }
+    golden    = @{ Title = 'Agent golden evaluator'; Kind = 'node'; Commands = @('npm run test:golden', 'npm run golden'); Checks = @('npm run golden') }
+    contracts = @{ Title = 'OpenAPI contract'; Kind = 'pytest'; Commands = @('npm run test:openapi', 'npm run check:openapi'); Checks = @('npm run check:openapi') }
     typecheck = @{ Title = 'Web type check'; Kind = 'none'; Commands = @('npm --prefix web run typecheck') }
     client    = @{ Title = 'Web client and BFF'; Kind = 'node'; Commands = @('npm --prefix web run test:client') }
     unit      = @{ Title = 'Web offline components'; Kind = 'node'; Commands = @('npm --prefix web run test:unit') }
@@ -66,6 +67,7 @@ New-Item -ItemType Directory -Force -Path $Output | Out-Null
 $Output = (Resolve-Path $Output).Path
 
 $saved = @{}
+$evidenceErrors = New-Object 'Collections.Generic.List[string]'
 function Set-RunVariable([string]$Name, [string]$Value) {
     if (-not $saved.ContainsKey($Name)) { $saved[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process') }
     [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
@@ -77,6 +79,11 @@ function Read-Counts([string]$Kind, [string]$Text, [datetime]$Since) {
         # The node test runner ends with lines such as "ℹ tests 59"; the leading symbol depends on the console.
         foreach ($match in [regex]::Matches($Text, '(?m)^\S*\s+(tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$')) {
             $counts[$match.Groups[1].Value] = [int]$match.Groups[2].Value
+        }
+        if ($counts.Count -gt 0) {
+            foreach ($name in 'tests', 'pass', 'fail') {
+                if (-not $counts.Contains($name)) { throw 'Incomplete Node test summary.' }
+            }
         }
     } elseif ($Kind -eq 'pytest') {
         $summary = [regex]::Matches($Text, '(?m)^=*\s*((?:\d+ \w+(?:, )?)+) in [\d.]+s')
@@ -95,7 +102,22 @@ function Read-Counts([string]$Kind, [string]$Text, [datetime]$Since) {
             foreach ($file in $files) {
                 $report = New-Object Xml.XmlDocument
                 $report.Load($file.FullName)
-                foreach ($name in 'tests', 'failures', 'errors', 'skipped') { $counts[$name] += [int]$report.DocumentElement.GetAttribute($name) }
+                $leafSuites = @($report.SelectNodes('//testsuite[not(.//testsuite)]'))
+                if ($leafSuites.Count -eq 0) { throw "$($file.Name): no testsuite elements" }
+                foreach ($leaf in $leafSuites) {
+                    $values = @{}
+                    foreach ($name in 'tests', 'failures', 'errors', 'skipped') {
+                        $value = 0
+                        if ($leaf.HasAttribute($name) -and (-not [int]::TryParse($leaf.GetAttribute($name), [ref]$value) -or $value -lt 0)) {
+                            throw "$($file.Name): invalid JUnit counts"
+                        }
+                        $values[$name] = $value
+                    }
+                    if (-not $leaf.HasAttribute('tests') -or $values['failures'] + $values['errors'] + $values['skipped'] -gt $values['tests']) {
+                        throw "$($file.Name): invalid JUnit counts"
+                    }
+                    foreach ($name in 'tests', 'failures', 'errors', 'skipped') { $counts[$name] += $values[$name] }
+                }
                 $stderr = (@($report.SelectNodes('//system-err')) | ForEach-Object { $_.InnerText }) -join "`n"
                 if ($stderr -match '(?m)^\s*Exception in thread "[^"]+"') { $counts['uncaughtClasses']++ }
             }
@@ -121,16 +143,19 @@ function Get-Tally([string]$Kind, $Totals) {
     # One shape for every runner: node reports tests/pass/fail, pytest passed/failed/errors, JUnit tests/failures/errors.
     if ($Totals.Count -eq 0) { return $null }
     $value = { param($name) if ($Totals.Contains($name)) { [int]$Totals[$name] } else { 0 } }
+    $cancelled = 0
     if ($Kind -eq 'node') {
-        $failed = (& $value 'fail') + (& $value 'cancelled'); $skipped = (& $value 'skipped') + (& $value 'todo'); $total = & $value 'tests'
+        $failed = & $value 'fail'; $cancelled = & $value 'cancelled'; $skipped = (& $value 'skipped') + (& $value 'todo'); $total = & $value 'tests'
     } elseif ($Kind -eq 'pytest') {
         $failed = (& $value 'failed') + (& $value 'error') + (& $value 'errors'); $skipped = (& $value 'skipped') + (& $value 'xfailed')
         $total = (& $value 'passed') + (& $value 'xpassed') + $failed + $skipped
     } else {
         $failed = (& $value 'failures') + (& $value 'errors'); $skipped = & $value 'skipped'; $total = & $value 'tests'
     }
-    if ($total -eq 0 -and $failed -eq 0) { return $null }
-    return [ordered]@{ total = $total; passed = $total - $failed - $skipped; failed = $failed; skipped = $skipped }
+    if ($total -eq 0 -and $failed -eq 0 -and $cancelled -eq 0) { return $null }
+    $passed = $total - $failed - $skipped - $cancelled
+    if ($passed -lt 0 -or ($Kind -eq 'node' -and $passed -ne (& $value 'pass'))) { throw 'Inconsistent test counts.' }
+    return [ordered]@{ total = $total; passed = $passed; failed = $failed; skipped = $skipped; cancelled = $cancelled }
 }
 
 function Format-Tally($Tally) {
@@ -138,6 +163,7 @@ function Format-Tally($Tally) {
     $text = "$($Tally.passed) of $($Tally.total) passed"
     if ($Tally.failed) { $text += ", $($Tally.failed) failed" }
     if ($Tally.skipped) { $text += ", $($Tally.skipped) skipped" }
+    if ($Tally.cancelled) { $text += ", $($Tally.cancelled) cancelled" }
     return $text
 }
 
@@ -191,6 +217,7 @@ function Invoke-Suite([string]$Name) {
     $blocker = Get-Blocker $Name
     $result = 'passed'
     $totals = [ordered]@{}
+    $diagnostics = @()
     if ($blocker) {
         $result = 'not run'
         [IO.File]::WriteAllText($log, "Not run: $blocker`r`n", $utf8)
@@ -198,17 +225,37 @@ function Invoke-Suite([string]$Name) {
         [IO.File]::WriteAllText($log, '', $utf8)
         foreach ($command in $definition.Commands) {
             Write-Host "[$Name] $command"
-            $part = Join-Path $Output "$Name.part.log"
+            $part = Join-Path $Output "$Name.$([guid]::NewGuid().ToString('N')).part.log"
             $batch = Join-Path $Output "$Name.cmd"
             # A batch file keeps the command exactly as written; PowerShell 5 rewrites quotes in native arguments.
-            [IO.File]::WriteAllText($batch, "@echo off`r`ncd /d `"$root`"`r`ncall $command > `"$part`" 2>&1`r`nexit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
-            & cmd.exe /d /c $batch | Out-Null
-            $code = $LASTEXITCODE
-            $text = [IO.File]::ReadAllText($part, [Text.Encoding]::UTF8)
+            [IO.File]::WriteAllText($batch, "@echo off`r`ncd /d `"$root`"`r`n(call $command) > `"$part`" 2>&1`r`nexit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
+            # Wait for cmd.exe itself, not the end of an output pipe: a process the command leaves behind,
+            # such as a Gradle daemon, inherits that pipe and keeps it open for hours (T207).
+            $process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/c', "`"$batch`"") -NoNewWindow -PassThru
+            $null = $process.Handle
+            $process.WaitForExit()
+            $code = $process.ExitCode
+            $stream = [IO.File]::Open($part, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8)
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
             [IO.File]::AppendAllText($log, "> $command`r`n$text`r`n> exit code $code`r`n`r`n", $utf8)
-            Remove-Item -LiteralPath $part, $batch
+            Remove-Item -LiteralPath $batch
+            try { Remove-Item -LiteralPath $part -ErrorAction Stop }
+            catch [IO.IOException] {
+                [IO.File]::AppendAllText($log, "Retained output file held by a child process: $part`r`n", $utf8)
+            }
             if ($code -ne 0) { $result = 'failed' }
-            $counts = Read-Counts $definition.Kind $text $since
+            try {
+                $counts = Read-Counts $definition.Kind $text $since
+                if ($definition.Kind -ne 'none' -and $definition.Checks -notcontains $command -and -not (Get-Tally $definition.Kind $counts)) {
+                    throw "No current $($definition.Kind) test results were reported."
+                }
+            } catch {
+                $result = 'failed'
+                $counts = [ordered]@{}
+                $diagnostics += $_.Exception.Message
+                [IO.File]::AppendAllText($log, "Verification failed: $($_.Exception.Message)`r`n", $utf8)
+            }
             foreach ($key in $counts.Keys) {
                 if ($totals.Contains($key)) { $totals[$key] += $counts[$key] } else { $totals[$key] = $counts[$key] }
             }
@@ -217,8 +264,13 @@ function Invoke-Suite([string]$Name) {
     $watch.Stop()
     $tally = Get-Tally $definition.Kind $totals
     # A runner that exits 0 while reporting failures still failed.
-    if ($tally -and $tally.failed -gt 0) { $result = 'failed' }
-    $counted = Format-Tally $tally
+    if ($tally -and ($tally.failed -gt 0 -or $tally.cancelled -gt 0)) { $result = 'failed' }
+    if ($result -eq 'passed' -and $tally -and $tally.passed -eq 0) {
+        $result = 'not run'
+        $blocker = 'All reported tests were skipped; no tests passed.'
+        [IO.File]::AppendAllText($log, "Not run: $blocker`r`n", $utf8)
+    }
+    $counted = (@((Format-Tally $tally)) + $diagnostics | Where-Object { $_ }) -join '; '
     if ($definition.Kind -eq 'junit' -and $totals.Contains('uncaughtClasses') -and $totals['uncaughtClasses'] -gt 0) {
         $result = 'failed'
         $diagnostic = "uncaught exceptions in $($totals['uncaughtClasses']) JVM test classes; inspect XML system-err"
@@ -243,13 +295,26 @@ function Invoke-Suite([string]$Name) {
     return $entry
 }
 
+function Read-GitEvidence([string[]]$Arguments) {
+    $previous = $ErrorActionPreference
+    try {
+        $git = Get-Command git -CommandType Application -ErrorAction Stop
+        $ErrorActionPreference = 'Continue'
+        $text = @(& $git -C $root @Arguments 2>$null)
+        if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') exited with code $LASTEXITCODE." }
+        return $text
+    } catch {
+        $evidenceErrors.Add("Source-state evidence unavailable: $($_.Exception.Message)")
+        return $null
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Get-TreeState {
     # Each changed or untracked file with its status and write time, to see what changed while the checks ran.
     $state = @{}
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $listed = @(& git -C $root status --porcelain -uall 2>$null)
-    $ErrorActionPreference = $previous
+    $listed = @(Read-GitEvidence @('status', '--porcelain', '-uall'))
     foreach ($entry in $listed) {
         if ($entry.Length -lt 4) { continue }
         $path = ($entry.Substring(3) -split ' -> ')[-1].Trim('"')
@@ -279,39 +344,42 @@ try {
     }
     if ($selected -contains 'live' -and -not $env:COMMUNITY_WEB_URL) { Set-RunVariable 'COMMUNITY_WEB_URL' 'http://127.0.0.1:3000' }
 
-    $ErrorActionPreference = 'Continue'
-    $commit = (& git rev-parse --short HEAD 2>$null)
-    $changes = @(& git status --porcelain 2>$null).Count
-    $ErrorActionPreference = 'Stop'
+    $commit = Read-GitEvidence @('rev-parse', '--short', 'HEAD')
+    $changes = @(Read-GitEvidence @('status', '--porcelain')).Count
     $before = Get-TreeState
-    Write-Host "Checks on $commit with $changes uncommitted changes; logs in $Output"
+    if ($evidenceErrors.Count -gt 0) { $changes = $null }
+    $shownCommit = if ($commit) { $commit } else { 'unknown' }
+    $shownChanges = if ($null -ne $changes) { $changes } else { 'unknown' }
+    Write-Host "Checks on $shownCommit with $shownChanges uncommitted changes; logs in $Output"
     $entries = @(foreach ($name in $selected) { Invoke-Suite $name })
 
     $finished = Get-Date
     $after = Get-TreeState
-    $ErrorActionPreference = 'Continue'
-    $endCommit = (& git rev-parse --short HEAD 2>$null)
-    $ErrorActionPreference = 'Stop'
+    $endCommit = Read-GitEvidence @('rev-parse', '--short', 'HEAD')
     # Other sessions share this working tree, so files can change while the suites run.
-    $moved = @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique | Where-Object { $before[$_] -ne $after[$_] })
+    $moved = @()
+    if ($evidenceErrors.Count -eq 0) {
+        $moved = @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique | Where-Object { $before[$_] -ne $after[$_] })
+    }
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     $lines = @(
         '# Verification summary', '',
-        "Started $($started.ToString('yyyy-MM-dd HH:mm:ss zzz', $invariant)), finished $($finished.ToString('HH:mm:ss', $invariant)), on commit ``$commit`` with $changes uncommitted changes.", ''
+        "Started $($started.ToString('yyyy-MM-dd HH:mm:ss zzz', $invariant)), finished $($finished.ToString('HH:mm:ss', $invariant)), on commit ``$shownCommit`` with $shownChanges uncommitted changes.", ''
     )
-    if ($endCommit -ne $commit) { $lines += "A commit was made during the run: it ended on ``$endCommit``.", '' }
+    if ($commit -and $endCommit -and $endCommit -ne $commit) { $lines += "A commit was made during the run: it ended on ``$endCommit``.", '' }
     if ($moved.Count -gt 0) {
         $shown = ($moved | Select-Object -First 10 | ForEach-Object { "``$_``" }) -join ', '
         $counted = if ($moved.Count -eq 1) { '1 file' } else { "$($moved.Count) files" }
         $lines += "$counted changed during the run, so the results may mix the states before and after: $shown$(if ($moved.Count -gt 10) { ', ...' }).", ''
     }
+    if ($evidenceErrors.Count -gt 0) { $lines += $evidenceErrors.ToArray() + @('') }
     $lines += '| Suite | Result | Counts | Seconds | Log |', '| --- | --- | --- | --- | --- |'
     foreach ($entry in $entries) {
         $result = if ($entry.note) { "not run: $($entry.note)" } else { $entry.result }
         $lines += "| $($entry.title) | $result | $($entry.summary) | $($entry.seconds) | $(Split-Path -Leaf $entry.log) |"
     }
     [IO.File]::WriteAllText((Join-Path $Output 'summary.md'), ($lines -join "`r`n") + "`r`n", $utf8)
-    $record = [ordered]@{ started = $started.ToString('o'); finished = $finished.ToString('o'); commit = $commit; endCommit = $endCommit; uncommitted = $changes; changedDuringRun = $moved; suites = $entries }
+    $record = [ordered]@{ started = $started.ToString('o'); finished = $finished.ToString('o'); commit = $commit; endCommit = $endCommit; uncommitted = $changes; changedDuringRun = $moved; evidenceErrors = $evidenceErrors.ToArray(); suites = $entries }
     [IO.File]::WriteAllText((Join-Path $Output 'summary.json'), ($record | ConvertTo-Json -Depth 5), $utf8)
 
     Write-Host ''
@@ -322,5 +390,5 @@ try {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     Pop-Location
 }
-if ($failed -gt 0) { exit 1 }
+if ($failed -gt 0 -or $evidenceErrors.Count -gt 0) { exit 1 }
 exit 0

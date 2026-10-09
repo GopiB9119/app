@@ -1,0 +1,33 @@
+services:
+  api:
+    environment:
+      COMMUNITY_AGENT_LANGGRAPH_ENABLED: "1"
+      PYTHONPATH: /agent-runtime:/app
+      LANGSMITH_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).close()"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+    volumes:
+      - type: bind
+        source: ${COMMUNITY_AGENT_RUNTIME_DIR:-../.local/t195/runtime-20261005-a/site-packages}
+        target: /agent-runtime
+        read_only: true
+        bind:
+          create_host_path: false
+  tests:
+    environment:
+      COMMUNITY_AGENT_LANGGRAPH_ENABLED: "1"
+      PYTHONPATH: /agent-runtime:/app
+      LANGSMITH_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+    volumes:
+      - type: bind
+        source: ${COMMUNITY_AGENT_RUNTIME_DIR:-../.local/t195/runtime-20261005-a/site-packages}
+        target: /agent-runtime
+        read_only: true
+        bind:
+          create_host_path: false

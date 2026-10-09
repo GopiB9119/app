@@ -159,7 +159,7 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String, 
     val list = rememberLazyListState()
     // The message about the last action is the list's first item. A lazy list leaves out items scrolled off screen,
     // so after an action further down, such as Show more or cancelling, bring it into view to be seen.
-    LaunchedEffect(state.error, state.notice, state.messageId) { if (state.error != null || state.notice != null) list.scrollToItem(0) }
+    LaunchedEffect(state.error, state.notice, state.messageId, state.searchItemGone) { if (state.error != null || state.notice != null || state.searchItemGone) list.scrollToItem(0) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(unit * 2), verticalAlignment = Alignment.CenterVertically) {
@@ -176,6 +176,9 @@ fun EventsScreen(state: EventsState, actions: EventsActions, spaceName: String, 
                 LazyColumn(Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("events-content"), state = list, contentPadding = PaddingValues(unit * 4), verticalArrangement = Arrangement.spacedBy(unit * 3)) {
                     state.error?.let { item("error") { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("events-error")) } }
                     state.notice?.let { item("notice") { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("events-notice")) } }
+                    if (state.searchItemGone) item("search-gone") {
+                        Text(stringResource(R.string.events_from_search_gone), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }.testTag("event-search-gone"))
+                    }
                     when (state.mode) {
                         EventMode.LIST -> {
                             item("intro") { Text(stringResource(R.string.events_intro), style = MaterialTheme.typography.bodyMedium) }

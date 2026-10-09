@@ -8,6 +8,7 @@ import { Bookmark, BookmarkCheck, Compass, Flag, Heart, LoaderCircle, LogIn, Mes
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
 import { REPORT_REASONS, isUnknown, reactToPost, reportContent, termLabel, textProblem } from "./client";
@@ -24,9 +25,10 @@ export function useCommunityTime() {
 
 export function useViewer() {
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }), retry: false });
+  const hydrated = useHydrated();
   const signedOut = profile.error instanceof ApiError && profile.error.status === 401;
   return {
-    account: profile.data?.data ?? null, pending: profile.isPending, signedOut,
+    account: hydrated ? profile.data?.data ?? null : null, pending: !hydrated || profile.isPending, signedOut,
     error: signedOut ? null : profile.error, retry: () => { void profile.refetch(); },
   };
 }

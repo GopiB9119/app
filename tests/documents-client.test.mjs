@@ -78,7 +78,7 @@ const documentHit = (overrides = {}) => ({
 
 const taskHit = (overrides = {}) => ({
   task_id: otherId, space_id: spaceId, space_name: 'Morgan family', title: 'Picnic shopping',
-  excerpt: 'Bring picnic blankets.', status: 'open', due_date: '2026-10-10', ...overrides,
+  excerpt: 'Bring picnic blankets.', excerpt_in: 'notes', status: 'open', due_date: '2026-10-10', ...overrides,
 });
 
 const eventHit = (overrides = {}) => ({
@@ -87,7 +87,7 @@ const eventHit = (overrides = {}) => ({
 });
 
 const searchResults = (overrides = {}) => ({
-  query: 'picnic plans', space_id: spaceId, documents: [documentHit()], tasks: [], events: [],
+  query: 'picnic plans', space_id: spaceId, limit: 20, documents: [documentHit()], tasks: [], events: [],
   more_documents: false, more_tasks: false, more_events: false, ...overrides,
 });
 
@@ -171,6 +171,84 @@ test('Space search sends the words and Space filter and rejects foreign hits of 
   }
 });
 
+test('Legacy Space search keeps the initial result page readable without accepting an unsupported larger page', async () => {
+  const legacy = searchResults();
+  delete legacy.limit;
+  const client = searchClient(async () => Response.json({ data: legacy }));
+  const found = await client.searchSpaces(accountId, 'picnic plans', spaceId);
+  assert.equal(found.limit, 20);
+  assert.equal(found.documents[0].document_id, documentId);
+  assert.equal(found.space_id, spaceId);
+  await assert.rejects(client.searchSpaces(accountId, 'picnic plans', spaceId, undefined, 40), { status: 502 });
+  const invalid = searchClient(async () => Response.json({ data: { ...legacy, limit: null } }));
+  await assert.rejects(invalid.searchSpaces(accountId, 'picnic plans', spaceId), { status: 502 });
+});
+
+test('Legacy Space search identifies existing task excerpts as notes and still refuses unknown sources', async () => {
+  const legacy = taskHit();
+  delete legacy.excerpt_in;
+  const client = searchClient(async () => Response.json({ data: searchResults({ documents: [], tasks: [legacy] }) }));
+  const found = await client.searchSpaces(accountId, 'picnic plans', spaceId);
+  assert.equal(found.tasks[0].excerpt_in, 'notes');
+  assert.equal(found.tasks[0].excerpt, legacy.excerpt);
+  for (const source of [null, 'unknown']) {
+    const invalid = searchClient(async () => Response.json({ data: searchResults({ tasks: [{ ...legacy, excerpt_in: source }] }) }));
+    await assert.rejects(invalid.searchSpaces(accountId, 'picnic plans', spaceId), { status: 502 });
+  }
+});
+
+test('Space search asks for more with a limit, and refuses another limit or an impossible count', async () => {
+  const calls = [];
+  const client = searchClient(async url => {
+    calls.push(String(url));
+    return Response.json({ data: searchResults({ limit: 40 }) });
+  });
+  assert.equal((await client.searchSpaces(accountId, 'picnic', spaceId, undefined, 40)).limit, 40);
+  assert.deepEqual([...new URL(calls[0], origin).searchParams.entries()], [['q', 'picnic'], ['space_id', spaceId], ['limit', '40']]);
+  const answered = changes => searchClient(async () => Response.json({ data: searchResults(changes) }));
+  // The service answered for another limit than the one asked for.
+  await assert.rejects(answered({ limit: 20 }).searchSpaces(accountId, 'picnic', spaceId, undefined, 40), { status: 502 });
+  await assert.rejects(answered({ limit: 40 }).searchSpaces(accountId, 'picnic', spaceId), { status: 502 });
+  // More results than the limit, or "more" with fewer results than the limit, cannot both be true.
+  const many = count => Array.from({ length: count }, (_, index) => documentHit({ document_id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` }));
+  await assert.rejects(answered({ documents: many(21) }).searchSpaces(accountId, 'picnic', spaceId), { status: 502 });
+  await assert.rejects(answered({ more_documents: true }).searchSpaces(accountId, 'picnic', spaceId), { status: 502 });
+  await assert.rejects(answered({ limit: 101 }).searchSpaces(accountId, 'picnic', spaceId, undefined, 101), { status: 502 });
+  const full = await answered({ documents: many(20), more_documents: true }).searchSpaces(accountId, 'picnic', spaceId);
+  assert.equal(full.documents.length, 20);
+  assert.equal(full.more_documents, true);
+});
+
+test('Task hits say whether the words were found in the notes or in the checklist', async () => {
+  const client = searchClient(async () => Response.json({ data: searchResults({ documents: [], tasks: [taskHit({ excerpt_in: 'checklist' })] }) }));
+  assert.equal((await client.searchSpaces(accountId, 'picnic', spaceId)).tasks[0].excerpt_in, 'checklist');
+  const unknown = searchClient(async () => Response.json({ data: searchResults({ documents: [], tasks: [taskHit({ excerpt_in: 'title' })] }) }));
+  await assert.rejects(unknown.searchSpaces(accountId, 'picnic', spaceId), { status: 502 });
+});
+
+test('Task and event results open that very task or event in its Space', () => {
+  const client = searchClient();
+  const task = new URL(client.taskLink({ space_id: spaceId, task_id: otherId }), origin);
+  assert.equal(task.pathname, '/app/tasks');
+  assert.deepEqual([...task.searchParams.entries()], [['space_id', spaceId], ['task_id', otherId]]);
+  const event = new URL(client.eventLink({ space_id: spaceId, event_id: otherId }), origin);
+  assert.equal(event.pathname, '/app/events');
+  assert.deepEqual([...event.searchParams.entries()], [['space_id', spaceId], ['event_id', otherId]]);
+});
+
+test('Search words break file names, dates and e-mail addresses into parts, as the search does', () => {
+  const client = searchClient();
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(client.searchWords('Insurance_Policy.TXT')), ['insurance', 'policy', 'txt']);
+  assert.deepEqual(plain(client.searchWords('alex@example.test')), ['example', 'alex', 'test']);
+  assert.deepEqual(plain(client.highlight('insurance_policy.txt', client.searchWords('policy'))), [
+    { text: 'insurance_', marked: false }, { text: 'policy', marked: true }, { text: '.txt', marked: false },
+  ]);
+  assert.deepEqual(plain(client.highlight('Due 2026-10-04', client.searchWords('10'))), [
+    { text: 'Due 2026-', marked: false }, { text: '10', marked: true }, { text: '-04', marked: false },
+  ]);
+});
+
 test('File checks refuse unsupported, empty, oversized and folder names but accept uppercase Markdown', () => {
   const client = documentsClient();
   assert.equal(client.fileProblem({ name: 'notes.pdf', size: 100 }), 'Add a .txt, .md or .csv file. Other file types need a virus scanner, which is not available yet.');
@@ -213,6 +291,7 @@ test('Document BFF forwards all five routes with their exact method and permitte
     ['GET', `documents/${documentId}`],
     ['POST', `documents/${documentId}/delete`],
     ['GET', `search?q=picnic+plans&space_id=${spaceId}`],
+    ['GET', `search?q=picnic+plans&space_id=${spaceId}&limit=40`],
   ]) {
     const proxy = bff();
     assert.equal((await proxy.request(method, route)).status, 200, `${method} ${route}`);
@@ -261,6 +340,7 @@ test('Document BFF refuses query strings on both commands before forwarding anyt
 test('Document BFF refuses unknown and repeated read parameters', async () => {
   for (const route of [
     'search?topic=x', 'search?q=picnic&q=plans', `search?q=picnic&space_id=${spaceId}&space_id=${otherId}`,
+    'search?q=picnic&limit=20&limit=40',
     `spaces/${spaceId}/documents?q=x`, `spaces/${spaceId}/documents?limit=10&limit=20`,
     `spaces/${spaceId}/documents?cursor=first&cursor=second`, `documents/${documentId}?line=3`,
   ]) {

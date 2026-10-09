@@ -11,8 +11,23 @@ export type Reaction = typeof REACTIONS[number];
 export const REPLY_EXCERPT_CHARACTERS = 120;
 export const EDIT_WINDOW_MILLISECONDS = 15 * 60 * 1000;
 export const MAX_EDITS = 10;
+// Asking the agent from a chat message with @agent (DEC-046): what became of the request, as its author sees it.
+export const AGENT_REQUEST_STATUSES = ["answered", "private", "waiting", "pending", "off", "limited", "too_long", "failed"] as const;
+export type AgentRequestStatus = typeof AGENT_REQUEST_STATUSES[number];
+const MENTION = /(?<![\p{L}\p{N}_@.])@agent(?![\p{L}\p{N}_])/iu;
 
 export const participantSchema = z.object({ account_id: uuid, display_name: chars(1, 80) });
+export const TYPING_TTL_MILLISECONDS = 8000;
+export const MAX_TYPING_MENTIONS = 5;
+export const typingSchema = z.object({
+  kind: z.literal("typing"), conversation_id: uuid, space_id: uuid, account_id: uuid,
+  client_id: uuid, sequence: z.number().int().min(1).max(2147483647), is_typing: z.boolean(),
+  mentioned_account_ids: z.array(uuid).max(MAX_TYPING_MENTIONS).refine(ids => new Set(ids).size === ids.length),
+  mentions_agent: z.boolean(), expires_at: timestamp,
+}).refine(value => value.is_typing || (!value.mentions_agent && value.mentioned_account_ids.length === 0));
+export type TypingUpdate = z.infer<typeof typingSchema>;
+export type TypingIntent = Pick<TypingUpdate, "client_id" | "sequence" | "is_typing" | "mentioned_account_ids" | "mentions_agent">;
+
 export const conversationSchema = z.object({
   id: uuid, space_id: uuid, space_name: chars(1, 80),
   kind: z.enum(["space", "direct"]), title: chars(1, 80),
@@ -45,6 +60,13 @@ export const replySchema = z.object({
 });
 export type Reply = z.infer<typeof replySchema>;
 export const reactionSchema = z.object({ reaction: z.enum(REACTIONS), count: z.number().int().positive(), mine: z.boolean() });
+export const agentRequestSchema = z.object({ status: z.enum(AGENT_REQUEST_STATUSES), run_id: uuid.nullable() }).superRefine((value, context) => {
+  // A reply in the chat always comes from a request the agent received.
+  if (["answered", "private", "waiting"].includes(value.status) && value.run_id === null) {
+    context.addIssue({ code: "custom", message: "Inconsistent agent request." });
+  }
+});
+export type AgentRequest = z.infer<typeof agentRequestSchema>;
 
 export const messageSchema = z.object({
   id: uuid, conversation_id: uuid, position: position.refine(value => value !== "0"),
@@ -56,9 +78,15 @@ export const messageSchema = z.object({
   // Servers from before replies, reactions and edits leave these out.
   edited_at: timestamp.nullable().default(null), reply_to: replySchema.nullable().default(null),
   reactions: z.array(reactionSchema).max(REACTIONS.length).default([]), revision: z.number().int().positive().default(1),
+  // Servers from before @agent (DEC-046) leave these out.
+  from_agent: z.boolean().default(false), agent_request: agentRequestSchema.nullable().default(null),
 }).superRefine((value, context) => {
   if ((value.status === "sent") !== (value.body !== null) || (value.status === "deleted") !== (value.deleted_at !== null)
     || value.mine !== (value.client_message_id !== null)) {
+    context.addIssue({ code: "custom", message: "Inconsistent message." });
+  }
+  // The agent writes no reader's message, and only the author is told what became of their request.
+  if ((value.from_agent && value.mine) || (value.agent_request !== null && (!value.mine || value.from_agent))) {
     context.addIssue({ code: "custom", message: "Inconsistent message." });
   }
   // A deleted message keeps no reactions, each reaction appears once in the fixed order, and a message cannot answer itself.
@@ -187,6 +215,74 @@ export async function reactToMessage(accountId: string, conversationId: string, 
 /** Whether the author may still edit [message] by the device clock; the server decides. */
 export function editable(message: Message, now = Date.now()) {
   return message.mine && message.status === "sent" && now - Date.parse(message.created_at) < EDIT_WINDOW_MILLISECONDS;
+}
+
+/** Whether a message asks the agent: "@agent" as a word of its own, as the server reads it (DEC-046). */
+export function mentionsAgent(text: string) {
+  return MENTION.test(text);
+}
+
+export function typingMentions(text: string, members: readonly z.infer<typeof participantSchema>[]) {
+  const normalized = text.normalize("NFC");
+  const names = new Map<string, { name: string; accounts: string[] }>();
+  for (const member of members) {
+    const name = member.display_name.trim().normalize("NFC");
+    const key = name.toLowerCase();
+    if (!name || key === "agent") continue;
+    const entry = names.get(key) ?? { name, accounts: [] };
+    entry.accounts.push(member.account_id);
+    names.set(key, entry);
+  }
+  const occupied: { start: number; end: number }[] = [];
+  const targets = new Map<string, number>();
+  // Prefer a complete longer name over its prefix; duplicate display names do not identify a person.
+  for (const { name, accounts } of [...names.values()].sort((a, b) => b.name.length - a.name.length)) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}\\p{M}_@.])@${escaped}(?![\\p{L}\\p{N}\\p{M}_])`, "giu");
+    for (const match of normalized.matchAll(pattern)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (occupied.some(range => start < range.end && end > range.start)) continue;
+      occupied.push({ start, end });
+      if (accounts.length === 1 && !targets.has(accounts[0])) targets.set(accounts[0], start);
+    }
+  }
+  return {
+    mentioned_account_ids: [...targets].sort((a, b) => a[1] - b[1]).slice(0, MAX_TYPING_MENTIONS).map(([id]) => id),
+    mentions_agent: mentionsAgent(text),
+  };
+}
+
+export async function sendTyping(accountId: string, conversationId: string, intent: TypingIntent, signal?: AbortSignal) {
+  const { data } = await api(`conversations/${conversationId}/typing`, typingSchema, {
+    method: "POST", accountId, body: intent, signal,
+  });
+  if (data.account_id !== accountId || data.conversation_id !== conversationId || data.client_id !== intent.client_id
+    || data.sequence !== intent.sequence || data.is_typing !== intent.is_typing || data.mentions_agent !== intent.mentions_agent
+    || data.mentioned_account_ids.join(",") !== intent.mentioned_account_ids.join(",")) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The typing update could not be confirmed.");
+  }
+  return data;
+}
+
+/** The author asks the agent again about their own message when no answer came; once answered, nothing changes. */
+export async function askAgentAgain(accountId: string, conversationId: string, messageId: string) {
+  const result = await api(`conversations/${conversationId}/messages/${messageId}/agent`, messageSchema, { method: "POST", accountId, body: {} });
+  const message = checkMessage(accountId, conversationId, result.data);
+  if (message.id !== messageId || !message.mine || message.agent_request === null) {
+    throw new ApiError(502, "INVALID_RESPONSE", "The agent request could not be confirmed.");
+  }
+  return message;
+}
+
+/** The author shows the agent's private answer to their message to everyone in the chat (DEC-061); sharing again changes nothing. */
+export async function shareAgentAnswer(accountId: string, conversationId: string, messageId: string) {
+  const result = await api(`conversations/${conversationId}/messages/${messageId}/agent/share`, messageSchema, { method: "POST", accountId, body: {} });
+  const message = checkMessage(accountId, conversationId, result.data);
+  if (message.id !== messageId || !message.mine || message.agent_request?.status !== "answered") {
+    throw new ApiError(502, "INVALID_RESPONSE", "Sharing the answer could not be confirmed.");
+  }
+  return message;
 }
 
 export async function markRead(accountId: string, conversationId: string, through: string) {

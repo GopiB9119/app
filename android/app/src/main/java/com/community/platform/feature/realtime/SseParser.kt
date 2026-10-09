@@ -15,7 +15,7 @@ sealed class LiveEvent {
     /** The stream is open. Anything may have changed while it was closed. */
     data object Ready : LiveEvent()
 
-    data class Change(val kind: String, val conversationId: String?, val spaceId: String?, val reason: String) : LiveEvent()
+    data class Change(val kind: String, val conversationId: String?, val spaceId: String?, val reason: String, val runId: String? = null) : LiveEvent()
 
     /** Hints were lost for this stream: re-read everything. */
     data object Resync : LiveEvent()
@@ -84,8 +84,11 @@ class SseParser {
             "change" -> {
                 val kind = text(body, "kind")
                 val conversationId = id(body, "conversation_id")
+                val spaceId = id(body, "space_id")
+                val runId = id(body, "run_id")
                 require(kind != "conversation" || conversationId != null) { "A conversation change names its conversation" }
-                LiveEvent.Change(kind, conversationId, id(body, "space_id"), text(body, "reason"))
+                require(kind != "agent" || spaceId != null && runId != null) { "An Agent change names its Space and run" }
+                LiveEvent.Change(kind, conversationId, spaceId, text(body, "reason"), runId)
             }
             else -> null
         }

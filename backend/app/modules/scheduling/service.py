@@ -12,7 +12,14 @@ from app.modules.notifications.models import InAppNotification, NotificationPref
 from app.modules.planning.models import Task, TaskAccess
 from app.modules.realtime.hub import signal
 from app.modules.scheduling.models import Reminder, ReminderEvent, ReminderSeries
-from app.modules.scheduling.schemas import PreviewClaims, PreviewOption, ReminderCursor, ReminderPreview, ReminderRecipient, ReminderView
+from app.modules.scheduling.schemas import (
+    PreviewClaims,
+    PreviewOption,
+    ReminderCursor,
+    ReminderPreview,
+    ReminderRecipient,
+    ReminderView,
+)
 from app.modules.spaces.models import Space, SpaceMembership
 from app.modules.spaces.schemas import Pagination
 
@@ -198,11 +205,11 @@ class ReminderService:
         self.record(database, reminder, "reminder.scheduled", caller.id)
         return self.view(reminder, task)
 
-    def cursor(self, value, kind, account_id, task_id=None):
-        position = self.position(value, kind, account_id, task_id)
+    def cursor(self, value, kind, account_id, task_id=None, *, space_id=None):
+        position = self.position(value, kind, account_id, task_id, space_id=space_id)
         return position[1] if position else None
 
-    def position(self, value, kind, account_id, task_id=None):
+    def position(self, value, kind, account_id, task_id=None, *, space_id=None):
         """The creation time (None for lists ordered by identifier only) and identifier after which a page continues."""
         if value is None:
             return None
@@ -210,35 +217,43 @@ class ReminderService:
             cursor = ReminderCursor.model_validate_json(self.security.open(value))
         except (InvalidToken, ValueError, TypeError):
             raise DomainError(400, "CURSOR_INVALID", "Reload this list.") from None
-        if cursor.kind != kind or str(cursor.account_id) != account_id or (str(cursor.task_id) if cursor.task_id else None) != task_id:
+        if (cursor.kind, str(cursor.account_id), str(cursor.task_id) if cursor.task_id else None,
+            str(cursor.space_id) if cursor.space_id else None) != (kind, account_id, task_id, space_id):
             raise DomainError(400, "CURSOR_INVALID", "Reload this list.")
         if cursor.expires_at <= self.clock():
             raise DomainError(410, "CURSOR_EXPIRED", "Reload this list.")
         return cursor.after_created_at, str(cursor.after_id)
 
-    def pagination(self, has_more, last_id, kind, account_id, task_id=None, last_created_at=None):
+    def pagination(self, has_more, last_id, kind, account_id, task_id=None, last_created_at=None, *, space_id=None):
         cursor = None
         if has_more:
             cursor = self.security.seal(ReminderCursor(
-                kind=kind, account_id=account_id, task_id=task_id, after_id=last_id, after_created_at=last_created_at,
+                kind=kind, account_id=account_id, space_id=space_id, task_id=task_id, after_id=last_id, after_created_at=last_created_at,
                 expires_at=self.clock() + timedelta(minutes=15),
-            ).model_dump_json())
+            ).model_dump_json(exclude_none=True))
         return Pagination(next_cursor=cursor, has_more=has_more)
 
-    def list_reminders(self, token, limit, cursor=None, task_id=None):
+    def list_reminders(self, token, limit, cursor=None, task_id=None, *, space_id=None):
         with self.sessions() as database:
             caller, _session = self.identity.authenticate(database, token)
+            if space_id is not None:
+                space_id = str(space_id)
+                self.tasks.context(database, token, space_id)
             if task_id:
                 self.task_context(database, token, task_id)
             statement = self.visible(caller.id)
+            if space_id is not None:
+                statement = statement.where(Reminder.space_id == space_id)
             if task_id:
                 statement = statement.where(Reminder.task_id == task_id)
-            after = self.cursor(cursor, "reminders", caller.id, task_id)
+            after = self.cursor(cursor, "reminders", caller.id, task_id, space_id=space_id)
             if after:
                 statement = statement.where(Reminder.id > after)
             rows = database.execute(statement.order_by(Reminder.id).limit(limit + 1)).all()
             page = rows[:limit]
-            return [self.view(row[0], row[1]) for row in page], self.pagination(len(rows) > limit, page[-1][0].id if page else None, "reminders", caller.id, task_id)
+            return [self.view(row[0], row[1]) for row in page], self.pagination(
+                len(rows) > limit, page[-1][0].id if page else None, "reminders", caller.id, task_id, space_id=space_id,
+            )
 
     def lock_visible(self, database, token, identifier):
         caller, _session = self.identity.authenticate(database, token)

@@ -4,7 +4,14 @@ from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AwareDatetime, BaseModel, BeforeValidator, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.identity.schemas import Envelope, Input
 from app.modules.planning.schemas import date_only
@@ -110,6 +117,7 @@ class ReminderPage(Envelope[list[ReminderView]]):
 class ReminderCursor(Input):
     kind: Literal["reminders", "notifications"]
     account_id: UUID
+    space_id: UUID | None = None
     task_id: UUID | None = None
     after_id: UUID
     # The inbox is listed newest first, so its cursor also holds the creation time of the last item shown (T102).

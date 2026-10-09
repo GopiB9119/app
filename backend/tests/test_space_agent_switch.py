@@ -8,12 +8,11 @@ from app.modules.agents.models import AgentApproval, AgentRun
 from app.modules.identity.models import OutboxEvent
 from app.modules.planning.models import Task
 from app.modules.spaces.models import SpaceAuditEvent
-from tests.test_agents import answer, approve, ask
+from tests.agent_support import answer, approve, ask
 from tests.test_identity import account, auth
 from tests.test_messaging import admit
 from tests.test_space_directory import settings
 from tests.test_spaces import create_space
-from tests.test_tasks import create_task
 
 OFF = "The owner turned the agent off in this Space. Nothing was changed."
 
@@ -48,11 +47,9 @@ def test_only_the_owner_turns_the_agent_off_after_reviewing_the_settings(client,
     refused = set_agent(client, member, space_id, False, reviewed["etag"])
     assert refused.status_code == 404 and refused.json()["error"]["message"] == "Space not found."
     assert set_agent(client, owner, space_id, True, reviewed["etag"]).json()["error"]["code"] == "NO_CHANGES"
-
     key = str(uuid4())
     changed = set_agent(client, owner, space_id, False, reviewed["etag"], key)
     assert changed.status_code == 200, changed.text
-    assert changed.json()["data"]["agent_enabled"] is False
     assert set_agent(client, owner, space_id, False, reviewed["etag"], key).json()["data"]["agent_enabled"] is False
     assert set_agent(client, owner, space_id, True, reviewed["etag"], key).json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
     assert client.get(f"/v1/spaces/{space_id}", headers=auth(member)).json()["data"]["agent_enabled"] is False
@@ -84,23 +81,17 @@ def test_waiting_requests_stop_when_touched_and_do_not_come_back(client, app):
     member = account(client, app, "agent-switch-member@example.test")
     space_id = create_space(client, owner).json()["data"]["id"]
     admit(client, owner, space_id, member)
-    create_task(client, member, space_id, title="Call the plumber")
     waiting_approval = ask(client, member, space_id, "add a task to book the hall")
-    waiting_answer = ask(client, member, space_id, "remind me to call the plumber")
+    waiting_answer = ask(client, member, space_id, "ask me something")
     assert (waiting_approval["status"], waiting_answer["status"]) == ("waiting_for_approval", "waiting_for_user")
     turn_agent(client, owner, space_id, False)
-
-    decided = approve(client, member, waiting_approval)
-    assert decided.status_code == 200, decided.text
-    run = decided.json()["data"]
+    run = approve(client, member, waiting_approval).json()["data"]
     assert (run["status"], run["stop_reason"], run["answer"]) == ("cancelled", "agent_off", OFF)
     assert run["approval"]["status"] == "cancelled" and run["approval"]["reason"] == "agent_off"
     resumed = answer(client, member, waiting_answer, "6 pm")
     assert (resumed["status"], resumed["stop_reason"]) == ("cancelled", "agent_off")
-
     turn_agent(client, owner, space_id, True)
-    again = client.get(f"/v1/agent-runs/{waiting_approval['id']}", headers=auth(member)).json()["data"]
-    assert again["status"] == "cancelled"
+    assert client.get(f"/v1/agent-runs/{waiting_approval['id']}", headers=auth(member)).json()["data"]["status"] == "cancelled"
     with app.state.sessions() as database:
         assert database.scalar(select(func.count()).select_from(Task).where(func.lower(Task.title) == "book the hall")) == 0
         assert database.scalar(select(AgentApproval.status).where(AgentApproval.run_id == waiting_approval["id"])) == "cancelled"

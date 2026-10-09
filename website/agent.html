@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#85bce9">
+	<title>Agent | Skyline</title>
+	<link rel="icon" href="image/avatar.png" type="image/png">
+	<link rel="preload" href="image/agent-sky.jpg" as="image">
+	<link rel="stylesheet" href="styles.css">
+	<link rel="stylesheet" href="screens.css">
+	<script src="screens.js" defer></script>
+	<script src="app.js" defer></script>
+</head>
+<body class="screen-page agent-screen" data-page="agent">
+	<a class="skip-link" href="#main">Skip to your agent</a>
+	<header id="screen-header" class="screen-header"></header>
+	<main id="main" class="screen-main agent-main" tabindex="-1">
+		<img class="agent-visual" src="image/agent-orb.png" width="320" height="270" alt="A softly glowing translucent sphere">
+		<p class="agent-eyebrow">YOUR AGENT</p>
+		<h1 class="agent-title">Hi <span data-profile-name>Gopi</span>.</h1>
+		<p class="agent-description"><span>I'm your agent. I'm here to help you and your family.</span><span>What would you like to do?</span></p>
+		<form id="screen-message-form" class="screen-composer" aria-label="Message your agent">
+			<input id="message-input" name="message" type="text" aria-label="Message your agent" placeholder="Message your agent..." maxlength="2000" autocomplete="off">
+			<div class="composer-actions">
+				<button class="screen-icon-button" type="button" data-screen-action="attach" aria-label="Attach a file" title="Attach a file"><svg class="icon" aria-hidden="true"><use href="#plus"/></svg></button>
+				<button class="screen-icon-button composer-mic" type="button" data-screen-action="voice" aria-label="Voice input" title="Voice input"><svg class="icon" aria-hidden="true"><use href="#mic"/></svg></button>
+				<button class="screen-icon-button composer-send" type="submit" aria-label="Send message" title="Send message" disabled><svg class="icon" aria-hidden="true"><use href="#arrow-up"/></svg></button>
+			</div>
+		</form>
+		<input id="message-file" type="file" accept="image/jpeg,image/png,image/webp,.pdf,.txt" aria-label="Choose an attachment" hidden>
+		<div id="composer-attachment" class="composer-attachment" hidden></div>
+		<div class="agent-suggestions">
+			<button data-screen-action="suggestions"><svg class="icon" aria-hidden="true"><use href="#lightbulb"/></svg>Get suggestions</button>
+			<button data-action="calendar"><svg class="icon" aria-hidden="true"><use href="#calendar"/></svg>Check my calendar</button>
+			<button data-action="plans"><svg class="icon" aria-hidden="true"><use href="#map-pin"/></svg>Plan something</button>
+			<button class="agent-more" data-screen-action="agent-more" aria-label="More agent actions" title="More actions"><svg class="icon" aria-hidden="true"><use href="#ellipsis"/></svg></button>
+		</div>
+		<section id="screen-conversation" class="screen-conversation" role="log" aria-live="polite" aria-label="Agent conversation" hidden></section>
+	</main>
+</body>
+</html>

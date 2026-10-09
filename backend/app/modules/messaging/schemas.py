@@ -70,6 +70,30 @@ class MessageAction(Input):
     pass
 
 
+class TypingInput(Input):
+    client_id: UUID
+    sequence: int = Field(ge=1, le=2_147_483_647, strict=True)
+    is_typing: bool = Field(strict=True)
+    mentioned_account_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    mentions_agent: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def valid_context(self) -> "TypingInput":
+        if len(set(self.mentioned_account_ids)) != len(self.mentioned_account_ids):
+            raise ValueError("Mention each person only once.")
+        if not self.is_typing and (self.mentioned_account_ids or self.mentions_agent):
+            raise ValueError("A stopped typing update cannot contain mentions.")
+        return self
+
+
+class TypingView(TypingInput):
+    kind: Literal["typing"] = "typing"
+    conversation_id: UUID
+    space_id: UUID
+    account_id: UUID
+    expires_at: AwareDatetime
+
+
 class ParticipantView(BaseModel):
     account_id: str
     display_name: str
@@ -94,6 +118,7 @@ class ConversationView(BaseModel):
 class ConversationPage(Envelope[list[ConversationView]]):
     pagination: Pagination
     unread_count: int = Field(ge=0)
+    unread_marker: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ConversationCursor(Input):
@@ -121,6 +146,18 @@ class ReactionView(BaseModel):
     mine: bool
 
 
+class AgentRequestView(BaseModel):
+    """What became of the viewer's own message that asked the agent with @agent (DEC-046).
+
+    `answered`: the agent replied in the chat. `private`: the reply only says the answer is in the asker's Agent
+    screen, because not everyone in the chat may see it. `waiting`: the agent needs the asker's answer or approval
+    there. `pending`, `failed`: no reply yet, and asking again is allowed. `off`, `limited`, `too_long`: the agent was
+    turned off in the Space, the day's limit was reached, or the request was longer than 500 characters."""
+
+    status: Literal["answered", "private", "waiting", "pending", "off", "limited", "too_long", "failed"]
+    run_id: str | None
+
+
 class MessageView(BaseModel):
     id: str
     conversation_id: str
@@ -137,6 +174,10 @@ class MessageView(BaseModel):
     reply_to: ReplyView | None = None
     reactions: list[ReactionView] = Field(default_factory=list)
     revision: int = Field(default=1, ge=1)
+    # The agent's replies (DEC-046) come from the Space's agent, never from a member: one stable identifier per Space
+    # that is no account, and the name "Agent".
+    from_agent: bool = False
+    agent_request: AgentRequestView | None = None
 
 
 class MessagePage(Envelope[list[MessageView]]):

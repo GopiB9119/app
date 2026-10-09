@@ -22,6 +22,8 @@ class Space(Base):
     __tablename__ = "spaces"
     __table_args__ = (
         UniqueConstraint("created_by_id", "creation_key", name="uq_space_creation_intent"),
+        # The target of agent_instances' composite key, so an agent binding always matches its Space's type (T215).
+        UniqueConstraint("id", "space_type", name="uq_space_id_type"),
         CheckConstraint("length(btrim(name)) BETWEEN 1 AND 80", name="ck_space_name"),
         CheckConstraint("space_type IN ('family', 'solo', 'group', 'couple')", name="ck_space_type"),
         # Only group Spaces may ever be public.

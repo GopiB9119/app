@@ -67,11 +67,12 @@ function message(overrides = {}) {
   };
 }
 
-test('Messaging BFF exposes exactly the nine authenticated operations', async () => {
+test('Messaging BFF exposes the authenticated messaging operations, including transient typing', async () => {
   for (const [method, route] of [
     ['POST', `spaces/${spaceId}/conversations`], ['GET', 'conversations'], ['GET', `conversations/${conversationId}`],
     ['GET', `conversations/${conversationId}/messages`], ['POST', `conversations/${conversationId}/messages`],
     ['POST', `conversations/${conversationId}/read`], ['POST', `conversations/${conversationId}/messages/${messageId}/delete`],
+    ['POST', `conversations/${conversationId}/typing`],
     // Edits and reactions (T162).
     ['POST', `conversations/${conversationId}/messages/${messageId}/edit`], ['POST', `conversations/${conversationId}/messages/${messageId}/reactions`],
   ]) {
@@ -89,6 +90,7 @@ test('Messaging BFF exposes exactly the nine authenticated operations', async ()
     ['GET', `spaces/${spaceId}/conversations`], ['POST', `conversations/not-a-uuid/messages`],
     ['GET', `conversations/${conversationId}/messages/${messageId}/reactions`], ['PATCH', `conversations/${conversationId}/messages/${messageId}/edit`],
     ['POST', `conversations/${conversationId}/messages/${messageId}/react`],
+    ['GET', `conversations/${conversationId}/typing`], ['PATCH', `conversations/${conversationId}/typing`],
   ]) {
     const proxy = bff();
     assert.equal((await proxy.request(method, route)).status, 404, `${method} ${route}`);
@@ -120,6 +122,83 @@ test('Messaging BFF forwards only reviewed list parameters and refuses command q
   const switched = bff();
   assert.equal((await switched.request('POST', `conversations/${conversationId}/messages`, { 'X-Account-ID': otherId })).status, 409);
   assert.equal(switched.calls.length, 1);
+});
+
+test('Typing BFF enforces origin, account binding and command query restrictions', async () => {
+  for (const [route, headers, status, calls] of [
+    [`conversations/${conversationId}/typing?draft=private`, {}, 400, 0],
+    [`conversations/${conversationId}/typing`, { Origin: 'https://foreign.example' }, 403, 0],
+    [`conversations/${conversationId}/typing`, { Cookie: '' }, 401, 0],
+    [`conversations/${conversationId}/typing`, { 'X-Account-ID': otherId }, 409, 1],
+  ]) {
+    const proxy = bff();
+    assert.equal((await proxy.request('POST', route, headers)).status, status);
+    assert.equal(proxy.calls.length, calls);
+  }
+});
+
+function typing(overrides = {}) {
+  return {
+    kind: 'typing', conversation_id: conversationId, space_id: spaceId, account_id: accountId,
+    client_id: key, sequence: 1, is_typing: true, mentioned_account_ids: [], mentions_agent: false,
+    expires_at: '2026-10-07T18:00:08Z', ...overrides,
+  };
+}
+
+test('Typing sends only bounded mention metadata and binds the response to the exact source and update', async () => {
+  const calls = [];
+  const intent = { client_id: key, sequence: 1, is_typing: true, mentioned_account_ids: [otherId], mentions_agent: true };
+  const client = messagingClient(async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({ data: typing(intent) });
+  });
+  const controller = new AbortController();
+  await client.sendTyping(accountId, conversationId, intent, controller.signal);
+  assert.equal(calls[0].url, `/api/conversations/${conversationId}/typing`);
+  assert.equal(calls[0].options.headers['X-Account-ID'], accountId);
+  assert.equal(calls[0].options.signal, controller.signal);
+  assert.deepEqual(JSON.parse(calls[0].options.body), intent);
+  for (const mismatch of [
+    { account_id: otherId }, { conversation_id: otherId }, { client_id: otherId }, { sequence: 2 },
+    { is_typing: false, mentions_agent: false, mentioned_account_ids: [] },
+    { mentions_agent: false }, { mentioned_account_ids: [] },
+  ]) {
+    const bad = messagingClient(async () => Response.json({ data: typing({ ...intent, ...mismatch }) }));
+    await assert.rejects(bad.sendTyping(accountId, conversationId, intent), error => error.code === 'INVALID_RESPONSE');
+  }
+});
+
+test('Typing schemas refuse invalid stops, sources, excessive targets and duplicate mentions', () => {
+  const client = messagingClient();
+  assert.equal(client.typingSchema.safeParse(typing()).success, true);
+  assert.equal(client.typingSchema.safeParse(typing({ is_typing: false })).success, true);
+  for (const invalid of [
+    { client_id: 'bad' }, { sequence: 0 }, { sequence: 1.5 }, { sequence: 2147483648 },
+    { is_typing: 'true' }, { is_typing: false, mentions_agent: true },
+    { is_typing: false, mentioned_account_ids: [otherId] }, { mentioned_account_ids: [otherId, otherId] },
+    { mentioned_account_ids: Array.from({ length: 6 }, (_, index) => `00000000-0000-4000-8000-00000000000${index}`) },
+  ]) assert.equal(client.typingSchema.safeParse(typing(invalid)).success, false, JSON.stringify(invalid));
+});
+
+test('Typing mentions use complete unambiguous current names, Unicode boundaries and the existing agent syntax', () => {
+  const client = messagingClient();
+  const members = [
+    { account_id: accountId, display_name: 'Sam' }, { account_id: otherId, display_name: 'Sam Rivera' },
+    { account_id: spaceId, display_name: 'లత' }, { account_id: conversationId, display_name: 'A+B (team)' },
+    { account_id: messageId, display_name: 'Ren\u00e9e' }, { account_id: key, display_name: 'Agent' },
+  ];
+  const targets = text => JSON.parse(JSON.stringify(client.typingMentions(text, members)));
+  assert.deepEqual(targets('Ordinary chat, no mentions'), { mentioned_account_ids: [], mentions_agent: false });
+  assert.deepEqual(targets('@SAM RIVERA, @లత and @agent'), { mentioned_account_ids: [otherId, spaceId], mentions_agent: true });
+  assert.deepEqual(targets('@A+B (team)! @Rene\u0301e'), { mentioned_account_ids: [conversationId, messageId], mentions_agent: false });
+  assert.deepEqual(targets('email@Sam @@Sam @Sammy @agentic user@agent.test'), { mentioned_account_ids: [], mentions_agent: false });
+  assert.deepEqual(targets('@Sam @Sam @Sam Rivera'), { mentioned_account_ids: [accountId, otherId], mentions_agent: false });
+  assert.deepEqual(targets('@agent'), { mentioned_account_ids: [], mentions_agent: true });
+  const ambiguous = [...members, { account_id: '00000000-0000-4000-8000-000000000001', display_name: 'sam rivera' }];
+  assert.deepEqual(Array.from(client.typingMentions('@Sam Rivera', ambiguous).mentioned_account_ids), []);
+  const many = Array.from({ length: 8 }, (_, index) => ({ account_id: `00000000-0000-4000-8000-00000000000${index}`, display_name: `Person ${index}` }));
+  assert.deepEqual(Array.from(client.typingMentions(many.map(member => `@${member.display_name}`).join(', '), many).mentioned_account_ids),
+    many.slice(0, 5).map(member => member.account_id));
 });
 
 test('Send retries keep the same idempotency key and body and confirm the returned message', async () => {
@@ -192,6 +271,19 @@ test('Conversation lists require a validated unread total and non-repeating curs
   ]) {
     const client = messagingClient(async () => Response.json(payload));
     await assert.rejects(client.conversationPage(accountId, 'same'), { status: 502 });
+  }
+});
+
+test('Conversation unread marker metadata stays compatible with the existing web client', async () => {
+  for (const marker of [undefined, 'a'.repeat(64)]) {
+    const client = messagingClient(async () => Response.json({
+      data: [conversation()], pagination: { next_cursor: null, has_more: false }, unread_count: 1,
+      unread_marker: marker,
+    }));
+    const page = await client.conversationPage(accountId);
+    assert.equal(page.unreadCount, 1);
+    assert.equal(page.data[0].id, conversationId);
+    assert.equal(page.pagination.has_more, false);
   }
 });
 

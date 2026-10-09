@@ -11,6 +11,8 @@ import { useLanguage, useText } from "@/features/i18n/i18n";
 import { HANDLE_PATTERN, createPage, emptyClassification, followPage, followingPages, isUnknown, myPages, termLabel } from "./client";
 import type { Classification, CreateIntent, Topic } from "./client";
 import { PageRoles } from "./page-roles";
+import { HelpReviewQueue, MyHelpPosts } from "./help-posts";
+import { MyPageEvents } from "./page-events";
 import { CommunityFrame, Failure, Loading, problemText, sessionLost, useTextProblem, useViewer } from "./shared";
 import { ClassificationEditor, TaxonomyStatus, TopicSelect, unavailableTerms, useTaxonomy } from "./taxonomy-controls";
 import styles from "./community.module.css";
@@ -67,6 +69,9 @@ function MyPages({ account }: { account: Account }) {
       {owned.data?.length === 5 && <p className={styles.meta}>{t("community.ownedLimit")}</p>}
     </section>
     <PageRoles account={account} />
+    <HelpReviewQueue account={account} />
+    <MyPageEvents account={account} />
+    <MyHelpPosts account={account} />
     <section className={styles.stack} aria-labelledby="following-heading">
       <h2 id="following-heading">{t("community.followingPages")}</h2>
       {error && <div className="message error" role="alert">{error}</div>}

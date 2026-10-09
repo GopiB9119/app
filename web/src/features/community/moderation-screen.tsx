@@ -49,6 +49,9 @@ function Preview({ preview, pageName, targetType }: { preview: ContentPreview; p
   </>;
 }
 
+// A decision closes the reports it reviewed, so a later report on the same content starts a group with a later first report.
+const reportGroup = (item: ModerationQueueItem) => `${item.target_type}:${item.target_id}:${item.first_reported_at}`;
+
 function Reviews({ account }: { account: Account }) {
   const t = useText();
   const time = useCommunityTime();
@@ -70,7 +73,7 @@ function Reviews({ account }: { account: Account }) {
   });
   useEffect(() => { if (sessionLost(reports.error) || sessionLost(appeals.error)) window.location.replace("/login"); }, [reports.error, appeals.error]);
   const rows = [...new Map(reports.data?.pages.flatMap(page => page.items).map(item => [`${item.target_type}:${item.target_id}`, item]) ?? []).values()]
-    .filter(item => !decided.has(`${item.target_type}:${item.target_id}`));
+    .filter(item => !decided.has(reportGroup(item)));
   async function more() {
     try { await reports.fetchNextPage({ throwOnError: true }); }
     catch (problem) {
@@ -107,7 +110,7 @@ function Reviews({ account }: { account: Account }) {
         <p>{t("community.reportsCount", { count: item.report_count })}</p>
         <ul className={reviewStyles.reasons}>{item.reasons.map(entry => <li key={entry.reason}>{t("community.reasonCount", { reason: t(`community.reason.${entry.reason}`), count: entry.count })}</li>)}</ul>
         <p className={reviewStyles.meta}>{t("community.firstReportedBefore")}<time dateTime={item.first_reported_at}>{time.format(new Date(item.first_reported_at))}</time></p>
-        <DecisionForm account={account} item={item} done={() => { setDecided(previous => new Set(previous).add(`${item.target_type}:${item.target_id}`)); setMessage("community.decisionRecorded"); }} />
+        <DecisionForm account={account} item={item} done={() => { setDecided(previous => new Set(previous).add(reportGroup(item))); setMessage("community.decisionRecorded"); }} />
       </article>)}
       {reports.hasNextPage && <button className="secondary-button" disabled={reports.isFetching} onClick={more}>{t("community.more")}</button>}
     </section>

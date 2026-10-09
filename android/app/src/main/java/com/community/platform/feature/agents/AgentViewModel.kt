@@ -8,6 +8,7 @@ import com.community.platform.feature.spaces.SpaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -24,12 +25,15 @@ enum class AgentIssue { CONNECTION, RESPONSE, UNCERTAIN }
 /** Where a problem is shown: the composer, a request card (its run ID), the memory list or the delete dialog. */
 const val AGENT_AT_COMPOSER = "composer"
 const val AGENT_AT_MEMORIES = "memories"
+private const val POLL_MILLIS = 1_500L
+private const val POLL_LIMIT = 200
 
 data class AgentState(
     val accountId: String? = null,
     val view: AgentView = AgentView.REQUESTS,
     val spaces: List<SpaceDto> = emptyList(),
     val spacesLoaded: Boolean = false,
+    // Null asks the person's Main Agent (DEC-060); a Space ID asks that Space's agent.
     val spaceId: String? = null,
     val message: String = "",
     val runs: List<AgentRunDto> = emptyList(),
@@ -60,16 +64,21 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
     private var generation = 0L
     private var loadJob: Job? = null
     private var commandJob: Job? = null
+    private var pollJob: Job? = null
     private val cursors = mutableSetOf<String>()
     // One key per approval and choice, so pressing Approve again can never approve a second time.
     private val decisionKeys = mutableMapOf<String, String>()
+    private var entrySpaceId: String? = null
 
-    fun bind(accountId: String?) {
-        if (mutableState.value.accountId == accountId) return
+    /** [entrySpaceId] opens the agent on that Space, as when a chat's @agent request waits there (DEC-046). */
+    fun bind(accountId: String?, entrySpaceId: String? = null) {
+        val entry = if (accountId == null) null else entrySpaceId
+        if (mutableState.value.accountId == accountId && this.entrySpaceId == entry) return
+        this.entrySpaceId = entry
         generation += 1
-        loadJob?.cancel(); commandJob?.cancel()
+        loadJob?.cancel(); commandJob?.cancel(); pollJob?.cancel()
         cursors.clear(); decisionKeys.clear()
-        mutableState.value = AgentState(accountId = accountId)
+        mutableState.value = AgentState(accountId = accountId, spaceId = entry)
         if (accountId != null) reloadSpaces()
     }
 
@@ -80,7 +89,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
         val failure = error as? IdentityFailure
         if (failure?.status == 401 || failure?.code == "ACCOUNT_CHANGED") {
             generation += 1
-            loadJob?.cancel(); commandJob?.cancel()
+            loadJob?.cancel(); commandJob?.cancel(); pollJob?.cancel()
             cursors.clear(); decisionKeys.clear()
             mutableState.value = AgentState(accountId = mutableState.value.accountId, requiresSignIn = true)
             return
@@ -120,15 +129,15 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
                     if (cursor != null && !seen.add(cursor)) throw IdentityFailure("INVALID_RESPONSE", "The Space list did not advance.")
                 } while (cursor != null)
                 if (generation == expected) {
-                    val chosen = mutableState.value.spaceId?.takeIf { id -> loaded.any { it.id == id } } ?: loaded.firstOrNull()?.id
+                    // An entry Space that is no longer listed falls back to the Main Agent.
+                    val chosen = mutableState.value.spaceId?.takeIf { id -> loaded.any { it.id == id } }
                     mutableState.update { it.copy(spaces = loaded.toList(), spacesLoaded = true, spaceId = chosen) }
                     // The first page loads in the same job, so the screen never looks idle between the two reads.
-                    if (chosen != null) {
-                        val page = repository.runs(account, chosen, null)
-                        if (generation == expected && mutableState.value.spaceId == chosen) {
-                            cursors.clear()
-                            mutableState.update { it.copy(runs = page.items, nextCursor = page.nextCursor, runsLoaded = true) }
-                        }
+                    val page = repository.runs(account, chosen, null)
+                    if (generation == expected && mutableState.value.spaceId == chosen) {
+                        cursors.clear()
+                        mutableState.update { it.copy(runs = page.items, nextCursor = page.nextCursor, runsLoaded = true) }
+                        follow()
                     }
                 }
             } catch (error: CancellationException) { throw error }
@@ -141,12 +150,13 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
         val current = mutableState.value
         if (current.view == view || current.busy || current.uncertain || current.requiresSignIn) return
         mutableState.update { it.copy(view = view, problem = null, issue = null, error = null, at = null, confirmingForget = null) }
-        if (view == AgentView.MEMORIES) reloadMemories() else if (current.spaceId != null) reload()
+        if (view == AgentView.MEMORIES) reloadMemories() else reload()
     }
 
-    fun chooseSpace(spaceId: String) {
+    /** [spaceId] null chooses the person's Main Agent. */
+    fun chooseSpace(spaceId: String?) {
         val current = mutableState.value
-        if (!idle(current) || current.spaceId == spaceId || current.spaces.none { it.id == spaceId }) return
+        if (!idle(current) || current.spaceId == spaceId || (spaceId != null && current.spaces.none { it.id == spaceId })) return
         cursors.clear()
         mutableState.update { it.copy(spaceId = spaceId, runs = emptyList(), nextCursor = null, runsLoaded = false, replies = emptyMap(),
             problem = null, issue = null, error = null, at = null) }
@@ -156,7 +166,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
     fun reload(more: Boolean = false) {
         val current = mutableState.value
         val account = current.accountId ?: return
-        val space = current.spaceId ?: return
+        val space = current.spaceId
         if (!idle(current)) return
         val cursor = if (more) current.nextCursor ?: return else null
         val expected = generation
@@ -177,6 +187,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
                     if (more && !restarted && cursor != null) cursors += cursor
                     mutableState.update { it.copy(runs = if (more && !restarted) it.runs + page.items else page.items,
                         nextCursor = page.nextCursor, runsLoaded = true) }
+                    follow()
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { fail(error, expected, AGENT_AT_COMPOSER) }
@@ -209,7 +220,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
     fun ask() {
         val current = mutableState.value
         val account = current.accountId ?: return
-        val space = current.spaceId ?: return
+        val space = current.spaceId
         if (!idle(current) || current.space?.agentEnabled == false) return
         val message = normalizedAgentMessage(current.message)
         agentMessageProblem(message)?.let { problem -> mutableState.update { it.copy(problem = problem, issue = null, error = null, at = AGENT_AT_COMPOSER) }; return }
@@ -314,6 +325,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
                                 message = if (command is AgentCommand.Ask) "" else it.message,
                                 replies = if (command is AgentCommand.Answer || command is AgentCommand.Stop) it.replies - changed.id else it.replies)
                         } else if (generation == expected) mutableState.update { it.copy(pending = null) }
+                        if (generation == expected) follow()
                     }
                 }
             } catch (error: CancellationException) { throw error }
@@ -347,7 +359,7 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
     private fun reloadKeepingError() {
         val saved = mutableState.value
         val account = saved.accountId ?: return
-        val space = saved.spaceId ?: return
+        val space = saved.spaceId
         val expected = generation
         mutableState.update { it.copy(loading = true) }
         loadJob = viewModelScope.launch {
@@ -360,6 +372,31 @@ class AgentViewModel @Inject constructor(private val repository: AgentRepository
             } catch (error: CancellationException) { throw error }
             catch (_error: Exception) { }
             finally { if (generation == expected) mutableState.update { it.copy(loading = false) } }
+        }
+    }
+
+    /** Reads requests that are still working until they settle; Main Agent runs send no live hint (DEC-060). */
+    private fun follow() {
+        val account = mutableState.value.accountId ?: return
+        if (pollJob?.isActive == true || mutableState.value.runs.none { it.working }) return
+        val expected = generation
+        pollJob = viewModelScope.launch {
+            repeat(POLL_LIMIT) {
+                delay(POLL_MILLIS)
+                val current = mutableState.value
+                if (generation != expected) return@launch
+                val working = current.runs.filter { it.working }
+                if (working.isEmpty()) return@launch
+                if (current.busy || current.uncertain) return@repeat
+                for (run in working) {
+                    val fresh = try { repository.getRun(account, run.id, run.spaceId) }
+                        catch (error: CancellationException) { throw error }
+                        catch (_error: Exception) { continue }
+                    if (generation == expected) mutableState.update { state ->
+                        state.copy(runs = state.runs.map { item -> if (item.id == fresh.id) fresh else item })
+                    }
+                }
+            }
         }
     }
 

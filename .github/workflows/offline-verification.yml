@@ -1,0 +1,61 @@
+{
+  "name": "Offline verification",
+  "on": {
+    "pull_request": {},
+    "push": {},
+    "workflow_dispatch": {}
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "offline-${{ github.workflow }}-${{ github.ref }}",
+    "cancel-in-progress": true
+  },
+  "jobs": {
+    "tooling": {
+      "runs-on": "${{ matrix.os }}",
+      "timeout-minutes": 10,
+      "strategy": {
+        "fail-fast": false,
+        "matrix": {
+          "os": ["ubuntu-latest", "windows-latest"]
+        }
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4",
+          "with": { "persist-credentials": false, "fetch-depth": 2 }
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": { "node-version": "22" }
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": { "python-version": "3.12" }
+        },
+        {
+          "name": "Verifier self-tests",
+          "run": "node --test scripts/verify.test.mjs"
+        },
+        {
+          "name": "Offline project gates",
+          "run": "npm run verify -- --suite runner,tokens,golden --output .local/verify/ci"
+        },
+        {
+          "name": "Retain verification reports",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "offline-verification-${{ matrix.os }}",
+            "path": ".local/verify/ci",
+            "include-hidden-files": true,
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        }
+      ]
+    }
+  }
+}

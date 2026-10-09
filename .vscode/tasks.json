@@ -2,6 +2,55 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Community Platform: install backend packages",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pip",
+				"install",
+				"--retries",
+				"0",
+				"--timeout",
+				"15",
+				"./backend[test]"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"PIP_RETRIES": "0",
+					"PIP_TIMEOUT": "15",
+					"PIP_DISABLE_PIP_VERSION_CHECK": "1"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify Windows runner",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"scripts/verify.mjs",
+				"--suite",
+				"runner"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
 			"label": "Community Platform: start local backend",
 			"type": "shell",
 			"command": "docker",
@@ -39,6 +88,58 @@
 					"NEXT_TELEMETRY_DISABLED": "1"
 				}
 			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: build web (fast)",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"node_modules/next/dist/bin/next",
+				"build"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/web",
+				"env": {
+					"COMMUNITY_BUILD_LABEL": "local-web-fast",
+					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3000",
+					"NEXT_TELEMETRY_DISABLED": "1"
+				}
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Community Platform: preview web (fast)",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"node_modules/next/dist/bin/next",
+				"start",
+				"--hostname",
+				"127.0.0.1",
+				"--port",
+				"3000"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/web",
+				"env": {
+					"COMMUNITY_BUILD_LABEL": "local-web-fast",
+					"COMMUNITY_WEB_ORIGINS": "http://127.0.0.1:3000",
+					"NEXT_TELEMETRY_DISABLED": "1"
+				}
+			},
+			"dependsOn": "Community Platform: build web (fast)",
 			"presentation": {
 				"panel": "dedicated",
 				"reveal": "always"
@@ -476,6 +577,467 @@
 				"ps",
 				"--all"
 			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify read-only agent web",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-reporter=spec",
+				"--test-reporter=junit",
+				"--test-reporter-destination=stdout",
+				"--test-reporter-destination=.local/agent-readonly-web-20261004.xml",
+				"tests/agents-client.test.mjs",
+				"tests/unit/agents-ui.test.mjs"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify read-only agent live",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-name-pattern=^agent(:| read-only:)",
+				"--test-reporter=spec",
+				"--test-reporter=junit",
+				"--test-reporter-destination=stdout",
+				"--test-reporter-destination=.local/agent-readonly-live-20261004.xml",
+				"tests/e2e/identity.test.mjs"
+			],
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify read-only agent with model",
+			"type": "shell",
+			"command": "& {\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        & node --test --test-concurrency=1 --test-name-pattern='^agent read-only:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=.local/agent-readonly-live-model-20261004.xml tests/e2e/identity.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'The model-enabled read-only agent journey failed.' }\n    } finally {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = $previous\n    }\n}",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify read-only agent backend",
+			"type": "shell",
+			"command": "& {\n    $captured = @(& node .local/blueprint-audit-run.mjs --snapshot-only)\n    $captured | Write-Output\n    if ($LASTEXITCODE -ne 0) { throw 'Source capture failed; tests were not started.' }\n    $snapshot = ($captured | Where-Object { $_.StartsWith('Snapshot: ') }).Substring(10)\n    if (-not $snapshot) { throw 'No captured source path was returned.' }\n    $backend = Join-Path $snapshot 'backend'\n    & docker compose -f infra/compose.yaml --profile test run --rm --pull never -e PYTHONDONTWRITEBYTECODE=1 -v \"${backend}:/app:ro\" -v \"${snapshot}:/evidence\" tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agents.py tests/test_agent_evaluation.py tests/test_space_agent_switch.py tests/test_agent_model.py tests/test_agent_model_budget.py tests/test_agent_metrics.py tests/test_openapi.py --junitxml=/evidence/agent-backend.xml\n    if ($LASTEXITCODE -ne 0) { throw \"Agent backend verification failed; evidence is in $snapshot\" }\n}",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: reload local agent API",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"-f",
+				"infra/compose.yaml",
+				"restart",
+				"api"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Community Platform: verify T195 graph dispatch",
+			"type": "shell",
+			"command": "& { $ErrorActionPreference = 'Stop'; $evidence = (Resolve-Path '..\\.local\\backend\\.local').Path; $env:PYTHONDONTWRITEBYTECODE = '1'; python -m pip show langgraph langchain-core langsmith langgraph-checkpoint | Out-File -Encoding utf8 (Join-Path $evidence 'host-langgraph-packages.txt'); if ($LASTEXITCODE -ne 0) { throw 'Host LangGraph dependency inventory failed.' }; Get-FileHash -Algorithm SHA256 app\\modules\\agents\\graph.py, app\\modules\\agents\\service.py, app\\modules\\agents\\README.md, pyproject.toml, tests\\test_agent_graph.py, ..\\.vscode\\tasks.json | Format-List Algorithm,Hash,Path | Out-File -Encoding utf8 (Join-Path $evidence 't195-source-sha256.txt'); $site = Join-Path (Split-Path (Get-Command python).Source) 'Lib\\site-packages'; $distFiles = foreach ($directory in @('langgraph-1.2.11.dist-info', 'langchain_core-1.6.0.dist-info', 'langsmith-0.11.1.dist-info', 'langgraph_checkpoint-4.2.0.dist-info')) { foreach ($name in @('METADATA', 'RECORD')) { Join-Path $site (Join-Path $directory $name) } }; Get-FileHash -Algorithm SHA256 $distFiles | Format-List Algorithm,Hash,Path | Out-File -Encoding utf8 (Join-Path $evidence 't195-host-dist-metadata-sha256.txt'); python -m unittest discover -s tests -p test_agent_graph.py -v; if ($LASTEXITCODE -ne 0) { throw 'Focused T195 graph dispatch validation failed.' }; & docker compose -f ..\\infra\\compose.yaml --profile test run --rm --pull never -e PYTHONDONTWRITEBYTECODE=1 -v \"${evidence}:/evidence\" tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_graph.py --junitxml=/evidence/t195-graph-image-gate.xml; if ($LASTEXITCODE -ne 0) { throw 'T195 stock-image graph collection gate failed.' } }",
+			"options": {
+				"cwd": "${workspaceFolder}/backend"
+			},
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always"
+			},
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify T182 Agent web records",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"--test",
+				"--test-concurrency=1",
+				"--test-reporter=spec",
+				"--test-reporter=junit",
+				"--test-reporter-destination=stdout",
+				"--test-reporter-destination=.local/t182-web-records-20261005.xml",
+				"tests/agents-client.test.mjs",
+				"tests/unit/agents-ui.test.mjs"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify T182 native Agent records",
+			"type": "shell",
+			"command": "& {\n    $captured = @(& node .local/blueprint-audit-run.mjs --snapshot-only)\n    $captured | Write-Output\n    if ($LASTEXITCODE -ne 0) { throw 'Agent source capture failed.' }\n    $snapshot = ($captured | Where-Object { $_.StartsWith('Snapshot: ') }).Substring(10)\n    if (-not $snapshot) { throw 'Source capture returned no path.' }\n    & node .local/blueprint-audit-run.mjs --android-focused $snapshot com.community.platform.feature.agents.AgentTest\n    if ($LASTEXITCODE -ne 0) { throw \"Native Agent verification failed; preserve evidence at $snapshot\" }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect T195 runtime packages",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"-c",
+				"import json; import importlib.metadata as metadata; print(json.dumps({name: {'version': metadata.version(name), 'requires': metadata.requires(name)} for name in ['langgraph','langgraph-checkpoint','langgraph-prebuilt','langgraph-sdk','langchain-core','langsmith','ormsgpack','orjson','xxhash']}, indent=2))"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: inspect T195 package inventory",
+			"type": "shell",
+			"command": "C:\\Users\\91961\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+			"args": [
+				".local/t195-dependencies.py",
+				"inventory"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: acquire verified T195 runtime cache",
+			"type": "shell",
+			"command": "C:\\Users\\91961\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+			"args": [
+				".local/t195-dependencies.py",
+				"cache"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify T107 unread marker",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"-f",
+				"infra/compose.yaml",
+				"--profile",
+				"test",
+				"run",
+				"--rm",
+				"--no-deps",
+				"--pull",
+				"never",
+				"-e",
+				"PYTHONDONTWRITEBYTECODE=1",
+				"-v",
+				"${workspaceFolder}/.local/t107-20261005-011921/backend-after:/app:ro",
+				"-v",
+				"${workspaceFolder}/.local/t107-20261005-011921:/evidence",
+				"tests",
+				"python3",
+				"-m",
+				"pytest",
+				"-q",
+				"--tb=short",
+				"-p",
+				"no:cacheprovider",
+				"tests/test_messaging.py::test_unread_marker_changes_for_a_new_message_at_the_same_count_but_not_an_own_send",
+				"--junitxml=/evidence/unread-after-task.xml"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify T107 Android",
+			"type": "shell",
+			"command": "${workspaceFolder}/.local/t107-20261005-011921/check-android.ps1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify T107 defect controls",
+			"type": "shell",
+			"command": "${workspaceFolder}/.local/t107-20261005-011921/android-controls.ps1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify T107 current contract",
+			"type": "shell",
+			"command": "${workspaceFolder}/.local/t107-20261005-011921/check-backend-contract.ps1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: collect frozen Linux graph parity",
+			"type": "shell",
+			"command": "& {\n    $ErrorActionPreference = 'Continue'\n    $container = 'community-platform-tests-run-79a81ade1ed2'\n    $metadata = @(& docker inspect $container | ConvertFrom-Json)[0]\n    if ($LASTEXITCODE -ne 0 -or -not $metadata) { throw 'Expected parity container is unavailable' }\n    if (-not ($metadata.Config.Env -contains 'COMMUNITY_AGENT_LANGGRAPH_ENABLED=1')) { throw 'Container is not graph-enabled' }\n    if (-not ($metadata.Mounts | Where-Object { $_.Destination -eq '/app' -and $_.Source -match '57d11e97' -and -not $_.RW })) { throw 'Container does not use the expected read-only frozen source' }\n    if (-not ($metadata.Mounts | Where-Object { $_.Destination -eq '/runtime' -and $_.Source -match 'runtime-20261005-a' -and -not $_.RW })) { throw 'Container does not use the verified read-only runtime' }\n    $snapshot = Join-Path (Get-Location) '.local/blueprint-audit-2026-10-05T05-22-26-030Z-57d11e97'\n    Write-Output 'Confirmed the existing graph-enabled parity run; attaching to its log, not starting another test.'\n    $output = @(& docker logs --follow $container 2>&1)\n    $output | ForEach-Object { $_.ToString() } | Out-File -Encoding utf8 (Join-Path $snapshot 'langgraph-parity-collected.log')\n    $output | Select-Object -Last 50\n    $reportPath = Join-Path $snapshot 'langgraph-parity.xml'\n    if (-not (Test-Path -LiteralPath $reportPath)) { throw 'The parity run produced no JUnit report' }\n    [xml]$report = Get-Content -LiteralPath $reportPath -Raw\n    $cases = $report.SelectNodes('//testcase')\n    $failures = $report.SelectNodes('//testcase/failure')\n    $errors = $report.SelectNodes('//testcase/error')\n    $skips = $report.SelectNodes('//testcase/skipped')\n    Write-Output ('Tests=' + $cases.Count + '; failures=' + $failures.Count + '; errors=' + $errors.Count + '; skipped=' + $skips.Count)\n    if ($cases.Count -eq 0 -or $failures.Count -ne 0 -or $errors.Count -ne 0 -or $skips.Count -ne 0) { throw 'Frozen Linux graph parity did not pass completely' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect Linux graph mounts",
+			"type": "shell",
+			"command": "& {\n    $metadata = & docker inspect community-platform-tests-run-79a81ade1ed2 | ConvertFrom-Json\n    if ($LASTEXITCODE -ne 0) { throw 'Graph container inspection failed' }\n    foreach ($container in $metadata) {\n        [pscustomobject]@{ Name = $container.Name; Status = $container.State.Status; GraphEnabled = ($container.Config.Env -contains 'COMMUNITY_AGENT_LANGGRAPH_ENABLED=1'); Command = $container.Config.Cmd; Mounts = @($container.Mounts | Select-Object Source,Destination,RW); Binds = $container.HostConfig.Binds } | ConvertTo-Json -Depth 7\n    }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: validate Linux graph mounts",
+			"type": "shell",
+			"command": "& {\n    $env:COMMUNITY_T195_BACKEND = (Resolve-Path -LiteralPath '.local/blueprint-audit-2026-10-05T05-22-26-030Z-57d11e97/backend').Path\n    $env:COMMUNITY_T195_EVIDENCE = (Resolve-Path -LiteralPath '.local/t195/build-20261005-a').Path\n    $configuration = & docker compose -f infra/compose.yaml -f infra/compose.agent-langgraph.yaml -f .local/t195-qualification.compose.yaml config --format json | ConvertFrom-Json\n    if ($LASTEXITCODE -ne 0) { throw 'Graph Compose configuration failed' }\n    $mounts = $configuration.services.tests.volumes\n    foreach ($target in @('/app','/agent-runtime')) {\n        $mount = @($mounts | Where-Object { $_.target -eq $target })\n        if ($mount.Count -ne 1 -or $mount[0].read_only -ne $true) { throw ('Expected read-only mount: ' + $target) }\n    }\n    if ($configuration.services.tests.environment.COMMUNITY_AGENT_LANGGRAPH_ENABLED -ne '1') { throw 'Graph gate missing from test configuration' }\n    $mounts | Select-Object source,target,read_only | Format-Table -AutoSize\n    Write-Output 'Explicit frozen-source and runtime read-only Compose configuration validated; no service started.'\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect resolved graph configuration",
+			"type": "shell",
+			"command": "& {\n    $env:COMMUNITY_T195_BACKEND = (Resolve-Path -LiteralPath '.local/blueprint-audit-2026-10-05T05-22-26-030Z-57d11e97/backend').Path\n    $env:COMMUNITY_T195_EVIDENCE = (Resolve-Path -LiteralPath '.local/t195/build-20261005-a').Path\n    $configuration = & docker compose -f infra/compose.yaml -f infra/compose.agent-langgraph.yaml -f .local/t195-qualification.compose.yaml config --format json | ConvertFrom-Json\n    if ($LASTEXITCODE -ne 0) { throw 'Compose inspection failed' }\n    [pscustomobject]@{ testMounts = $configuration.services.tests.volumes; apiMounts = $configuration.services.api.volumes; graphEnabled = $configuration.services.tests.environment.COMMUNITY_AGENT_LANGGRAPH_ENABLED } | ConvertTo-Json -Depth 6\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify Linux graph transaction thread",
+			"type": "shell",
+			"command": "& {\n    $runtime = (Resolve-Path -LiteralPath '.local/t195/runtime-20261005-a/site-packages').Path\n    $backend = (Resolve-Path -LiteralPath 'backend').Path\n    & docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/runtime:/app -e COMMUNITY_AGENT_LANGGRAPH_ENABLED=1 -v \"${backend}:/app:ro\" -v \"${runtime}:/runtime:ro\" --entrypoint python3 community-platform-tests -m unittest discover -s /app/tests -p test_agent_graph.py -v\n    if ($LASTEXITCODE -ne 0) { throw 'Graph thread/session boundary failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify Linux Agent graph",
+			"type": "shell",
+			"command": "& .\\.local\\t195-qualify.ps1",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect owned native graph readiness",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t195/native-phone-readiness-20261005.json'\n    if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw | ConvertFrom-Json | Select-Object completedWithinLimit,exitCode | Format-List }\n    Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(adb|qemu-system-x86_64(-headless)?)\\.exe$' -and ($_.ProcessId -eq 23176 -or $_.CommandLine -match 'emulator-5584.*phone') } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine | Format-List\n    $adb = 'C:\\Users\\91961\\AppData\\Local\\Android\\sdk\\platform-tools\\adb.exe'\n    $owned = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq 23176 -and $_.CommandLine -match 'community_membership_20260923' -and $_.CommandLine -match '-read-only' -and $_.CommandLine -match '-port 5584' })\n    if ($owned.Count -ne 1) { throw 'Owned emulator identity is unavailable' }\n    $boot = @(& $adb -s emulator-5584 shell getprop sys.boot_completed)\n    $phone = @(& $adb -s emulator-5584 shell service check phone)\n    $package = @(& $adb -s emulator-5584 shell service check package)\n    [pscustomobject]@{ boot = ($boot -join '').Trim(); phone = ($phone -join '').Trim(); package = ($package -join '').Trim() } | ConvertTo-Json\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: close unready native graph fixture",
+			"type": "shell",
+			"command": "& {\n    $adb = 'C:\\Users\\91961\\AppData\\Local\\Android\\sdk\\platform-tools\\adb.exe'\n    $owned = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq 23176 -and $_.CommandLine -match 'community_membership_20260923' -and $_.CommandLine -match '-read-only' -and $_.CommandLine -match '-port 5584' })\n    if ($owned.Count -ne 1) { throw 'Do not operate on an unowned emulator' }\n    $process = Get-Process -Id 23176\n    try {\n        & $adb -s emulator-5584 logcat -d -b crash -t 80 | Out-File -Encoding utf8 '.local/t195/native-unready-crash-20261005.txt'\n        & $adb -s emulator-5584 shell dumpsys activity exit-info com.android.phone | Out-File -Encoding utf8 '.local/t195/native-unready-phone-20261005.txt'\n        $installed = @(& $adb -s emulator-5584 shell pm list packages com.community.platform.debug)\n        if ($LASTEXITCODE -ne 0) { throw 'Could not verify fixture app absence' }\n        [pscustomobject]@{ ownedProcess = 23176; installedApp = ($installed -join '').Trim(); testsStarted = 0; reason = 'Boot completed but phone service absent' } | ConvertTo-Json | Out-File -Encoding utf8 '.local/t195/native-unready-result-20261005.json'\n    } finally {\n        $waiter = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq 24436 -and $_.Name -eq 'adb.exe' -and $_.CommandLine -match 'emulator-5584 shell cmd -w phone help' })\n        if ($waiter.Count -eq 1) { Stop-Process -Id 24436 }\n        & $adb -s emulator-5584 emu kill\n        if ($LASTEXITCODE -ne 0) { throw 'Owned unready emulator shutdown was not acknowledged' }\n        if (-not $process.WaitForExit(30000)) { throw 'Owned unready emulator did not exit' }\n        Write-Output 'Unready owned fixture exited; zero app installations/tests; diagnostics retained.'\n    }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify native LangGraph live",
+			"type": "shell",
+			"command": "& {\n    $adb = 'C:\\Users\\91961\\AppData\\Local\\Android\\sdk\\platform-tools\\adb.exe'\n    $owned = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq 26260 -and $_.CommandLine -match 'community_membership_20260923' -and $_.CommandLine -match '-read-only' -and $_.CommandLine -match '-port 5584' })\n    if ($owned.Count -ne 1) { throw 'Owned graph retry fixture identity changed' }\n    $name = @(& $adb -s emulator-5584 emu avd name)\n    if ($LASTEXITCODE -ne 0 -or -not ($name | Where-Object { $_.Trim() -eq 'community_membership_20260923' })) { throw 'Wrong graph retry fixture' }\n    $boot = @(& $adb -s emulator-5584 shell getprop sys.boot_completed)\n    $phone = @(& $adb -s emulator-5584 shell service check phone)\n    $package = @(& $adb -s emulator-5584 shell service check package)\n    [pscustomobject]@{ boot = ($boot -join '').Trim(); phone = ($phone -join '').Trim(); package = ($package -join '').Trim(); ownedPid = 26260 } | ConvertTo-Json | Out-File -Encoding utf8 '.local/t195/native-retry-readiness-20261005.json'\n    if (($boot -join '').Trim() -ne '1' -or -not (($phone -join '').Trim() -match ': found$') -or -not (($package -join '').Trim() -match ': found$')) { throw 'Native retry fixture is not ready; no installation attempted' }\n    $installed = @(& $adb -s emulator-5584 shell pm list packages com.community.platform.debug)\n    if ($LASTEXITCODE -ne 0 -or ($installed -join '').Trim()) { throw 'Retry fixture already has an app; no data changed' }\n    $apks = Get-Content -LiteralPath '.local/t205-native-status-final-apks-20261005.json' -Raw | ConvertFrom-Json\n    foreach ($artifact in $apks) { if ((Get-FileHash -LiteralPath $artifact.Path -Algorithm SHA256).Hash -ne $artifact.Hash) { throw 'Verified native APK bytes changed' } }\n    & $adb -s emulator-5584 shell settings put global airplane_mode_on 1\n    & $adb -s emulator-5584 shell svc data disable\n    & $adb -s emulator-5584 shell settings put global mobile_data 0\n    & $adb -s emulator-5584 shell svc wifi enable\n    & $adb -s emulator-5584 shell wm size 640x1280\n    & $adb -s emulator-5584 shell wm density 320\n    $apk = '.local/blueprint-audit-2026-10-05T04-04-47-066Z-434522a1/android/app/build/outputs/apk'\n    & $adb -s emulator-5584 install \"$apk/debug/app-debug.apk\"\n    if ($LASTEXITCODE -ne 0) { throw 'Graph native app installation failed' }\n    & $adb -s emulator-5584 install \"$apk/androidTest/debug/app-debug-androidTest.apk\"\n    if ($LASTEXITCODE -ne 0) { throw 'Graph native test installation failed' }\n    $wifi = @(& $adb -s emulator-5584 shell settings get global wifi_on)\n    $data = @(& $adb -s emulator-5584 shell settings get global mobile_data)\n    if (($wifi -join '').Trim() -ne '1' -or ($data -join '').Trim() -ne '0') { throw 'Graph native network guard failed' }\n    $api = & docker inspect community-platform-api-1 | ConvertFrom-Json\n    if ($LASTEXITCODE -ne 0 -or $api.State.Health.Status -ne 'healthy' -or -not ($api.Config.Env -contains 'COMMUNITY_AGENT_LANGGRAPH_ENABLED=1')) { throw 'API is not the healthy graph runtime' }\n    $before = @(& $adb -s emulator-5584 shell settings get system font_scale)\n    $classes = 'com.community.platform.feature.identity.AccountJourneyTest#nativeAgentActsOnlyAfterApprovalAndDeletesAMemoryWithTheRealBackend,com.community.platform.feature.identity.AccountJourneyTest#nativeAgentWithTheTestModelReadsNaturalRequestsButStillNeedsApproval'\n    $output = @(& $adb -s emulator-5584 shell am instrument -w -r -e community_local_integration true -e community_agent_model true -e class $classes com.community.platform.debug.test/androidx.test.runner.AndroidJUnitRunner)\n    $exit = $LASTEXITCODE\n    $output | Out-File -Encoding utf8 '.local/t195/live-native-graph-20261005.txt'\n    $output | Select-Object -Last 32\n    $after = @(& $adb -s emulator-5584 shell settings get system font_scale)\n    Write-Output ('Font scale before/after: ' + ($before -join '') + '/' + ($after -join ''))\n    if ($exit -ne 0 -or -not ($output -match '^OK \\(2 tests\\)') -or ($output -match '^INSTRUMENTATION_STATUS_CODE: -[1234]$') -or ($before -join '').Trim() -ne ($after -join '').Trim()) { throw 'Native graph-enabled journeys did not pass' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify natural Agent requests",
+			"type": "shell",
+			"command": "& {\n    $runtime = (Resolve-Path -LiteralPath '.local/t195/runtime-20261005-a/site-packages').Path\n    $report = '/app/.local/t232-natural-requests-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --pull never -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/runtime:/app -e COMMUNITY_AGENT_LANGGRAPH_ENABLED=1 -v \"${runtime}:/runtime:ro\" tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agents.py -k 'reported or month_qualifier' \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Natural Agent request regressions failed' }\n}",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify real natural Agent journey",
+			"type": "shell",
+			"command": "& {\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        $report = '.local/t232-real-natural-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n        & node --test --test-concurrency=1 '--test-name-pattern=^agent natural conversation:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-conversation.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'Real natural Agent journey failed' }\n    } finally {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = $previous\n    }\n}",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify natural Agent snapshot",
+			"type": "shell",
+			"command": "& .\\.local\\t195-qualify.ps1 -Source '.local/t232/source-66dc635e-approved-policy' -EvidenceBase '.local/t232'",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify Agent clarification boundary",
+			"type": "shell",
+			"command": "docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_conversation.py -k unknown_clarification --junitxml=/app/.local/t232-unknown-clarification-20261005.xml",
+			"isBackground": false,
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify controlled Agent lifecycle",
+			"type": "shell",
+			"command": "& {\n    $runtime = (Resolve-Path -LiteralPath '.local/t195/runtime-20261005-a/site-packages').Path\n    $report = '/app/.local/t229-lifecycle-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/runtime:/app -e COMMUNITY_AGENT_LANGGRAPH_ENABLED=1 -v \"${runtime}:/runtime:ro\" tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_graph.py \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Controlled Agent lifecycle checks failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify reviewed public Agent actions",
+			"type": "shell",
+			"command": "& {\n    $running = @(& docker ps --no-trunc --format '{{.Names}} {{.Command}}' | Where-Object { $_ -like '*tests/test_agent_public.py*' })\n    if ($running.Count) { throw 'A public Agent test process is already running; preserve it and collect its report before another run.' }\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_public.py --junitxml=/app/.local/t235-public-social-dedicated.xml\n    if ($LASTEXITCODE -ne 0) { throw 'Public Agent action checks failed; inspect the retained report.' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify Agent lifecycle web compatibility",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t229-web-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & node --test --test-concurrency=1 --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/agents-client.test.mjs tests/messaging-agent-client.test.mjs tests/unit/agents-ui.test.mjs\n    if ($LASTEXITCODE -ne 0) { throw 'Agent lifecycle web compatibility checks failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify selected Agent replies",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-selected-replies-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_public.py -k 'selected or reports' \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Selected reply and report checks failed; preserve the report.' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify public Agent web contracts",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t235-agent-web-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & node --test --test-concurrency=1 --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/agents-client.test.mjs tests/messaging-agent-client.test.mjs\n    if ($LASTEXITCODE -ne 0) { throw 'Public Agent web contracts failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify public Agent native contracts",
+			"type": "shell",
+			"command": "node .local/blueprint-audit-run.mjs --android-focused .local/blueprint-audit-2026-10-05T12-37-55-122Z-2cb140bf com.community.platform.feature.agents.AgentTest",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify atomic public Agent actions",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-atomic-public-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_public.py -k 'combined_publication_refusal or rolls_back or wellness' \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Public action atomicity checks failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify public Agent review screens",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t235-public-review-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & node --test --test-concurrency=1 --test-name-pattern='public page and post review' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/unit/agents-ui.test.mjs\n    if ($LASTEXITCODE -ne 0) { throw 'Public Agent review screen check failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify public Agent request boundaries",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-request-boundaries-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agents.py -k 'public_action or forbidden_requests' \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Public request and retained-refusal checks failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify public Agent draft review",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-draft-review-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_public.py -k post_draft_and_publication \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Public draft review check failed' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: qualify reviewed public Agent candidate",
+			"type": "shell",
+			"command": "& .\\.local\\t195-qualify.ps1 -Source '.local/blueprint-audit-2026-10-05T13-16-39-512Z-0f62c55c' -EvidenceBase '.local/t235' -AdditionalTests @('tests/test_agent_public.py','tests/test_community.py','tests/test_messaging.py')",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify live Agent wellness publishing",
+			"type": "shell",
+			"command": "& {\n    $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*--test-name-pattern=^agent public content:*' -and $_.CommandLine -like '*agent-conversation.test.mjs*' })\n    if ($running.Count) { throw 'A wellness publishing journey is already running; collect its report before retrying.' }\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        $report = '.local/t235-live-public-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n        & node --test --test-concurrency=1 '--test-name-pattern=^agent public content:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-conversation.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'Real Agent wellness publishing journey failed; preserve the report.' }\n    } finally {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = $previous\n    }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect synthetic wellness Agent result",
+			"type": "shell",
+			"command": "& {\n    $code = @'\nimport json\nfrom sqlalchemy import select\nfrom app.config import Settings\nfrom app.db import database\nfrom app.modules.agents.models import AgentRun, AgentToolCall\nengine, sessions = database(Settings().database_url)\nwith sessions() as session:\n    run = session.scalar(select(AgentRun).where(AgentRun.message.contains('wellness-1791220077801')))\n    print(json.dumps(dict(id=run.id, prompt=run.state.get('prompt_version'), status=run.status, stop_reason=run.stop_reason, answer=run.answer, question=run.question, usage=run.state.get('usage'), calls=[dict(tool=call.tool_name, status=call.status, error=call.error_code, summary=call.summary) for call in session.scalars(select(AgentToolCall).where(AgentToolCall.run_id == run.id).order_by(AgentToolCall.sequence))], turns=[dict(role=message.get('role'), content=str(message.get('content'))[:2200], tools=[call['function']['name'] for call in message.get('tool_calls') or []]) for message in run.state.get('messages', [])]), indent=2))\nengine.dispose()\n'@\n    $code | & docker exec -i community-platform-api-1 python3 -\n    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the synthetic wellness run' }\n}",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify live wellness publication continuation",
+			"type": "shell",
+			"command": "& {\n    $code = @'\nfrom alembic.config import Config\nfrom alembic.script import ScriptDirectory\nfrom sqlalchemy import func, select, text\nfrom app.config import Settings\nfrom app.db import database\nfrom app.modules.agents.models import AgentRun\nfrom app.modules.agents.prompts import PROMPT_VERSION\nsettings = Settings()\nassert settings.agent_model_call_tokens == 10000 and settings.agent_model_token_limit == 2000000\nassert settings.agent_model_usage_dir and not settings.agent_web_key.get_secret_value()\nengine, sessions = database(settings.database_url)\nwith sessions() as session:\n    assert set(session.scalars(text('select version_num from alembic_version'))) == set(ScriptDirectory.from_config(Config('alembic.ini')).get_heads())\n    active = session.scalar(select(func.count()).select_from(AgentRun).where(AgentRun.status.in_(('queued', 'running'))))\n    assert active == 0, 'Another Agent request is working; do not restart the shared API'\nassert PROMPT_VERSION == 'agent-react-2026-10-05-5'\nprint('Current schema and budget verified; no active Agent request; publication continuation version 5.')\nengine.dispose()\n'@\n    $code | & docker exec -i community-platform-api-1 python3 -\n    if ($LASTEXITCODE -ne 0) { throw 'Agent reload preflight failed; no restart or test performed' }\n    & docker restart community-platform-api-1\n    if ($LASTEXITCODE -ne 0) { throw 'Could not restart the current API container' }\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        $report = '.local/t235-live-public-v5-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n        & node --test --test-concurrency=1 '--test-name-pattern=^agent public content:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-conversation.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'Wellness publication continuation failed; preserve the report.' }\n    } finally { $env:COMMUNITY_AGENT_MODEL_LIVE = $previous }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify requested publication review",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-publication-continuation-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_runtime.py -k 'requested_publication_review or full_post_text or publication_never_accepts or public_change_and_approval' \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Publication review checks failed; preserve the report' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify current reviewed Agent runtime",
+			"type": "shell",
+			"command": "& {\n    $report = '/app/.local/t235-current-final-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & docker compose -f infra/compose.yaml --profile test run --rm --no-deps --pull never -e PYTHONDONTWRITEBYTECODE=1 tests python3 -m pytest -q --tb=short -p no:cacheprovider tests/test_agent_runtime.py tests/test_agent_llm.py tests/test_agent_registry.py tests/test_agent_mentions.py tests/test_space_agent_switch.py tests/test_agent_metrics.py tests/test_community.py tests/test_messaging.py tests/test_migrations.py tests/test_openapi.py \"--junitxml=$report\"\n    if ($LASTEXITCODE -ne 0) { throw 'Current Agent integration tests failed; preserve the report' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: inspect Agent reload readiness",
+			"type": "shell",
+			"command": "& {\n    $code = @'\nimport json\nfrom datetime import datetime, timezone\nfrom sqlalchemy import select\nfrom app.config import Settings\nfrom app.db import database\nfrom app.modules.agents.models import AgentRun\nengine, sessions = database(Settings().database_url)\nwith sessions() as session:\n    rows = session.execute(select(AgentRun.status, AgentRun.updated_at, AgentRun.deadline_at, AgentRun.lease_expires_at).where(AgentRun.status.in_(('queued', 'running')))).all()\n    print(json.dumps(dict(now=datetime.now(timezone.utc).isoformat(), active=[dict(status=row.status, updated=row.updated_at.isoformat(), deadline=row.deadline_at.isoformat(), lease=row.lease_expires_at.isoformat() if row.lease_expires_at else None) for row in rows]), indent=2))\nengine.dispose()\n'@\n    $code | & docker exec -i community-platform-api-1 python3 -\n    if ($LASTEXITCODE -ne 0) { throw 'Could not check Agent reload readiness' }\n}",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Community Platform: verify Agent chat workspace",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t235-chat-workspace-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & node --test --test-concurrency=1 '--test-name-pattern=^agent workspace:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/unit/agents-ui.test.mjs\n    if ($LASTEXITCODE -ne 0) { throw 'Agent chat workspace checks failed; preserve the report' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: check Agent workspace design tokens",
+			"type": "shell",
+			"command": "node scripts/design-tokens.mjs --check",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify live Agent chat workspace",
+			"type": "shell",
+			"command": "& {\n    $report = '.local/t235-live-chat-workspace-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n    & node --test --test-concurrency=1 '--test-name-pattern=^agent workspace live:' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-conversation.test.mjs\n    if ($LASTEXITCODE -ne 0) { throw 'Live Agent workspace layout failed; preserve the report' }\n}",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Community Platform: verify live web information answers",
+			"type": "shell",
+			"command": "& {\n    $code = @'\nfrom alembic.config import Config\nfrom alembic.script import ScriptDirectory\nfrom sqlalchemy import text\nfrom app.config import Settings\nfrom app.main import create_app\nfrom app.modules.agents.prompts import PROMPT_VERSION\nsettings = Settings()\nassert settings.agent_model_call_tokens == 10000 and settings.agent_model_token_limit == 2000000\nassert settings.agent_model_usage_dir\nassert settings.agent_model_key.get_secret_value() and settings.agent_web_key.get_secret_value(), 'Both existing providers must be configured'\nassert PROMPT_VERSION == 'agent-react-2026-10-06-14'\napp = create_app(settings)\nwith app.state.sessions() as session:\n    assert set(session.scalars(text('select version_num from alembic_version'))) == set(ScriptDirectory.from_config(Config('alembic.ini')).get_heads())\nprint('Matched source/schema; existing providers and budgets verified. This task does not reload the API.')\napp.state.agents.close()\napp.state.engine.dispose()\n'@\n    $code | & docker exec -i community-platform-api-1 python3 -\n    if ($LASTEXITCODE -ne 0) { throw 'Agent preflight failed; no live test performed' }\n    $ready = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health/ready' -TimeoutSec 15\n    if ($ready.status -ne 'ready') { throw 'The API must already be ready before testing' }\n    $previous = $env:COMMUNITY_AGENT_MODEL_LIVE\n    try {\n        $env:COMMUNITY_AGENT_MODEL_LIVE = '1'\n        $report = '.local/agent-web-information-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.xml'\n        & node --test --test-concurrency=1 '--test-name-pattern=^llm (web information|news information|web extraction):' --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout \"--test-reporter-destination=$report\" tests/e2e/agent-llm.test.mjs\n        if ($LASTEXITCODE -ne 0) { throw 'Live information journey failed; preserve its report and run records' }\n    } finally { $env:COMMUNITY_AGENT_MODEL_LIVE = $previous }\n}",
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "test"

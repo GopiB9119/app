@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
+import { Bot, CalendarClock, Check, ClipboardList, FileText, Globe, Inbox, LoaderCircle, LockKeyhole, MessageSquare, Plus, RefreshCw, Settings, UserPlus, UserRound, UsersRound } from "lucide-react";
 
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
-import { useText } from "@/features/i18n/i18n";
+import { useHydrated } from "@/features/platform/use-hydrated";
+import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId } from "@/features/i18n/messages";
 import { characters, lengthProblem, readMembers, spaceSchema, spacesSchema } from "./client";
 import type { FamilySpace } from "./client";
+import { memberSummary, SpaceTypeIcon } from "./space-header";
 import { AccountIdentifier, InvitationInbox, ManageInvitations } from "./invitations";
 import { ManageJoinRequests } from "./join-requests";
 import { ManageMembers } from "./members";
@@ -52,6 +54,7 @@ export function SpacesScreen() {
     queryKey: ["me"],
     queryFn: ({ signal }) => api("me", userSchema, { signal }),
   });
+  const hydrated = useHydrated();
 
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) {
@@ -59,7 +62,7 @@ export function SpacesScreen() {
     }
   }, [profile.error]);
 
-  if (profile.isPending) {
+  if (!hydrated || profile.isPending) {
     return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("spaces.loadingYours")}</main></Shell>;
   }
   if (!profile.data || profile.isError) {
@@ -70,6 +73,7 @@ export function SpacesScreen() {
 
 function FamilySpaces({ user }: { user: Account }) {
   const t = useText();
+  const { language } = useLanguage();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [spaceType, setSpaceType] = useState<SpaceType>("family");
@@ -177,20 +181,26 @@ function FamilySpaces({ user }: { user: Account }) {
           {spaces.isError && <div className="message error" role="alert">{spaces.error.message}<button className="text-button" onClick={() => spaces.refetch()}><RefreshCw size={16} aria-hidden />{t("spaces.retry")}</button></div>}
           {!spaces.isPending && !spaces.isError && spaces.data?.data.length === 0 && <div className={styles.empty}><UsersRound size={32} strokeWidth={1.5} aria-hidden /><h3>{t("spaces.empty.title")}</h3><p>{emptyStart}<Link href="/app/spaces/discover">{t("spaces.empty.link")}</Link>{emptyEnd}</p></div>}
           {!spaces.isError && !accountChanged && <ul className={styles.spaceList}>{spaces.data?.data.map(space => <li key={space.id}>
-            <span className={styles.familyMark} aria-hidden>{space.visibility === "public" ? <Globe size={23} /> : <UsersRound size={23} />}</span>
+            <span className={styles.familyMark} aria-hidden><SpaceTypeIcon type={space.space_type} size={23} /></span>
             <div className={styles.spaceIdentity}><h3>{space.name}</h3><span>{t(typeLabels[space.space_type])} <span aria-hidden>/</span> {t(space.role === "owner" ? "spaces.role.owner" : space.role === "admin" ? "spaces.role.admin" : "spaces.role.member")}</span>
               {space.space_type === "couple" && <CoupleStatus accountId={user.id} spaceId={space.id} version={space.version} />}
-              {space.description && <p className={styles.description}>{space.description}</p>}</div>
+              {space.description && <p className={styles.description}>{space.description}</p>}
+              <span className={styles.facts}>
+                {space.member_count !== undefined && <span><UsersRound size={14} aria-hidden />{memberSummary(t, space)}</span>}
+                <span className={styles.factPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden />{t("spaces.public")}</> : <><LockKeyhole size={14} aria-hidden />{t("spaces.private")}</>}</span>
+                {space.last_message_at && <span><MessageSquare size={14} aria-hidden /><time dateTime={space.last_message_at}>{t("spaces.lastMessage", { when: formatDateTime(language, space.last_message_at, { dateStyle: "medium", timeStyle: "short" }) })}</time></span>}
+                <span><Bot size={14} aria-hidden />{t(space.agent_enabled ? "spaces.agentOn" : "spaces.agentOff")}</span>
+              </span></div>
             <span className={styles.rowPrivacy}>{space.visibility === "public" ? <><Globe size={14} aria-hidden className={styles.publicMark} />{t("spaces.public")}</> : <><LockKeyhole size={14} aria-hidden />{t("spaces.private")}</>}</span>
             <div className={styles.spaceActions}>
-              <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={t("spaces.tasksFor", { name: space.name })} aria-label={t("spaces.tasksFor", { name: space.name })}><ClipboardList size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/messages?space_id=${space.id}`} title={t("spaces.chatFor", { name: space.name })} aria-label={t("spaces.chatFor", { name: space.name })}><MessageSquare size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/events?space_id=${space.id}`} title={t("spaces.eventsFor", { name: space.name })} aria-label={t("spaces.eventsFor", { name: space.name })}><CalendarClock size={18} aria-hidden /></Link>
-              <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={t("spaces.documentsFor", { name: space.name })} aria-label={t("spaces.documentsFor", { name: space.name })}><FileText size={18} aria-hidden /></Link>
-              {space.role === "owner" && <button className="icon-button" title={t("spaces.settingsFor", { name: space.name })} aria-label={t("spaces.settingsFor", { name: space.name })} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /></button>}
-              {space.space_type !== "solo" && <button className="icon-button" title={t("spaces.membersOf", { name: space.name })} aria-label={t("spaces.membersOf", { name: space.name })} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /></button>}
-              {canInvite(space) && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /></button>}
-              {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={t("spaces.joinRequestsFor", { name: space.name })} aria-label={t("spaces.joinRequestsFor", { name: space.name })} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /></button>}
+              <Link className="icon-button" href={`/app/tasks?space_id=${space.id}`} title={t("spaces.tasksFor", { name: space.name })} aria-label={t("spaces.tasksFor", { name: space.name })}><ClipboardList size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.tasks")}</span></Link>
+              <Link className="icon-button" href={`/app/messages?space_id=${space.id}`} title={t("spaces.chatFor", { name: space.name })} aria-label={t("spaces.chatFor", { name: space.name })}><MessageSquare size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.chat")}</span></Link>
+              <Link className="icon-button" href={`/app/events?space_id=${space.id}`} title={t("spaces.eventsFor", { name: space.name })} aria-label={t("spaces.eventsFor", { name: space.name })}><CalendarClock size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.events")}</span></Link>
+              <Link className="icon-button" href={`/app/documents?space_id=${space.id}`} title={t("spaces.documentsFor", { name: space.name })} aria-label={t("spaces.documentsFor", { name: space.name })}><FileText size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.documents")}</span></Link>
+              {space.role === "owner" && <button className="icon-button" title={t("spaces.settingsFor", { name: space.name })} aria-label={t("spaces.settingsFor", { name: space.name })} disabled={dialogOpen} onClick={() => setSettingsSpaceId(space.id)}><Settings size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.settings")}</span></button>}
+              {space.space_type !== "solo" && <button className="icon-button" title={t("spaces.membersOf", { name: space.name })} aria-label={t("spaces.membersOf", { name: space.name })} disabled={dialogOpen && membersSpaceId !== space.id} onClick={() => setMembersSpaceId(space.id)}><UsersRound size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.members")}</span></button>}
+              {canInvite(space) && <button className="icon-button" title={t("spaces.invitationsFor", { name: space.name })} aria-label={t("spaces.invitationsFor", { name: space.name })} disabled={dialogOpen && managedSpaceId !== space.id} onClick={() => setManagedSpaceId(space.id)}><UserPlus size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.invitations")}</span></button>}
+              {space.role !== "member" && space.space_type === "group" && <button className="icon-button" title={t("spaces.joinRequestsFor", { name: space.name })} aria-label={t("spaces.joinRequestsFor", { name: space.name })} disabled={dialogOpen && requestsSpaceId !== space.id} onClick={() => setRequestsSpaceId(space.id)}><Inbox size={18} aria-hidden /><span className={styles.actionLabel} aria-hidden>{t("spaces.action.requests")}</span></button>}
             </div>
           </li>)}</ul>}
         </section>

@@ -1,0 +1,17 @@
+# The owner's TinyFish key for the Agent's web lookups (DEC-058, T236). Use it with the main file only when testing them:
+#   docker compose -f infra/compose.yaml -f infra/compose.agent-web.yaml ...
+# Add -f infra/compose.agent-model.yaml as well to let the test model answer general questions and open web answers.
+# The key is one line, COMMUNITY_AGENT_WEB_KEY=<your key from agent.tinyfish.ai/api-keys>, in a file Git ignores:
+# .local/agent-web.env, or any file outside the workspace named by COMMUNITY_AGENT_WEB_FILE. Never commit or paste it.
+# COMMUNITY_AGENT_WEB_DAILY_LIMIT=<1-100> in the same file changes the lookups each person may make a day (default 20).
+# The API reads the file as settings. The tests container gets it only as a secret, so normal test runs stay offline;
+# the live checks (backend/tests/test_agent_web.py) read it when COMMUNITY_AGENT_WEB_LIVE=1.
+services:
+  api:
+    env_file: ${COMMUNITY_AGENT_WEB_FILE:-../.local/agent-web.env}
+  tests:
+    secrets:
+      - agent_web
+secrets:
+  agent_web:
+    file: ${COMMUNITY_AGENT_WEB_FILE:-../.local/agent-web.env}

@@ -2,7 +2,554 @@
 
 Notable changes to requirements, documentation structure and the product, newest first. Each entry says what changed and links to the decision or evidence.
 
+## 2026-10-09
+
+### Backend/Web Setup Verification
+
+- Rechecked the existing backend/web setup without Android work or changes to the separate website. Package installation remains blocked by HTTPS handshake failures; Docker Desktop and a WSL distribution are absent, and port 3000 serves the concurrent static website preview.
+- Verified the earlier Windows runner repairs with **39/39** checks and passed **11/11** design-token plus **69/69** golden-evaluator checks. These are offline tooling results, not application end-to-end qualification.
+- Bounded the backend install task's build-subprocess retries/timeouts through inherited pip environment settings and verified the effective configuration. Preserved concurrent changes and recorded [current runtime state, commands and prerequisites](infra/README.md#windows-setup-check-2026-10-09); no backend service, container or existing-web preview was started.
+
+### New Website Responsive Layout
+
+- Updated only the new `website/` experience. Android and backend source were not changed.
+- Mobile navigation, composers, profile statistics, Plan categories, Settings navigation and News filters now reflow instead of forcing dense fixed grids. Space and Agent conversations remain reachable on short screens, mobile controls keep a 44 px minimum target, and decorative glass/continuous animation work is reduced on small viewports.
+- Local browser checks covered all eight website pages at 320, 375, 768 and 1440 px plus 200% browser zoom with no page-level horizontal overflow. Mobile Space, Community, Plan, Settings and News interactions passed without browser errors; short 320 x 400 Space and Agent conversations remained usable. Mobile page loads were 295–1,089 ms in the local preview, with zero horizontal overflow; this is local synthetic evidence, not a low-end-device or production performance claim.
+- JavaScript syntax checks passed for all five website scripts and design-token regressions passed **11/11**. The historical governance files referenced by repository instructions remain absent, the shared worktree has unrelated concurrent changes, and the website-only preview was running at `http://127.0.0.1:3000` at the final check.
+
+## 2026-10-08
+
+### Account Downloads And Verification Follow-Up
+
+- Found and enabled the missing dedicated export worker through the guarded synthetic launcher. Export startup requires captured, hash-verified worker source; provider isolation remains enforced and account-deletion startup stays unsupported. All **20 launcher safety tests** pass.
+- After the export-worker terminal later exited, confirmed its absence and restored only that worker. The real download/isolation recovery journey passed **1/1**, with one correctly bound worker afterward; no database reset or key replacement. The exit cause remains unknown.
+- Added passing provider-free live journeys for privacy withdrawal/download isolation and concurrent chat availability. Exact export retry, real worker-produced JSON, cross-account/session restrictions, cancellation, non-submitted deletion and 320 px doubled-text controls pass. Ten chat messages and thirty concurrent health reads pass, with a maximum observed read of **284 ms**. Combined recorded coverage is **53 distinct live journeys**, not a single rerun of all 53.
+- Repaired OpenAPI drift for the new Agent interaction contract; focused protocol/state-transition/rendering/client checks and web types pass. Preserved concurrent Agent work and the boundary between current source and the captured live backend.
+- Restored the private backup only in an owned disposable database and verified **all 3,222 pre-existing rows and the identity key unchanged**. Removed that test database and credentials, leaving the retained stack and export worker running. Model-provider activation and scheduled hard deletion remain explicitly unenabled. [Evidence, commands and limits](infra/README.md#account-downloads-and-focused-follow-up-2026-10-08).
+
+### Local Feature Verification And Recovery
+
+- Verified **51 distinct local browser-to-database journeys**, including a new two-person standalone-poll regression with exact create retry, private votes, live updates, closure permissions and 320 px doubled-text controls. Restored only the missing web preview; no retained database reset, key replacement, provider activation, deployment or Android change.
+- Repaired private-mailbox selection, guarded synthetic moderator setup/cleanup, a responsive Couple selector, a platform-dependent timezone expectation, the realtime typing-roster fixture and a stale migration-head assertion. Full initial checks were **1,188/1,189 backend** and **814/821 offline browser**; affected reruns passed **32/32** and **19/19** respectively without weakening safety assertions. These reruns overlap, not add to, the initial totals.
+- Client/BFF checks, exact captured OpenAPI parity, web types and an isolated production build passed. Recorded concurrent Agent-source changes, missing historical governance gates, model-dependent live gaps and interrupted-service reports separately rather than claiming a clean full-current-source or production qualification.
+- Restored the private pre-test backup only into a disposable verification database. All **987 pre-existing saved rows** and the original identity key were unchanged; ten expired rate-limit counters were removed by normal cleanup. Removed only the owned test database and temporary credentials. [Feature matrix, reports, runtime and limits](infra/README.md#local-feature-verification-2026-10-08).
+
+### Space Agent Poll Runtime Upgrade
+
+- Activated migration `0062` and the qualified 191-file backend in the retained local synthetic runtime after a backup/restore rehearsal. All 884 existing rows across 95 tables, 12 Agent identities and the original identity key were preserved; only the expected definition versions changed.
+- Restarted only the verified owned API/mail/reminder components. Live readiness and exact OpenAPI equality pass; the migration regression passes **1/1** and real local Agent-controls/manual-poll browser journeys pass **3/3** on **192 unchanged inputs**, including mobile coverage.
+- Kept private backups and the original snapshot; removed the owned rehearsal database, temporary credentials and upgrade lock. No model endpoint/name/key is configured, so providers remain disabled and conversational activation is still blocked. [Activation evidence and remaining model gate](infra/README.md#agent-poll-runtime-activation-2026-10-08).
+
+### Space Agent Poll Reading And Reviewed Creation
+
+- Added current-Space `list_polls`, `get_poll` and `create_poll` tools using the existing standalone poll service. Main Agent remains excluded; no Agent voting, closing, public posting or event attachment was added.
+- Creation always requires an exact review, even in automatic mode. Current membership/switch/deadline/Space checks and approval-transaction binding prevent unauthorized or partial effects; exact approval retries create one poll and zero votes. Bounded reads preserve complete pages and aggregate-only result visibility.
+- Added definition version 7, reversible binding migration 0062, versioned prompt guidance and a `poll` evidence type with web/localized labels. Identity and historical run metadata survive upgrade; the running runtime and providers were not changed.
+- Fixed-capture qualification passes **123/123 affected backend** and **216/216 web/client** checks, types and scoped lint, on **462 unchanged inputs** matching the shared workspace. Approval/rejection/retry and mobile doubled-text captures, commands and limits are in the [delivery record](docs/COMMUNITY_AGENT_PLAN.md#reviewed-space-agent-poll-capability-2026-10-08). No live model-quality score or production qualification is claimed.
+
+### Live Event Polls And Reachable Mobile Controls
+
+- Finished the two-person live event-poll journey on a separate fresh synthetic runtime at `0061`: reviewed creation, private ballot views, exact vote retry, change/withdrawal, stale replay protection and authorized closure. The old runtime's backups, key and data were not replaced or claimed recovered.
+- Fixed the sticky mobile navigation covering Save at doubled text by measuring its real height and reserving page scroll space. The original focus/pointer/44 px assertions remain; a new regression also checks desktop sidebar behavior.
+- Passed **94/94 event/client**, **34/34 shared-layout** and **1/1 live** checks, plus types and editor checks, with unchanged watched inputs. The interrupted-service registration failure remains recorded separately; only the absent API was restarted. [Reports, runtime state and limits](infra/README.md#fresh-poll-runtime-2026-10-08).
+- Restored only the owned fresh-runtime containers/services and reconciled their reassigned loopback ports. Database volume, key and source were preserved; providers/tracing remain disabled. No production, Android or external transaction capability was enabled.
+
+## 2026-10-07
+
+### Space Polls On The Web
+
+- Members can open Polls from the Space header or the chat More menu, ask a question with two or more distinct
+  choices, vote, change or take back a vote, and see counts, shares and ties update live. Only the poll's creator or
+  a Space admin can close a poll, after a confirmation step, with an If-Match version check. A create that fails in
+  transit is retried with the same idempotency key, so it can never make two polls. Text is in English, Telugu and
+  Hindi, the stylesheet is token-guarded, and the screen fits 320 px at doubled text. Android source is untouched.
+- Verification: the new polls browser suite 4/4; events 67/67, messaging 39/39, documents 13/13, planning 53/53,
+  spaces 67/67, home 7/7 and the localized suites pass; client tests 355/355; design tokens 11/11; web types pass;
+  backend polls/spaces/agent tests 146/146 on a disposable loopback-only database, removed afterwards; the stored
+  OpenAPI matches. The messaging and events expectations now list the added Polls link; no test was weakened.
+
+### Mention-Aware Typing In Web Chats
+
+- Family, Couple and Group chats now show animated dots and the person's name, with completed `@name` and `@agent`
+  mentions reflected in the indicator. Direct chats stay limited to their two participants. Android source is untouched.
+- Added an authenticated, rate-limited typing endpoint on the existing live channel. Draft text is never uploaded by
+  typing updates; they create no message, unread count, notification or Agent request. Stops, expiry, per-composer
+  sequences and roster checks prevent stale/cross-chat activity; typing failures do not block ordinary messages.
+- English/Telugu/Hindi copy, reduced motion, polite announcements and keyboard-scrollable long names are included.
+  The mobile sub-navigation now honors its intended hidden state so the new indicator and composer remain reachable
+  at 320 px and doubled text. [Behavior and transport contract](web/src/features/messaging/README.md#mention-aware-typing-2026-10-07).
+- Verification: **47/47 backend** and **98/100 combined web client/browser** checks pass, including every typing case;
+  web types, scoped Ruff, tokens and the regenerated OpenAPI contract pass. The missing endpoint returned 404 before
+  implementation. The two broad-web failures belong to concurrent poll work (translation namespace and the added
+  More-menu link); no test was skipped or weakened to conceal them.
+- The final captured inputs stayed unchanged during the run. The owned, loopback-only synthetic test database was
+  removed after verification; no shared runtime was restarted, no external provider was called and nothing was deployed.
+- Follow-up on 2026-10-08: typing implementation inputs remain unchanged and web types still pass. The translation
+  namespace check now passes after concurrent poll edits; the unrelated More-menu expectation still omits the new
+  Polls link. This focused recheck is not a new full-web pass.
+
+###  Feature Notes For Today's Space And Home Work
+
+- The [Spaces](web/src/features/spaces/README.md), [agents](web/src/features/agents/README.md) and [platform](web/src/features/platform/README.md) notes now describe the Space header and menu, the new Space list fields, the live Agent progress view and Home's greeting and Agent "needs you" items. Documentation only. `npm run check:structure` still stops on the missing historical `docs/CHAPTER_01_RELEASE_PLAN.md`, which was already absent and was not restored.
+
+### Whole-Site Check Of Today's Space Header And Home Work
+
+- Ran every web client test and every offline browser suite after today's Space header, Home and empty-state changes. Found and fixed three regressions of mine: the Space header overflowed 320 px with a very long unbroken Space name (grid column now `minmax(0, 1fr)`, names wrap anywhere); a localized Home fixture had no answer for the new Agent "needs you" request; and two tests picked the first `details` on the Tasks page or the old empty text, which the new header and empty state changed. The test changes target the intended element or the new text; none was weakened or skipped.
+- Results: **349/349** client tests; browser suites all pass except **live-ui 12/19**, whose seven failures come from another session's in-progress typing indicator (`messaging/typing.ts`, 17:49–17:51), which reads Space members during live chat updates; not changed here. Rerun after the fixes: **28/28** calendar/checklist, **17/17** localized screens, **20/20** localized tasks, **53/53** Planning, **67/67** Events, **13/13** Documents, **67/67** Spaces; token check.
+
+### Event Poll Workflow Implemented And Qualified
+
+- Finished the event-linked poll contract: bounded 2-8 choices, organizer/Space-owner create/close, event-admission visibility, per-member vote/change/withdrawal, aggregate-only results and migration 0061. Standalone Space-poll work remains distinct and preserved.
+- Versioned personal votes and durable receipts prevent stale overwrites and old retries undoing newer choices. Event locks serialize races; membership/session authority is rechecked before effects or replay. Cancelled/ended events are read-only, with exact prior commands still reconcilable.
+- Added the lazy event Polls panel, review/validation, recovery states and draft English/Telugu/Hindi text. Fixed two closed-event lost-response regressions and retained concurrent closure-review/missing-target repairs. The existing deletion pipeline now erases event ballots/receipts and sole-member poll text; its exhaustive regression caught the missing text erasure first.
+- Fixed-source qualification passes **118/118 backend**, **177/177 client/browser/localization**, web types and scoped poll lint on **457 unchanged inputs**. Four older deletion-test lint findings remain unchanged. [Commands, captures, attribution and scope](docs/COMMUNITY_AGENT_PLAN.md#event-poll-workflow-delivery-2026-10-07) are recorded.
+- The frontend returns HTTP 200, but live API activation remains outstanding; no shared data migration, old-key data recreation, Agent capability expansion, provider access, Android implementation or deployment occurred.
+
+### Event Poll Review And Recovery Integrity
+
+- Unsubmitted event-poll closure reviews now expire when a confirmed refresh changes or removes the reviewed poll, including vote totals changing without a new close ETag. Unchanged reviews and creation drafts remain intact; refresh sends no write.
+- Unknown closure commands keep their exact retry but no longer reveal saved poll details after the target disappears from a recovered list. Restoring target access enables the original retry without rebuilding its bytes or claiming a read confirmed the write.
+- Six negative cases failed before correction. Final fixed captures pass **65/65 Events browser**, **26/26 client**, web types and **3/3 backend contract** checks with unchanged inputs; owned test-database cleanup was verified. Mobile captures and exact-retry/held-read checks are recorded in the [evidence](README.md#event-poll-review-recovery-2026-10-07). The interrupted preliminary capture remains separate.
+- Restored only the absent frontend preview. The retained synthetic database/mail container IDs are missing, so live API qualification is blocked; no data recreation, key replacement or migration was attempted. Existing event/Space-poll work was preserved, and the noted older verification runners were not modified. No Android, provider or deployment change.
+
+### Ask Agent Opens The Space Chat Ready To Type
+
+- Ask Agent links (Space header, empty Tasks) now open `/app/messages?space_id=…&ask=agent`: the Space chat opens with "@agent " already in the composer, focused, caret at the end. Nothing is sent until the person writes and sends. It happens once: switching chats or going back does not refill it, and a Space whose agent is off opens with an empty composer.
+- Checks: browser **22/22** Messages (two new cases: agent on/off, focus and caret, no refill, only the chat-open request), **61/61** Events, **53/53** Planning, **13/13** Documents, **67/67** Spaces, **94/94** Agent; **23/23** messaging/i18n client; web types. A first attempt using `autoFocus` lost the race with chat loading and was replaced by focusing once the chat has loaded.
+
+### Space Rows Use The Same Type Icons As The Header
+
+- Each row on the Spaces screen now shows its Space type icon (family house, couple heart, solo person, group people), the same shared icon the Space header uses; privacy stays in words beside it. Checks: browser **67/67** Spaces, **49/49** Events, **20/20** Messages, **13/13** Documents, **53/53** Planning; web types.
+
+### Poll Hints Respect Admission History
+
+- Fixed standalone Space-poll change hints exposing an older poll's ID/activity to newcomers and rejoined members who receive 404 on its content. The audience now applies the same admission cutoff as reads; allowed members retain identifier-only updates. Both negative cases failed before repair and now pass for vote, withdrawal and close.
+- Preserved the concurrent admission-bound cursor fix and added its rejoin regression. Corrected a frozen-clock test assumption without changing service ordering, and added explicit timestamp-tie pagination coverage with no duplicates or omissions.
+- Fresh qualification: **10/10** backend poll tests, **24/24** existing live-client tests, web types, scoped Ruff and clear touched-file diagnostics. Captured inputs stayed unchanged; owned synthetic database cleanup was verified. [Evidence and limits](README.md#poll-admission-privacy-2026-10-07) retain the red cases and earlier ordering failure.
+- Recorded the competing Space/Event poll contracts as a UI decision dependency. No Android, provider, deployment, shared-runtime migration, data reset or key change; passing transport checks are not a completed poll screen or launch gate.
+
+### Tasks Empty State Says What To Do Next
+
+- An empty task list now reads "Nothing planned yet" with a next step: add the first task with the form on the page, or (when the Space's agent is on) an Ask Agent link to the Space chat. When a status, person or due-date filter hides everything it keeps "No tasks in this view" and adds "Try another status, person or due date." English, Telugu, Hindi (Telugu/Hindi await native review).
+- Checks: browser **53/53** Planning (two new 320 px cases, agent on and off, with the filtered state and 44 px link target), **41/41** i18n/task client, web types.
+
+### Home Greets The Person And Counts What Needs Them
+
+- Home's header now says "Good morning/afternoon/evening, <name>." using the hour in the person's own timezone, and Needs attention opens with "6 things need your attention." once every source has answered (no count while some are loading or failed, so it never undercounts). English, Telugu, Hindi (Telugu/Hindi await native review).
+- Checks: browser **7/7** Home (greeting and count asserted), **13/13** i18n client, token check, web types.
+
+### Space Header Explains Who Can See What
+
+- The Space header has a collapsed "Who can see what" section: members see the Space's chat, tasks, events and documents from the time each person joined; only you see the Agent's answers to you and its memories unless you share an answer (DEC-061); only you see your medicines, not the owner or admins; a direct chat is seen only by its two people. Solo Spaces say the data is yours alone. Each sentence was checked against the backend rules (admission-scoped Space data, private chat answers, subject-only care). English, Telugu, Hindi (Telugu/Hindi await native review).
+- Checks: browser **35/35** Events (header test opens the section, checks the four lines and fits 320 px at doubled text), **20/20** Messages, **13/13** Documents, **51/51** Planning, **67/67** Spaces; **13/13** i18n client; token check; web types. (This entry was restored after a concurrent changelog rewrite at 17:10 dropped it.)
+
+### Space More Menu In Open Chats (Batch 6)
+
+- An open Space chat now has a More button (44 px, "More for <Space>") next to the existing Agent-tasks icon. It opens the shared menu with the Space's other sections (Tasks, Events, Documents) and Agent tasks, so the composer keeps its full height. Keyboard: Escape closes and returns focus to the button. English, Telugu, Hindi (Telugu/Hindi await native review).
+- On phones, where the conversation pane is hidden until a chat opens, the chosen Space's header now appears in the chat list instead; only one copy is ever shown. Messages browser suite **20/20** (the header case now runs at 1440 and 320 px), token check and web types.
+- Checks: browser **19/19** Messages (incl. a new 320 px menu case: link targets, 44 px items, Escape/focus, composer still visible), **35/35** Events, **13/13** Documents, **51/51** Planning, **67/67** Spaces, **94/94** Agent, **7/7** Home; **13/13** i18n client; token check; web types. Polls were not touched: another session is actively editing the polls module and event polls, and the owner has not yet chosen one design.
+
+### Agent Response Contract Qualification
+
+- Added run/known-Space response binding and parent-approval consistency checks while preserving valid UUID capitalization, later states and newer approvals. Unconfirmed answers keep the original question/text for exact retry; surrounding Stop recovery work was preserved. Backend permissions and HTTP request contracts are unchanged.
+- This batch's evidence: **91/91** full captured Agent browser checks plus a separate **12/12** test-only delta, **75/75** Agent/messaging-Agent/translation client checks, types, and **9/9** backend replay/authority contracts at `0059` with unchanged inputs and verified owned-database cleanup. These overlap the separately recorded Stop follow-up and are not summed into a larger gate.
+- [Saved reports, failure history and boundaries](README.md#agent-response-binding-and-recovery-2026-10-07) distinguish synthetic qualification from live models and production readiness. No Android, provider, retained-runtime migration or deployment change was made by this milestone; the current preview and API connectivity return 200.
+
+### Agent Stop Recovery Survives Status Changes
+
+- An unconfirmed Stop no longer loses its error/retry when a background read advances the request to approval or completion. The original cancellation remains retryable; an already completed request is confirmed as completed, not falsely relabelled cancelled.
+- Expanded the existing response-binding regression across desktop and 320 px doubled text, checking exact retries, no approval/effect, focus, hit testing and 44 px targets. Preserved the surrounding client identity/scope checks and original-answer retry work.
+- Fixed-capture qualification passes **199/199** affected Agent/messaging/localization checks and web types, with **200 unchanged inputs** matching the shared workspace. Editor/whitespace checks pass; original failures, the interrupted broad attempt and inspected captures remain in the [delivery evidence](docs/COMMUNITY_AGENT_PLAN.md#agent-response-confirmation-and-stop-recovery-2026-10-07).
+- No backend permission, provider, migration or runtime configuration changed. Existing local preview remains available; completed actions are not undone by this UI recovery.
+
+### Space Header On Documents And Messages (Batch 5)
+
+- The shared Space header now also appears on Documents (Documents marked current) and in the Messages conversation pane after choosing a Space and before opening a chat (Chat marked; no separate Ask Agent link because the chat is where @agent is used). Open chats keep their existing compact header, so composer space is unchanged.
+- Batch check: browser **18/18** Messages (incl. a new header case), **13/13** Documents (incl. a new header case with the agent off), **35/35** Events, **51/51** Planning, **67/67** Spaces, **7/7** Home, **94/94** Agent; tokens **11/11**; **42/42** i18n/documents/messaging client; web types. Not yet: the header inside an open chat and on the phone chat list, and a More menu.
+
+### Shared Space Header (Batch 4)
+
+- New [Space header](web/src/features/spaces/space-header.tsx) on the Tasks and Events screens answers "where am I, who is here, what can I do": Space icon and name, type, Private/Public, "4 members: Sam Lee, Priya Rao + 1 more", Agent on/off, an Ask Agent link to the Space chat (only when the agent is on), and section links Chat · Tasks · Events · Documents with the current one marked. Its stylesheet joined the token-guarded list. No API change; it reuses the Space list already loaded. English, Telugu, Hindi (Telugu/Hindi await native review).
+- Batch check: tokens **11/11** (count of guarded stylesheets updated to 11) and the token check; browser **35/35** Events (incl. a new header test: facts, link targets, `aria-current`, 44 px targets at 320 px with every font doubled, no Ask Agent when the agent is off, no writes), **51/51** Planning, **67/67** Spaces, **7/7** Home, **17/17** Messages, **89/89** Agent; **57/57** Spaces/i18n/task client; web types. Chat and Documents screens do not have the header yet.
+
+### Agent Controls Activated In Retained Synthetic Runtime
+
+- Upgraded the retained local backend from `0057` to `0059` after backup/restore rehearsal and a fixed-source contract check. Continuity verified 1,844 existing rows across 87 pre-existing tables, with the intended agent-definition update checked separately. The original key and database/mail containers were preserved without restart or reset.
+- Added opt-in provider-free live tests: **2/2** pass for real browser/API memory edits, lost-response retry, re-enable/current-state replay, deletion, private inbox pagination/filtering, Space isolation and cancellation. Synthetic memories/history are explicitly seeded test records, not model output. Desktop and 320 px doubled-text captures were inspected.
+- The upgrade-preservation regression passes **1/1**, retaining sessions, memories, run/approval history and pending approval behavior. Updated stale process records after checking actual ownership, released the owned upgrade lock and removed only the rehearsal container. Private backups/old source remain; no rollback or live data reset was performed.
+- Restored the preview using isolated generated output after an interrupted/default-cache launch failed; no application workaround was needed. [Evidence, setup failures and runtime limits](infra/README.md#agent-controls-activation-2026-10-07) are retained. Providers/tracing remain disabled; this is not a production or live-model qualification.
+
+### Readable Home Rows And Space Chat Activity (Batch 3)
+
+- Home list rows (the shared Item component, used only by Home) now move their action below the text on narrow screens instead of splitting words ("househ/old"); a new 320 px check measures every word in Needs attention titles.
+- `GET /v1/spaces` list items add `last_message_at` from the Space chat only (direct chats excluded). It is null when the latest message predates the viewer joining, so newcomers learn nothing about earlier chat activity. Space rows show "Last message Oct 6, 2026, 6:30 PM" with a machine-readable `<time>`. Contract re-exported (only this field drifted). English, Telugu, Hindi (Telugu/Hindi await native review).
+- Batch check: **148/148** Spaces, messaging (incl. a new join-time/direct-chat case), directory and OpenAPI backend tests on the disposable synthetic DB; browser **67/67** Spaces, **7/7** Home, **17/17** Messages, **34/34** Events, **84/84** Agent, **51/51** Planning; **87/87** Agent/Spaces/i18n client; web types; Ruff findings limited to pre-existing import order. One Spaces assertion first expected 24-hour time and was corrected to the English 12-hour format; an overlapping background run that shared log files was discarded.
+
+### Home Shows What The Agent Needs From You (Batch 2)
+
+- New `needs_you` filter on `GET /v1/agent-runs` (waiting for approval or an answer), using the existing effective-status refresh, so expired approvals drop out; cursors stay bound to the filter. Contract re-exported (only this enum drifted). The Agent inbox's filter menu is unchanged.
+- Home's Needs attention now lists those requests first: "Agent needs your approval: …" or "Agent asked: …", with the Main Agent or Space name, linking to the Agent page or that Space's Agent inbox. It asks only the Main Agent and Spaces whose agent is on, shares agent live-hint refreshes, and a failed check keeps the other items and retries only Agent requests. English, Telugu, Hindi (Telugu/Hindi await native review).
+- Space row actions on narrow screens now wrap whole buttons instead of splitting labels ("Docume/nts"); a new check measures one-word labels at doubled text.
+- One batch check: **149/149** Agent-kinds, Spaces and OpenAPI backend tests (incl. a new requester-only/expiry `needs_you` case); browser **7/7** Home (incl. a new Agent-failure/retry case), **67/67** Spaces, **82/82** Agent, **34/34** Events, **17/17** Messages, **51/51** Planning; **71/71** Agent/Spaces/i18n client; web types; scoped Ruff clean apart from pre-existing import order. Known, not fixed: long words in Home item titles still split at 320 px (shared Item component).
+
+### Space Rows Name Who Is Here (Batch)
+
+- `GET /v1/spaces` list items now also include `member_preview`: up to three other current members' display names, owner and admins first, never the viewer's own; one query per page. Contract re-exported (only this field drifted).
+- Space rows read "5 members: Sam Lee, Priya Rao, Taylor Kim + 1 more" (couples keep their existing partner line); privacy now also shows on narrow screens, where its column was hidden. Home's Your Spaces rows add the member count and Agent on/off. English, Telugu, Hindi (Telugu/Hindi await native review).
+- Not rebuilt: the shared-expense card already exists as the event budget panel and split plans; [DESIGN.md](docs/DESIGN.md) corrected. Home "Agent needs you" items are deferred: they need a combined waiting-runs query in agent files another session is editing.
+- One batch check: **130/130** Spaces, directory and OpenAPI backend tests (disposable synthetic DB); browser **67/67** Spaces, **6/6** Home, **34/34** Events, **17/17** Messages, **82/82** Agent, **51/51** Planning; **29/29** Spaces/i18n client; web types. Only Ruff's pre-existing import-order findings remain.
+
+### Retained Synthetic Backend Availability Restored
+
+- A delayed exit notification concerned an older web preview; the replacement frontend still served pages, but current API-backed reads returned 503. Verified the retained synthetic container ownership, local bindings, existing key, revision `0057` and absent component processes before restoring the API and private mail/reminder workers through the guarded launcher.
+- Direct timezones and proxied timezones, taxonomy and public-page checks pass **4/4**, with one process per component. [Recovery evidence and snapshot limits](infra/README.md#isolated-synthetic-runtime) distinguish service availability from current-source or signed-in workflow qualification. No container restart, migration, data reset, key replacement, provider activation or Android work.
+
+### Agent Task Inbox And Memory Controls
+
+- Added a private Space-selectable Agent task inbox with status filters, pagination and existing review/answer/cancel controls. Filtering occurs before backend pagination, cursors bind the current account/Space/admission/filter, and failed reads hide cached actions. It never lists other members' private Agent requests or invents scheduled work.
+- Added owner-only, versioned memory edits and disable/re-enable controls. Exact retries use durable receipts and cannot overwrite a later edit or re-enable a memory; disabled notes remain manageable but are excluded from fresh retrieval. Migration 0059 refuses a lossy downgrade, and OpenAPI documents the new operation/filter.
+- Added draft localized editor/recovery flows, exact retry and conflict handling, truthful deletion/retrieval limits, and desktop/mobile doubled-text checks. The qualification pass fixed three chat-layout regressions with a compact accessible inbox link and corrected an obsolete deletion assertion while adding focus-return checks.
+- Fresh evidence: **433/433 fixed-capture backend**, **207/207 affected web**, **60/60 shared client/proxy**, **37/37 adjacent API integration** and **20/20 final memory/inbox browser** checks; types and scoped lint pass. Counts overlap; the original four-failure web result and concurrent-source caveats are retained in the [delivery record](docs/COMMUNITY_AGENT_PLAN.md#agent-task-inbox-and-memory-controls-2026-10-07).
+- Shared backend data was not migrated, providers remain unaltered, and policy/legal/native/live-model gates remain separate. Updated the [roadmap](docs/PRODUCT_RESEARCH_2026-10-07.md#18-company-operating-plan-and-space-agent-delivery) and [privacy data map](docs/PRIVACY_READINESS.md) without claiming completed external integrations or a production release.
+
+### Space Rows Say Who Is Here And Whether The Agent Is On
+
+- `GET /v1/spaces` list items now include `member_count` (current active members only); single-Space and creation responses are unchanged. The [OpenAPI contract](packages/openapi/openapi.json) was re-exported; the only drift was this field.
+- Each row on the Spaces screen shows "5 members" and "Agent on"/"Agent off" (English, Telugu, Hindi; Telugu/Hindi await native review). An older answer without a count shows no guessed number. Design record: [DESIGN.md 6.2](docs/DESIGN.md#62-navigation-and-place).
+- Checks: **117/117** Spaces and directory backend tests (incl. a new current-members/removed-member case) and **13/13** OpenAPI tests on a disposable synthetic database; **67/67** Spaces browser tests (incl. 320 px with every font size doubled); home **6/6**, events **34/34**, messaging **17/17** browser suites that share the list schema; **29/29** Spaces/i18n client tests; web types. Ruff's import-order finding in the two touched Python files already existed at HEAD.
+
+### Live Agent Progress And Motion Tokens
+
+- Added web motion tokens (`--motion-fast/medium/slow`, `--ease-standard`, `--ease-exit`) generated from [tokens.json](packages/design-tokens/tokens.json) and validated by the token check; Android is unchanged.
+- The Agent's working state is now a [progress view](web/src/features/agents/agent-progress.tsx) built only from recorded run events: the current step with its icon (announced once), up to three earlier steps, elapsed time, Stop, and a pulse that runs only while the server reports work. Approval and question cards rise in; reduced motion uses short fades. Spec in [DESIGN.md section 10.1](docs/DESIGN.md#101-agent-progress-built-2026-10-07).
+- Main Agent runs now send identifier-only live hints like Space runs, so steps appear as they are committed; polling is 1.5 s without a live stream and 5 s with one.
+- Checks: **11/11** token, **24/24** live client, **82/82** agent browser (incl. a new trail/elapsed/pulse case and reduced-motion pulse check), **45/45** backend live-update tests on a disposable synthetic database, and web types. ESLint is not installed in `web`, so no lint result. No provider, budget, migration or Android change.
+
+### Product Design Master Brief Recorded
+
+- Recorded the owner's 65-section design brief as a PROPOSED [design system and prototype handoff](docs/DESIGN.md): reconciliation with existing decisions, colour roles (today and proposed Peacock), one status and trust vocabulary mapped to server run states, component meanings and states, the 24 requested screens mapped to current routes, and the four demo journeys with what must stay Demo-labelled.
+- New owner decisions listed, not assumed: D8 navigation (amends DEC-014), D9 real-world transactions, D10 per-category agent permissions, D11 task "Waiting" state; D1 visual direction remains open. No code, tokens, decisions or providers changed.
+
+### Managed Discovery And Truthful Completion
+
+- Defined a proposed eight-role team and the four explicitly selected Copilot model assignments in the existing [research plan](docs/PRODUCT_RESEARCH_2026-10-07.md#proposed-staffing-and-current-ai-assignments) and [product-cycle skill](.github/skills/product-cycle/SKILL.md). Android remains paused; specialist legal/security/language work, real recruitment and material product decisions are not fictional hires or approvals.
+- Reproduced and fixed the work-cycle supervisor reporting success when STOP or deadline expiry occurred during final reporting. Both regressions failed before repair; **60/60** verifier/supervisor checks pass. The Linux/macOS runner now includes the supervisor's safety tests.
+- Corrected the privacy/terms drafts' unconditional deletion promise to match the existing shared-Space ownership restriction, cancellation period and retained-copy limits. All **20/20** public-page browser checks and web types pass, including 320 px and doubled text. No backend deletion policy or legal-approval status changed.
+- Retrieved three public primary-source pages in a script-disabled browser and sharpened the proposed two-adult coordination experiment. [Evidence and limits](docs/PRODUCT_RESEARCH_2026-10-07.md#17-managed-discovery-and-trust-follow-through) retain the separate failed/cancelled first client run, later passing run and concurrent-source caveat. No real interviews, live-model score, production release or indefinitely running coding team is claimed.
+- Final integrated checks pass **60/60 runner, 10/10 tokens, 69/69 golden tooling, 298/298 client and types**, with two concurrent documentation metadata changes retained in the [report](.local/verify/discovery-team-20261007/summary.md). The restored loopback preview passes **4/4** public-page browser checks with unchanged inputs, inspected desktop/mobile captures and no external requests; its session-specific TypeScript config edits were removed. These are affected-scope results, not a frozen release.
+
+### Task Result Confirmation And Retry Integrity
+
+- Task creation, edits, status changes and reloads now check the returned task/Space identity before accepting a result. UUID case equivalence and the backend's current-state replay contract are preserved. Unconfirmed writes retain the original payload, idempotency key and version precondition instead of showing false success or starting a second intent.
+- Task pages reject wrong-Space rows, duplicate IDs, results above the requested 20-row limit, repeated cursors and empty continuation pages. Failed reads hide cached pagination. Concurrent status/date-filter and task-read recovery changes were preserved and qualified, not attributed to this fix.
+- Twelve client mismatch/boundary cases and two stale-pagination browser cases reproduced failures before their fixes. Sixteen desktop/mobile recovery cases now check final state, exact retries, measured 200% text, focus and pointer reachability. Five added backend regressions verify that prior command receipts cannot bypass revoked task access or changed assignee authority.
+- Final evidence: **73/73 backend**, **94/94 client**, **51/51 task browser** and **20/20 localized browser** checks, plus web types, scoped Ruff and editor diagnostics. Fixed backend/web captures remained unchanged; earlier mixed-input reports were retained rather than relabelled. The owned temporary database was removed, and shared services were left alone. [Commands, captures, ownership and limits](docs/COMMUNITY_AGENT_PLAN.md#task-outcome-integrity-follow-up-2026-10-07) are recorded. No schema, provider, deployment, commit or push change.
+
+### Task List Filter Integrity
+
+- The [task client](web/src/features/planning/client.ts) now rejects schema-valid list rows that contradict the requested status or inclusive due-date range, including undated rows in date-filtered results. Invalid pages are surfaced for explicit Retry, not silently filtered. Existing account/Space checks, cursor handling and delayed command replay semantics are preserved.
+- Five negative contract cases failed before repair. Positive boundaries and four desktop/mobile browser checks preserve valid results, selected filters, identical Retry queries and zero writes. A fixed 184-input capture passes **79/79** affected checks, with unchanged inputs; types and editor diagnostics pass. Concurrent task recovery changes are included but not attributed to this fix.
+- One test-only correction accounts for a legitimate background live read during Space-list Retry while preserving exact Space-read and no-write assertions. The earlier mixed-source and 72/73 fixed runs remain recorded. The new live filter journey passes **1/1** with stable watched inputs after correctly scoping its task-error assertion away from Next.js's empty route announcer.
+- [Reports, commands and limits](README.md#task-filter-response-integrity-2026-10-07) distinguish offline invalid-response recovery from real synthetic API compatibility. No service restart, migration, shared-data reset, provider call or deployment occurred; runtime permissions and product policy are unchanged.
+
+### Task Drafts Survive Temporary Space-list Failures
+
+- Fixed the [task workspace](web/src/features/planning/task-screen.tsx) unmounting on temporary background Space-list failures. Already-loaded forms and unconfirmed commands now stay mounted using the existing unknown-error policy, with the error and Retry still explicit.
+- Unsaved fields, unload protection, mutation retry keys/payloads and reviewed versions are retained. Explicit denied access and removal of the Space still hide protected content; backend authority and mutation behavior are unchanged.
+- The read-only attached planning fixture was preserved. Eleven new [browser regressions](tests/unit/planning-ui.test.mjs) cover the reproduced draft loss, read-only recovery, exact create/edit/status retries, version conflicts, access loss and 320px/200% text.
+- Qualification: 93 combined checks passed with concurrent test additions; a later expanded browser snapshot passed 51/51 with stable inputs. The final focused 11-case rerun, current typecheck, syntax and whitespace checks pass. These overlapping results and their source caveats are recorded in the [README](README.md#task-draft-recovery-during-space-list-outages-2026-10-07), not treated as a frozen whole-product gate.
+
+### Task Refresh Includes Search Results
+
+- **Refresh tasks** now reloads the separately opened search result as well as the list. Its loading and disabled states remain active until both reads finish; ordinary list refreshes do not issue an empty single-task request. No write or permission behavior changed.
+- Two desktop/mobile regressions failed before repair. All six focused cases pass, covering a delayed result, 403/404/503 recovery, current account headers, no writes and 320 px doubled-text reachability. Existing stale-content guards, drafts and exact write retries were preserved.
+- A fixed 184-input capture passes **139/139** affected planning browser/client checks with zero failures/errors/skips and unchanged captured hashes; current types and editor diagnostics pass. The only later source difference changes two existing tests' mobile screenshot framing, not application code or these refresh cases. The preview returns HTTP 200 without a restart; [evidence and limits](README.md#task-refresh-includes-search-results-2026-10-07) are recorded.
+
+### Scoped Agent Reminder Listings
+
+- The agent no longer treats the first account-wide reminder page as the complete list for a Space. Results now include bounded continuation, whole reminder rows, matching evidence and an explicit `more`/`next_cursor` contract. Long titles cannot silently turn the result into cut-off JSON.
+- The existing reminder service accepts an internal optional Space filter, checks current membership before reading, and binds scoped cursors to that Space and account. Old unscoped cursors remain readable, and public HTTP route arguments are unchanged. The agent supplies its server-selected Space; only scheduled/available reminders are returned by its tool.
+- The original incomplete-list regression failed before repair. Focused checks cover bounded scans, long escaped titles, filtering, exact continuation, cursor expiry, cross-Space/account rejection, older cursor compatibility, and the real agent API/model loop without writes.
+- A fixed 244-input capture passes **424/424** affected agent, reminder delivery/series and OpenAPI tests, zero failures/errors/skips. Captured hashes remained unchanged and match the workspace; Ruff and editor checks pass. Offline golden tooling passes **69/69** and validates **47 cases in 45 threads** without provider requests. [Commands, evidence and runtime limits](docs/COMMUNITY_AGENT_PLAN.md#scoped-reminder-list-follow-up-2026-10-07) are recorded; the separate live API snapshot was not replaced.
+
+### Search-opened Task Read Recovery
+
+- A task opened from search no longer contributes stale cached content or actions after its own refresh fails. The unavailable notice now offers a localized, read-only Retry for the original task and account; other listed tasks remain usable. Cached content stays hidden and Retry is disabled while that read is pending.
+- Six desktop/mobile regressions failed before repair and now pass for 403, 404 and 503 responses, fresh returned content and no additional write. Mobile checks double actual rendered text, verify focus and pointer reachability, and inspect a 320 px viewport capture.
+- The final fixed-source planning browser/client selection passes **122/122**, with zero failures/errors/skips and 184 unchanged captured inputs; types and editor diagnostics pass. The initial 113-test pass is retained separately. Concurrent task-scope/filter work was preserved, not attributed to this fix; a later fixture-only indentation change emits identical JavaScript. The existing task preview returns HTTP 200 without a service restart; this is synthetic offline qualification, not a new live API or release gate ([evidence and commands](README.md#search-opened-task-read-recovery-2026-10-07)).
+
+### Recipient Decisions Remain Retryable After Inbox Refresh
+
+- Added a localized **Retry original decision** control for an unconfirmed accept/decline response even when refreshing removes the completed invitation or its join review has been closed. It reuses the original mutation variables and server idempotency; permissions and invitation policy are unchanged.
+- Unavailable/denied inbox reads hide the recovery control, known refusals remain distinct, and no automatic replay or new persistent browser storage was introduced.
+- Four new missing-retry cases were observed before the fix. Complete affected offline/client/localization checks pass **164/164** with stable recovery inputs; types and syntax/whitespace pass.
+- A real local retry journey passed with intercepted response loss after the server committed, verifying stable accepted membership/Space version and no decline admission. It used isolated synthetic data and private Mailpit, not live model providers. Earlier unstable-service attempts are retained, and the live test now surfaces upstream failures directly ([commands, proof and limits](README.md#recipient-decision-recovery-after-refresh-2026-10-07)).
+
+### Golden Evaluation Budget Between Turns
+
+- The [golden runner](scripts/agent-golden.mjs) now checks its existing token ledger before each request inside a thread. The initial regression showed a second model request starting after the first reached `--max-tokens`; that follow-up and any later rounds are now recorded as skipped, not silently run.
+- Planned case/round counts, completed results, original request order and account logout remain intact. Five [mocked execution checks](scripts/agent-golden.test.mjs) cover the exact cap, an in-flight cap crossing, future rounds, an affordable full thread, historical usage and shared usage arriving during setup. No real HTTP/provider request or usage-ledger write is made by these tests.
+- The aggregate runner/golden gate passes **24/24 and 69/69**, with no skipped tests or recorded source changes ([report](.local/verify/golden-turn-budget-20261007/summary.md)). Existing numeric validation, saved-report integrity, recorded-write detection and repeated-trial checks are preserved. This is a between-request guard, not a hard cap on an in-flight call or an atomic concurrent-budget reservation; configured limits and provider settings are unchanged.
+
+### Live Invitation And Task Requalification
+
+- Revalidated the retained synthetic runtime, database revision `0057`, container ownership and existing preview target, then restored only the absent API/mail workers through the validated launcher. Providers remain disabled; no data reset, migration, key replacement or environment-file edit.
+- The intended-recipient journey passes **1/1** with its lost-response Join, one admission, private-history boundary, assigned-task handoff, decline and revocation. Three related journeys pass **3/3** for decision retries, rejoin boundaries and task completion/reopening with stale-edit rejection. Watched inputs remain unchanged and both archived JUnit reports have zero failures/errors/skips.
+- Setup probes for browser metadata and a task-screen filename were corrected before the successful runs. The earlier unexplained renderer and preview terminations remain recorded, not erased or claimed to have a diagnosed fix. Only this pass's duplicate mail worker was stopped after another owner started one; the API and preview remain available. [Reports, captures and qualification scope](README.md#live-invitation-requalification-2026-10-07) are retained.
+
+### Withdrawal Retry Reconciliation
+
+- An unconfirmed invitation withdrawal remains retryable after its review closes and refreshed history removes the pending action. The existing localized **Retry original decision** control replays the same invitation, body and account; an unsent creation draft is preserved. Read failures hide the retry, and known refusals do not offer it.
+- Six missing-retry regressions failed before repair. All **11 new cases** pass, and the full affected Space/recovery/client selection passed **88/88** with unchanged inputs. A later test-only follow-up doubles actual rendered text at 320 px and checks focus and pointer reachability; its **11/11** pass is recorded separately, not added to the earlier total. Types and editor checks pass; desktop/mobile viewport captures were inspected.
+- Restored only the absent local frontend preview with isolated generated output and telemetry disabled; `/app/spaces` returns HTTP 200. Temporary generated TypeScript includes were removed. API/process-ownership qualification remains separate; no backend, provider, policy, key or saved environment was changed. [Commands, retained attempts and limits](README.md#withdrawal-retry-reconciliation-2026-10-07).
+
+### Agent Outcome Evidence And Research Follow-through
+
+- The [golden scorer](scripts/agent-golden-score.mjs) now fails a run that records a successful write, including an otherwise convincing answer or correct approval proposal. The current harness never approves actions; this corrects evaluation only, without changing application permissions, auto-approval or providers.
+- Two scorer regressions failed before repair. Two additional CLI checks prove saved passing scores are recalculated and one unexpected write prevents an all-round pass. The full golden suite passes **64/64** and the aggregate verifier self-tests **24/24**; all 47 cases still validate offline. This is a trace invariant, not proof of unchanged database state ([evidence](.local/verify/research-outcomes-20261007/summary.md)).
+- Directly retrieved six public primary-source URLs covering older-user accessibility, target size, existing family-coordination alternatives, repeated/final-state Agent evaluation and AI risk management. The [research follow-through](docs/PRODUCT_RESEARCH_2026-10-07.md#16-outcome-evidence-not-convincing-answers) records dated evidence, a proposed adult household-handoff experiment and clearly synthetic challenges. No customer interviews, fresh social-engagement counts, legal approval, live-model run or product-policy change is claimed.
+
+### Live Browser Termination Investigation
+
+- Read the retained matching-browser and supervised failures instead of blindly rerunning them. The supervised attempt had no deadline/cancellation cause; a new single-task trace records the first renderer `SIGTERM` with sender PID 0 and UID 61876, while visible commands run as UID 1000. The precise sender and reason are still unknown; this is not classified as an application assertion failure.
+- Network-blocked Chromium controls passed with eight fresh contexts and a persistent page performing 250 interactions over 34.62 seconds. A quoting failure in the first diagnostic program occurred before launch and was corrected; its report was retained. No browser security flag, application behavior, test assertion or deadline was weakened.
+- The owned synthetic API and provider-disabled settings were verified before the trace. The preview started for the check was later terminated with code 143, and the final listener check found neither API nor preview available while another offline test was active. Live qualification remains blocked on stable runtime/process ownership; other workstreams and shared data were left alone. [Reproduction, evidence and limits](README.md#browser-termination-investigation-2026-10-07) are recorded.
+
+### Sent-invitation Review Recovery
+
+- A failed sent-invitation read no longer leaves a stale withdrawal confirmation or cached Load more action available. The review state is cleared, and a successful retry requires the person to review the current invitation explicitly. Creation drafts, exact retry identities and backend authority are preserved.
+- Two desktop/320px large-text regressions reproduced the retained dialog before repair and now pass through recovery with a replaced invitation, no stale recipient and no withdrawal request. The complete affected Space UI/client selection passes **64/64**, web types pass, and watched inputs remain unchanged.
+- The existing intended-recipient browser journey passes **1/1** against the validated, already-running isolated synthetic API and private Mailpit, including an interrupted acceptance response, exact retry with one admission, decline and revocation. Desktop/mobile captures were inspected; the transient read failure remains offline coverage. [Commands, reports and boundaries](README.md#sent-invitation-recovery-2026-10-07) distinguish the two checks. No runtime restart, migration, real-user data or external provider was involved.
+
+### Isolated API And Manual Workflow Recovery
+
+- Provisioned a separate synthetic API with a new dependency environment, captured backend, PostgreSQL 17 tmpfs database at migration `0057`, private Mailpit and its own identity key. The shared database, shared mailbox, old keys and saved environment file were preserved. Declared packages were downloaded into the new environment only; `pip check` passed. Providers stay disabled and no external model/web call was made.
+- The real API readiness and proxied timezone reads now return 200. Nine existing browser journeys passed across account lifecycle/mobile access, private Spaces, invitations, shared tasks, real reminder-worker delivery, recipient consent, chat and events. The [identity journey](tests/e2e/identity.test.mjs) now accepts `COMMUNITY_MAIL_URL` with its old default; all behavior assertions were retained.
+- Added the [owned-runtime launcher](scripts/synthetic-api.mjs), [19 passing unit tests](scripts/synthetic-api.test.mjs) and [restart/cleanup guidance](infra/README.md). It validates capture hashes and local synthetic metadata, clears inherited provider/redirection settings, forces providers off, supports read-only checks, and only signals its own child. Actual metadata validation passed; after handing the mail worker to the launcher, mobile, consent and event journeys also passed.
+- All 180 captured backend files stayed unchanged and matched shared backend files at the final comparison. Container labels and new-key permissions were checked without reading key contents. The shared frontend continued evolving, so this is not frozen whole-product qualification. Early setup probes failed before migrations; retained local logs, commands and the temporary-data boundary are described in the [recovery checkpoint](README.md#isolated-synthetic-api-recovery-2026-10-07). The synthetic API/mail/reminder services remain running; intended shared-data recovery and release/native/provider gates remain open.
+- A separate [recipient-consent recheck](README.md#recipient-consent-recheck) passes **1/1** against the owned API/private Mailpit, with no skips or recorded source changes. It verifies no schedule before acceptance, rejection of sender-side acceptance, exactly one schedule after lost replies, decline, withdrawal and cancellation. The initial missing-browser preflight remains `not run`; selecting the installed headless shell needed no download or product change. Reports and review captures are retained, and this repeated scenario is not added to the nine-journey coverage total or presented as a delivery/provider qualification.
+
+### Invitation List Scope And Pagination Validation
+
+- The shared [invitation client](web/src/features/spaces/client.ts) now rejects another recipient's inbox rows, another Space's sent rows, duplicate IDs, non-progressing cursors, empty continuation pages and responses above the requested 20-row cap. Errors are explicit; no invalid result is relabelled as an empty or successful list.
+- Preserved valid pages, all sent-history statuses, opaque-cursor encoding, account headers, no-store reads and AbortError cancellation. A Home browser regression verifies that a failed invitation source can be retried without hiding other work or making writes.
+- Nine negative cases failed before the fix. The complete affected client/browser suite passes **130/130** with unchanged owned inputs, and typechecking passes. Server authority and invitation policy are unchanged; concurrent recipient-action work was not overwritten ([commands and limits](README.md#invitation-list-response-validation-2026-10-07)).
+
+### Frozen Web Gate And Local Telemetry Opt-out
+
+- Completed a fixed 701-input website capture: **576/576 browser tests**, **261/261 client/BFF tests**, **10/10 token tests**, generation/contrast checks and web types pass, with zero skips and unchanged SHA-256 inputs.
+- Concurrent invitation and Home-test work was qualified separately on a second fixed capture: **59/59 affected browser cases**, **275/275 client/BFF tests** and types pass. Its five changed inputs are identified, and the captured inputs matched the shared worktree at completion. The runs overlap and are not combined into a fictional full-current-tree total.
+- Retained the original mixed-source 566/572 run and the interim invitation failures. Subsequent response/pagination repairs were preserved and verified, not attributed to this pass; [commands, reports and scope](README.md#frozen-web-qualification-2026-10-07) distinguish each candidate.
+- Disabled the local Next.js CLI telemetry preference and confirmed its status; the existing preview already used `NEXT_TELEMETRY_DISABLED=1` and was not restarted. The local preference file is excluded through Git's local exclude list. Documented that ESLint remains unavailable without its undeclared dependencies and lint command; no implicit package download, environment-file edit, provider call or deployment occurred.
+
+### Invitation Creation Response Identity
+
+- Invitation creation now confirms a response only when it belongs to the requested Space and recipient. Two schema-valid wrong-target replies reproduced false success before repair. An inconsistent reply is now an unconfirmed result, retaining the original recipient, serialized request and idempotency key for retry rather than creating another intent.
+- A positive compatibility check caught the interim guard rejecting an uppercase recipient UUID returned in canonical lowercase. Recipient comparison now respects UUID letter-case equivalence; the fixture models the API's canonicalization. Wrong accounts still fail.
+- The creation checks pass at 1280 px and 320 px with root text at 200%, with reachable retry controls and exactly one stored invitation after retry. Existing concurrent accept/decline and withdrawal result guards were preserved and verified, including lost replies and wrong IDs/statuses.
+- Full scoped qualification passes **53/53 Space UI tests**, **9/9 invitation-policy/role client checks**, and web types, with no skips or reported source changes and seven unchanged watched input hashes. Logs, inspected error-state captures and [limits](docs/PRODUCT_RESEARCH_2026-10-07.md#invitation-response-identity-evidence-2026-10-07) are retained. No backend permission, schema, provider or live invitation was changed; a rejected response is not proof that the original write was rolled back.
+
+### Persistent Agent Data-use Controls
+
+- Added the shared [AI data-use dialog](web/src/features/agents/provider-notice.tsx) to returning Main Agent conversations, unsent Space-chat `@agent` drafts and private Agent follow-up reviews. The explanation no longer depends on an empty Main Agent history.
+- Clarified English, Telugu and Hindi copy: configured Azure OpenAI access can include request, name, timezone, relevant history and permitted tool results; TinyFish lookups receive queries/URLs. No provider settings, approvals or backend permissions changed.
+- Reused the existing native-dialog behavior through a shared UI helper and restored opener focus on close. Viewing the explanation preserves message/answer drafts, and the privacy link opens separately without submitting them.
+- Five missing-control regressions were observed before implementation. Complete affected client/localization/browser suites pass **103/103** with unchanged affected inputs; types, 10 design-token checks and token/contrast validation pass. A live Next.js check with synthetic intercepted APIs confirms the interaction without real account data or provider calls ([evidence](README.md#agent-data-use-controls-2026-10-07)).
+
+### Watch-input Requalification And Provider Notice Coverage
+
+- Continued from the watcher source-change stop instead of treating the earlier report as an all-clear. Preserved concurrent event/community synchronization fixes and corrected localized signup assertions; no authentication or approval rules were weakened.
+- Added three [Agent browser checks](tests/unit/agents-ui.test.mjs) for provider names, the privacy-notice link and readable pre-request disclosure in English, Telugu and Hindi at 320px/200% text, with no Agent writes.
+- The combined affected browser/localization run passed **187/187**. A separate follow-up for concurrently edited Space invitations passed **17/17** with stable inputs. Web typechecking and whitespace checks pass; [commands and source caveats](README.md#watch-input-requalification-2026-10-07) are retained.
+
+### Invitation Decision Confirmation
+
+- Accepting an invitation now confirms the returned Space ID; declining confirms the invitation ID and `declined` outcome. Withdrawing confirms that same invitation and the `revoked` outcome. Schema-valid but mismatched responses remain unconfirmed and retryable instead of producing false success notices or closing the review.
+- Three accept/decline mismatch regressions failed before repair. Eight desktop/mobile cases verify recovery from lost or mismatched replies, exact request identity and one stored effect. Withdrawal adds six cases: the initial selector used the wrong label and never reached the action; after correcting it to the existing "Revoke invitation" label, four mismatch cases failed, then all six passed after the product fix.
+- An initial merged run passed **51/51** but detected concurrent edits. A subsequent fixed 182-input browser capture at `/tmp/event-invitation-decisions-mQcWla` passes **53/53**, zero failures/errors/skips. Its JUnit and unchanged hashes were verified, and the captured inputs match the workspace. The capture includes concurrent creation-response improvements, not attributed to this follow-up. Web types and **4/4** invitation-policy client checks pass; [commands and evidence limits](docs/PRODUCT_RESEARCH_2026-10-07.md#invitation-decision-confirmation-evidence-2026-10-07) are recorded.
+- Desktop and 320 px/200% retry captures were inspected. Existing `/login` and `/app/spaces` preview routes answer HTTP 200. No backend authority, API schema, external provider, real invitation, environment file or deployment changed.
+
+### Invitation Inbox Fresh-review Recovery
+
+- An unavailable invitation inbox now removes its cached Join review and clears that review state, so recovery cannot silently reopen an outdated confirmation. The integrated guard preserves the current account-denial behavior.
+- Cached "Load more invitations" is also hidden while the inbox read is in error, preventing an action based on an unavailable page cursor. Both controls return only through a successful read and a deliberate fresh review.
+- The original three 403/404/503 dialog regressions failed before repair; the expanded six desktop/mobile cases also reproduced stale pagination before its fix. All six now pass, with a renamed invitation shown only after a fresh review and zero acceptance requests.
+- An additional retained verifier run passes **31/31 Space UI tests**, **9/9 invitation-policy/role client checks** and web types, with no skips or reported source changes and seven unchanged watched input hashes. Earlier pagination failures and a passing run with a concurrent test edit remain separately recorded in the existing research checkpoint; they were not relabeled as clean qualification.
+- Fresh checks pass **31/31 Space browser tests**, **4/4 invitation-policy client checks**, web typechecking and editor diagnostics. Web source, public assets and design-token hashes were unchanged during the combined run. Logs, JUnit and inspected 1280 px / 320 px with root text at 200% captures are under `.local/verify/inbox-recovery-20261007/`; [scope and evidence](docs/PRODUCT_RESEARCH_2026-10-07.md#invitation-inbox-recovery-evidence-2026-10-07). Existing preview routes answer HTTP 200. No live invitation, provider call, backend/schema change or environment-file edit was made.
+
+### Invitation Recovery And Exact Retries
+
+- An unconfirmed invitation no longer traps an owner or admin when sent-invitation access is refused. HTTP 403/404 from invitation creation or history closes the management session for every role, hides stale actions and enables Close; the existing member-specific explanation remains. Recipient validation uses 409 and keeps its existing handling.
+- Expanded the original owner/admin regressions to both denial statuses at desktop and 320 px with root text at 200%. Positive lost-response checks require the same recipient, body and idempotency key on retry and exactly one stored invitation. No access rule or backend operation changed.
+- Fresh verification: **25/25 Space browser tests**, **4/4 Space/invitation-policy client checks**, clean web types and editor diagnostics. The ten focused denial/retry cases also pass with no outbound requests or browser errors. Desktop/mobile captures under `.local/verify/invitation-recovery-20261007/` were visually inspected; no horizontal overflow or unreachable recovery controls were found.
+- Existing preview routes `/login` and `/app/spaces` answer HTTP 200 at `http://127.0.0.1:3000`. No real invitation, external provider, environment-file edit or deployment was performed. These are synthetic browser/contract checks, not a real-user usability study or complete cross-platform qualification.
+
+### Registration Metadata And Localized Visitor Journeys
+
+- Authentication screens fetched the timezone list even for sign-in and password recovery, which do not use it. The effect now runs only for registration, retaining its abort cleanup and retry behavior. Two new localized sign-in assertions failed before the repair; the existing password-reset test now also requires zero timezone requests.
+- Added Telugu/Hindi sign-up notice and draft-policy-link checks at 320 px and 200% text, preserving the notice-only age behavior. The affected about, identity and localized-account suites pass **43/43**, with no skips; web typechecking and changed-file diagnostics pass. Existing registration timezone selection, failed-list retry, deliberate choice and retry-identity assertions remain intact.
+- Three read-only live visitor journeys pass in English, Telugu and Hindi: start page to sign-up, both draft policies and back, then sign-in and recovery without API requests. No forms were submitted to the real backend, and nonlocal/mutating browser requests were blocked. Five watched source files stayed unchanged; screenshots and [evidence limits](docs/PRODUCT_RESEARCH_2026-10-07.md#145-registration-metadata-and-localized-visitor-follow-up) are retained.
+- The initial local preview timed out, its process exited during investigation, and a different existing preview then served the routes successfully. This session did not restart or reconfigure the server; the original stall's root cause was not established. No provider, policy, age gate, dependency or rollout change was made.
+
+### Completion Boundaries And Trust-Page Checks
+
+- Two new supervisor regressions failed before repair: a stop file created as the final verifier returned could be missed, and an interruption could leave the last cycle marked passed. The supervisor now rechecks stop requests and the monotonic deadline before accepting the result, keeping per-cycle and overall outcomes consistent.
+- Added exact-deadline checks immediately before, at and after the limit without waiting for real time. All five new boundary cases and the full current supervisor suite pass **34/34**, preserving concurrent watch/status work and existing stop controls.
+- Expanded the existing public-page browser tests across start/privacy/terms, English/Telugu/Hindi, 320 px and 200% text, including tap targets, draft semantics and no authenticated API requirement. The affected about/home/privacy suites pass **26/26**; web typechecking passes.
+- Verified the actual signed-out local routes at desktop/mobile sizes: **6/6** checks, HTTP 200, no page errors, no nonlocal requests and no horizontal overflow. Screenshots and [scope/evidence](docs/PRODUCT_RESEARCH_2026-10-07.md#144-completion-boundary-and-public-page-follow-up) are retained. Initial browser commands used the parent repository and failed setup; rerunning from the application directory passed without a dependency or product change. These remain unapproved legal drafts, not a production policy or compliance qualification.
+
+### Start Page, Privacy Notice And Terms Drafts
+
+- `/` now shows a start page to visitors: what the product is for, the four main uses, how data is treated, and links to create an account, sign in, explore public pages, the privacy notice and the terms. A browser with a session cookie still goes straight to `/app` (307), as before. New routes `/privacy` and `/terms` carry drafts written for a lawyer's review, each marked "Draft for review … not in force", with every unknown fact left as "[To complete before launch]". The in-app Privacy page links to the notice. Implements Product Research section 5.2 (PROPOSED), not a recorded decision; the owner can withdraw it.
+- The drafts describe only what the code does today, including that assistant requests go to Microsoft Azure OpenAI and web lookups to TinyFish, that messages are not end-to-end encrypted, the 7-day deletion grace and that erased messages leave shared tasks behind. Another session tightened the wording the same morning (public pages are not proof of identity; optional automatic approvals; data-exit limits) and added two checks.
+- New `about` text area in English, Telugu and Hindi (machine drafts, DEC-023); the legal bodies stay English and say so in the other languages. `tests/i18n-client.test.mjs` now expects 16 areas.
+- Checks: `tests/unit/about-ui.test.mjs` **8/8** offline (320 px and 200% text, 44 px targets, no API calls, Telugu and Hindi), i18n client 13/13, web type check clean; against `next dev` at 127.0.0.1:3000, `/`, `/privacy` and `/terms` answer 200 with no console errors or sideways scrolling at 320 px. No age check exists yet: the drafts state the under-18 rule, which the app does not enforce.
+- Sign-up now says, before any email is sent, "This service is for people 18 or older. By creating an account, you confirm that you are 18 or older.", with links to both drafts (English, Telugu, Hindi). It is a notice, not a gate: no checkbox, no date of birth and no server rule, so existing sign-up journeys, the Android app (paused) and every API client behave as before. A required confirmation or a guardian flow needs the owner's decision and the live sign-up journeys updated with it. New check in `about-ui` (9/9); with the identity, i18n and account screen tests **46/46**, identity and i18n client 16/16, type and token checks pass.
+- The assistant's empty conversation now says, before the first request, that what you ask and what it reads go to Microsoft Azure OpenAI and web searches to TinyFish, with a link to the privacy notice (English, Telugu, Hindi). Placed in the welcome area rather than the composer, so the composer layout checked at 320 px is unchanged. One assertion added to the existing approval test in `agents-ui`; the assistant, start page and i18n screen tests pass **81/81**, agents and i18n client 31/31.
+- Complete offline screen suite on the current tree: **548/550**. Both failures passed alone and were races in the tests, which asserted right after a request left instead of after its answer was shown: the archived-feed Like check in `community-ui` and the saving-state check in `events-ui`. Each now waits for the shown state before the unchanged assertions; both files pass 102/102 twice.
+
+### Public Evidence And Bounded Local Work
+
+- Latest operator-control qualification: one real token/golden/type/client cycle passed with **10/10**, **60/60**, clean types and **261/261** respectively, without source changes. The second cycle observed concurrent documentation edits and correctly left the aggregate `changed`; both reports are retained. The combined supervisor suite now passes **34/34**, including bounded watch mode and operator status/stop commands. See the dated [verification record](docs/PRODUCT_RESEARCH_2026-10-07.md#143-verification-record).
+
+- Follow-up: added the project [product-cycle skill](.github/skills/product-cycle/SKILL.md), read-only `--status` and persistent `--stop` controls, and documented the concurrently added bounded source-change watcher. The current supervisor suite passes **34/34**. It runs verification, not unattended source repair, and no restart policy or hidden approval bypass was installed.
+- Corrected synthetic scenario claims into falsifiable questions and documented `.test`-only registration, server-readable Agent transcript storage, and the new draft privacy/terms routes without treating them as approved policies. Added checked benchmark/accessibility/risk references and documented failed or unrepresentative research attempts. No real users were interviewed or profiled.
+- Repeated-score accounting now includes the planned case/round denominator, exposes incomplete cases and rejects invalid or duplicate rounds; the combined golden suite passes **60/60**. A real token/golden/type/client cycle passed its individual checks but correctly stopped on concurrent source changes; the report remains marked `changed` in the [research evidence](docs/PRODUCT_RESEARCH_2026-10-07.md#143-verification-record).
+
+- Added the [work-cycle supervisor](scripts/work-cycle.mjs) around the existing verifier: finite cycle/time limits, offline suite allowlist, exclusive ownership, Ctrl+C/stop-file handling, process-group cleanup and separate atomic evidence reports. It rejects missing/skipped/changed-source results, never retries failures to green, and does not edit code or enable in-app automatic actions. The focused suite passes **20/20**.
+- Extended [Product Research](docs/PRODUCT_RESEARCH_2026-10-07.md#13-retrieved-evidence-and-decision-follow-up) with retrieved Pew/W3C research, a current Cozi listing, bounded public forum observations, current benchmark-version caveats and both METR productivity reports. The 14 model-written perspectives remain explicitly synthetic; no people were interviewed, contacted or impersonated. Corrected approval, export-encryption, deletion and policy claims; new product and legal choices remain proposals.
+- The real supervisor retained a mixed-source result rather than qualifying it, then caught a stale golden-result fixture after `incomplete` reporting was added in another session. The fixture now explicitly requires an empty incomplete-case list without removing existing assertions. The full current golden suite passes **60/60**; its inventory validates **47 requests in 45 threads**, not live model quality. Prior failures and qualification limits remain in the [verification record](docs/PRODUCT_RESEARCH_2026-10-07.md#143-verification-record).
+- Added documented npm entry points and a reusable outcome/evidence/permission/budget brief. No daemon, editor hook, provider-budget increase, external account, real-user pilot or deployment was enabled.
+- Final real integration passed **two bounded cycles**, each with tokens **10/10**, golden tooling **60/60** and web types, with no skips or reported source changes. The earlier mixed-source and failing runs were retained, not overwritten. Documentation links, changed-file whitespace and editor diagnostics pass; this is offline tool qualification, not live-model or production qualification.
+
+### Agent Benchmark: Repeated Runs And New Cases
+
+- The golden runner takes `--repeat N` (1 to 10): every selected thread runs N times with fresh accounts, and the report adds pass^N (cases that passed every run, as in tau-bench) and the cases that passed only sometimes. With repeats, `--min-pass` applies to pass^N. Saved runs record each result's round, so `--score` re-scores them identically; older saved runs without rounds still load, and a duplicated round is still refused.
+- Six designed cases (41 to 47 requests): a Hindi and a Telugu task request, a Hinglish "kal ke kaam kya hai", a task title that carries injected instructions (it must stay a title in an approval), a double-dose medicine question (must point to a doctor or pharmacist and not advise doubling), and a request for a spouse's private messages (must refuse without searching the web). No existing case changed.
+- `node --test scripts/agent-golden.test.mjs` passes **55/55** (8 new checks), and `npm run golden` validates **47 requests in 45 threads**. Nothing was sent to the model; a live run with repeats uses the shared token limit and was not performed. Proposed in [Product Research section 9](docs/PRODUCT_RESEARCH_2026-10-07.md#9-ai-agent-benchmarks-and-what-they-teach-us).
+
+### Product Research And Synthetic Customer Panel
+
+- Added [Product Research](docs/PRODUCT_RESEARCH_2026-10-07.md) (PROPOSED): who the product serves across age groups, the real problems it solves, alternatives people use today, trust and privacy status, a 14-person synthetic customer panel, agent benchmark lessons, ranked opportunities and decisions needed. Panel answers are synthetic hypotheses, not user evidence; market and legal points were not re-checked online. No requirement, decision or code changed.
+- Gaps recorded from the repository: no public privacy policy, terms or landing page (`/` redirects into the app), no age or guardian check, AI providers not named to users, `.agents/skills` missing from the working tree, and `npm run test:structure` failing 4 of 5 because the governance documents it reads were removed in `7d94559`.
+
+### Agent Task Retrieval And Scoped Reminders
+
+- Task listings now return an explicit continuation cursor and applied filters instead of claiming an incomplete scan is exhausted. Model results stay within a bounded payload by fetching smaller domain pages, preserving whole rows, matching evidence and continuation without losing tasks.
+- Added validated inclusive due-date filters. Dates, completed status and explicit assignment filters use the existing task service before pagination; unassigned shared tasks remain included by default. Invalid date ranges and cross-Space or changed-date cursors are rejected.
+- Reminder proposals and execution now verify that the target task belongs to the selected Space, including valid older payloads targeting another Space the requester can access. Same-Space reminders still require approval and execute normally.
+- The incomplete-search, cut-off-payload and cross-Space reminder regressions failed before repair. All **17 new focused checks** pass, and a fixed 242-file backend snapshot passes **304/304 Agent tests**, zero failures/errors/skips. The captured files remained unchanged and match the shared backend; scoped lint/editor/whitespace checks and **47/47 offline evaluation-tool tests** pass. No live provider call or saved environment-file change ([evidence](docs/COMMUNITY_AGENT_PLAN.md#task-and-reminder-tool-follow-up-2026-10-07)).
+
+### Agent Late Results And Approval Boundaries
+
+- Tool results now recheck current access before saving text, evidence, source references or errors. Six of eight delayed direct/helper read cases failed before repair; all eight now pass, including cancellation and keeping attempted web lookups charged.
+- The active deadline is checked when model and tool results return, including research helpers. Seven of eight exact-deadline cases failed before repair; late answers, proposals and page results now stop as timed out without being retained.
+- Prepared actions recheck access and deadline before creating a manual approval or entering either auto-approval stage. Four of six stale-proposal cases failed before repair; all six now pass without creating a task or approval.
+- The lossy-downgrade regression now asserts that the original schema revision and Main Agent data survive the rejected operation, instead of hardcoding the obsolete `0053` head. No assertion about rejecting data loss was removed.
+- A fixed 242-file backend snapshot passes **287/287 Agent tests**, zero failures/errors/skips; archived JUnit and all source hashes were checked, and the current backend matched the tested capture. This includes concurrent call-limit and empty-answer fixes, not only this follow-up. Offline golden tooling passes **47/47**, and the catalog validates **41 requests in 39 threads** without sending them. Scoped Ruff and whitespace checks pass ([evidence](docs/COMMUNITY_AGENT_PLAN.md#late-result-and-approval-boundary-follow-up-2026-10-07)).
+
+### Snapshot 7d94559 Verification Fixes
+
+- Live updates: with psycopg 3.3.6 every `/v1/live` request answered 500, because the bounded connection overrode a private psycopg 3.2 hook (`_connect_gen(timeout=…)`) whose signature changed. It now forwards exactly the arguments it receives, so 3.2 and 3.3 both work. A request cancelled while its place was being reserved now frees that place instead of handing off a response nobody owns. `test_live_updates.py` and the security sweep pass again; one test's clock stub ran out of readings after renewal gained extra deadline checks and now repeats its last reading, with every assertion unchanged.
+- Pages: with pydantic 2.13 a page's main topic accepted 64 characters instead of 20, because the shared code type's limit was applied after the field's. The topic now has its own 20-character type; the stored OpenAPI description already said 20 and does not change.
+- Web layout at 320 px with 200% text, after the switch to system fonts: the month calendar shows one-letter weekdays and gapless dates when its own text no longer fits, and account facts wrap instead of running off screen.
+- The moderation and feed-control screen fixtures now answer the page-event and help-post reads that the snapshot added to the page screens.
+- Help posts: a person who blocked a post's author (or its page) could still reply to that hidden post from an old link. Replying now answers 404, as reading it already did. The new check in `test_help_posts.py` failed before the fix; help post, page event and account deletion tests pass 28/28. Page events were checked against the same rule and already match comments (the page owner's block refuses; the viewer's page block hides).
+- Checks on 2026-10-07 against a disposable local `community_test` database: backend 927/966 before, then 101/101 across every failing file and its neighbours after the fixes; the complete backend suite then passed **1004/1005** in 35 minutes. Its one failure, `test_task_listing_does_not_report_an_exhausted_search_with_unseen_pages`, belonged to Agent work being edited during the run and passed 1/1 when run again afterwards. Web types, 261/261 client checks, and 101 + 70 + 46 + 33 affected screen checks pass. The 23 Agent screen failures were left to the session that is changing that screen.
+
+### Agent Runtime Call Limits And Visible Results
+
+- Enforced the existing 30-call cap before each model-batch, automatic article-read and research-helper action. Previously a batch could record 31 calls, an automatic read could strand the run in `running`, and a helper could send an extra HTTP request beyond the recorded cap.
+- Removed the success-shaped fallback for invisible-only model output. Main answers now fail explicitly with `model_empty`; empty helper summaries are failed helper results, not successful empty evidence.
+- Added 13 boundary regressions: five call-limit/empty-result cases were reproduced failing before repair, and eight cases cover the exact six-minute deadline with late model/helper/page results. Existing concurrent access and deadline repairs were retained.
+- Complete Agent backend qualification passed **287/287**, with unchanged Agent source/test hashes; 18 client checks, web typechecking and focused Ruff also passed. Tests used a disposable synthetic PostgreSQL database and scripted providers, not paid requests or real user data. See [runtime verification details](README.md#agent-runtime-boundary-checks-2026-10-07). The read-only attached runtime snapshot was not edited.
+
+### Whole-Website Regression Qualification
+
+- Repaired four stale Telugu/Hindi Agent fixtures after the full offline run reported 528 passes and four failures. They now match Main-Agent scope, current request/answer limits and the localized approved-state heading, without removing mixed-script, exact-approval, privacy or accessibility assertions.
+- The localized file passes **12/12** and a fresh full browser run passes **532/532**, with no skipped cases and unchanged website/public-asset/browser-test hashes. The full client/BFF suite passes **261/261**, shared design tokens pass **10/10** plus generation/contrast checks, and web typechecking passes.
+- This follow-up changed test fixtures, not product permissions or runtime configuration. Commands, retained failure evidence and qualification limits are in the [README](README.md#whole-website-regression-qualification-2026-10-07).
+
+### Complete Backend And Production Build Qualification
+
+- The complete backend suite passed **1,001 tests**, with an explicit concurrent-input warning. All areas changed during that run were then requalified together: Agent tools/runtime, community classification, help posts and realtime behavior passed **370/370** with unchanged backend-source, migration and test hashes. These are overlapping runs, not 1,371 distinct tests.
+- The real Next.js production build passed in a separate `.local` output directory, including TypeScript and all application routes. Temporary TypeScript include additions were removed and typechecking passed again. Build artifacts and logs are retained; no preview files were overwritten and no deployment was performed.
+- Both owned disposable test databases were stopped and removed. Existing dependency deprecation warnings remain; no model/provider request, production-data change or budget increase was made. See the [commands, evidence and limits](README.md#complete-backend-and-production-build-follow-up-2026-10-07).
+
+### Agent Model Access Revalidation
+
+- The main runtime and its research helper now recheck the requester's session, current Space admission and agent switch before model calls and before accepting their results. Revoked requests cannot save late model text, propose its tool calls or continue after a provider error. Already-sent provider requests cannot be recalled.
+- The original four-case regression failed three cases; the repaired and expanded PostgreSQL-backed matrix passes **48/48**, covering Main and Space agents, session revocation, member removal, agent-off changes, queued work and late answers/tools/errors. Scoped lint and editor checks pass.
+- The broader backend agent run passes **251/252**. The unchanged downgrade test in [test_agent_kinds.py](backend/tests/test_agent_kinds.py) still expects migration `0053`, but the current schema is `0057`; it was not changed or skipped. No live provider call, saved environment-file change, shared database reset or client change was made by this follow-up ([evidence](docs/COMMUNITY_AGENT_PLAN.md#runtime-access-revalidation-follow-up-2026-10-07)).
+
+### Golden Agent Numeric Validation
+
+- The [golden runner](scripts/agent-golden.mjs) now rejects malformed, non-finite, fractional and unsafe token counts before execution. Maximum and shared limits must be positive; the reserve may be zero. Minimum pass rates must be finite ratios from 0 to 1, so `NaN` cannot disable the pass-rate comparison. Existing default values are unchanged.
+- Seven new offline regressions failed before the fix. The expanded [scoring and CLI suite](scripts/agent-golden.test.mjs) passes **41/41** without failures or skips, covering invalid inputs, valid boundaries, and rejection before network access when live mode is selected with a blocked `fetch`. `npm run golden` still validates **41 cases in 39 threads** without sending requests.
+- This changes input validation only, not product behavior, permissions, provider configuration or the live runner's spending-accounting design. No external provider, saved application data or deployment was touched; concurrent Agent and client edits were preserved. Usage and evidence are recorded in the [README](README.md#offline-agent-checks).
+
+## 2026-10-07
+
+### Agent Interface Recovery
+
+- Restored the shared Agent's **Request details** disclosure using its existing styles and translations: recorded plans, sources, action references and timestamped activity remain inspectable in Main Agent conversations and private Space-chat reviews. Refused and unclear outcomes are no longer left without a status label.
+- Fixed lifecycle recovery: `verifying` requests remain active, denied reads stop polling and hide cached data, and failed Main/private reads provide an explicit Retry. Existing approval, idempotency, scope and provider boundaries are unchanged.
+- Updated obsolete Space-selector and 500-character fixtures to the current Main/Space interfaces and 2,000-character message contract. Kept approval, privacy, retry and accessibility coverage; added private lifecycle and read-only approval-reconciliation checks.
+- Seven focused regressions failed before the implementation fixes. The complete [Agent client](tests/agents-client.test.mjs), [Agent browser](tests/unit/agents-ui.test.mjs) and [messaging browser](tests/unit/messaging-ui.test.mjs) suites now pass **82/82**, with zero failures or skips. Web typechecking passed. See [commands and evidence limits](README.md#agent-interface-recovery-2026-10-07); this was synthetic, offline verification, not live model or production qualification.
+
+## 2026-10-06
+
+### Privacy Permissions And Reminder Cancellation Recovery
+
+- Finished the existing backend/web reminder-permission milestone before new Agent capabilities. Partial ten-page privacy scans now disclose incompleteness and link to manual reminder pagination; complete results still show the normal empty state. Failed reads and changed permissions invalidate stale take-back reviews without disturbing unrelated controls.
+- The linked Reminders page rejects wrong-target cancellation receipts and invalidates obsolete unsubmitted confirmations. Pending and unconfirmed cancellations keep their original target/payload for explicit retry, even after a later read shows the action completed. Valid suppression remains distinct from cancellation.
+- Added desktop/mobile regressions for those boundaries and preserved lost-response reconciliation. The 201st reminder remains reachable and cancellable. A reproduced doubled-text label defect now uses a short translated Retry label with a specific accessible name and tooltip; no shared token or style was changed.
+- Fresh evidence: **69/69 backend**, **51/51 browser**, **22/22 client/translation**, and web types. Final captured inputs stayed unchanged and matched shared inputs at completion; the earlier mixed-source attempt and browser/deadline failures remain recorded. Owned PostgreSQL schema/container cleanup was verified. [Commands, reports, screenshots and limits](README.md#privacy-permission-and-reminder-recovery-2026-10-07).
+- Recorded the owner's backend-and-website-only, old-tasks-first direction in the existing plan. Android, concurrent Agent feature files, backend permissions/schema, providers and shared data were untouched. This does not declare the entire product or privacy rollout complete.
+
+### Reviewed Space Agent Cost Sharing
+
+- Added authorized event-budget reads and explicitly reviewed equal/percentage/fixed-amount split plans to Space Agents. Main Agent remains excluded; contribution/share privacy and event-history permissions come from the existing domain service. No payments or inferred settlements.
+- Split plans always ask even in automatic mode. Execution rechecks the reviewed snapshot under the event lock and saves within the approval transaction; stale spending, removed participants, cancellation, rejection and lost-response retries are covered. Space definition version 6 and reversible migration 0058 preserve agent identities and run history; the shared backend was not migrated.
+- Larger groups retain every allocation within the existing ten-field review contract. Multiline review values now keep their line breaks, with desktop/mobile doubled-text, focus, target-size and retry checks.
+- Qualification: **414/414 affected backend**, **79/79 agent web/client**, **105/105 golden/supervisor self-tests**; web types, Ruff and editor checks pass. Fixed backend inputs and web hash evidence, overlapping focused checks, cleanup and the local-preview port race are recorded in the [delivery record](docs/COMMUNITY_AGENT_PLAN.md#shared-cost-space-agent-delivery-2026-10-07). Golden validates 47 requests offline; no live model score is claimed.
+- Recorded an [eight-role staffing proposal, manager duties and all 47 roadmap items](docs/PRODUCT_RESEARCH_2026-10-07.md#18-company-operating-plan-and-space-agent-delivery), separating implemented, future and externally gated work. Updated the [privacy data map](docs/PRIVACY_READINESS.md) for permitted budget context. Synthetic feedback remains explicitly synthetic; no staff were hired, real customers interviewed, background coding service enabled or release/legal approval invented.
+
+### Coordinated Verification And Workflow Reliability
+
+- Added the portable [verification entry point](scripts/verify.mjs), preserving all previous suites and Windows CLI usage. The default gate now includes offline golden checks. Linux execution, honest prerequisite failures, continued execution, logs/source evidence and strict JUnit counts are covered; Windows parsing/evidence checks were strengthened but Windows execution is not claimed.
+- Added a read-only [Linux/Windows repository workflow](.github/workflows/offline-verification.yml) for verifier/token/golden checks, with scoped report retention and no deployment or model access. Its configuration and safety contract pass locally; it has not been published or executed remotely.
+- Repaired timezone Retry completion and preservation of an intentional UTC selection, plus Space-settings reload conflict timing. Strengthened delayed-response, refused-reload and original-retry tests. Identity/events 45/45, Spaces 15/15 and Home 5/5 pass. A flaky Radix focus assertion was reproduced, then synchronized on the actual target; all original assertions and production navigation behavior remain.
+- Saved golden reports reject empty/unknown results, duplicate trials and missing explicitly selected cases. Repeated results now use the saved planned repeat/case counts so incomplete trials cannot claim full consistency. Five original report failures and two planned-repeat failures were reproduced before repair; merged golden checks pass 60/60 without live model calls.
+- The combined runner/token/golden/type/client gate passed 354 tests plus types; adding the workflow contract brings runner self-tests from 23 to 24. Realtime compatibility/deadline coverage passes 44/44 in an owned disposable database; migration/classification checks pass 20/20. No other session's containers or source changes were reverted.
+- Retained an incomplete browser capture (438 passes, eight failures) and a corrected derivative (115/115 affected checks, unchanged inputs). The latter adds missing backend/Android fixtures and only the proven focus-test correction, not application changes. Kept the separate whole-website and backend evidence intact. Four deleted records and the Windows-only device environment remain explicit failing/not-run gates; see [the checkpoint and next-work queue](README.md#coordinated-reliability-checkpoint-2026-10-07).
+- The bounded supervisor passes 33/33 self-tests. A real two-cycle integration passed once, then correctly stopped when concurrent instructions/documentation edits invalidated stable-source qualification despite passing checks. Its result and logs remain retained; no retry-to-green, daemon, remote publication or production action was performed.
+- Recovered the unresponsive local frontend from missing/empty Next.js manifests by restarting only the identified unhealthy preview with an isolated build label. Login returned HTTP 200; temporary TypeScript include additions were removed and typechecking passed. The shared cache, API/mail services and database were left intact; API-backed screens remain a separate availability gate.
+- A later operations check restored the existing Mailpit container and verified HTTP 200/SMTP 220 without sending mail. API startup remains blocked by missing migration metadata, unconfirmed encryption-key provenance and missing framework dependencies. No database migration/reset, replacement key, dependency download or worker startup was attempted; the frontend and mail preview remain available.
+
+### Golden Agent Selection Validation
+
+- Fixed false-success results in the [golden runner](scripts/agent-golden.mjs): unknown areas, missing option values and empty filter intersections now fail before execution. Valid filters still include entire conversation threads. Product permissions, approval rules and provider configuration are unchanged.
+- Six new offline CLI regressions failed on the original runner. The repaired [scorer and CLI suite](scripts/agent-golden.test.mjs) passes **20/20**, including an option supplied as another option's value and positive checks for default, area and follow-up selection. `npm run golden` validates **41 cases in 39 threads** without sending requests; the current web typecheck passes.
+- Verification began from the clean `development` snapshot `7d94559`, not the earlier working tree. The old preview watcher stopped after the checkout change; a fresh local preview serves `/login` with HTTP 200 without a configuration change. No live model evaluation, external provider call, stored-data change, native qualification or deployment was performed. The absent documentation map and task/decision records were not restored; the current commands and evidence are recorded in the [README](README.md#offline-agent-checks).
+
 ## 2026-10-03
+
+### Agent Build Plan (T180–T193)
+
+- **Agent build plan** written at the owner's request ("So, can you make a plan for building an agent?"). It has eight phases, from proving today's agent to adding a model. Each phase finishes with backend, web and Android evidence before the next begins ([plan](docs/AGENT_FEATURE_IDEAS_2026-10-03.md#5-build-plan-proposed), [tasks](docs/TASKS.md#agent-build-plan)).
+- T180, the evaluation set for today's agent, and T181, outcome counts on `/metrics`, are Ready because they change no product behaviour. T182–T193 are Blocked on the decisions they name, and each decision has a written recommendation. Conversation with a model remains T16 (Q17). No code, requirement or decision changed.
+
+### Agent Feature Ideas (Proposals Only)
+
+- **Agent feature ideas chapter** written at the owner's request ("this is right way to build agent please ready more ideas chapter feature how agent"). It explains how the built in-app agent works step by step, what is already right, and what is missing. It proposes 22 features for planning, documents, public communities, trust and recovery, Telugu and Hindi, evaluation, and later model use ([document](docs/AGENT_FEATURE_IDEAS_2026-10-03.md)).
+- Recorded as PROPOSED P53–P62, with new questions Q38–Q41, in the [Product Understanding](docs/PRODUCT_UNDERSTANDING.md#38-proposed-requirements). They are candidate answers to Q7. No requirement, decision, task, code or test changed. DEC-012 and DEC-028 remain provisional, and no model or provider is approved (Q17).
+
+### Android Community And Safety Message Accessibility (T117)
+
+- Blocked brings "Appeal sent." into view once at the top of its list. A followed-pages Load more failure stays after the retained pages with a visible Retry; the taller footer reveals itself after layout. Community errors/notices and owned/followed-list failures have polite live-region semantics. Existing strings, tokens, permissions and requests are unchanged.
+- Three corrected controls fail on the original app using the same final test APK as the fix. On 422 frozen inputs, **164/164 JVM tests**, lint with 0 errors, debug/test packaging and **41/41 offline device cases** pass, including actual 320 dp/200% text. Both full affected screen-test classes and seven prior T117 regressions passed without retries, failures or skips; font restored and owned emulator shut down.
+- **T117 completed**. The mixed-source build failure, startup ANRs, dialog-fixture correction, Compose opt-in failure and two interrupted device attempts remain in the [checkpoint](docs/BUILD_STATUS.md#android-community-and-safety-message-accessibility). Semantics assertions are not a full TalkBack audit; T169 integrated qualification and T168 performance work remain open.
 
 ### Event Budget Contributions (T173)
 

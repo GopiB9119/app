@@ -8,15 +8,23 @@ import { after, before, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { prepareRuntime } from '../../scripts/synthetic-api.mjs';
+
 const require = createRequire(new URL('../../web/package.json', import.meta.url));
 const { chromium } = require('playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const base = process.env.COMMUNITY_WEB_URL ?? 'http://127.0.0.1:3000';
-const mail = 'http://127.0.0.1:8025';
+const mail = process.env.COMMUNITY_MAIL_URL ?? 'http://127.0.0.1:8025';
 const password = 'Synthetic-Meadow-49!';
 let browser;
+let runtime;
 
 before(async () => {
+  if (process.env.COMMUNITY_SYNTHETIC_RUNTIME) {
+    runtime = prepareRuntime(process.env.COMMUNITY_SYNTHETIC_RUNTIME);
+    assert.equal(base, runtime.summary.webUrl);
+    assert.equal(mail, runtime.summary.mailUrl);
+  }
   browser = await chromium.launch({ executablePath: process.env.COMMUNITY_CHROMIUM_PATH, headless: true });
   await mkdir(path.join(root, '.local/screenshots'), { recursive: true });
 });
@@ -279,7 +287,12 @@ test('page insights: the owner sees totals that name nobody, live', { timeout: 3
 
 function operator(operation, email) {
   // DEC-024: an operator names platform moderators with a local command; there is no screen for it.
-  const result = spawnSync('docker', ['compose', '-f', 'infra/compose.yaml', 'exec', '-T', 'api', 'python3', '-m', 'app.cli', 'moderators', operation, email], { cwd: root, encoding: 'utf8', timeout: 120000 });
+  assert.ok(['add', 'remove'].includes(operation));
+  assert.match(email, /^limits-(first|second)-moderator-\d+@example\.test$/);
+  const args = ['-m', 'app.cli', 'moderators', operation, email];
+  const result = runtime
+    ? spawnSync(runtime.interpreter, ['-E', '-s', '-B', ...args], { cwd: runtime.snapshotRoot, env: runtime.env, encoding: 'utf8', timeout: 120000 })
+    : spawnSync('docker', ['compose', '-f', 'infra/compose.yaml', 'exec', '-T', 'api', 'python3', ...args], { cwd: root, encoding: 'utf8', timeout: 120000 });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}${result.error ?? ''}`);
 }
 
@@ -295,12 +308,15 @@ test('limited pages: a moderator limits a page, Discover drops it, comments paus
   for (const page of pages) page.on('pageerror', error => errors.push(error.message));
   const suffix = Date.now();
   const emails = ['owner', 'reader', 'first-moderator', 'second-moderator'].map(role => `limits-${role}-${suffix}@example.test`);
+  const moderators = [];
   // Runs even when the test times out, so no synthetic account keeps the moderator role.
-  t.after(() => { for (const email of emails.slice(2)) spawnSync('docker', ['compose', '-f', 'infra/compose.yaml', 'exec', '-T', 'api', 'python3', '-m', 'app.cli', 'moderators', 'remove', email], { cwd: root, timeout: 120000 }); });
+  t.after(() => { for (const email of moderators) operator('remove', email); });
   try {
     for (const [index, page] of pages.entries()) await signUp(page, emails[index]);
-    operator('add', emails[2]);
-    operator('add', emails[3]);
+    for (const email of emails.slice(2)) {
+      moderators.push(email);
+      operator('add', email);
+    }
     const accounts = await Promise.all(contexts.map(async context => (await (await context.request.get(`${base}/api/me`)).json()).data));
     const headers = accounts.map(account => ({ Origin: base, 'X-Account-ID': account.id }));
     const handle = `limits-${suffix}`;

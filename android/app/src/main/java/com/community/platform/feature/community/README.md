@@ -2,13 +2,19 @@
 
 Built: the **Community** screen, opened with **Discover** in the bottom bar or from Home ([DEC-014](../../../../../../../../../../docs/DECISIONS.md#accepted-decisions)). It has Feed (Following, Latest, Saved), Pages and posts (search pages or posts), your pages with drafts, publishing and editing, post details with comments, and likes, saves, follows, reports and blocks. The blocked list opens from Profile (**Blocked** on the account screen), without the Feed, Pages and posts and Your pages chips.
 
-Response limits (fixed [T06](../../../../../../../../../../docs/TASKS.md#defects-that-break-approved-requirements)): GET lists of posts or comments accept up to 512 KiB, a page's drafts up to 1.5 MiB and the block list up to 256 KiB; single pages, posts, page searches and all writes keep the 64 KiB limit. The sizes come from the stored maxima (names 80, post text 5,000, titles 120 and comments 2,000 characters, at up to 4 bytes each). Evidence: [public community checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#public-community-checkpoint) and [response limits checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#android-community-response-limits-checkpoint) (`CommunityTest`, 12 JVM tests). Post search: [post search checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#public-post-search-checkpoint) (2 more JVM tests, and `CommunityScreenTest` with 3 device tests of Discover on an emulator). Other community screens are not yet tested on a device.
+Response limits (fixed [T06](../../../../../../../../../../docs/TASKS.md#defects-that-break-approved-requirements)): GET lists of posts or comments accept up to 512 KiB, a page's drafts up to 1.5 MiB and the block list up to 256 KiB; single pages, posts, page searches and all writes keep the 64 KiB limit. The sizes come from the stored maxima (names 80, post text 5,000, titles 120 and comments 2,000 characters, at up to 4 bytes each). Evidence: [public community checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#public-community-checkpoint) and [response limits checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#android-community-response-limits-checkpoint) (`CommunityTest`, 12 JVM tests). Post search: [post search checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#public-post-search-checkpoint) (2 more JVM tests, and `CommunityScreenTest` with 3 device tests of Discover on an emulator). Current coverage: [T117 checkpoint](../../../../../../../../../../docs/BUILD_STATUS.md#android-community-and-safety-message-accessibility), with all 22 Community and 12 Moderation offline screen tests passing.
 
 Source chapters: 1, 2, 15.
 
 Feature inventory: pages, page-onboarding, page-roles, page-membership, following, posts-drafts, publication-review, media-posts, comments-replies, reactions, shares, saved-posts, topics-hashtags, page-analytics, scheduled-publication.
 
 See the [complete feature catalog](../../../../../../../../../../packages/feature-catalog/features.json). Future implementation files belong here as each feature is built.
+
+## Messages Stay Visible (T117)
+
+The Community host receives the moderation success value and renders it once at the top of Blocked, scrolling there after an appeal; `moderationHistory` no longer renders a second, off-screen success. The standalone moderation queue keeps its own success message. Your pages puts followed-list failures and Retry after the retained followed pages, beside Load more, and reveals the whole footer after layout. Community errors/notices and both page-list errors have polite live-region semantics.
+
+The three new acceptance cases fail on the original app and pass on the fixed app with the same final test APK. The [qualification](../../../../../../../../../../docs/BUILD_STATUS.md#android-community-and-safety-message-accessibility) includes real 320 dp/200% text, measured text layout, exact appeal target, unchanged retained pages, 164 JVM cases and the two full screen-test classes. These are local visibility/semantics checks, not a complete TalkBack audit.
 
 ## Post Editing Keeps The Opened Version (T77)
 

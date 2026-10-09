@@ -8,10 +8,13 @@ from app.modules.agents.schemas import (
     AgentMemoryView,
     AgentRunPage,
     AgentRunView,
+    AgentRunWebTextView,
     AgentToolView,
     CreateAgentRun,
     DeletedMemory,
+    EditAgentMemory,
     ResumeAgentRun,
+    RunFilter,
 )
 from app.modules.identity.api import envelope, token
 from app.modules.identity.schemas import Envelope, ErrorEnvelope
@@ -29,15 +32,21 @@ def create_run(request: Request, body: CreateAgentRun, idempotency_key: UUID = H
 
 
 @router.get("/agent-runs", response_model=AgentRunPage)
-def list_runs(request: Request, space_id: UUID, limit: int = Query(default=20, ge=1, le=50),
-              cursor: str | None = Query(default=None, max_length=2048)):
-    data, pagination = request.app.state.agents.list_runs(token(request), space_id, limit, cursor)
+def list_runs(request: Request, space_id: UUID | None = None, limit: int = Query(default=20, ge=1, le=50),
+              cursor: str | None = Query(default=None, max_length=2048), status: RunFilter = "all"):
+    # Without a Space: the person's Main Agent requests (DEC-060).
+    data, pagination = request.app.state.agents.list_runs(token(request), space_id, limit, cursor, status=status)
     return {**envelope(request, data), "pagination": pagination}
 
 
 @router.get("/agent-runs/{run_id}", response_model=Envelope[AgentRunView])
 def read_run(request: Request, run_id: UUID):
     return envelope(request, request.app.state.agents.read_run(token(request), run_id))
+
+
+@router.get("/agent-runs/{run_id}/web-text", response_model=Envelope[AgentRunWebTextView])
+def read_web_text(request: Request, run_id: UUID):
+    return envelope(request, request.app.state.agents.read_web_text(token(request), run_id))
 
 
 @router.post("/agent-runs/{run_id}/resume", response_model=Envelope[AgentRunView])
@@ -69,6 +78,12 @@ def list_memories(request: Request):
 @router.delete("/agent-memories/{memory_id}", response_model=Envelope[DeletedMemory])
 def delete_memory(request: Request, memory_id: UUID):
     return envelope(request, request.app.state.agents.delete_memory(token(request), memory_id))
+
+
+@router.patch("/agent-memories/{memory_id}", response_model=Envelope[AgentMemoryView])
+def edit_memory(request: Request, memory_id: UUID, body: EditAgentMemory, idempotency_key: UUID = Header(),
+                if_match: str | None = Header(default=None, max_length=160)):
+    return envelope(request, request.app.state.agents.edit_memory(token(request), memory_id, body, str(idempotency_key), if_match))
 
 
 @router.get("/agent-tools", response_model=Envelope[list[AgentToolView]])

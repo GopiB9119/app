@@ -6,6 +6,7 @@ from cryptography.fernet import InvalidToken
 from sqlalchemy import and_, func, or_, select
 
 from app.errors import DomainError
+from app.modules.discovery.live import announce_history
 from app.modules.events.models import SpaceEvent, SpaceEventResponse
 from app.modules.events.schemas import AttendeeView, EventCursor, EventDetail, SpaceEventView
 from app.modules.identity.models import OutboxEvent, User
@@ -17,6 +18,8 @@ MAX_UPCOMING_PER_SPACE = 100
 MAX_EVENT_DURATION = timedelta(days=14)
 MAX_EVENT_AHEAD = timedelta(days=731)
 CURSOR_MINUTES = 15
+# The only changes to an event that a search can show; answers and budgets are not among them.
+SEARCHED_ACTIONS = frozenset({"event.created", "event.updated", "event.cancelled"})
 
 
 def not_found(subject="Event"):
@@ -104,6 +107,8 @@ class EventService:
         database.add(OutboxEvent(
             id=identifier, event_type=action, actor_id=actor_id, aggregate_id=event.id, schema_version=1, created_at=now,
         ))
+        if action in SEARCHED_ACTIONS:
+            announce_history(database, event.space_id, event.admissions_before, "event")
 
     def present(self, database, events, membership, detail=False, now=None):
         if not events:

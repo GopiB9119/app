@@ -1,6 +1,7 @@
 package com.community.platform.feature.messaging
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
@@ -59,9 +61,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,6 +74,12 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.community.platform.DesignTokens
 import com.community.platform.R
+import com.community.platform.feature.agents.AgentCommand
+import com.community.platform.feature.agents.AgentExecutionRecords
+import com.community.platform.feature.agents.AgentProblem
+import com.community.platform.feature.agents.agentMessageProblem
+import com.community.platform.feature.agents.normalizedAgentMessage
+import com.community.platform.feature.agents.statusLabel
 import com.community.platform.feature.spaces.SpaceMemberDto
 import java.time.Instant
 import java.time.ZoneId
@@ -102,10 +112,21 @@ data class MessagingActions(
     val editDraft: (String) -> Unit = {},
     val cancelEdit: () -> Unit = {},
     val saveEdit: () -> Unit = {},
+    // Asking the agent with @agent (DEC-046): ask again about a request, or open the Agent on the chat's Space.
+    val askAgentAgain: (MessageDto) -> Unit = {},
+    val shareAgentAnswer: (MessageDto) -> Unit = {},
+    val openAgent: (String) -> Unit = {},
+    val openAgentReview: (String) -> Unit = {},
+    val closeAgentReview: () -> Unit = {},
+    val refreshAgentReview: () -> Unit = {},
+    val agentReviewAnswer: (String) -> Unit = {},
+    val answerAgentReview: () -> Unit = {},
+    val decideAgentReview: (Boolean) -> Unit = {},
+    val retryAgentReview: () -> Unit = {},
 )
 
 @Composable
-fun MessagingRoute(viewModel: MessagingViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit) {
+fun MessagingRoute(viewModel: MessagingViewModel, accountId: String, timezone: String, onBack: () -> Unit, onSessionLost: () -> Unit, onOpenAgent: (String) -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { viewModel.pause() }
@@ -119,7 +140,11 @@ fun MessagingRoute(viewModel: MessagingViewModel, accountId: String, timezone: S
         editFailed = viewModel::editFailed, askDelete = viewModel::askDelete, cancelDelete = viewModel::cancelDelete,
         confirmDelete = viewModel::confirmDelete, startReply = viewModel::startReply, cancelReply = viewModel::cancelReply,
         react = viewModel::react, startEdit = viewModel::startEdit, editDraft = viewModel::editDraft, cancelEdit = viewModel::cancelEdit,
-        saveEdit = viewModel::saveEdit,
+        saveEdit = viewModel::saveEdit, askAgentAgain = viewModel::askAgentAgain, shareAgentAnswer = viewModel::shareAgentAnswer, openAgent = onOpenAgent,
+        openAgentReview = viewModel::openAgentReview, closeAgentReview = viewModel::closeAgentReview,
+        refreshAgentReview = viewModel::refreshAgentReview, agentReviewAnswer = viewModel::agentReviewAnswer,
+        answerAgentReview = viewModel::answerAgentReview, decideAgentReview = viewModel::decideAgentReview,
+        retryAgentReview = viewModel::retryAgentReview,
     ), timezone, onBack)
 }
 
@@ -137,6 +162,7 @@ fun MessagingScreen(state: MessagingState, actions: MessagingActions, timezone: 
     var leaving by remember { mutableStateOf(false) }
     var stopKey by remember { mutableStateOf<String?>(null) }
     val time = remember(timezone) { formatter(timezone) }
+    val zone = remember(timezone) { try { ZoneId.of(timezone) } catch (_error: RuntimeException) { ZoneId.systemDefault() } }
     val back: () -> Unit = {
         when {
             chat == null -> onBack()
@@ -169,7 +195,7 @@ fun MessagingScreen(state: MessagingState, actions: MessagingActions, timezone: 
             val showProgress = if (chat == null) state.listLoading || state.opening || state.loadingMore else chat.loading || chat.loadingEarlier || chat.deleting != null
             if (showProgress) LinearProgressIndicator(Modifier.fillMaxWidth().height(3.dp)) else Spacer(Modifier.height(3.dp))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
-                if (chat == null) ConversationList(state, actions, time) else ChatPane(chat, actions, time, onStop = { stopKey = it })
+                if (chat == null) ConversationList(state, actions, time) else ChatPane(chat, actions, time, zone, onStop = { stopKey = it })
             }
         }
     }
@@ -183,7 +209,7 @@ fun MessagingScreen(state: MessagingState, actions: MessagingActions, timezone: 
     if (leaving && chat != null) AlertDialog(
         onDismissRequest = { leaving = false },
         title = { Text(stringResource(R.string.messages_leave_title)) },
-        text = { Text(stringResource(R.string.messages_leave_warning)) },
+        text = { Text(stringResource(if (chat.agentReview?.command != null) R.string.messages_agent_leave_warning else R.string.messages_leave_warning)) },
         confirmButton = { TextButton(onClick = { leaving = false; actions.close() }) { Text(stringResource(R.string.messages_leave)) } },
         dismissButton = { TextButton(onClick = { leaving = false }) { Text(stringResource(R.string.messages_stay)) } },
     )
@@ -266,7 +292,7 @@ private fun ConversationList(state: MessagingState, actions: MessagingActions, t
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeFormatter, onStop: (String) -> Unit) {
+private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeFormatter, zone: ZoneId, onStop: (String) -> Unit) {
     val list = rememberLazyListState()
     val newest = chat.messages.lastOrNull()?.id
     LaunchedEffect(newest, chat.pending.size) { if (list.firstVisibleItemIndex <= 2) list.scrollToItem(0) }
@@ -286,6 +312,7 @@ private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeF
             if (chat.earlierCursor != null) item("earlier") {
                 TextButton(onClick = actions.loadEarlier, enabled = !chat.loadingEarlier, modifier = Modifier.testTag("chat-earlier")) { Text(stringResource(R.string.messages_earlier)) }
             }
+            chat.agentReview?.let { review -> item("agent-review-${review.runId}") { AgentReviewPanel(review, actions, zone) } }
             item("notes") {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -306,14 +333,19 @@ private fun ChatPane(chat: ChatState, actions: MessagingActions, time: DateTimeF
 @Composable
 private fun MessageBubble(message: MessageDto, chat: ChatState, actions: MessagingActions, time: DateTimeFormatter) {
     Box(Modifier.fillMaxWidth(), contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart) {
+        // The agent's replies come from the Space's agent, not a member, so they look unlike people's messages (DEC-046).
         Surface(
-            color = if (message.mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+            color = when { message.fromAgent -> DesignTokens.Surface; message.mine -> MaterialTheme.colorScheme.primaryContainer; else -> MaterialTheme.colorScheme.surfaceVariant },
+            border = if (message.fromAgent) BorderStroke(1.dp, DesignTokens.Accent) else null,
             shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(0.86f).testTag("message-${message.position}"),
         ) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (message.mine) stringResource(R.string.messages_you) else message.senderName, style = MaterialTheme.typography.labelLarge)
+                        if (message.fromAgent) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("message-agent-${message.position}")) {
+                            Icon(Icons.Default.Face, null, Modifier.size(16.dp), tint = DesignTokens.Accent); Spacer(Modifier.width(6.dp))
+                            Text(stringResource(R.string.messages_agent_name), style = MaterialTheme.typography.labelLarge)
+                        } else Text(if (message.mine) stringResource(R.string.messages_you) else message.senderName, style = MaterialTheme.typography.labelLarge)
                         Text(time.display(message.createdAt), style = MaterialTheme.typography.labelSmall)
                         if (message.editedAt != null && message.status != "deleted") Text(stringResource(R.string.messages_edited), style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("message-edited-${message.position}"))
                     }
@@ -321,7 +353,7 @@ private fun MessageBubble(message: MessageDto, chat: ChatState, actions: Messagi
                         Icon(Icons.Default.Delete, stringResource(R.string.messages_delete))
                     }
                 }
-                message.replyTo?.let { Quote(it) }
+                message.replyTo?.let { reply -> Quote(reply, fromAgent = chat.messages.any { it.id == reply.messageId && it.fromAgent }) }
                 when {
                     chat.editing == message.id -> {
                         val problem = messageProblem(chat.editDraft)
@@ -337,7 +369,138 @@ private fun MessageBubble(message: MessageDto, chat: ChatState, actions: Messagi
                     message.status == "deleted" -> Text(stringResource(R.string.messages_deleted), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
                     else -> Text(stringResource(R.string.messages_unavailable), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                 }
+                AgentStatus(message, chat, actions)
                 Reactions(message, chat, actions)
+            }
+        }
+    }
+}
+
+/** What became of the person's own @agent request and where to go next; an answer in the chat needs no note (DEC-046). */
+@Composable
+private fun AgentStatus(message: MessageDto, chat: ChatState, actions: MessagingActions) {
+    val status = message.agentRequest?.status ?: return
+    if (status == "answered" || message.status != "sent") return
+    val text = stringResource(when (status) {
+        "private" -> R.string.messages_agent_private
+        "waiting" -> R.string.messages_agent_waiting
+        "pending" -> R.string.messages_agent_pending
+        "off" -> R.string.messages_agent_off
+        "limited" -> R.string.messages_agent_limited
+        "too_long" -> R.string.messages_agent_too_long
+        else -> R.string.messages_agent_failed
+    })
+    Column(Modifier.testTag("agent-status-${message.position}")) {
+        var sharing by remember { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Face, null, Modifier.size(15.dp), tint = DesignTokens.Muted); Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.bodySmall, color = DesignTokens.Muted, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        }
+        when (status) {
+            "private", "waiting" -> if (message.mine) TextButton(onClick = { actions.openAgentReview(message.id) },
+                enabled = chat.conversation.kind == "space" && chat.acting == null,
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-open-${message.position}")) { Text(stringResource(R.string.messages_agent_review)) }
+            "pending", "failed" -> TextButton(onClick = { actions.askAgentAgain(message) }, enabled = chat.acting == null && chat.conversation.canSend,
+                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-ask-again-${message.position}")) { Text(stringResource(R.string.messages_agent_ask_again)) }
+        }
+        if (status == "private" && message.mine && message.agentRequest?.runId != null) TextButton(onClick = { sharing = true },
+            enabled = chat.acting == null && chat.conversation.canSend,
+            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-share-${message.position}")) { Text(stringResource(R.string.messages_agent_share)) }
+        if (sharing) AlertDialog(onDismissRequest = { sharing = false },
+            title = { Text(stringResource(R.string.messages_agent_share_title)) },
+            text = { Text(stringResource(R.string.messages_agent_share_text)) },
+            confirmButton = { TextButton(onClick = { sharing = false; actions.shareAgentAnswer(message) },
+                modifier = Modifier.testTag("agent-share-confirm")) { Text(stringResource(R.string.messages_agent_share_confirm)) } },
+            dismissButton = { TextButton(onClick = { sharing = false }) { Text(stringResource(R.string.messages_agent_keep_private)) } },
+            modifier = Modifier.testTag("agent-share-dialog"))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AgentReviewPanel(review: AgentReviewState, actions: MessagingActions, zone: ZoneId) {
+    val run = review.run
+    Surface(
+        color = DesignTokens.Surface,
+        border = BorderStroke(1.dp, DesignTokens.Border),
+        shape = RoundedCornerShape(DesignTokens.DialogRadius),
+        modifier = Modifier.fillMaxWidth().testTag("agent-review-${review.runId}"),
+    ) {
+        Column(Modifier.padding(DesignTokens.SpaceUnit * 4), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.messages_agent_review_title), style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f).semantics { heading() }.testTag("agent-review-title"))
+                IconButton(onClick = actions.closeAgentReview, modifier = Modifier.testTag("agent-review-close")) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.messages_agent_review_close))
+                }
+            }
+            Text(review.run?.message.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+            if (run == null && review.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            run?.let { current ->
+                Text(statusLabel(current), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("agent-review-status-${current.id}"))
+                current.answer?.let { answer -> Text(answer, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("agent-review-answer-${current.id}")) }
+                current.question?.let { question ->
+                    val answerProblem = agentMessageProblem(normalizedAgentMessage(review.answer))
+                    Text(question.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("agent-review-question-${current.id}"))
+                    val answering = review.command as? AgentCommand.Answer
+                    OutlinedTextField(
+                        value = answering?.answer ?: review.answer,
+                        onValueChange = actions.agentReviewAnswer,
+                        enabled = !review.loading && !review.working && review.command == null,
+                        isError = review.answer.isNotEmpty() && answerProblem != null,
+                        label = { Text(stringResource(R.string.agent_answer_label)) },
+                        maxLines = 3,
+                        supportingText = {
+                            when (answerProblem) {
+                                AgentProblem.EMPTY -> Text(stringResource(R.string.agent_problem_empty))
+                                AgentProblem.TOO_LONG -> Text(stringResource(R.string.agent_problem_long))
+                                AgentProblem.CONTROL -> Text(stringResource(R.string.agent_problem_control))
+                                null -> Unit
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("agent-review-answer-field"),
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                        Button(
+                            onClick = if (answering != null) actions.retryAgentReview else actions.answerAgentReview,
+                            enabled = !review.loading && !review.working && (answering != null || review.command == null && answerProblem == null),
+                            modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-review-answer-submit"),
+                        ) { Text(stringResource(if (answering != null) R.string.agent_try_again else R.string.agent_answer)) }
+                    }
+                }
+                current.approval?.let { approval ->
+                    HorizontalDivider(color = DesignTokens.Border)
+                    Text(if (current.awaitingApproval) stringResource(R.string.agent_check) else approval.summary,
+                        style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() }.testTag("agent-review-approval-${current.id}"))
+                    approval.fields.forEachIndexed { index, field ->
+                        Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.testTag("agent-review-field-${current.id}-$index")) {
+                            Text(field.label, style = MaterialTheme.typography.bodySmall, color = DesignTokens.Muted)
+                            Text(field.value, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    if (current.awaitingApproval) {
+                        val deciding = review.command as? AgentCommand.Decide
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                            Button(
+                                onClick = if (deciding?.approve == true) actions.retryAgentReview else { { actions.decideAgentReview(true) } },
+                                enabled = !review.loading && !review.working && (review.command == null || deciding?.approve == true),
+                                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-review-approve"),
+                            ) { Text(stringResource(if (deciding?.approve == true) R.string.agent_approve_again else R.string.agent_approve)) }
+                            OutlinedButton(
+                                onClick = if (deciding?.approve == false) actions.retryAgentReview else { { actions.decideAgentReview(false) } },
+                                enabled = !review.loading && !review.working && (review.command == null || deciding?.approve == false),
+                                modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-review-reject"),
+                            ) { Text(stringResource(if (deciding?.approve == false) R.string.agent_try_again else R.string.agent_reject)) }
+                        }
+                    }
+                }
+                AgentExecutionRecords(current, zone)
+            }
+            review.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("agent-review-error")) }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 2)) {
+                TextButton(onClick = actions.refreshAgentReview, enabled = !review.loading && !review.working,
+                    modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("agent-review-refresh")) { Text(stringResource(R.string.agent_check_again)) }
             }
         }
     }
@@ -356,9 +519,9 @@ private fun reactionName(reaction: String): String = stringResource(when (reacti
 })
 
 @Composable
-private fun Quote(reply: ReplyDto) {
+private fun Quote(reply: ReplyDto, fromAgent: Boolean = false) {
     val text = when (reply.status) {
-        "sent" -> "${reply.senderName}: ${reply.excerpt}"
+        "sent" -> "${if (fromAgent) stringResource(R.string.messages_agent_name) else reply.senderName}: ${reply.excerpt}"
         "deleted" -> stringResource(R.string.messages_quote_deleted)
         else -> stringResource(R.string.messages_quote_hidden)
     }
@@ -432,7 +595,7 @@ private fun Composer(chat: ChatState, actions: MessagingActions) {
     val length = normalizeMessage(chat.draft).let { it.codePointCount(0, it.length) }
     chat.replyingTo?.let { original ->
         Row(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("reply-bar"), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.messages_replying_to, if (original.mine) stringResource(R.string.messages_you) else original.senderName) + ": " + original.body.orEmpty(),
+            Text(stringResource(R.string.messages_replying_to, when { original.fromAgent -> stringResource(R.string.messages_agent_name); original.mine -> stringResource(R.string.messages_you); else -> original.senderName }) + ": " + original.body.orEmpty(),
                 style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             TextButton(onClick = actions.cancelReply, modifier = Modifier.heightIn(min = DesignTokens.MinimumTarget).testTag("reply-cancel")) { Text(stringResource(R.string.messages_reply_cancel)) }
         }
@@ -442,11 +605,14 @@ private fun Composer(chat: ChatState, actions: MessagingActions) {
             value = chat.draft, onValueChange = actions.draft, label = { Text(stringResource(R.string.messages_composer)) },
             isError = problem != null, minLines = 1, maxLines = 5, enabled = !chat.loading,
             supportingText = {
-                Text(when (problem) {
-                    MessageProblem.TOO_LONG -> pluralStringResource(R.plurals.messages_problem_long, MAX_MESSAGE_CHARACTERS, MAX_MESSAGE_CHARACTERS)
-                    MessageProblem.CONTROL -> stringResource(R.string.messages_problem_control)
-                    else -> stringResource(R.string.messages_count, length, MAX_MESSAGE_CHARACTERS)
-                })
+                Column {
+                    Text(when (problem) {
+                        MessageProblem.TOO_LONG -> pluralStringResource(R.plurals.messages_problem_long, MAX_MESSAGE_CHARACTERS, MAX_MESSAGE_CHARACTERS)
+                        MessageProblem.CONTROL -> stringResource(R.string.messages_problem_control)
+                        else -> stringResource(R.string.messages_count, length, MAX_MESSAGE_CHARACTERS)
+                    })
+                    if (problem == null && mentionsAgent(chat.draft)) Text(stringResource(R.string.messages_agent_hint), modifier = Modifier.testTag("agent-hint"))
+                }
             },
             modifier = Modifier.weight(1f).testTag("message-composer"),
         )

@@ -197,9 +197,10 @@ test('English is the default and preserves the shared shell and sign-in names', 
     assert.equal(await page.getByRole('button', { name: 'Sign in', exact: true }).count(), 1);
     assert.equal(await page.getByRole('button', { name: 'Show password', exact: true }).getAttribute('title'), 'Show password');
     assert.equal(await page.getByRole('navigation', { name: 'Account access', exact: true }).count(), 1);
-    for (const label of ['Community Platform home', 'Discover pages', 'Forgot your password?', 'Test inbox']) assert.equal(await page.getByRole('link', { name: label, exact: true }).count(), 1);
-    assert.equal(await page.getByText('Local test environment', { exact: true }).count(), 1);
-    assert.equal(await page.getByText('Community Platform / Local build', { exact: true }).count(), 1);
+    for (const label of ['Community Platform home', 'Discover pages', 'Forgot your password?']) assert.equal(await page.getByRole('link', { name: label, exact: true }).count(), 1);
+    assert.equal(await page.getByRole('link', { name: 'Test inbox', exact: true }).count(), 0);
+    assert.equal(await page.getByText('Local test environment', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('Community Platform / Local build', { exact: true }).count(), 0);
     assert.equal(await page.getByRole('combobox', { name: 'Language', exact: true }).inputValue(), 'en');
     assert.deepEqual(await page.locator('.language-picker option').evaluateAll(options => options.map(option => [option.value, option.textContent, option.lang])), [['en', 'English', 'en'], ['te', 'తెలుగు', 'te'], ['hi', 'हिन्दी', 'hi']]);
     assert.equal(await page.locator('html').getAttribute('lang'), 'en');
@@ -212,6 +213,24 @@ test('English is the default and preserves the shared shell and sign-in names', 
     assertClean(result);
   } finally { await context.close(); }
 });
+
+for (const language of ['en', 'te', 'hi']) {
+  test(`${language}: the shared website has no development labels or test-service links`, async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const result = await fixture(context, { language, mode: 'account' });
+      const { page } = result;
+      await page.getByRole('heading', { name: texts[language]['account.heading'], exact: true }).waitFor();
+      assert.equal(await page.locator('.environment, .inbox-link').count(), 0);
+      assert.equal(await page.locator('a[href="http://127.0.0.1:8025"]').count(), 0);
+      assert.equal(await page.locator('.app-footer').getByText(/local|test|లోకల్|పరీక్ష|लोकल|टेस्ट/i).count(), 0);
+      assert.equal(await page.getByRole('combobox', { name: texts[language]['language.label'], exact: true }).count(), 1);
+      assert.equal(await page.getByRole('navigation', { name: texts[language]['nav.main'], exact: true }).getByRole('link').count(), 5);
+      await assertFits(page, `${language} clear website wording`);
+      assertClean(result);
+    } finally { await context.close(); }
+  });
+}
 
 for (const language of ['te', 'hi']) {
   test(`${language}: the footer switches sign-in and navigation immediately and stores a one-year cookie`, async () => {

@@ -174,6 +174,10 @@ def test_classification_takes_only_current_terms_within_the_limits(client, app):
         assert attempt(**classification).status_code == 422, classification
     gossip = create_page(client, owner, handle="garden-help", name="Garden Help", topic="gossip")
     assert gossip.status_code == 422 and gossip.json()["error"]["code"] == "TERM_UNAVAILABLE"
+    at_limit = create_page(client, owner, handle="long-topic", name="Long Topic", topic="a" * 20)
+    assert at_limit.status_code == 422 and at_limit.json()["error"]["code"] == "TERM_UNAVAILABLE"
+    long_topic = create_page(client, owner, handle="long-topic", name="Long Topic", topic="a" * 21)
+    assert long_topic.status_code == 422 and long_topic.json()["error"]["code"] == "VALIDATION_ERROR"
     with app.state.sessions() as database:
         assert database.scalar(select(func.count()).select_from(PublicPage)) == 0
         assert database.scalar(select(func.count()).select_from(PageTerm)) == 0
@@ -365,14 +369,19 @@ def test_an_erased_page_loses_its_classification(client, app):
     owner = account(client, app)
     club = page(client, owner, "compost-club", "support", interests=["composting"], languages=["te"])
     assert delete(client, owner, club, etag=club["etag"]).status_code == 200
+    assert app.state.page_lifecycle.purge_due() == {"purged": 0}
+    with app.state.sessions() as database:
+        assert database.scalar(select(func.count()).select_from(PageTerm)) == 2
+        assert database.get(PublicPage, club["id"]).topic == "support"
     advance(app, days=7, minutes=1)
+    expired = create_page(client, owner, handle="expired-session", name="Expired Session", topic="support")
+    assert expired.status_code == 401 and expired.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
     assert app.state.page_lifecycle.purge_due() == {"purged": 1}
     with app.state.sessions() as database:
         assert database.scalar(select(func.count()).select_from(PageTerm)) == 0
         # A support or health topic would say something about the owner, so the erased page keeps none.
         assert database.get(PublicPage, club["id"]).topic == "other"
-    long_topic = create_page(client, owner, handle="long-topic", name="Long Topic", topic="a" * 21)
-    assert long_topic.status_code == 422
+
 
 def test_openapi_declares_the_vocabulary_public_and_choices_private(client):
     schema = client.get("/openapi.json").json()

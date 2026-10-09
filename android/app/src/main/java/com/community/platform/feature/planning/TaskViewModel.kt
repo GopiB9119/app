@@ -44,6 +44,8 @@ data class TaskWorkspaceState(
     val spaceCursor: String? = null,
     val selectedSpace: FamilySpaceDto? = null,
     val tasks: List<TaskRecord> = emptyList(),
+    val openedFromSearchId: String? = null,
+    val searchItemGone: Boolean = false,
     val nextCursor: String? = null,
     val statusFilter: String? = null,
     /** null is anyone; "me" or "none". */
@@ -71,14 +73,17 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
     private var generation = 0L
     private var work: Job? = null
     private var entrySpaceId: String? = null
+    private var entryTaskId: String? = null
     internal var today: () -> LocalDate = { LocalDate.now() }
 
-    fun bind(accountId: String?, initialSpaceId: String? = null) {
+    fun bind(accountId: String?, initialSpaceId: String? = null, initialTaskId: String? = null) {
         val requestedSpaceId = if (accountId == null) null else initialSpaceId
-        if (accountId == mutableState.value.accountId && requestedSpaceId == entrySpaceId) return
+        val requestedTaskId = if (accountId == null) null else initialTaskId
+        if (accountId == mutableState.value.accountId && requestedSpaceId == entrySpaceId && requestedTaskId == entryTaskId) return
         generation += 1
         work?.cancel()
         entrySpaceId = requestedSpaceId
+        entryTaskId = requestedTaskId
         mutableState.value = TaskWorkspaceState(accountId = accountId)
         if (accountId != null) refresh()
     }
@@ -196,6 +201,18 @@ class TaskViewModel @Inject constructor(private val repository: TaskRepository) 
         val current = mutableState.value
         val page = repository.tasks(accountId, spaceId, cursor, current.statusFilter, filters(current))
         update(expected) { it.copy(tasks = ((if (cursor == null) emptyList() else it.tasks) + page.items).distinctBy { item -> item.task.id }, nextCursor = page.nextCursor) }
+        val target = entryTaskId?.takeIf { spaceId == entrySpaceId && current.statusFilter == null && current.assigneeFilter == null && current.dueFilter == null }
+        if (target == null) {
+            update(expected) { it.copy(openedFromSearchId = null, searchItemGone = false) }
+            return
+        }
+        try {
+            val record = mutableState.value.tasks.firstOrNull { it.task.id == target } ?: repository.read(accountId, spaceId, target)
+            update(expected) { it.copy(tasks = listOf(record) + it.tasks.filterNot { item -> item.task.id == target }, openedFromSearchId = target, searchItemGone = false) }
+        } catch (error: IdentityFailure) {
+            if (error.status !in setOf(403, 404)) throw error
+            update(expected) { it.copy(openedFromSearchId = null, searchItemGone = true) }
+        }
     }
 
     fun loadMore() {

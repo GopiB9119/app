@@ -15,6 +15,7 @@ import { problemText, sessionLost, useViewer } from "@/features/community/shared
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { MessageId, MessageValues } from "@/features/i18n/messages";
 import { spacesSchema } from "@/features/spaces/client";
+import { SpaceHeader } from "@/features/spaces/space-header";
 import { eventAlert, eventLeads, setEventAlert } from "@/features/notifications/alerts-client";
 import type { EventLead } from "@/features/notifications/alerts-client";
 import {
@@ -23,6 +24,8 @@ import {
 } from "./client";
 import type { CreateIntent, EventForm, EventFormProblems, EventResponse, SpaceEvent } from "./client";
 import { EventBudget } from "./budget-panel";
+import { EventPolls } from "./polls";
+import type { PollWork } from "./polls";
 import styles from "./events.module.css";
 
 type When = "upcoming" | "past";
@@ -69,7 +72,7 @@ function serverFormProblems(error: unknown): EventFormProblems {
   return problems;
 }
 
-export function EventsScreen({ initialSpaceId }: { initialSpaceId: string }) {
+export function EventsScreen({ initialSpaceId, initialEventId = "" }: { initialSpaceId: string; initialEventId?: string }) {
   const t = useText();
   const viewer = useViewer();
   useEffect(() => { if (viewer.signedOut) window.location.replace("/login"); }, [viewer.signedOut]);
@@ -79,19 +82,23 @@ export function EventsScreen({ initialSpaceId }: { initialSpaceId: string }) {
   if (!viewer.account) {
     return <Shell account><main className={styles.main}><h1>{t("events.unavailable")}</h1><p role="alert">{problemText(viewer.error, t("events.loadProblem"), t)}</p><button className="secondary-button" onClick={viewer.retry}><RefreshCw size={17} aria-hidden />{t("events.retry")}</button></main></Shell>;
   }
-  return <Events key={viewer.account.id} user={viewer.account} initialSpaceId={initialSpaceId} />;
+  return <Events key={viewer.account.id} user={viewer.account} initialSpaceId={initialSpaceId} initialEventId={initialEventId} />;
 }
 
-function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: string }) {
+function Events({ user, initialSpaceId, initialEventId }: { user: Account; initialSpaceId: string; initialEventId: string }) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
   const zone = useMemo(browserZone, []);
   const [chosenSpace, setChosenSpace] = useState(initialSpaceId);
   const [when, setWhen] = useState<When>("upcoming");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialEventId || null);
   const [creating, setCreating] = useState(false);
-  const [editorGuard, setEditorGuard] = useState<EditorGuard | null>(null);
+  const [formGuard, setEditorGuard] = useState<EditorGuard | null>(null);
+  const [pollWork, setPollWork] = useState<Record<string, PollWork | null>>({});
+  const pollBusy = Object.values(pollWork).some(work => work?.state === "sending");
+  const unconfirmedPoll = Object.values(pollWork).some(work => work?.state === "unknown");
+  const editorGuard = useMemo(() => ({ busy: Boolean(formGuard?.busy || pollBusy), message: formGuard?.message ?? null }), [formGuard, pollBusy]);
   const spaces = useQuery({
     queryKey: ["spaces", user.id],
     queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }),
@@ -99,6 +106,7 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   const spaceList = spaces.data?.data ?? [];
   const firstSpaceId = spaceList[0]?.id ?? "";
   const spaceId = chosenSpace ? spaceList.find(space => space.id === chosenSpace)?.id ?? "" : firstSpaceId;
+  const selectedSpace = spaceList.find(space => space.id === spaceId);
   useEffect(() => { if (!chosenSpace && firstSpaceId) setChosenSpace(firstSpaceId); }, [chosenSpace, firstSpaceId]);
   const list = useInfiniteQuery({
     queryKey: ["events", user.id, spaceId, when],
@@ -117,6 +125,12 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["events", user.id, spaceId] }); };
   const events = list.data?.pages.flatMap(page => page.data) ?? [];
   const chooseSpace = (value: string) => { if (value === spaceId || !mayLeaveEditor(editorGuard)) return; setChosenSpace(value); setSelectedId(null); setCreating(false); };
+  useEffect(() => {
+    if (!unconfirmedPoll) return;
+    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", unload);
+    return () => window.removeEventListener("beforeunload", unload);
+  }, [unconfirmedPoll]);
   useEffect(() => {
     if (!editorGuard?.busy && !editorGuard?.message) return;
     const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -144,6 +158,7 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
             if (selectedId) {
               void queryClient.invalidateQueries({ queryKey: ["event", user.id, selectedId] });
               void queryClient.invalidateQueries({ queryKey: ["eventBudget", user.id, selectedId] });
+              void queryClient.invalidateQueries({ queryKey: ["eventPolls", user.id, selectedId] });
             }
           }}><RefreshCw size={18} className={spaces.isFetching || list.isFetching ? "spin" : ""} aria-hidden /></button>
           {spaceId && !creating && <button className="primary-button" disabled={editorGuard?.busy} onClick={() => { if (!mayLeaveEditor(editorGuard)) return; setCreating(true); setSelectedId(null); }}><CalendarPlus size={18} aria-hidden />{t("events.new")}</button>}
@@ -161,8 +176,10 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
           {(["upcoming", "past"] as const).map(value => <button key={value} className={styles.tab} aria-pressed={when === value} disabled={editorGuard?.busy} onClick={() => { if (when === value || !mayLeaveEditor(editorGuard)) return; setWhen(value); setSelectedId(null); setCreating(false); }}>{value === "upcoming" ? t("events.upcoming") : t("events.past")}</button>)}
         </div>
       </div>}
+      {selectedSpace && <SpaceHeader space={selectedSpace} current="events" />}
       {creating && spaceId && <EventEditor user={user} spaceId={spaceId} zone={zone} onGuard={setEditorGuard} onClose={() => { setCreating(false); refresh(); }} onSaved={event => { setCreating(false); setWhen("upcoming"); setSelectedId(event.id); refresh(); }} />}
-      {selectedId && spaceId && <EventPanel key={selectedId} user={user} eventId={selectedId} zone={zone} onGuard={setEditorGuard} onClose={() => setSelectedId(null)} onChanged={refresh} />}
+      {selectedId && spaceId && <EventPanel key={selectedId} user={user} eventId={selectedId} zone={zone} focusOnOpen={Boolean(initialEventId) && selectedId === initialEventId} onGuard={setEditorGuard} onClose={() => setSelectedId(null)} onChanged={refresh}
+        pollWork={pollWork[selectedId] ?? null} onPollWork={work => setPollWork(current => ({ ...current, [selectedId]: work }))} />}
       {spaceId && <section aria-labelledby="event-list-title">
         <h2 id="event-list-title" className={styles.listTitle}>{when === "upcoming" ? t("events.upcomingTitle") : t("events.pastTitle")}</h2>
         {list.isPending && <p aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("events.loading")}</p>}
@@ -193,14 +210,19 @@ function Events({ user, initialSpaceId }: { user: Account; initialSpaceId: strin
   </Shell>;
 }
 
-function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user: Account; eventId: string; zone: string; onClose: () => void; onChanged: () => void; onGuard: GuardChange }) {
+function EventPanel({ user, eventId, zone, focusOnOpen = false, onClose, onChanged, onGuard, pollWork, onPollWork }: {
+  user: Account; eventId: string; zone: string; focusOnOpen?: boolean; onClose: () => void; onChanged: () => void; onGuard: GuardChange;
+  pollWork: PollWork | null; onPollWork: (work: PollWork | null) => void;
+}) {
   const t = useText();
   const { language } = useLanguage();
   const queryClient = useQueryClient();
   const titleId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
   const [editing, setEditing] = useState<SpaceEvent | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
-  const detail = useQuery({ queryKey: ["event", user.id, eventId], queryFn: ({ signal }) => readEvent(user.id, eventId, signal) });
+  const detail = useQuery({ queryKey: ["event", user.id, eventId], queryFn: ({ signal }) => readEvent(user.id, eventId, signal), staleTime: 0 });
+  const pollBusy = pollWork?.state === "sending";
   // A read that started before the change would otherwise land afterwards and show the old event again.
   const store = async (event: SpaceEvent) => {
     await queryClient.cancelQueries({ queryKey: ["event", user.id, eventId] });
@@ -211,12 +233,20 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
   const cancel = useMutation({ mutationFn: (event: SpaceEvent) => cancelEvent(user.id, event), onSuccess: event => {
     setConfirmCancel(false);
     void queryClient.invalidateQueries({ queryKey: ["eventBudget", user.id, eventId] });
+    void queryClient.invalidateQueries({ queryKey: ["eventPolls", user.id, eventId] });
     return store(event);
   } });
   useEffect(() => {
     const problem = detail.error ?? respond.error ?? cancel.error;
     if (sessionLost(problem)) { queryClient.clear(); window.location.replace("/login"); }
   }, [detail.error, respond.error, cancel.error, queryClient]);
+  // Opened from a search result: bring the event into view and put the reader on it once it has loaded (DEC-051).
+  const loaded = detail.isSuccess;
+  useEffect(() => {
+    if (!focusOnOpen || !loaded) return;
+    heading.current?.scrollIntoView({ block: "start" });
+    heading.current?.focus();
+  }, [focusOnOpen, loaded]);
   if (editing && (!detail.isError || isUnknown(detail.error))) {
     return <EventEditor user={user} spaceId={editing.space_id} zone={zone} existing={editing} onGuard={onGuard} readError={detail.error}
       onClose={() => setEditing(null)} onReload={() => { setEditing(null); void detail.refetch(); }}
@@ -235,8 +265,8 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
   const counts = { going: event.going, maybe: event.maybe, notGoing: event.not_going };
   return <section className={styles.panel} aria-labelledby={titleId}>
     <div className={styles.panelHeader}>
-      <h2 id={titleId}>{event.title}</h2>
-      <button className="icon-button" aria-label={t("events.closeEvent")} title={t("events.closeEvent")} onClick={onClose}><X size={18} aria-hidden /></button>
+      <h2 id={titleId} ref={heading} tabIndex={-1}>{event.title}</h2>
+      <button className="icon-button" aria-label={t("events.closeEvent")} title={t("events.closeEvent")} disabled={pollBusy} onClick={onClose}><X size={18} aria-hidden /></button>
     </div>
     {event.status === "cancelled" && <p className={styles.notice} role="status">{t("events.cancelledNotice")}</p>}
     {event.status === "scheduled" && event.ended && <p className={styles.notice}>{t("events.ended")}</p>}
@@ -250,7 +280,7 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
       {event.my_response_outdated && <p className={styles.notice} role="status">{t("events.outdated")}</p>}
       <div className={styles.tabs} role="group" aria-label={t("events.yourResponse")}>
         {RESPONSES.map(value => <button key={value} className={styles.tab} aria-pressed={event.my_response === value && !event.my_response_outdated}
-          disabled={respond.isPending} onClick={() => respond.mutate(value)}>{t(responseLabels[value])}</button>)}
+          disabled={respond.isPending || pollBusy} onClick={() => respond.mutate(value)}>{t(responseLabels[value])}</button>)}
       </div>
       {respond.isPending && <p role="status">{t("events.savingResponse")}</p>}
       {respond.isError && <p role="alert">{problemText(respond.error, t("events.responseProblem"), t)}{isUnknown(respond.error) ? ` ${t("events.chooseAgain")}` : ""}</p>}
@@ -268,16 +298,18 @@ function EventPanel({ user, eventId, zone, onClose, onChanged, onGuard }: { user
     })}</ul>
       : <p className={styles.meta}>{t("events.noResponses")}</p>}
     {event.can_manage && <div className={styles.actions}>
-      <button className="secondary-button" onClick={() => setEditing(event)}><Pencil size={16} aria-hidden />{t("events.edit")}</button>
-      {!confirmCancel && <button className="secondary-button" onClick={() => setConfirmCancel(true)}><Ban size={16} aria-hidden />{t("events.cancel")}</button>}
+      <button className="secondary-button" disabled={pollBusy} onClick={() => setEditing(event)}><Pencil size={16} aria-hidden />{t("events.edit")}</button>
+      {!confirmCancel && <button className="secondary-button" disabled={pollBusy} onClick={() => setConfirmCancel(true)}><Ban size={16} aria-hidden />{t("events.cancel")}</button>}
     </div>}
     {confirmCancel && <div className={styles.confirm} role="group" aria-label={t("events.confirmCancellation")}>
       <p>{t("events.cancelText", { title: event.title, space: event.space_name })}</p>
-      <button className="primary-button" disabled={cancel.isPending} onClick={() => cancel.mutate(event)}>{cancel.isPending ? t("events.cancelling") : t("events.cancelConfirm")}</button>
+      <button className="primary-button" disabled={cancel.isPending || pollBusy} onClick={() => cancel.mutate(event)}>{cancel.isPending ? t("events.cancelling") : t("events.cancelConfirm")}</button>
       <button className="secondary-button" disabled={cancel.isPending} onClick={() => { setConfirmCancel(false); cancel.reset(); }}>{t("events.keep")}</button>
       {cancel.isError && <p role="alert">{problemText(cancel.error, t("events.cancelProblem"), t)}{cancel.error && "code" in cancel.error && cancel.error.code === "EVENT_CHANGED" ? ` ${t("events.reviewLatest")}` : ""}</p>}
       {cancel.isError && <button className="text-button" onClick={() => { setConfirmCancel(false); cancel.reset(); void detail.refetch(); }}>{t("events.reload")}</button>}
     </div>}
+    <EventPolls accountId={user.id} event={event} eventReady={!detail.isFetching && !cancel.isPending} work={pollWork} onWork={onPollWork}
+      onRefreshEvent={async () => !(await detail.refetch()).isError} />
     <EventBudget user={user} eventId={event.id} />
   </section>;
 }

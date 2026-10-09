@@ -48,9 +48,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.community.platform.DesignTokens
@@ -65,6 +72,7 @@ data class SearchActions(
     val back: () -> Unit = {}, val query: (String) -> Unit = {}, val filter: (String?) -> Unit = {}, val search: () -> Unit = {},
     val reloadSpaces: () -> Unit = {}, val openDocument: (SearchDocumentDto) -> Unit = {},
     val openTasks: (SearchTaskDto) -> Unit = {}, val openEvents: (SearchEventDto) -> Unit = {},
+    val showMore: (SearchKind) -> Unit = {},
 )
 
 @Composable
@@ -73,7 +81,8 @@ fun SearchRoute(viewModel: SearchViewModel, accountId: String, onBack: () -> Uni
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.requiresSignIn) { if (state.requiresSignIn) onSessionLost() }
     if (state.accountId == accountId) SearchScreen(state, SearchActions(back = onBack, query = viewModel::query, filter = viewModel::filter,
-        search = viewModel::search, reloadSpaces = viewModel::reloadSpaces, openDocument = onOpenDocument, openTasks = onOpenTasks, openEvents = onOpenEvents))
+        search = viewModel::search, reloadSpaces = viewModel::reloadSpaces, openDocument = onOpenDocument, openTasks = onOpenTasks, openEvents = onOpenEvents,
+        showMore = viewModel::showMore))
 }
 
 @Composable
@@ -84,6 +93,7 @@ private fun SearchHeading(label: String, tag: String) {
 @Composable
 fun SearchScreen(state: SearchState, actions: SearchActions) {
     BackHandler(onBack = actions.back)
+    val words = searchWords(state.submittedQuery ?: state.results?.query.orEmpty())
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(DesignTokens.SpaceUnit * 2), verticalAlignment = Alignment.CenterVertically) {
@@ -91,26 +101,35 @@ fun SearchScreen(state: SearchState, actions: SearchActions) {
                 Text(stringResource(R.string.search_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).semantics { heading() })
             }
             HorizontalDivider(color = DesignTokens.Border)
-            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(DesignTokens.SpaceUnit)) else Spacer(Modifier.height(DesignTokens.SpaceUnit))
+            if (state.busy || state.loadingMore || state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth().height(DesignTokens.SpaceUnit).clearAndSetSemantics {})
+            else Spacer(Modifier.height(DesignTokens.SpaceUnit))
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(Modifier.widthIn(max = DesignTokens.SpaceUnit * 180).fillMaxSize().testTag("search-content"),
                     contentPadding = PaddingValues(DesignTokens.SpaceUnit * 4), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit * 3)) {
                     item("form") { SearchForm(state, actions) }
+                    item("status") {
+                        Column(Modifier.fillMaxWidth().testTag("search-status").semantics { liveRegion = LiveRegionMode.Polite },
+                            verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
+                            if (state.loadingMore) Text(stringResource(R.string.search_loading_more))
+                            state.notice?.let { Text(stringResource(if (it == SearchNotice.UPDATED) R.string.search_updated else R.string.search_space_gone)) }
+                            if (state.stale) Text(stringResource(R.string.search_stale))
+                        }
+                    }
                     val results = state.results
                     if (results != null) {
                         if (results.empty) item("empty") { Text(stringResource(R.string.search_empty), modifier = Modifier.testTag("search-empty")) }
                         item("documents-heading") { SearchHeading(stringResource(R.string.documents_title), "search-documents-heading") }
                         if (results.documents.isEmpty()) item("no-documents") { Text(stringResource(R.string.search_no_documents)) }
                         itemsIndexed(results.documents, key = { index, document -> "${document.documentId}:$index" }) { index, document ->
-                            SearchResult(document.name, document.spaceName, document.excerpt, "search-document-$index", { actions.openDocument(document) }) {
+                            SearchResult(document.name, document.spaceName, document.excerpt, "search-document-$index", { actions.openDocument(document) }, words) {
                                 Text(stringResource(R.string.search_document_lines, documentKindLabel(document.mediaType), document.startLine ?: 0, document.endLine ?: 0), style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        if (results.moreDocuments == true) item("more-documents") { Text(stringResource(R.string.search_more), modifier = Modifier.testTag("search-more-documents")) }
+                        if (results.moreDocuments == true) item("more-documents") { SearchMore(state, SearchKind.DOCUMENTS, actions) }
                         item("tasks-heading") { SearchHeading(stringResource(R.string.search_tasks), "search-tasks-heading") }
                         if (results.tasks.isEmpty()) item("no-tasks") { Text(stringResource(R.string.search_no_tasks)) }
                         items(results.tasks, key = { it.taskId }) { task ->
-                            SearchResult(task.title, task.spaceName, task.excerpt, "search-task-${task.taskId}", { actions.openTasks(task) }) {
+                            SearchResult(task.title, task.spaceName, task.excerpt, "search-task-${task.taskId}", { actions.openTasks(task) }, words, task.excerptIn == "checklist") {
                                 Text(stringResource(when (task.status) {
                                     "in_progress" -> R.string.search_task_in_progress; "completed" -> R.string.search_task_completed
                                     "cancelled" -> R.string.search_task_cancelled; else -> R.string.search_task_open
@@ -119,18 +138,18 @@ fun SearchScreen(state: SearchState, actions: SearchActions) {
                                     LocalDate.parse(it).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))), style = MaterialTheme.typography.bodySmall) }
                             }
                         }
-                        if (results.moreTasks == true) item("more-tasks") { Text(stringResource(R.string.search_more), modifier = Modifier.testTag("search-more-tasks")) }
+                        if (results.moreTasks == true) item("more-tasks") { SearchMore(state, SearchKind.TASKS, actions) }
                         item("events-heading") { SearchHeading(stringResource(R.string.search_events), "search-events-heading") }
                         if (results.events.isEmpty()) item("no-events") { Text(stringResource(R.string.search_no_events)) }
                         items(results.events, key = { it.eventId }) { event ->
-                            SearchResult(event.title, event.spaceName, event.excerpt, "search-event-${event.eventId}", { actions.openEvents(event) }) {
+                            SearchResult(event.title, event.spaceName, event.excerpt, "search-event-${event.eventId}", { actions.openEvents(event) }, words) {
                                 Text(stringResource(if (event.status == "cancelled") R.string.search_event_cancelled else R.string.search_event_scheduled), style = MaterialTheme.typography.bodySmall)
                                 Text(stringResource(R.string.search_event_time,
                                     LocalDateTime.parse(event.localStart).format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)), event.timezone),
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        if (results.moreEvents == true) item("more-events") { Text(stringResource(R.string.search_more), modifier = Modifier.testTag("search-more-events")) }
+                        if (results.moreEvents == true) item("more-events") { SearchMore(state, SearchKind.EVENTS, actions) }
                     }
                 }
             }
@@ -177,13 +196,40 @@ private fun SearchForm(state: SearchState, actions: SearchActions) {
 }
 
 @Composable
-private fun SearchResult(title: String, space: String, excerpt: String, tag: String, onClick: () -> Unit, details: @Composable () -> Unit) {
+private fun SearchMore(state: SearchState, kind: SearchKind, actions: SearchActions) {
+    val tag = "search-more-${kind.name.lowercase(java.util.Locale.ROOT)}"
+    if (state.limit >= 100) Text(stringResource(R.string.search_first_page, 100), modifier = Modifier.testTag(tag))
+    else OutlinedButton(onClick = { actions.showMore(kind) }, enabled = !state.loadingMore && !state.busy && !state.requiresSignIn,
+        shape = RoundedCornerShape(DesignTokens.ControlRadius), modifier = Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).testTag(tag)) {
+        Text(stringResource(when (kind) {
+            SearchKind.DOCUMENTS -> R.string.search_more_documents
+            SearchKind.TASKS -> R.string.search_more_tasks
+            SearchKind.EVENTS -> R.string.search_more_events
+        }))
+    }
+}
+
+@Composable
+private fun marked(value: String, words: List<String>) = buildAnnotatedString {
+    val style = SpanStyle(fontWeight = FontWeight.Bold, background = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.onPrimaryContainer)
+    highlightPieces(value, words).forEach { piece ->
+        if (piece.marked) withStyle(style) { append(piece.text) } else append(piece.text)
+    }
+}
+
+@Composable
+private fun SearchResult(title: String, space: String, excerpt: String, tag: String, onClick: () -> Unit,
+    words: List<String>, checklist: Boolean = false, details: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().heightIn(min = DesignTokens.MinimumTarget).clickable(role = Role.Button, onClick = onClick)
         .padding(vertical = DesignTokens.SpaceUnit * 2).testTag(tag), verticalArrangement = Arrangement.spacedBy(DesignTokens.SpaceUnit)) {
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(marked(title, words), style = MaterialTheme.typography.titleMedium)
         Text(space, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         details()
-        if (excerpt.isNotEmpty()) Text(excerpt, style = MaterialTheme.typography.bodyMedium)
+        if (excerpt.isNotEmpty()) {
+            if (checklist) Text(stringResource(R.string.search_in_checklist), style = MaterialTheme.typography.labelLarge)
+            Text(marked(excerpt, words), style = MaterialTheme.typography.bodyMedium)
+        }
         HorizontalDivider(color = DesignTokens.Border)
     }
 }

@@ -123,6 +123,53 @@ class EventsTest {
         return current
     }
 
+    @Test fun searchEntryOpensTheNamedEventsDetailsEvenOutsideThePage() = runBlocking {
+        val target = detail.copy(id = "81a09cbf-901e-470c-a905-27d565be91ae", title = "Search event")
+        val reads = mutableListOf<String>()
+        val named = object : EventsApi by api {
+            override suspend fun read(authorization: String, eventId: String): Response<EnvelopeDto<EventDto>> {
+                reads += eventId
+                return ok(target)
+            }
+        }
+        val current = EventsViewModel(EventsRepository(named, fixture.accounts)); model = current
+        current.bind(fixture.accountId, spaceId, "UTC", target.id); idle(current)
+        assertEquals(listOf(target.id), reads)
+        assertEquals(target, current.state.value.selected)
+        assertEquals(EventMode.DETAIL, current.state.value.mode)
+        assertEquals(listOf(event), current.state.value.events)
+        current.close(); idle(current)
+        assertEquals(EventMode.LIST, current.state.value.mode)
+        assertEquals(1, reads.size)
+        current.bind(fixture.accountId, spaceId, "UTC"); idle(current)
+        assertNull(current.state.value.selected)
+        assertEquals(EventMode.LIST, current.state.value.mode)
+    }
+
+    @Test fun missingSearchEventKeepsTheSpacesEventList() = runBlocking {
+        val named = object : EventsApi by api {
+            override suspend fun read(authorization: String, eventId: String): Response<EnvelopeDto<EventDto>> = failed(404, "NOT_FOUND")
+        }
+        val current = EventsViewModel(EventsRepository(named, fixture.accounts)); model = current
+        current.bind(fixture.accountId, spaceId, "UTC", eventId); idle(current)
+        assertEquals(EventMode.LIST, current.state.value.mode)
+        assertNull(current.state.value.selected)
+        assertEquals(listOf(event), current.state.value.events)
+        assertTrue(current.state.value.searchItemGone)
+        assertNull(current.state.value.error)
+    }
+
+    @Test fun searchEventCannotOpenAnItemFromAnotherSpace() = runBlocking {
+        api.current = detail.copy(spaceId = "81a09cbf-901e-470c-a905-27d565be91ae")
+        val current = EventsViewModel(repository); model = current
+        current.bind(fixture.accountId, spaceId, "UTC", eventId); idle(current)
+        assertEquals(EventMode.LIST, current.state.value.mode)
+        assertNull(current.state.value.selected)
+        assertEquals(listOf(event), current.state.value.events)
+        assertNotNull(current.state.value.error)
+        assertFalse(current.state.value.searchItemGone)
+    }
+
     @Test fun rejectsInconsistentEventFacts() {
         val bad = listOf(
             event.copy(status = "draft"), event.copy(status = "cancelled", canRespond = false), event.copy(endsAt = null),

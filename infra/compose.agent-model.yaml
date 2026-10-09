@@ -1,0 +1,19 @@
+# The owner's Azure test model for the agent (DEC-043, T197). Use it with the main file only when testing with the model:
+#   docker compose -f infra/compose.yaml -f infra/compose.agent-model.yaml ...
+# The endpoint, model name and key live in a file Git ignores: .local/agent-model.env, or any file outside the workspace
+# named by COMMUNITY_AGENT_MODEL_FILE, which keeps the key away from tools that search the workspace. Never commit or paste them.
+# The API reads them as settings. The tests container gets the file only as a secret, so normal test runs stay offline;
+# the live evaluation (backend/tests/test_agent_model_live.py) reads it when COMMUNITY_AGENT_MODEL_LIVE=1.
+# Q44 (2026-10-04): the API and the live evaluation count every call in backend/.local/agent-model-usage, one file per
+# process, and stop calling before the owner's total of 2,000,000 tokens; no call may ask for more than 10,000.
+services:
+  api:
+    env_file: ${COMMUNITY_AGENT_MODEL_FILE:-../.local/agent-model.env}
+    environment:
+      COMMUNITY_AGENT_MODEL_USAGE_DIR: /app/.local/agent-model-usage
+  tests:
+    secrets:
+      - agent_model
+secrets:
+  agent_model:
+    file: ${COMMUNITY_AGENT_MODEL_FILE:-../.local/agent-model.env}

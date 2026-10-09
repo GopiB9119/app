@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Check, CheckCheck, Clock3, Download, Globe2, ListFilter, LoaderCircle, LogOut, Monitor, RefreshCw, Save, ShieldBan, ShieldCheck, Smartphone, UserRound, VolumeX, X } from "lucide-react";
 import { Account, ApiError, api, characters, doneSchema, eventSchema, sessionSchema, userSchema } from "./client";
 import { Shell } from "./shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { TimezoneListProblem } from "./timezone-list-problem";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { Language, MessageId, MessageValues } from "@/features/i18n/messages";
@@ -15,10 +16,11 @@ import styles from "./account.module.css";
 export function AccountScreen() {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   useEffect(() => {
     if (profile.error instanceof ApiError && profile.error.status === 401) window.location.replace("/login");
   }, [profile.error]);
-  if (profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("account.loading")}</main></Shell>;
+  if (!hydrated || profile.isPending) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" />{t("account.loading")}</main></Shell>;
   if (!profile.data) return <Shell account><main className="auth-main"><h1>{t("account.unavailable")}</h1><p role="alert">{profile.error?.message}</p><button className="secondary-button" onClick={() => profile.refetch()}><RefreshCw size={17} />{t("account.retry")}</button></main></Shell>;
   return <AccountDetails key={profile.data.data.id} user={profile.data.data} etag={profile.data.etag} />;
 }

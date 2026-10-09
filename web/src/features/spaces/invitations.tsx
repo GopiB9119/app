@@ -6,6 +6,7 @@ import { Check, Copy, Inbox, LoaderCircle, RefreshCw, UserPlus, X } from "lucide
 
 import { ApiError, api } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
+import { isUnknown } from "@/features/community/client";
 import { formatDateTime, useLanguage, useText } from "@/features/i18n/i18n";
 import type { Language, MessageId, MessageValues } from "@/features/i18n/messages";
 import { invitationOutcomeSchema, invitationPage, invitationSchema, recipientSchema, spaceSchema } from "./client";
@@ -67,8 +68,16 @@ export function InvitationInbox({ user }: { user: Account }) {
   const respond = useMutation({
     mutationFn: async ({ invitation, action }: { invitation: FamilyInvitation; action: "accept" | "decline" }) => {
       const options = { method: "POST", body: {}, accountId: user.id };
-      if (action === "accept") return api(`invitations/${invitation.id}/accept`, spaceSchema, options);
-      return api(`invitations/${invitation.id}/decline`, invitationOutcomeSchema, options);
+      if (action === "accept") {
+        const result = await api(`invitations/${invitation.id}/accept`, spaceSchema, options);
+        if (result.data.id !== invitation.space_id) throw new ApiError(502, "INVALID_RESPONSE", "The invitation decision could not be confirmed.");
+        return result;
+      }
+      const result = await api(`invitations/${invitation.id}/decline`, invitationOutcomeSchema, options);
+      if (result.data.id !== invitation.id || result.data.status !== "declined") {
+        throw new ApiError(502, "INVALID_RESPONSE", "The invitation decision could not be confirmed.");
+      }
+      return result;
     },
     onMutate: () => setNotice(null),
     onSuccess: async (_result, { invitation, action }) => {
@@ -87,6 +96,10 @@ export function InvitationInbox({ user }: { user: Account }) {
     },
   });
   const denied = useAccountGuard(invitations.error, respond.error);
+  const retryDecision = respond.isError && isUnknown(respond.error) ? respond.variables : undefined;
+  useEffect(() => {
+    if (invitations.isError) setReview(null);
+  }, [invitations.isError]);
   const rows = [...new Map(invitations.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
 
   return <section className={styles.invitationSection} aria-labelledby="invitation-title">
@@ -95,6 +108,9 @@ export function InvitationInbox({ user }: { user: Account }) {
     {invitations.isPending && <p role="status">{t("spaces.invitations.loading")}</p>}
     {invitations.isError && <div className="message error" role="alert">{invitations.error.message}<button className="text-button" onClick={() => invitations.refetch()}><RefreshCw size={16} aria-hidden />{t("spaces.retry")}</button></div>}
     {respond.isError && <p className="message error" role="alert">{respond.error.message}</p>}
+    {retryDecision && !review && !denied && !invitations.isError && <button className="text-button" type="button" disabled={respond.isPending} onClick={() => respond.mutate(retryDecision)}>
+      <RefreshCw size={17} aria-hidden />{t("spaces.invitations.retryDecision")}
+    </button>}
     {!denied && !invitations.isError && !invitations.isPending && rows.length === 0 && <p className={styles.emptyNote}>{t("spaces.invitations.none")}</p>}
     {!denied && !invitations.isError && <ul className={styles.invitationList}>{rows.map(invitation => <li key={invitation.id}>
       <div className={styles.invitationDetails}><h3>{invitation.space_name}</h3><p>{t("spaces.invitations.from", { name: invitation.inviter_name })}</p><span>{t("spaces.invitations.memberPrivate")}</span><time dateTime={invitation.expires_at}>{t("spaces.invitations.expires", { date: formatExpiry(language, invitation.expires_at, user.timezone) })}</time></div>
@@ -103,8 +119,8 @@ export function InvitationInbox({ user }: { user: Account }) {
         <button className="icon-button" title={t("spaces.invitations.declineFor", { name: invitation.space_name })} aria-label={t("spaces.invitations.declineFor", { name: invitation.space_name })} disabled={respond.isPending} onClick={() => respond.mutate({ invitation, action: "decline" })}><X size={18} aria-hidden /></button>
       </div>
     </li>)}</ul>}
-    {invitations.hasNextPage && !denied && <button className="text-button" onClick={() => invitations.fetchNextPage()} disabled={invitations.isFetching}>{t("spaces.invitations.more")}</button>}
-    {review && !denied && <InvitationConfirmation title={t("spaces.invitations.joinTitle", { name: review.space_name })} label={t("spaces.invitations.join")} pending={respond.isPending} error={respond.error?.message} onCancel={() => setReview(null)} onConfirm={() => respond.mutate({ invitation: review, action: "accept" })}>
+    {invitations.hasNextPage && !denied && !invitations.isError && <button className="text-button" onClick={() => invitations.fetchNextPage()} disabled={invitations.isFetching}>{t("spaces.invitations.more")}</button>}
+    {review && !denied && !invitations.isError && <InvitationConfirmation title={t("spaces.invitations.joinTitle", { name: review.space_name })} label={t("spaces.invitations.join")} pending={respond.isPending} error={respond.error?.message} onCancel={() => setReview(null)} onConfirm={() => respond.mutate({ invitation: review, action: "accept" })}>
       <dl className={styles.reviewFacts}><dt>{t("spaces.invitations.invitedBy")}</dt><dd>{review.inviter_name}</dd><dt>{t("spaces.invitations.role")}</dt><dd>{t("spaces.role.member")}</dd><dt>{t("spaces.invitations.privacy")}</dt><dd>{t("spaces.private")}</dd><dt>{t("spaces.invitations.earlier")}</dt><dd>{t("spaces.invitations.noAccess")}</dd></dl>
     </InvitationConfirmation>}
   </section>;
@@ -127,9 +143,15 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
     getNextPageParam: last => last.pagination.next_cursor ?? undefined,
   });
   const invite = useMutation({
-    mutationFn: (pending: NonNullable<typeof intent>) => api(`spaces/${space.id}/invitations`, invitationSchema, {
-      method: "POST", accountId: user.id, body: { recipient_account_id: pending.recipient }, headers: { "Idempotency-Key": pending.key },
-    }),
+    mutationFn: async (pending: NonNullable<typeof intent>) => {
+      const result = await api(`spaces/${space.id}/invitations`, invitationSchema, {
+        method: "POST", accountId: user.id, body: { recipient_account_id: pending.recipient }, headers: { "Idempotency-Key": pending.key },
+      });
+      if (result.data.space_id !== space.id || result.data.recipient_account_id.toLowerCase() !== pending.recipient.toLowerCase()) {
+        throw new ApiError(502, "INVALID_RESPONSE", "The invitation result could not be confirmed.");
+      }
+      return result;
+    },
     onSuccess: async result => {
       setIntent(null); setRecipient("");
       setNotice(inviteResults[result.data.status]);
@@ -143,7 +165,13 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
     },
   });
   const revoke = useMutation({
-    mutationFn: (invitation: FamilyInvitation) => api(`spaces/${space.id}/invitations/${invitation.id}/revoke`, invitationOutcomeSchema, { method: "POST", body: {}, accountId: user.id }),
+    mutationFn: async (invitation: FamilyInvitation) => {
+      const result = await api(`spaces/${space.id}/invitations/${invitation.id}/revoke`, invitationOutcomeSchema, { method: "POST", body: {}, accountId: user.id });
+      if (result.data.id !== invitation.id || result.data.status !== "revoked") {
+        throw new ApiError(502, "INVALID_RESPONSE", "The invitation withdrawal could not be confirmed.");
+      }
+      return result;
+    },
     onSuccess: async () => {
       setRevokeTarget(null); setNotice("spaces.invitations.revoked");
       await queryClient.invalidateQueries({ queryKey: ["sentInvitations", user.id, space.id] });
@@ -156,11 +184,14 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
     },
   });
   const denied = useAccountGuard(history.error, invite.error, revoke.error);
-  // A member's 404 means the owner turned the setting off or removed them; a withdraw 404 alone could be a stale row, so the refetched list decides.
-  const gone = ended || (space.role === "member" && [history.error, invite.error].some(error => error instanceof ApiError && error.status === 404));
+  const retryWithdrawal = revoke.isError && isUnknown(revoke.error) ? revoke.variables : undefined;
+  const gone = ended || [history.error, invite.error].some(error => error instanceof ApiError && (error.status === 403 || error.status === 404));
   useEffect(() => {
     if (gone) void queryClient.invalidateQueries({ queryKey: ["spaces", user.id] });
   }, [gone, queryClient, user.id]);
+  useEffect(() => {
+    if (history.isError) setRevokeTarget(null);
+  }, [history.isError]);
   const rows = [...new Map(history.data?.pages.flatMap(page => page.data).map(item => [item.id, item] as const) ?? []).values()];
 
   useEffect(() => {
@@ -172,7 +203,7 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (invite.isPending || denied || history.isError) return;
+    if (invite.isPending || denied || gone || history.isError) return;
     const parsed = recipientSchema.safeParse(recipient);
     if (!parsed.success) { setValidation("spaces.invitations.invalidId"); return; }
     const pending = intent ?? { recipient: parsed.data, key: crypto.randomUUID() };
@@ -181,7 +212,7 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
 
   return <section className={styles.invitationSection} aria-labelledby="manage-invitations-title">
     <div className={styles.sectionHeading}><UserPlus size={20} aria-hidden /><h2 id="manage-invitations-title">{t("spaces.invitations.inviteTo", { name: space.name })}</h2><button className="icon-button" title={t("spaces.invitations.close")} aria-label={t("spaces.invitations.close")} disabled={(intent !== null || revoke.isPending) && !gone} onClick={onClose}><X size={18} aria-hidden /></button></div>
-    {gone ? <p className="message error" role="alert">{t("spaces.invitations.ownerAdminsOnly")}</p> : <>
+    {gone ? <p className="message error" role="alert">{t(space.role === "member" ? "spaces.invitations.ownerAdminsOnly" : "spaces.unavailable")}</p> : <>
     {space.role === "member" && <p className={styles.emptyNote}>{t("spaces.invitations.memberNote")}</p>}
     {notice && <p className="message success" role="status">{t(notice)}</p>}
     {space.space_type === "couple" && <p className={styles.emptyNote}>{t("spaces.invitations.coupleHint")}</p>}
@@ -192,6 +223,9 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
     {validation && <p id="recipient-error" className="message error" role="alert">{t(validation)}</p>}
     {invite.isError && <p className="message error" role="alert">{invite.error.message}</p>}
     {revoke.isError && <p className="message error" role="alert">{revoke.error.message}</p>}
+    {retryWithdrawal && !revokeTarget && !denied && !history.isError && <button className="text-button" type="button" disabled={revoke.isPending} onClick={() => revoke.mutate(retryWithdrawal)}>
+      <RefreshCw size={17} aria-hidden />{t("spaces.invitations.retryDecision")}
+    </button>}
     <div className={styles.sectionHeading}><h3>{t("spaces.invitations.sent")}</h3><button className="icon-button" title={t("spaces.invitations.refreshSent")} aria-label={t("spaces.invitations.refreshSent")} disabled={history.isFetching} onClick={() => history.refetch()}><RefreshCw size={17} className={history.isFetching ? "spin" : ""} aria-hidden /></button></div>
     {history.isPending && <p role="status">{t("spaces.invitations.loadingSent")}</p>}
     {history.isError && <div className="message error" role="alert">{history.error.message}<button className="text-button" onClick={() => history.refetch()}>{t("spaces.retry")}</button></div>}
@@ -200,8 +234,8 @@ export function ManageInvitations({ user, space, ended = false, onClose }: { use
       <div className={styles.invitationDetails}><span className={styles.accountCode}>{invitation.recipient_account_id}</span><span>{t(sentStatuses[invitation.status])}</span><time dateTime={invitation.expires_at}>{t("spaces.invitations.expires", { date: formatExpiry(language, invitation.expires_at, user.timezone) })}</time></div>
       {invitation.status === "pending" && <button className="icon-button" title={t("spaces.invitations.revoke")} aria-label={t("spaces.invitations.revokeFor", { account: invitation.recipient_account_id })} disabled={revoke.isPending} onClick={() => { revoke.reset(); setRevokeTarget(invitation); }}><X size={18} aria-hidden /></button>}
     </li>)}</ul>}
-    {history.hasNextPage && !denied && <button className="text-button" disabled={history.isFetching} onClick={() => history.fetchNextPage()}>{t("spaces.invitations.moreSent")}</button>}
-    {revokeTarget && !denied && <InvitationConfirmation title={t("spaces.invitations.revokeTitle")} label={t("spaces.invitations.revoke")} pending={revoke.isPending} error={revoke.error?.message} onCancel={() => setRevokeTarget(null)} onConfirm={() => revoke.mutate(revokeTarget)}><p className={styles.accountCode}>{revokeTarget.recipient_account_id}</p></InvitationConfirmation>}
+    {history.hasNextPage && !denied && !history.isError && <button className="text-button" disabled={history.isFetching} onClick={() => history.fetchNextPage()}>{t("spaces.invitations.moreSent")}</button>}
+    {revokeTarget && !denied && !history.isError && <InvitationConfirmation title={t("spaces.invitations.revokeTitle")} label={t("spaces.invitations.revoke")} pending={revoke.isPending} error={revoke.error?.message} onCancel={() => setRevokeTarget(null)} onConfirm={() => revoke.mutate(revokeTarget)}><p className={styles.accountCode}>{revokeTarget.recipient_account_id}</p></InvitationConfirmation>}
     </>}
   </section>;
 }

@@ -4,30 +4,40 @@ import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { CalendarDays, LoaderCircle, Pill, RefreshCw } from "lucide-react";
+import { Bell, BellRing, Bot, CalendarDays, Heart, House, Mail, Newspaper, Pill, RefreshCw, UserPlus, UserRound, UsersRound } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemLeading, ItemLink, ItemTitle } from "@/components/ui/item";
+import { PageHeader, Section as Group } from "@/components/ui/section";
+import { LoadingState } from "@/components/ui/skeleton";
+import { runPage } from "@/features/agents/client";
 import { homeFeed } from "@/features/community/client";
 import { ApiError, api, userSchema } from "@/features/identity/client";
 import type { Account } from "@/features/identity/client";
 import { Shell } from "@/features/identity/shell";
+import { useHydrated } from "@/features/platform/use-hydrated";
 import { useLanguage, useText } from "@/features/i18n/i18n";
 import type { Language, MessageId } from "@/features/i18n/messages";
 import { calendarPage, compareCalendarEntries, dateInZone } from "@/features/planning/calendar-client";
 import type { CalendarEntry } from "@/features/planning/calendar-client";
 import { notificationPage, reminderRequestPage } from "@/features/scheduling/client";
 import { invitationPage, pendingJoinRequests, spacesSchema } from "@/features/spaces/client";
-import type { FamilySpace } from "@/features/spaces/client";
+import type { ListedSpace } from "@/features/spaces/client";
 import styles from "./home.module.css";
 
 const SHOWN = 3;
+const spaceIcons: Record<string, LucideIcon> = { family: House, couple: Heart, solo: UserRound, group: UsersRound };
 
 // Home is a personal overview (DEC-014). Each section loads and fails on its own, and shows only what the person
 // can already see on the screen its "View all" opens.
 export function HomeScreen() {
   const t = useText();
   const profile = useQuery({ queryKey: ["me"], queryFn: ({ signal }) => api("me", userSchema, { signal }) });
+  const hydrated = useHydrated();
   const signedOut = profile.error instanceof ApiError && profile.error.status === 401;
   useEffect(() => { if (signedOut) window.location.replace("/login"); }, [signedOut]);
-  if (profile.isPending || signedOut) return <Shell account><main className="account-loading" aria-busy="true"><LoaderCircle className="spin" aria-hidden />{t("home.loading")}</main></Shell>;
+  if (!hydrated || profile.isPending || signedOut) return <Shell account><main className={styles.main} aria-busy="true"><LoadingState label={t("home.loading")} rows={4} /></main></Shell>;
   if (profile.isError || !profile.data) {
     return <Shell account><main className={styles.main}><h1>{t("home.title")}</h1>
       <p className="message error" role="alert">{profile.error?.message ?? t("home.error")}</p>
@@ -41,13 +51,10 @@ function Overview({ user }: { user: Account }) {
   const t = useText();
   const spaces = useQuery({ queryKey: ["spaces", user.id], queryFn: ({ signal }) => api("spaces?limit=50", spacesSchema, { accountId: user.id, signal }) });
   return <Shell account><main className={styles.main}>
-    <div className={styles.heading}>
-      <h1>{t("home.title")}</h1>
-      <nav className={styles.shortcuts} aria-label={t("home.shortcuts")}>
-        <Link href="/app/calendar"><CalendarDays size={18} aria-hidden />{t("home.calendar")}</Link>
-        <Link href="/app/care"><Pill size={18} aria-hidden />{t("home.medicines")}</Link>
-      </nav>
-    </div>
+    <PageHeader title={t("home.title")} description={t(greetingFor(user.timezone), { name: user.display_name })} actions={<nav className={styles.shortcuts} aria-label={t("home.shortcuts")}>
+      <Button asChild variant="secondary" size="sm"><Link href="/app/calendar"><CalendarDays aria-hidden />{t("home.calendar")}</Link></Button>
+      <Button asChild variant="secondary" size="sm"><Link href="/app/care"><Pill aria-hidden />{t("home.medicines")}</Link></Button>
+    </nav>} />
     <NeedsAttention user={user} spaces={spaces} />
     <Today user={user} spaces={spaces} />
     <YourSpaces spaces={spaces} />
@@ -55,29 +62,32 @@ function Overview({ user }: { user: Account }) {
   </main></Shell>;
 }
 
-type SpacesQuery = UseQueryResult<{ data: FamilySpace[] }>;
+type SpacesQuery = UseQueryResult<{ data: ListedSpace[] }>;
+
+// The hour in the person's own timezone, not the device's.
+function greetingFor(timezone: string): MessageId {
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  return hour < 12 ? "home.greeting.morning" : hour < 17 ? "home.greeting.afternoon" : "home.greeting.evening";
+}
 
 function Section({ id, title, more, moreLabel, children }: { id: string; title: string; more: string; moreLabel: string; children: React.ReactNode }) {
   const t = useText();
-  return <section className={styles.section} aria-labelledby={id}>
-    <div className={styles.sectionHead}><h2 id={id}>{title}</h2><Link href={more} aria-label={moreLabel}>{t("home.viewAll")}</Link></div>
-    {children}
-  </section>;
+  return <Group id={id} title={title} action={<Link href={more} aria-label={moreLabel}>{t("home.viewAll")}</Link>}>{children}</Group>;
 }
 
 function Problem({ text, retry }: { text: string; retry: () => void }) {
   const t = useText();
-  return <p className={styles.problem} role="alert">{text}<button className="text-button" onClick={retry}><RefreshCw size={16} aria-hidden />{t("home.retry")}</button></p>;
+  return <Alert tone="error">{text}<button className="text-button" onClick={retry}><RefreshCw size={16} aria-hidden />{t("home.retry")}</button></Alert>;
 }
 
 function Waiting({ text }: { text: string }) {
-  return <p className={styles.quiet} aria-busy="true"><LoaderCircle className="spin" size={16} aria-hidden />{text}</p>;
+  return <LoadingState label={text} rows={2} />;
 }
 
 const clock = (value: string, timezone: string, language: Language = "en") => new Intl.DateTimeFormat(language === "en" ? "en-GB" : language === "te" ? "te-IN" : "hi-IN", { timeZone: timezone, hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 const dayAndClock = (value: string, timezone: string, language: Language = "en") => new Intl.DateTimeFormat(language === "en" ? "en-GB" : language === "te" ? "te-IN" : "hi-IN", { timeZone: timezone, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 
-type Attention = { key: string; text: string; detail?: string; href: string; action: string };
+type Attention = { key: string; text: string; detail?: string; href: string; action: string; icon: LucideIcon; tone?: "warning" | "success" | "danger" };
 
 function NeedsAttention({ user, spaces }: { user: Account; spaces: SpacesQuery }) {
   const t = useText();
@@ -91,33 +101,54 @@ function NeedsAttention({ user, spaces }: { user: Account; spaces: SpacesQuery }
     queryKey: ["home", user.id, "join-requests", space.id], queryFn: ({ signal }: { signal: AbortSignal }) => pendingJoinRequests(user.id, space.id, signal),
   })) });
   const now = Date.now();
+  // The Main Agent plus each Space whose agent is on; agent live hints refresh these through the "agentRuns" key.
+  const agentScopes: (string | null)[] = [null, ...(spaces.data?.data ?? []).filter(space => space.agent_enabled).map(space => space.id)];
+  const agentRuns = useQueries({ queries: agentScopes.map(spaceId => ({
+    queryKey: ["agentRuns", user.id, "home-needs-you", spaceId ?? "main"],
+    queryFn: ({ signal }: { signal: AbortSignal }) => runPage(user.id, spaceId, null, signal, "needs_you"),
+  })) });
+  const spaceNames = new Map((spaces.data?.data ?? []).map(space => [space.id, space.name]));
   const groups: { name: string; checking: MessageId; problem: MessageId; items: Attention[]; query: { isPending: boolean; isError: boolean; refetch: () => unknown } }[] = [
+    { name: "agent", checking: "home.checkingAgent", problem: "home.failedAgent",
+      query: { isPending: spaces.isPending || agentRuns.some(runs => runs.isPending), isError: agentRuns.some(runs => runs.isError),
+        refetch: () => agentRuns.filter(runs => runs.isError).forEach(runs => void runs.refetch()) },
+      items: agentRuns.flatMap(runs => runs.data?.data ?? []).map(run => ({
+        key: `agent-${run.id}`,
+        text: run.status === "waiting_for_user" && run.question ? t("home.agentQuestion", { question: run.question.text })
+          : t("home.agentApproval", { summary: run.approval?.summary ?? run.message }),
+        detail: run.space_id ? spaceNames.get(run.space_id) : t("home.mainAgent"),
+        href: run.space_id ? `/app/agent/tasks?space_id=${run.space_id}` : "/app/agent",
+        action: t(run.status === "waiting_for_user" ? "home.agentAnswer" : "home.agentReview"), icon: Bot, tone: "warning" as const,
+      })) },
     { name: "invitations", checking: "home.checkingInvitations", problem: "home.failedInvitations", query: invitations, items: (invitations.data?.data ?? []).filter(item => item.status === "pending" && Date.parse(item.expires_at) > now).map(item => ({
-      key: `invitation-${item.id}`, text: t("home.invitation", { name: item.inviter_name, space: item.space_name }), href: "/app/spaces", action: t("home.reviewInvitation"),
+      key: `invitation-${item.id}`, text: t("home.invitation", { name: item.inviter_name, space: item.space_name }), href: "/app/spaces", action: t("home.reviewInvitation"), icon: Mail,
     })) },
     { name: "join requests", checking: "home.checkingJoins", problem: "home.failedJoins", query: { isPending: spaces.isPending || joins.some(join => join.isPending), isError: spaces.isError || joins.some(join => join.isError),
       refetch: () => { void spaces.refetch(); joins.filter(join => join.isError).forEach(join => void join.refetch()); } },
     items: reviewed.flatMap((space, index) => (joins[index]?.data ?? []).map(item => ({
-      key: `join-${item.id}`, text: t("home.joinRequest", { name: item.display_name, space: space.name }), href: "/app/spaces", action: t("home.reviewRequest"),
+      key: `join-${item.id}`, text: t("home.joinRequest", { name: item.display_name, space: space.name }), href: "/app/spaces", action: t("home.reviewRequest"), icon: UserPlus,
     }))) },
     { name: "reminder requests", checking: "home.checkingRequests", problem: "home.failedRequests", query: requests, items: (requests.data?.data ?? []).filter(item => item.status === "pending").map(item => ({
       key: `request-${item.id}`, text: t("home.reminderRequest", { name: item.requested_by.display_name, title: item.task_title }),
-      detail: dayAndClock(item.scheduled_at, user.timezone, language), href: "/app/reminders", action: t("home.reviewRequest"),
+      detail: dayAndClock(item.scheduled_at, user.timezone, language), href: "/app/reminders", action: t("home.reviewRequest"), icon: BellRing, tone: "warning",
     })) },
     { name: "reminders", checking: "home.checkingReminders", problem: "home.failedReminders", query: inbox, items: (inbox.data?.data ?? []).filter(item => item.acknowledged_at === null).map(item => ({
       key: `reminder-${item.id}`, text: t("home.reminder", { title: item.task_title }), detail: dayAndClock(item.scheduled_at, user.timezone, language),
-      href: "/app/notifications", action: t("home.openInbox"),
+      href: "/app/notifications", action: t("home.openInbox"), icon: Bell, tone: "warning",
     })) },
   ];
   const loaded = groups.filter(group => !group.query.isPending && !group.query.isError);
   const items = loaded.flatMap(group => group.items);
   return <Section id="home-attention" title={t("home.attention")} more="/app/notifications" moreLabel={t("home.viewInbox")}>
-    {items.length > 0 && <ul className={styles.list}>
-      {items.slice(0, SHOWN * 2).map(item => <li key={item.key} className={styles.row}>
-        <span className={styles.text}>{item.text}{item.detail && <span className={styles.detail}>{item.detail}</span>}</span>
-        <Link href={item.href}>{item.action}</Link>
-      </li>)}
-    </ul>}
+    {loaded.length === groups.length && items.length > 0 && <p className={styles.summary}>
+      {items.length === 1 ? t("home.attentionOne") : t("home.attentionCount", { count: items.length })}</p>}
+    {items.length > 0 && <ItemGroup>
+      {items.slice(0, SHOWN * 2).map(item => <Item key={item.key} tone={item.tone}>
+        <ItemLeading><item.icon size={20} aria-hidden /></ItemLeading>
+        <ItemContent><ItemTitle>{item.text}</ItemTitle>{item.detail && <ItemDescription>{item.detail}</ItemDescription>}</ItemContent>
+        <ItemLink href={item.href}>{item.action}</ItemLink>
+      </Item>)}
+    </ItemGroup>}
     {items.length > SHOWN * 2 && <p className={styles.quiet}>{t("home.more", { count: items.length - SHOWN * 2 })}</p>}
     {groups.filter(group => group.query.isPending).map(group => <Waiting key={group.name} text={t(group.checking)} />)}
     {groups.filter(group => group.query.isError).map(group => <Problem key={group.name} text={t(group.problem)} retry={() => void group.query.refetch()} />)}
@@ -158,13 +189,13 @@ function Today({ user, spaces }: { user: Account; spaces: SpacesQuery }) {
   const pending = spaces.isPending || days.some(day => day.isPending);
   return <Section id="home-today" title={t("home.today")} more="/app/calendar" moreLabel={t("home.viewCalendar")}>
     {spaces.isError && <Problem text={t("home.spacesError")} retry={() => void spaces.refetch()} />}
-    {entries.length > 0 && <ul className={styles.list}>
-      {entries.map(entry => <li key={`${entry.kind}-${entry.id}`} className={styles.row} data-kind={entry.kind}>
-        <span className={styles.when}>{entry.kind === "task" ? t("home.today") : clock(entry.scheduled_at, user.timezone, entry.kind === "event" ? "en" : language)}</span>
-        <span className={styles.text}>{entry.title}<span className={styles.detail}>{entry.kind === "event" ? "Event" : t(kindIds[entry.kind])} · {names.get(entry.space_id)}</span></span>
-        <Link href={entryLink(entry)} aria-label={entry.kind === "event" ? `Open ${entry.title}` : t("home.openItem", { title: entry.title })}>{entry.kind === "event" ? "Open" : t("home.open")}</Link>
-      </li>)}
-    </ul>}
+    {entries.length > 0 && <ItemGroup>
+      {entries.map(entry => <Item key={`${entry.kind}-${entry.id}`} data-kind={entry.kind} tone={entry.kind === "reminder" ? "warning" : entry.kind === "event" ? "success" : undefined}>
+        <ItemLeading>{entry.kind === "task" ? t("home.today") : clock(entry.scheduled_at, user.timezone, entry.kind === "event" ? "en" : language)}</ItemLeading>
+        <ItemContent><ItemTitle>{entry.title}</ItemTitle><ItemDescription>{entry.kind === "event" ? "Event" : t(kindIds[entry.kind])} · {names.get(entry.space_id)}</ItemDescription></ItemContent>
+        <ItemLink href={entryLink(entry)} aria-label={entry.kind === "event" ? `Open ${entry.title}` : t("home.openItem", { title: entry.title })}>{entry.kind === "event" ? "Open" : t("home.open")}</ItemLink>
+      </Item>)}
+    </ItemGroup>}
     {pending && <Waiting text={t("home.loadingToday")} />}
     {failed.map(space => <Problem key={space.id} text={t("home.todayError", { space: space.name })}
       retry={() => void days[list.indexOf(space)]?.refetch()} />)}
@@ -179,12 +210,15 @@ function YourSpaces({ spaces }: { spaces: SpacesQuery }) {
   return <Section id="home-spaces" title={t("home.spaces")} more="/app/spaces" moreLabel={t("home.viewSpaces")}>
     {spaces.isPending && <Waiting text={t("home.loadingSpaces")} />}
     {spaces.isError && <Problem text={t("home.spacesError")} retry={() => void spaces.refetch()} />}
-    {list.length > 0 && <ul className={styles.list}>
-      {list.slice(0, SHOWN + 1).map(space => <li key={space.id} className={styles.row}>
-        <span className={styles.text}>{space.name}<span className={styles.detail}>{t(`home.type.${space.space_type}`)} · {t(`home.role.${space.role}`)}</span></span>
-        <Link href={`/app/tasks?space_id=${space.id}`} aria-label={t("home.tasksIn", { space: space.name })}>{t("home.tasks")}</Link>
-      </li>)}
-    </ul>}
+    {list.length > 0 && <ItemGroup>
+      {list.slice(0, SHOWN + 1).map(space => { const Icon = spaceIcons[space.space_type] ?? UsersRound; return <Item key={space.id}>
+        <ItemLeading><Icon size={20} aria-hidden /></ItemLeading>
+        <ItemContent><ItemTitle>{space.name}</ItemTitle><ItemDescription>{t(`home.type.${space.space_type}`)} · {t(`home.role.${space.role}`)}
+          {space.member_count !== undefined && <> · {space.member_count === 1 ? t("spaces.groups.memberOne") : t("spaces.groups.memberOther", { count: String(space.member_count) })}</>}
+          {" · "}{t(space.agent_enabled ? "spaces.agentOn" : "spaces.agentOff")}</ItemDescription></ItemContent>
+        <ItemLink href={`/app/tasks?space_id=${space.id}`} aria-label={t("home.tasksIn", { space: space.name })}>{t("home.tasks")}</ItemLink>
+      </Item>; })}
+    </ItemGroup>}
     {list.length > SHOWN + 1 && <p className={styles.quiet}>{t("home.more", { count: list.length - SHOWN - 1 })}</p>}
     {spaces.isSuccess && list.length === 0 && <p className={styles.quiet}>{beforeLink}<Link href="/app/spaces">{t("home.createOrJoin")}</Link>{afterLink}</p>}
   </Section>;
@@ -199,12 +233,13 @@ function FromPages({ user }: { user: Account }) {
   return <Section id="home-pages" title={t("home.pages")} more="/app/home" moreLabel={t("home.viewPosts")}>
     {feed.isPending && <Waiting text={t("home.loadingPosts")} />}
     {feed.isError && <Problem text={t("home.postsError")} retry={() => void feed.refetch()} />}
-    {posts.length > 0 && <ul className={styles.list}>
-      {posts.slice(0, SHOWN).map(post => <li key={post.id} className={styles.row}>
-        <span className={styles.text}>{post.title ?? post.body.slice(0, 120)}<span className={styles.detail}>{post.page_name}{post.published_at ? ` · ${dayAndClock(post.published_at, user.timezone, language)}` : ""}</span></span>
-        <Link href={`/posts/${post.id}`} aria-label={post.title !== null ? t("home.readItem", { title: post.title }) : t("home.readFrom", { name: post.page_name })}>{t("home.read")}</Link>
-      </li>)}
-    </ul>}
+    {posts.length > 0 && <ItemGroup>
+      {posts.slice(0, SHOWN).map(post => <Item key={post.id}>
+        <ItemLeading><Newspaper size={20} aria-hidden /></ItemLeading>
+        <ItemContent><ItemTitle>{post.title ?? post.body.slice(0, 120)}</ItemTitle><ItemDescription>{post.page_name}{post.published_at ? ` · ${dayAndClock(post.published_at, user.timezone, language)}` : ""}</ItemDescription></ItemContent>
+        <ItemLink href={`/posts/${post.id}`} aria-label={post.title !== null ? t("home.readItem", { title: post.title }) : t("home.readFrom", { name: post.page_name })}>{t("home.read")}</ItemLink>
+      </Item>)}
+    </ItemGroup>}
     {feed.isSuccess && posts.length === 0 && <p className={styles.quiet}>{beforeLink}<Link href="/app/discover">{t("home.findPages")}</Link>{afterLink}</p>}
   </Section>;
 }

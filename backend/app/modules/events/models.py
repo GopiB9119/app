@@ -1,6 +1,17 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -68,6 +79,76 @@ class SpaceEventResponse(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # When this person answered Going: their place in line when the event has a capacity (DEC-032).
     going_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EventPoll(Base):
+    __tablename__ = "event_polls"
+    __table_args__ = (
+        CheckConstraint("length(btrim(question)) BETWEEN 1 AND 120", name="ck_event_poll_question"),
+        CheckConstraint("status IN ('open', 'closed')", name="ck_event_poll_status"),
+        CheckConstraint("(status = 'closed') = (closed_at IS NOT NULL)", name="ck_event_poll_closed"),
+        CheckConstraint("version > 0", name="ck_event_poll_version"),
+        UniqueConstraint("event_id", "creator_id", "creation_key", name="uq_event_poll_creation"),
+        Index("ix_event_poll_event", "event_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    event_id: Mapped[str] = mapped_column(ForeignKey(SpaceEvent.id))
+    creator_id: Mapped[str] = mapped_column(ForeignKey(User.id))
+    question: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(8))
+    version: Mapped[int] = mapped_column(Integer)
+    creation_key: Mapped[str] = mapped_column(String(36))
+    creation_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EventPollOption(Base):
+    __tablename__ = "event_poll_options"
+    __table_args__ = (
+        CheckConstraint("position BETWEEN 1 AND 8", name="ck_event_poll_option_position"),
+        CheckConstraint("length(btrim(text)) BETWEEN 1 AND 80", name="ck_event_poll_option_text"),
+        UniqueConstraint("poll_id", "position", name="uq_event_poll_option_position"),
+        UniqueConstraint("poll_id", "id", name="uq_event_poll_option_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    poll_id: Mapped[str] = mapped_column(ForeignKey(EventPoll.id))
+    position: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(String(80))
+
+
+class EventPollVote(Base):
+    __tablename__ = "event_poll_votes"
+    __table_args__ = (
+        ForeignKeyConstraint(["poll_id", "option_id"], ["event_poll_options.poll_id", "event_poll_options.id"], name="fk_event_poll_vote_option"),
+        CheckConstraint("version > 0", name="ck_event_poll_vote_version"),
+    )
+
+    poll_id: Mapped[str] = mapped_column(ForeignKey(EventPoll.id), primary_key=True)
+    account_id: Mapped[str] = mapped_column(ForeignKey(User.id), primary_key=True)
+    admission_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    option_id: Mapped[str | None] = mapped_column(String(36))
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class EventPollVoteCommand(Base):
+    __tablename__ = "event_poll_vote_commands"
+    __table_args__ = (
+        ForeignKeyConstraint(["poll_id", "account_id", "admission_id"],
+                             ["event_poll_votes.poll_id", "event_poll_votes.account_id", "event_poll_votes.admission_id"],
+                             name="fk_event_poll_vote_command", ondelete="CASCADE"),
+        UniqueConstraint("poll_id", "account_id", "admission_id", "request_key", name="uq_event_poll_vote_command"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    poll_id: Mapped[str] = mapped_column(String(36))
+    account_id: Mapped[str] = mapped_column(String(36))
+    admission_id: Mapped[str] = mapped_column(String(36))
+    request_key: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 # Budgets in exact money, never payments (DEC-039): amounts are whole numbers of paise or cents.
