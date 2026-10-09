@@ -155,3 +155,25 @@ not upgrade that running backend. A compatible web client can still read the pre
 The current dependency audit also reports pre-existing framework/toolchain advisories. The newly introduced
 math paths are constrained to the patched direct KaTeX version. A framework upgrade and its wider regression
 qualification are separate from this feature, and remain a prerequisite for a production claim.
+
+## Verification Follow-Up (2026-10-09)
+
+The [resumed verification record](../infra/README.md#resumed-agent-and-browser-verification-2026-10-09) records
+437 passing provider-free Agent backend tests and activation of the verified backend repairs. Rejected model
+replies retain reported token usage; task/event effects and approval receipts commit together; document pages
+are bounded and advance; compaction preserves action/control receipts; and comment approval checks the exact
+reviewed parent revision without requiring the commenter to own that post.
+
+The [capped live connection check](../infra/README.md#capped-live-model-connection-2026-10-09) subsequently passed:
+one actual Azure request returned the exact synthetic marker, consumed 54 reported and recorded tokens, and
+returned no tool calls. No private application context was sent, and credentials, model configuration and token
+limits were unchanged. This proves connectivity, not multi-step Agent behavior or a model-quality score.
+
+The current Agent web route still fails compilation because locked Markdown dependencies are absent. The registry
+is now listed in local network settings, but [validated registry HTTPS still fails](../infra/README.md#registry-transport-recheck-2026-10-09).
+Dependency restoration and a separately bounded Agent workflow evaluation remain gates; no Android or new-website
+work followed. The completed one-call approval must not be treated as an unlimited model-testing budget.
+
+Observed retention boundary: deleting a document denies fresh retrieval and removes its search text, but a
+previous private Agent answer can remain in later same-account/admission history. A different future-context
+reuse or derivative-erasure policy needs an explicit retention decision; no history was silently deleted here.

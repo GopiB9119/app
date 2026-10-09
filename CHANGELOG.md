@@ -4,6 +4,57 @@ Notable changes to requirements, documentation structure and the product, newest
 
 ## 2026-10-09
 
+### Capped Azure Connection Verified
+
+- After the owner's direct go-ahead for the scoped 10,000-token check, the application's retained Azure client made exactly one synthetic request: **HTTP 200**, the exact marker reply, **54 tokens**, zero tool calls. The provider reported `gpt-5-nano-2025-08-07`; no credential was displayed or reconstructed.
+- Proved the one-attempt guard offline first. The real call used the existing ledger, which moved from 1,532,116 to **1,532,170** with no reservation left. Retries were disabled only for the probe; normal API behavior, TLS, token limits and configuration were unchanged.
+- This verifies provider connectivity, not multi-step Agent quality or browser end-to-end operation. Missing web dependencies remain the blocker; Android and the new website are untouched. [Evidence and remaining scope](infra/README.md#capped-live-model-connection-2026-10-09).
+
+### Recovered Manual Web Qualification
+
+- Collected the already-running account/Space browser batch: **25/25 passed**, with no failures or skips. It covers membership/ownership/history boundaries, planning, real reminder delivery/fallback and recipient consent, event capacity/budgets, and confirmed personal care workflows. No duplicate run or application change was needed.
+- Reconciled five saved reports to **47 distinct passing browser journeys**. The earlier desktop `Connection closed.` failure remains recorded beside its passing retry; this is not one clean combined suite or a resolved root-cause claim.
+- Three further bounded desktop diagnostic attempts passed with unchanged assertions. The intermittent error was not reproduced or fixed, no application patch followed, and the distinct browser-journey count remains 47.
+- Agent/Messages dependencies, full build/types and live LLM verification remain blocked. No provider calls, credential or security changes, Android work or new-website work were performed. [Reports and remaining gates](infra/README.md#recovered-manual-web-qualification-2026-10-09).
+
+### Registry Transport Boundary Rechecked
+
+- Added only `registry.npmjs.org` following the owner's direct continuation of that scoped proposal. Verified all 35 previous hosts, filtering, deny settings and unrelated settings preserved; a parallel recheck kept this configuration unchanged.
+- Fresh bounded HTTPS checks still fail: Docker/Python and Node report handshake alerts, Windows Schannel reports `SEC_E_ILLEGAL_MESSAGE`, and Chromium reports `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`. One bounded post-approval npm attempt also failed; no TLS bypass, alternate registry or package-version change was used. The verified idle old-web preview was stopped for installation and restarted; backend services were preserved.
+- A further read-only check found public registry DNS answers and no explicit Windows user proxy or proxy-script URL. The isolated certificate-validating Chromium metadata check still failed and cleaned up its browser. The rejecting network component remains unidentified; no network settings or application source changed.
+- The fresh cache audit still finds 35 missing manifests and no matching archives. Generated a credentials-free [offline archive manifest](.local/web-offline-archive-manifest-20261009.json) with 34 required packages plus one optional package, their official URLs and locked integrity values. The remaining blocker is validated transport or supplied archives, not another permission request for the same host.
+- After the owner connected a mobile hotspot, one bounded certificate-validated registry request still failed with a TLS handshake alert. Read-only routing/proxy checks found a connected Wi-Fi default route and no explicit proxy configuration; the rejecting component remains unknown. No package retry, certificate bypass or Android change followed.
+- The restarted preview passes **2/2** browser smoke checks and **10/10** additional provider-free live journeys covering alerts, recurrence, classification, moderation, help, public events and search. Original failures remain preserved; these passes do not qualify the missing-package Agent/Messages screens, full build, or live model calls.
+- The remaining manual account/Space selection passes **25/25**, with no skips. The [coverage index](.local/old-web-browser-coverage-20261009.json) now records **47 distinct passing browser journeys across runs**, retaining the original desktop failure; it is not a single green combined run or complete application qualification.
+- The frozen Agent result remains **437/437 passing** on 255 unchanged inputs. Web dependency restoration and capped live-model verification remain open; Android and the new website are untouched. [Current blocker and safe resumption path](infra/README.md#registry-transport-recheck-2026-10-09).
+
+### Agent Safety Repairs And Resumed Browser Checks
+
+- Preserved reported token usage when rejecting truncated model replies, made task/event effects atomic with their approval receipts, bounded document paging with advancing offsets, and protected action/control receipts from context compaction. Comment approval now binds the internally captured post revision and checks it under lock, including comments on another person's post; changed reviews create no comment and unchanged exact retries create only one.
+- The dedicated current-source Agent suite passes **437/437**, with no failures or skips. The earlier **1,210/1,210** full-backend result remains separate because three Agent files changed. Reloaded only the idle retained API after matching schema `0062`; readiness and the post-reload real API/mail/persistence journey pass.
+- Browser smoke checks pass **2/2**. The ten core journeys initially passed **9/10**; the desktop account journey's uncaught `Connection closed.` error did not recur on its focused **1/1** retry. Added stack/path diagnostics without relaxing the error assertion; the original failure and unknown cause remain recorded.
+- The Agent route still returns HTTP 500 for missing locked Markdown dependencies. Registry access and one capped Azure verification call received no explicit approval; no network/TLS policy, provider budget or credential file was changed. Android and the separate website remain untouched. [Evidence, activation and remaining gates](infra/README.md#resumed-agent-and-browser-verification-2026-10-09).
+
+### Existing Backend Verification Results
+
+- The full local backend suite finished **1,210/1,210 passing**, with no skips and 29 computed-column comparison warnings. Three concurrently edited Agent files differ from the during-run source capture; the subsequent read-only Agent snapshot passes **437/437**, with all 255 inputs unchanged and matching the workspace. These overlapping results are not a new full-current-source run or a live model evaluation.
+- The offline web-component run has **633 passes and 195 dependency-resolution failures**, no skips. A cache audit confirms no matching offline archives for 35 missing manifests. Network restrictions, failed reports, existing features and all assertions remain intact.
+- Hardened the new API test's mailbox redirect/deadline handling, all-session cleanup, exact persisted fields and denied-write checks. Two fixture regressions and the real local journey pass **3/3**, without a model call. Android and the new website remain untouched. [Evidence and remaining gates](infra/README.md#existing-backend-and-web-recovery-2026-10-09).
+- Further manual browser checks were interrupted after account pages again failed on the missing Agent dependency chain, including after an idle-preview restart. No successful suite result or dependency repair is claimed; only the owned failing test tree was stopped, leaving backend/data services running.
+
+### Agent Markdown Dependency Installation Blocker
+
+- Diagnosed the Agent build's missing `@ungap/structured-clone`: version `1.4.0` is already recorded in [the web lockfile](web/package-lock.json) and required by `mdast-util-to-hast`, but its installed package is absent. After the attempted repair, 34 required package manifests remain missing; npm recovery folders contain no usable package copies.
+- Offline installation failed with `ENOTCACHED`; the registry attempt encountered TLS handshake failures and npm's `Exit handler never called!` error. `registry.npmjs.org` is absent from the active allowed-domain list, and explicit permission to add it was unavailable. No network-policy or TLS changes were made.
+- Application source, the package manifest and the lockfile remain unchanged. Dependency restoration and build verification remain blocked on approved npm registry access; no successful repair or build is claimed.
+- A subsequent network-free npm cache audit found 35 platform-compatible missing manifests and no archives matching their lockfile integrity values. Added a dedicated offline audit task and preserved the [package-level evidence](.local/old-web-offline-archives-1791533979125.json). No Android, key-file or network-policy changes were made.
+
+### Local Credential And Cache Cleanup
+
+- At the owner's request, deleted `.local/agent-model.env` and 21 untracked current-project cache paths covering Next.js, TypeScript, Python/pytest and Gradle/Kotlin. Removed **1.07 GiB** in total without opening credential files or reading key values.
+- Metadata-only `Test-Path` checks confirmed all 22 targets absent and all 10 protected encryption-key, fixture and example files present. `git status --porcelain` was clean before this record; application source, dependencies, database data, historical qualification artifacts and existing processes were preserved.
+- This was filename-based local cleanup, not a content-based secret scan or provider-side revocation. No application tests or external provider calls were run; any previously used provider keys still require separate revocation or rotation.
+
 ### Backend/Web Setup Verification
 
 - Rechecked the existing backend/web setup without Android work or changes to the separate website. Package installation remains blocked by HTTPS handshake failures; Docker Desktop and a WSL distribution are absent, and port 3000 serves the concurrent static website preview.

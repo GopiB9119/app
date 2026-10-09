@@ -35,10 +35,11 @@ LONGEST_RETRY_WAIT = 10.0
 class ModelError(Exception):
     """A call that gave no usable step. Transient failures were already retried."""
 
-    def __init__(self, kind, detail=None):
+    def __init__(self, kind, detail=None, *, tokens=None):
         super().__init__(f"{kind}: {detail}" if detail else kind)
         self.kind = kind
         self.detail = detail
+        self.tokens = tokens if type(tokens) is int and tokens >= 0 else None
 
 
 @dataclass(frozen=True)
@@ -169,14 +170,16 @@ def retry_wait(response, attempt):
 
 
 def parse_turn(payload, seconds, name):
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
     try:
         choice = payload["choices"][0]
         message = choice["message"]
         finish = choice.get("finish_reason")
         if finish == "content_filter" or message.get("refusal"):
-            raise ModelError("declined", "content_filter")
+            raise ModelError("declined", "content_filter", tokens=tokens)
         if finish == "length":
-            raise ModelError("length", "completion_limit")
+            raise ModelError("length", "completion_limit", tokens=tokens)
         calls = []
         for item in message.get("tool_calls") or []:
             if item.get("type", "function") != "function":
@@ -186,15 +189,13 @@ def parse_turn(payload, seconds, name):
             calls.append(ToolCall(id=str(item["id"])[:64], name=str(function["name"])[:64], arguments=str(arguments)))
         content = message.get("content")
         if content is not None and not isinstance(content, str):
-            raise ModelError("unreadable", "content")
+            raise ModelError("unreadable", "content", tokens=tokens)
     except ModelError:
         raise
     except (KeyError, IndexError, TypeError, AttributeError):
-        raise ModelError("unreadable", "shape") from None
+        raise ModelError("unreadable", "shape", tokens=tokens) from None
     if not calls and not (content or "").strip():
-        raise ModelError("length" if finish == "length" else "empty", finish)
-    usage = payload.get("usage") if isinstance(payload, dict) else None
-    tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+        raise ModelError("length" if finish == "length" else "empty", finish, tokens=tokens)
     model = payload.get("model") if isinstance(payload, dict) else None
     return ModelTurn(
         content=content, tool_calls=tuple(calls), finish_reason=finish,
@@ -273,6 +274,9 @@ class ChatModel:
                 status, response = outcome
                 # A refused request is answered before anything is written, so at most the prompt was used.
                 used = prompt if 400 <= status < 500 else None
+            except ModelError as error:
+                used = error.tokens
+                raise
             except httpx.HTTPError as error:
                 status, response = None, None
                 last = "timeout" if isinstance(error, httpx.TimeoutException) else "connection"

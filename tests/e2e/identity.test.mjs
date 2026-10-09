@@ -27,11 +27,12 @@ after(async () => { await browser?.close(); });
 
 async function mailCode(email, purpose = 'registration') {
   const deadline = Date.now() + 20000;
+  const options = { redirect: 'error', signal: AbortSignal.timeout(20000) };
   while (Date.now() < deadline) {
-    const result = await fetch(`${mail}/api/v1/messages`).then(response => response.json());
+    const result = await fetch(`${mail}/api/v1/messages`, options).then(response => response.json());
     const message = result.messages.find(entry => entry.To.some(recipient => recipient.Address === email) && entry.Subject.includes(purpose));
     if (message) {
-      const detail = await fetch(`${mail}/api/v1/message/${message.ID}`).then(response => response.json());
+      const detail = await fetch(`${mail}/api/v1/message/${encodeURIComponent(message.ID)}`, options).then(response => response.json());
       const code = detail.Text.match(/code is (\d{6})/);
       assert.ok(code);
       return code[1];
@@ -60,6 +61,155 @@ async function signUp(page, email) {
   await page.getByRole('heading', { name: 'Your account' }).waitFor();
   await page.getByRole('heading', { name: 'Active sessions' }).waitFor();
 }
+
+async function closeTestSessions(sessions, call) {
+  const outcomes = await Promise.allSettled([...sessions].map(async session => {
+    assert.equal((await call('POST', '/auth/logout', session)).status, 200);
+  }));
+  assert.equal(outcomes.filter(outcome => outcome.status === 'rejected').length, 0, 'Synthetic session cleanup failed after attempting every session.');
+}
+
+test('api transport fixtures: mailbox reads reject redirects and share a bounded signal', async context => {
+  const email = 'mailbox-guard@example.test';
+  const signal = new AbortController().signal;
+  context.mock.method(AbortSignal, 'timeout', duration => {
+    assert.equal(duration, 20000);
+    return signal;
+  });
+  const requests = [];
+  context.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.signal, signal);
+    requests.push(url);
+    const result = requests.length === 1
+      ? { messages: [{ ID: 'synthetic/mail', To: [{ Address: email }], Subject: 'registration' }] }
+      : { Text: 'Your synthetic code is 123456.' };
+    return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+  });
+  assert.equal(await mailCode(email), '123456');
+  assert.deepEqual(requests, [`${mail}/api/v1/messages`, `${mail}/api/v1/message/synthetic%2Fmail`]);
+});
+
+test('api transport fixtures: cleanup attempts all sessions and retains failures', async () => {
+  const sessions = new Set(['synthetic-first', 'synthetic-second', 'synthetic-third']);
+  const attempted = [];
+  await assert.rejects(closeTestSessions(sessions, async (method, route, session) => {
+    assert.equal(method, 'POST');
+    assert.equal(route, '/auth/logout');
+    attempted.push(session);
+    if (session === 'synthetic-first') throw new Error('Synthetic connection failure');
+    return { status: session === 'synthetic-second' ? 503 : 200 };
+  }), /Synthetic session cleanup failed/);
+  assert.deepEqual(attempted, [...sessions]);
+  await closeTestSessions(sessions, async () => ({ status: 200 }));
+});
+
+test('api transport: verified accounts and exact task writes persist across sessions without a model', { timeout: 120000 }, async context => {
+  const api = process.env.COMMUNITY_API_URL ?? 'http://127.0.0.1:8000';
+  for (const address of [api, mail]) {
+    const url = new URL(address);
+    assert.equal(url.protocol, 'http:');
+    assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname));
+    assert.equal(url.username + url.password + url.search + url.hash, '');
+    assert.equal(url.pathname, '/');
+  }
+  const sessions = new Set();
+  const call = async (method, route, session, body, headers = {}) => {
+    assert.match(route, /^\/(?:auth\/(?:register|verify-email|login|logout)|spaces|tasks(?:[/?]|$))/);
+    return fetch(`${api}/v1${route}`, {
+      method, redirect: 'error', signal: AbortSignal.timeout(15000),
+      headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: `Bearer ${session}` } : {}), ...headers },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  };
+  context.after(() => closeTestSessions(sessions, call));
+  const enroll = async role => {
+    const email = `api-transport-${role}-${crypto.randomUUID()}@example.test`;
+    const context = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
+    const registration = await call('POST', '/auth/register', null, { email, context_secret: context }, { 'Idempotency-Key': crypto.randomUUID() });
+    assert.equal(registration.status, 202, 'Synthetic registration must be accepted.');
+    const challenge = (await registration.json()).data;
+    const verification = await call('POST', '/auth/verify-email', null, {
+      challenge_id: challenge.challenge_id, context_secret: context, code: await mailCode(email),
+      password, display_name: 'Synthetic API check', timezone: 'Asia/Kolkata', platform: 'web', device_name: 'API transport check',
+    });
+    assert.equal(verification.status, 201, 'The actual local mail worker must deliver a valid proof.');
+    const account = (await verification.json()).data;
+    assert.equal(typeof account.session_token, 'string');
+    sessions.add(account.session_token);
+    return { email, token: account.session_token, id: account.user.id };
+  };
+  const owner = await enroll('owner');
+  const other = await enroll('other');
+  const spaceResponse = await call('POST', '/spaces', owner.token,
+    { name: 'Synthetic API persistence family', space_type: 'family' }, { 'Idempotency-Key': crypto.randomUUID() });
+  assert.equal(spaceResponse.status, 201);
+  const space = (await spaceResponse.json()).data;
+  const creationKey = crypto.randomUUID();
+  const intent = { space_id: space.id, title: 'Verify saved synthetic task', description: 'Original notes', assignee_account_id: owner.id };
+  const createdResponse = await call('POST', '/tasks', owner.token, intent, { 'Idempotency-Key': creationKey });
+  assert.equal(createdResponse.status, 201);
+  const initialEtag = createdResponse.headers.get('etag');
+  assert.ok(initialEtag);
+  const created = (await createdResponse.json()).data;
+  assert.equal(created.space_id, space.id);
+  assert.equal(created.title, intent.title);
+  assert.equal(created.description, intent.description);
+  assert.equal(created.assignee?.account_id, owner.id);
+  const replayResponse = await call('POST', '/tasks', owner.token, intent, { 'Idempotency-Key': creationKey });
+  assert.equal(replayResponse.status, 201);
+  const replay = (await replayResponse.json()).data;
+  assert.equal(replay.id, created.id);
+  assert.equal(replay.version, created.version);
+  for (const [session, deniedStatus] of [[other.token, 404], [null, 401]]) {
+    assert.equal((await call('GET', `/tasks/${created.id}`, session)).status, deniedStatus);
+    assert.equal((await call('PATCH', `/tasks/${created.id}`, session, { description: 'Unauthorized change' },
+      { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': initialEtag })).status, deniedStatus);
+    assert.equal((await call('POST', `/tasks/${created.id}/status`, session, { status: 'completed' },
+      { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': initialEtag })).status, deniedStatus);
+  }
+  const unchangedResponse = await call('GET', `/tasks/${created.id}`, owner.token);
+  assert.equal(unchangedResponse.status, 200);
+  assert.deepEqual((await unchangedResponse.json()).data, created);
+
+  const changedResponse = await call('PATCH', `/tasks/${created.id}`, owner.token, { description: 'Saved over the actual local API' },
+    { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': initialEtag });
+  assert.equal(changedResponse.status, 200);
+  const changedEtag = changedResponse.headers.get('etag');
+  assert.ok(changedEtag);
+  const stale = await call('PATCH', `/tasks/${created.id}`, owner.token, { description: 'Must not overwrite' },
+    { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': initialEtag });
+  assert.equal(stale.status, 412);
+  const completionHeaders = { 'Idempotency-Key': crypto.randomUUID(), 'If-Match': changedEtag };
+  const completedResponse = await call('POST', `/tasks/${created.id}/status`, owner.token, { status: 'completed' }, completionHeaders);
+  assert.equal(completedResponse.status, 200);
+  const completed = (await completedResponse.json()).data;
+  const completedRetry = await call('POST', `/tasks/${created.id}/status`, owner.token, { status: 'completed' }, completionHeaders);
+  assert.equal(completedRetry.status, 200);
+  assert.equal((await completedRetry.json()).data.version, completed.version);
+
+  assert.equal((await call('POST', '/auth/logout', owner.token)).status, 200);
+  sessions.delete(owner.token);
+  assert.equal((await call('GET', `/tasks/${created.id}`, owner.token)).status, 401);
+  const loginResponse = await call('POST', '/auth/login', null, { email: owner.email, password, device_name: 'Fresh API check session', platform: 'web' });
+  assert.equal(loginResponse.status, 200);
+  const login = (await loginResponse.json()).data;
+  sessions.add(login.session_token);
+  assert.equal(login.user.id, owner.id);
+  const persistedResponse = await call('GET', `/tasks/${created.id}`, login.session_token);
+  assert.equal(persistedResponse.status, 200);
+  const persisted = (await persistedResponse.json()).data;
+  assert.equal(persisted.status, 'completed');
+  assert.equal(persisted.description, 'Saved over the actual local API');
+  assert.equal(persisted.version, completed.version);
+  assert.equal(persisted.title, intent.title);
+  assert.equal(persisted.space_id, space.id);
+  assert.equal(persisted.assignee?.account_id, owner.id);
+  assert.equal(persisted.completed_by_account_id, owner.id);
+  const listResponse = await call('GET', `/tasks?space_id=${space.id}`, login.session_token);
+  assert.equal(listResponse.status, 200);
+  assert.equal((await listResponse.json()).data.filter(task => task.id === created.id).length, 1);
+});
 
 test('space polls: exact create retry shared results private votes and authorized closure through the live API', { timeout: 180000 }, async () => {
   const ownerContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -689,7 +839,7 @@ test('desktop: real signup, private cookie, profile persistence, revocation and 
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => errors.push({ message: error.message, stack: error.stack, path: new URL(page.url()).pathname }));
   const email = `web-${Date.now()}@example.test`;
   await signUp(page, email);
   const cookies = await context.cookies();

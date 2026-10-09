@@ -68,9 +68,12 @@ def test_filtered_empty_and_oversized_turns_are_errors():
     {"content": "An unfinished answer"},
     {"content": None, "tool_calls": [{"id": "truncated", "type": "function", "function": {"name": "save_memory", "arguments": '{"content":"do not execute"}'}}]},
 ])
-def test_truncated_model_answers_and_tools_are_never_accepted(message):
+def test_truncated_model_answers_and_tools_are_never_accepted(message, tmp_path):
+    ledger = TokenLedger(tmp_path, 25_000)
     with pytest.raises(ModelError, match="length"):
-        model(lambda request: turn(message, "length")).complete([{"role": "user", "content": "Explain this"}])
+        model(lambda request: turn(message, "length"), usage=ledger).complete([{"role": "user", "content": "Explain this"}])
+    assert ledger.spent() == 120
+    assert ledger.held == 0
 
 
 @pytest.mark.parametrize("options", [{}, {"max_completion_tokens": 900}])

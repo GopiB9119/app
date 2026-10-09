@@ -343,4 +343,9 @@ def create_app(settings=None, clock=utcnow):
     application.include_router(care_router)
     application.include_router(agent_router)
     application.include_router(live_router)
+    response_descriptions = {413: "Request Entity Too Large", 422: "Unprocessable Entity"}
+    for route in application.routes:
+        for status, response in getattr(route, "responses", {}).items():
+            if status in response_descriptions:
+                response.setdefault("description", response_descriptions[status])
     return application

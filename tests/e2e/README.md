@@ -43,6 +43,26 @@ $env:FORCE_COLOR = '0'
 node --test --test-concurrency=1 --test-reporter=junit --test-reporter-destination=../.local/live-journeys.xml "../tests/e2e/*.test.mjs"
 ```
 
+## Provider-Free API Transport
+
+The `api transport:` case in [identity.test.mjs](identity.test.mjs) checks the actual local API, mail worker and database
+without visiting a website or requesting a model. It creates only new synthetic accounts and one task, verifies exact retries,
+stale-write and access refusals, and reads the persisted task after a fresh login. Every created test session is logged out.
+Synthetic accounts and the task remain as local test data. `COMMUNITY_API_URL` defaults to `http://127.0.0.1:8000` and
+`COMMUNITY_MAIL_URL` to `http://127.0.0.1:8025`; both must be credential-free loopback HTTP origins.
+Mailbox requests reject redirects and share a 20-second abort signal. Cleanup attempts every remaining session even when
+one logout fails, and a failed cleanup remains a test failure. The journey checks exact saved fields and denied writes as
+well as denied reads.
+
+```powershell
+node --test --test-concurrency=1 --test-name-pattern='^api transport:' tests/e2e/identity.test.mjs
+```
+
+Expect exactly one passing case and no skips. The file's shared browser fixture still requires installed Playwright/Chromium;
+this case does not exercise browser controls and must never substitute for the browser, responsive or live-model gates.
+Use the prefix `^api transport` without the colon to include the two synthetic mailbox/cleanup regression cases as well;
+that selection expects three passes, including one real API journey.
+
 ## Provider-free Local Controls
 
 From the application root, with the [guarded synthetic runtime](../../infra/README.md#account-downloads-and-focused-follow-up-2026-10-08),

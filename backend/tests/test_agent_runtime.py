@@ -11,16 +11,18 @@ import pytest
 from sqlalchemy import func, select
 
 from app.errors import DomainError
-from app.modules.agents.llm import ModelError, ModelTurn
-from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun
+from app.modules.agents.llm import ModelError, ModelTurn, estimate_tokens
+from app.modules.agents.models import AgentApproval, AgentMemory, AgentRun, AgentToolCall
 from app.modules.agents.prompts import MAIN, RESEARCH
-from app.modules.agents.runtime import tool_message
+from app.modules.agents.runtime import TOOL_TEXT, AgentRuntime, tool_message
 from app.modules.agents.schemas import AgentInteractionView, AgentRunView, CreateWebFetch, WebFetchPage
 from app.modules.agents.toolkit import (
+    DOCUMENT_TEXT,
     EventBudgetArgs,
     ListEventsArgs,
     ListRemindersArgs,
     ListTasksArgs,
+    ReadDocumentArgs,
     ToolContext,
     ToolProblem,
     execute_schedule_reminder,
@@ -29,6 +31,7 @@ from app.modules.agents.toolkit import (
     list_events,
     list_reminders,
     list_tasks,
+    read_document,
 )
 from app.modules.agents.web import (
     FETCH_URL,
@@ -45,13 +48,14 @@ from app.modules.agents.web import (
     web_source,
     youtube_id,
 )
-from app.modules.community.models import PublicPage, PublicPost
-from app.modules.identity.models import AccountSession
-from app.modules.planning.models import Task
+from app.modules.community.models import PostComment, PublicPage, PublicPost
+from app.modules.events.models import SpaceEvent
+from app.modules.identity.models import AccountSession, OutboxEvent
+from app.modules.planning.models import Task, TaskAudit
 from app.modules.polls.models import SpacePoll, SpacePollVote
 from app.modules.scheduling.models import Reminder
 from app.modules.scheduling.schemas import CreateReminder, PreviewReminder
-from app.modules.spaces.models import Space
+from app.modules.spaces.models import Space, SpaceAuditEvent
 from tests.agent_support import (
     MAIN_AGENT,
     answer,
@@ -87,6 +91,33 @@ def count(app, model, *conditions):
 
 def tool_results(messages):
     return [json.loads(message["content"]) for message in messages if message["role"] == "tool"]
+
+
+@pytest.mark.parametrize("tool_name", ["create_task", "create_event", "save_memory", "ask_user", "unknown_tool"])
+@pytest.mark.parametrize("receipt", [
+    {"result": {"task_id": "synthetic-task", "done": "Created the reviewed task."}},
+    {"error": "The person rejected this change. Do not repeat it."},
+])
+def test_context_compaction_preserves_action_and_control_receipts(tool_name, receipt):
+    runtime = AgentRuntime(SimpleNamespace(model=SimpleNamespace(call_tokens=10_000)))
+    base = [{"role": "system", "content": "Keep permission checks and reviewed actions."}]
+    transcript = [{"role": "user", "content": "Make the reviewed change only once, then summarize."}]
+    protected = call(tool_name, title="Reviewed change").message()
+    protected_result = tool_message(protected["tool_calls"][0]["id"], receipt)
+    transcript.extend([protected, protected_result])
+    for content in ["source text " * 4_000, "Recent source one", "Recent source two"]:
+        reading = call("read_document", document_id=str(uuid4())).message()
+        transcript.extend([reading, {"role": "tool", "tool_call_id": reading["tool_calls"][0]["id"],
+                                    "content": json.dumps({"result": {"text": content}})}])
+    assert estimate_tokens({"messages": base + transcript, "tools": []}) > runtime.budget()
+
+    fitted = runtime.fit(base, [], list(transcript), [])
+
+    assert next(message for message in fitted if message.get("tool_call_id") == protected_result["tool_call_id"]) == protected_result
+    assert "trimmed" in json.loads(fitted[len(base) + 4]["content"])
+    assert fitted[-4:] == transcript[-4:]
+    assert [message for message in fitted if message["role"] != "tool"] == base + [message for message in transcript if message["role"] != "tool"]
+    assert estimate_tokens({"messages": fitted, "tools": []}) <= runtime.budget()
 
 
 @pytest.mark.parametrize("agent_kind,space_id", [("main", None), ("space", str(uuid4()))])
@@ -1546,6 +1577,96 @@ def test_document_listing_keeps_complete_rows_and_continuation():
     assert [item["lines"] for item in seen] == [item.line_count for item in expected]
 
 
+@pytest.mark.parametrize("line", [
+    "x" * (DOCUMENT_TEXT + 1),
+    "\u6f22" * (DOCUMENT_TEXT + 1),
+    "x" * TOOL_TEXT,
+    '"' * (TOOL_TEXT // 2),
+    "\\" * (TOOL_TEXT // 2),
+], ids=["ascii-text-limit", "unicode-text-limit", "ascii-envelope", "quotes-envelope", "backslashes-envelope"])
+def test_document_reading_refuses_unchunkable_lines(line):
+    document = SimpleNamespace(id=uuid4(), space_id="selected-space", name="Notes.txt", line_count=3,
+                               content=f"Before\n{line}\nAfter")
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", agent=SimpleNamespace(
+        documents=SimpleNamespace(read=lambda token, document_id: document),
+    ))
+    first = read_document(context, ReadDocumentArgs(document_id=document.id))
+    assert first.data["text"] == "1: Before" and first.data["next_start_line"] == 2
+    with pytest.raises(ToolProblem) as error:
+        read_document(context, ReadDocumentArgs(document_id=document.id, start_line=2))
+    assert error.value.code == "result_too_large"
+    assert "Line 2" in error.value.message and "Documents screen" in error.value.message
+
+
+@pytest.mark.parametrize("lines", [
+    ["x" * 1900] * 4,
+    ["\u6f22" * 1900] * 4,
+    ['"\\' * 800] * 4,
+    [""] + [f"short {index}" for index in range(800)],
+], ids=["ascii", "unicode", "escaped", "many-numbered-lines"])
+def test_document_reading_preserves_complete_lines_and_advancing_pages(lines):
+    document = SimpleNamespace(id=uuid4(), space_id="selected-space", name='"' * 180 + ".txt",
+                               line_count=len(lines), content="\n".join(lines))
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", agent=SimpleNamespace(
+        documents=SimpleNamespace(read=lambda token, document_id: document),
+    ))
+    seen, start = [], 1
+    for _page in range(len(lines)):
+        outcome = read_document(context, ReadDocumentArgs(document_id=document.id, start_line=start))
+        message = tool_message("document-read", {"result": outcome.data})
+        content = json.loads(message["content"])
+        assert "result" in content, "Document text and continuation must survive the result envelope."
+        assert len(message["content"]) <= TOOL_TEXT
+        result = content["result"]
+        assert result == outcome.data
+        assert result["name"] == document.name and result["total_lines"] == len(lines)
+        assert result["text"]
+        page = result["text"].split("\n")
+        assert page == [f"{number}: {lines[number - 1]}" for number in range(start, start + len(page))]
+        assert outcome.evidence == [{"kind": "document", "ref": str(document.id), "label": document.name}]
+        seen.extend(page)
+        if result["next_start_line"] is None:
+            break
+        assert result["next_start_line"] == start + len(page) > start
+        start = result["next_start_line"]
+    else:
+        pytest.fail("Document reading did not terminate within its line count.")
+    assert seen == [f"{number}: {line}" for number, line in enumerate(lines, start=1)]
+
+
+@pytest.mark.parametrize("character", ["x", "\u6f22"], ids=["ascii", "unicode"])
+def test_document_reading_keeps_a_complete_line_at_the_result_envelope(character):
+    name = '"' * 180 + ".txt"
+    expected = {"name": name, "total_lines": 2, "text": "1: ", "next_start_line": 2}
+    overhead = len(json.dumps({"result": expected}, ensure_ascii=False, default=str, separators=(",", ":")))
+    line = character * (TOOL_TEXT - overhead)
+    expected["text"] += line
+    assert len(json.dumps({"result": expected}, ensure_ascii=False, default=str, separators=(",", ":"))) == TOOL_TEXT
+    document = SimpleNamespace(id=uuid4(), space_id="selected-space", name=name, line_count=2,
+                               content=f"{line}\nRemaining text")
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", agent=SimpleNamespace(
+        documents=SimpleNamespace(read=lambda token, document_id: document),
+    ))
+    first = read_document(context, ReadDocumentArgs(document_id=document.id))
+    assert json.loads(tool_message("document-read", {"result": first.data})["content"]) == {"result": expected}
+    assert first.evidence == [{"kind": "document", "ref": str(document.id), "label": name}]
+    second = read_document(context, ReadDocumentArgs(document_id=document.id, start_line=first.data["next_start_line"]))
+    assert second.data["text"] == "2: Remaining text" and second.data["next_start_line"] is None
+    assert second.evidence == first.evidence
+
+
+@pytest.mark.parametrize("content,start_line", [("One line", 2), ("", 1)], ids=["past-end", "no-text"])
+def test_document_reading_refuses_unavailable_lines_instead_of_claiming_a_read(content, start_line):
+    document = SimpleNamespace(id=uuid4(), space_id="selected-space", name="Notes.txt",
+                               line_count=len(content.splitlines()), content=content)
+    context = SimpleNamespace(token="synthetic-session", space_id="selected-space", agent=SimpleNamespace(
+        documents=SimpleNamespace(read=lambda token, document_id: document),
+    ))
+    with pytest.raises(ToolProblem) as error:
+        read_document(context, ReadDocumentArgs(document_id=document.id, start_line=start_line))
+    assert error.value.code == "invalid_start_line" and f"Line {start_line}" in error.value.message
+
+
 def test_reminder_listing_does_not_claim_empty_when_unread_pages_remain():
     cursors = []
     other = SimpleNamespace(space_id="another-space", status="scheduled")
@@ -2049,6 +2170,141 @@ def test_public_change_and_approval_result_roll_back_together(client, app, monke
     assert recovered.json()["data"]["outcome"] == "action_completed"
     assert approve(client, person, run, key=key).status_code == 200
     assert count(app, PublicPage) == 1
+
+
+@pytest.mark.parametrize("tool_name, arguments, effect_model, audit_model, audit_ref, action", [
+    ("create_task", {"title": "Atomic task"}, Task, TaskAudit, TaskAudit.task_id, "task.created"),
+    ("create_event", {"title": "Atomic event", "start_time": "18:00"},
+     SpaceEvent, SpaceAuditEvent, SpaceAuditEvent.target_id, "event.created"),
+], ids=["create_task", "create_event"])
+def test_task_and_event_effects_and_approval_receipt_commit_or_roll_back_together(
+    client, app, monkeypatch, tool_name, arguments, effect_model, audit_model, audit_ref, action,
+):
+    person, space_id = solo(client, app)
+    if tool_name == "create_event":
+        arguments = {**arguments, "date": (app.state.clock() + timedelta(days=1)).date().isoformat()}
+    model = install(app, script(call(tool_name, **arguments), say("Created the reviewed item.")))
+    run = ask(client, person, space_id, "Create the reviewed item")
+    assert run["status"] == "waiting_for_approval", run
+    assert run["approval"]["status"] == "pending" and run["approval"]["result_ref"] is None
+    assert count(app, effect_model) == 0
+    original = app.state.agents.record_call
+
+    def fail_record(*arguments, **named):
+        if len(arguments) > 3 and arguments[3] == "write":
+            raise RuntimeError("Synthetic failure recording the task/event action result")
+        return original(*arguments, **named)
+
+    key = str(uuid4())
+    with monkeypatch.context() as patch:
+        patch.setattr(app.state.agents, "record_call", fail_record)
+        failed = approve(client, person, run, key=key)
+    assert failed.status_code == 500, failed.text
+    pending_response = client.get(f"/v1/agent-runs/{run['id']}", headers=auth(person))
+    assert pending_response.status_code == 200, pending_response.text
+    pending = pending_response.json()["data"]
+    assert pending["approval"] == run["approval"]
+    assert pending["status"] == run["status"] and pending["version"] == run["version"]
+    assert pending["tool_calls"] == run["tool_calls"] and pending["events"] == run["events"]
+    assert len(model.calls) == 1
+    assert count(app, effect_model) == 0
+    assert count(app, audit_model, audit_model.action == action) == 0
+    assert count(app, OutboxEvent, OutboxEvent.event_type == action) == 0
+    assert count(app, AgentToolCall, AgentToolCall.run_id == run["id"], AgentToolCall.effect == "write") == 0
+    assert count(app, AgentApproval) == 1
+    with app.state.sessions() as database:
+        pending_approval = database.get(AgentApproval, run["approval"]["id"])
+        assert pending_approval.decision_key is None and pending_approval.result_ref is None
+
+    recovered = approve(client, person, run, key=key)
+    assert recovered.status_code == 200, recovered.text
+    finished = recovered.json()["data"]
+    assert (finished["status"], finished["outcome"]) == ("completed", "action_completed")
+    receipt = finished["approval"]
+    assert receipt["id"] == run["approval"]["id"] and receipt["status"] == "approved"
+    assert receipt["result_ref"] is not None
+    writes = [item for item in finished["tool_calls"] if item["effect"] == "write"]
+    assert len(writes) == 1
+    assert (writes[0]["status"], writes[0]["approval_id"], writes[0]["result_ref"]) == (
+        "succeeded", receipt["id"], receipt["result_ref"],
+    )
+    with app.state.sessions() as database:
+        effect = database.get(effect_model, receipt["result_ref"])
+        assert effect is not None and effect.space_id == space_id and effect.title == arguments["title"]
+        approval = database.get(AgentApproval, receipt["id"])
+        assert (approval.status, approval.decision_key, approval.result_ref) == ("approved", key, effect.id)
+    assert count(app, audit_model, audit_model.action == action, audit_ref == receipt["result_ref"]) == 1
+    assert count(app, OutboxEvent, OutboxEvent.event_type == action, OutboxEvent.aggregate_id == receipt["result_ref"]) == 1
+    replay = approve(client, person, run, key=key)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"] == finished
+    assert len(model.calls) == 2
+    assert count(app, effect_model) == count(app, AgentApproval) == 1
+    assert count(app, audit_model, audit_model.action == action) == 1
+    assert count(app, OutboxEvent, OutboxEvent.event_type == action) == 1
+    assert count(app, AgentToolCall, AgentToolCall.run_id == run["id"], AgentToolCall.effect == "write") == 1
+
+
+@pytest.mark.parametrize("owns_post", [True, False], ids=["owner", "other_person"])
+def test_comment_review_rejects_changed_parent_without_posting(client, app, owns_post):
+    owner, _space_id = solo(client, app)
+    person = owner if owns_post else account(client, app, "comment-review@example.test")
+    page = create_page(client, owner).json()["data"]
+    post = publish(client, owner, draft(client, owner, page["id"]).json()["data"])
+    text = "This comment responds only to the reviewed post."
+    install(app, script(call("comment_on_post", post_id=post["id"], text=text), say("Comment result received.")))
+    run = ask(client, person, MAIN_AGENT, "Comment on the selected post")
+    assert run["status"] == "waiting_for_approval", run
+    assert fields(run)["Your comment"] == text
+    assert count(app, PostComment) == 0
+    changed = client.patch(f"/v1/posts/{post['id']}", headers={**auth(owner), "If-Match": post["etag"]},
+                           json={"body": "Different parent text that was not in the comment review."})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["data"]["etag"] != post["etag"]
+
+    result = approve(client, person, run)
+
+    assert result.status_code == 200, result.text
+    answered_run = result.json()["data"]
+    assert answered_run["approval"]["status"] == "cancelled", answered_run
+    assert answered_run["approval"]["reason"] == "CONTENT_CHANGED"
+    assert answered_run["approval"]["result_ref"] is None
+    assert not any(item["effect"] == "write" and item["status"] == "succeeded" for item in answered_run["tool_calls"])
+    assert count(app, PostComment) == 0
+    actual = client.get(f"/v1/posts/{post['id']}", headers=auth(person)).json()["data"]
+    assert actual["body"] == "Different parent text that was not in the comment review."
+    assert actual["status"] == "published" and actual["comment_count"] == 0
+
+
+@pytest.mark.parametrize("owns_post", [True, False], ids=["owner", "other_person"])
+def test_comment_review_on_an_unchanged_post_commits_once(client, app, owns_post):
+    owner, _space_id = solo(client, app)
+    person = owner if owns_post else account(client, app, "comment-review@example.test")
+    page = create_page(client, owner).json()["data"]
+    post = publish(client, owner, draft(client, owner, page["id"]).json()["data"])
+    text = "This comment responds only to the reviewed post."
+    model = install(app, script(call("comment_on_post", post_id=post["id"], text=text), say("Comment result received.")))
+    run = ask(client, person, MAIN_AGENT, "Comment on the selected post")
+    assert run["status"] == "waiting_for_approval", run
+    assert fields(run)["Your comment"] == text
+    assert count(app, PostComment) == 0
+    key = str(uuid4())
+
+    result = approve(client, person, run, key=key)
+
+    assert result.status_code == 200, result.text
+    finished = result.json()["data"]
+    assert finished["approval"]["status"] == "approved", finished
+    assert (finished["status"], finished["outcome"]) == ("completed", "action_completed")
+    replay = approve(client, person, run, key=key)
+    assert replay.status_code == 200 and replay.json()["data"] == finished
+    assert len(model.calls) == 2 and count(app, PostComment) == 1
+    with app.state.sessions() as database:
+        saved = database.get(PostComment, finished["approval"]["result_ref"])
+        assert (saved.post_id, saved.author_id, saved.body, saved.status) == (post["id"], person["user"]["id"], text, "visible")
+    actual = client.get(f"/v1/posts/{post['id']}", headers=auth(person)).json()["data"]
+    assert actual["comment_count"] == 1 and actual["body"] == post["body"]
+    assert actual["etag"] == (post["etag"] if owns_post else None)
 
 
 @pytest.mark.parametrize("published_first", [False, True])

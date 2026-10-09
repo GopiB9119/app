@@ -2,6 +2,243 @@
 
 Local synthetic work only. Production deployment and external providers are not enabled by this launcher.
 
+## Capped Live Model Connection (2026-10-09)
+
+Following the owner's direct continuation of the specific one-call, 10,000-token proposal, one synthetic
+connectivity check used the existing application's `ChatModel` and retained Azure container configuration.
+This supersedes the earlier pending-connectivity statements for this limited check, not for Agent workflow
+or browser qualification. No credentials were displayed, copied to the host or reconstructed from deleted files.
+
+- An offline mock failure first proved that disabling `RETRY_WAITS` only inside the probe process results in
+	exactly one HTTP attempt and retains conservative failed-call accounting. The running API's retry policy
+	and configuration were not changed.
+- Preflight confirmed the unchanged 10,000-token per-call and 2,000,000-token aggregate limits, a configured
+	shared ledger, 1,532,116 recorded tokens and zero reservations. The real request contained only synthetic
+	instructions and a fresh marker, no tools or private application context, with at most 1,200 completion tokens.
+- The [retained result](../backend/.local/agent-connection-once-20261009-d53da4bc.json) records **one attempt,
+	HTTP 200, the exact expected reply, zero tool calls and 54 reported tokens**. The provider reported
+	`gpt-5-nano-2025-08-07`; the HTTP call took 3.724 seconds in this single trial, not a latency benchmark.
+- The existing ledger advanced from 1,532,116 to **1,532,170**, exactly the reported 54 tokens, with no owned
+	reservation remaining. TLS verification stayed enabled. No provider/model switch, budget increase/reset,
+	business mutation, web search, package installation, API restart or Android change occurred.
+- The attempt marker was created exclusively before sending. Do not remove it or repeat the request to recover
+	already-recorded success. This approval covered one call; it does not authorize an unlimited evaluation loop.
+
+The LLM connection is now verified. The missing locked web dependencies still block Agent/Messages compilation,
+full web build/types and browser-to-Agent evaluation. Multi-step behavior, live permission/approval controls and
+model quality need a separate finite evaluation after their prerequisites are available. No new-website work
+followed, and no complete-application or production-readiness claim is made. Provider pricing was not verified.
+
+## Recovered Manual Web Qualification (2026-10-09)
+
+The coordinated remaining account/Space batch has finished **25/25 passing**, with zero failures or skips.
+Its existing process was observed to completion rather than duplicated; no Node browser-test runner remained
+afterwards. Tests used the real local web proxy, API, mail and reminder workers with synthetic accounts.
+
+| Report | Cases | Passed | Failed | Skipped |
+| --- | --- | --- | --- | --- |
+| [Earlier core journeys](../.local/old-web-core-resume-20261009.xml) | 10 | 9 | 1 | 0 |
+| [Desktop diagnostic retry](../.local/old-web-desktop-diagnostic-20261009.xml) | 1 | 1 | 0 | 0 |
+| [Recovered browser smoke](../.local/old-web-smoke-recovery-20261009.xml) | 2 | 2 | 0 | 0 |
+| [Extended manual journeys](../.local/old-web-extended-manual-recovery-20261009.xml) | 10 | 10 | 0 | 0 |
+| [Remaining account/Space journeys](../.local/old-web-manual-account-space-20261009.xml) | 25 | 25 | 0 | 0 |
+
+Structured XML reconciliation by unique case name finds **47 distinct passing browser journeys** across these
+reports. The earlier desktop `Connection closed.` failure is retained; its focused retry passed without weakening
+the no-browser-errors assertion, but its cause remains unproven. These results are not one clean combined run,
+and the separate API-only and offline test results are not added to this browser count.
+
+A bounded follow-up attempted the same desktop journey three times with stack/path diagnostics and unchanged
+assertions. All three passed: [attempt one](../.local/old-web-desktop-reproduce-20261009-154631-1.xml),
+[attempt two](../.local/old-web-desktop-reproduce-20261009-154631-2.xml), and
+[attempt three](../.local/old-web-desktop-reproduce-20261009-154631-3.xml). The original error was not reproduced
+or fixed; no application patch followed. These repeated attempts do not increase the 47-journey count.
+
+The newly completed batch covers exact checklist retries, solo/couple/group Spaces, settings, calendar views,
+invitations and lost replies, ownership transfer, removal/leave/rejoin history, roles and invite policy, task filters,
+real reminder delivery and fallback, notification preferences, recipient consent, post search, event edits/capacity,
+record-only event budgets, and confirmed personal care records. It made no Agent requests or real provider calls.
+
+This continuation changed no application source, packages, credentials, runtime configuration, Android or `website/`.
+The Agent/rich-message dependency chain, full web build/types, model-dependent privacy and Agent journeys, and live
+LLM connectivity remain unqualified. The existing registry transport/offline archive and bounded-provider approval
+gates below still apply. Do not navigate to the dependency-blocked Agent route during other manual qualification;
+its development compile failure can affect otherwise working pages. New-website work remains gated.
+
+## Registry Transport Recheck (2026-10-09)
+
+This recheck supersedes the earlier statements that `registry.npmjs.org` is absent from the local allowlist.
+The coordinator added only that hostname after the owner's direct continuation of the sole registry-access proposal.
+A [policy-only baseline](../.local/npm-domain-baseline-1791538222499.json) and structured comparison verified the
+35 previous domains plus the new entry, filtering still enabled, unchanged deny settings and unchanged unrelated
+settings. A parallel recheck preserved the resulting configuration without another permission change. Declared
+configuration is not proof of successful network access; do not ask for the same hostname approval again.
+
+- The existing `Community Platform: check package transport` task made one unauthenticated, 15-second-bounded
+	HTTPS metadata request from the cached Docker image to `https://registry.npmjs.org/web-namespaces`. It failed
+	during certificate-validated TLS setup with `SSLV3_ALERT_HANDSHAKE_FAILURE`, before any package was obtained.
+- Windows' native TLS client also failed on the same approved URL: `curl.exe --head --fail --connect-timeout 10
+	--max-time 15 --proto '=https' https://registry.npmjs.org/web-namespaces` returned exit 35 and
+	`SEC_E_ILLEGAL_MESSAGE`. This agrees with the previously recorded Node handshake failure; the evidence does
+	not identify which network component rejected the connection.
+- A read-only routing check resolves the registry to public IPv4 addresses. Windows user Internet Settings report
+	`ProxyEnable=0`, no explicit proxy server and no automatic proxy-script URL. No DNS, proxy or certificate setting
+	was changed. A fresh cookie-free Chromium context, restricted to the exact approved package-metadata URL and
+	with certificate validation enabled, also failed with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`; its browser was
+	closed in `finally`. These observations do not identify the rejecting network component or prove a registry outage.
+- After the owner reported connecting a mobile hotspot, one new certificate-validated Node request to the approved
+  registry ping endpoint still failed with `EPROTO` and TLS alert 40. The connected IPv4 default route uses Wi-Fi;
+  process proxy/custom-CA variables and explicit Windows user proxy settings were absent. No SSID, key file or
+  credential value was read out, and no networking setting was changed. A normal external Chrome/Edge check of
+  `https://registry.npmjs.org/-/ping` is the next discriminator; this session cannot establish that result.
+- After permission was verified, one bounded `npm --prefix web install --ignore-scripts --no-audit --no-fund
+	--prefer-offline --fetch-retries=0 --fetch-timeout=15000` attempt still exited 1 with `Exit handler never called!`.
+	Certificate-validated Node requests, including one TLS 1.2 compatibility probe, returned `EPROTO` handshake
+	failures; Chromium returned `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` for the approved registry ping endpoint.
+	Only the verified idle old-web preview was stopped for this attempt and then restarted; backend services were preserved.
+- No proxy or alternate registry was introduced, no certificate/TLS check was disabled, and no package-version
+	change or placeholder renderer was used. The package manifest and lockfile are unchanged. A
+	[fresh offline audit](../.local/old-web-offline-archives-1791538771485.json) still finds 35 missing manifests and
+	zero verified cached archives. The [offline recovery manifest](../.local/web-offline-archive-manifest-20261009.json)
+	lists only the 34 required and one optional official package archives and their existing integrity values;
+	a supplied bundle must exclude credentials, environment files, keys and user data.
+- The read-only Agent snapshot is complete: its existing result records 437 passes and 255 unchanged inputs,
+	with no pending test run to restart. This is retained backend evidence, not a new web or live-model pass.
+- After the preview restart, [mobile signup/offline recovery and pre-hydration safety pass 2/2](../.local/old-web-smoke-recovery-20261009.xml).
+	The [extended provider-free browser run passes 10/10](../.local/old-web-extended-manual-recovery-20261009.xml), with
+	no failures or skips: alerts/quiet hours/backup people, classification and interests, feed controls, insights,
+	moderation and appeals, help requests/reports, public events, repeating reminders/snooze, and live search/access loss.
+	These use real local services and synthetic accounts. They do not load the dependency-blocked Agent/rich-message
+	screens, establish a successful model call, or replace the failed full component/type/build gates.
+- The [remaining manual account/Space batch passes 25/25](../.local/old-web-manual-account-space-20261009.xml), no
+	failures or skips. It covers checklists, solo/couple/group Spaces, settings, invitations, ownership, member removal/rejoin,
+	task filters, reminders and consent requests, notification retry/fallback, calendar views, care, event capacity and budgets.
+	The [deduplicated coverage index](../.local/old-web-browser-coverage-20261009.json) now records **47 distinct passing
+	manual browser journeys across five reports**. The earlier desktop `Connection closed.` failure remains in that index;
+	this is not one clean combined run, a complete UI qualification, or a live-model result.
+- Next prerequisite: working validated HTTPS to the already-listed registry, or an owner-supplied offline cache
+	containing archives that match the existing lockfile integrity values. Restore dependencies, verify Agent and
+	Messages compilation, then rerun the affected browser suites. The capped live Azure check still needs explicit
+	approval; no provider request or credential-file access occurred. Android and the separate website stay untouched.
+
+## Existing Backend And Web Recovery (2026-10-09)
+
+This continuation targets the existing `web/` and backend, not `website/` or Android. Docker Desktop is now running;
+the earlier missing-Docker observation below is historical. The retained API, database, Mailpit, mail worker, reminder
+worker and export worker were started without replacing containers, volumes or keys. The account-deletion worker remains stopped.
+The old Next.js preview is at `http://127.0.0.1:3000`, but it is **not a working end-to-end website yet**.
+
+Verified in this continuation:
+
+- The retained database moved from `0057` to `0062` only after a successful backup restoration and upgrade rehearsal.
+	Both the [rehearsal](../.local/old-web-upgrade-rehearsal-20261009.json) and
+	[retained upgrade](../.local/old-web-upgrade-retained-20261009.json) preserve **30,048 pre-existing rows across 87 tables**,
+	allowing only the intended Agent definition changes from 5/6 to 7. Eight new tables and memory defaults were checked.
+	The owned rehearsal database was removed afterwards. The private pre-upgrade backup remains under `.local/`; its contents
+	and encryption keys were not exposed in chat or copied into reports.
+- [Migration/OpenAPI tests: 29/29](../backend/.local/old-web-migrations-20261009.xml), no failures or skips.
+	A subsequent whole-contract check found Python-runtime differences in HTTP 413/422 reason phrases. Explicit response
+	descriptions now preserve the existing stored contract and any custom route descriptions, without changing payload schemas
+	or validation behavior. The [final focused regression suite passes 13/13](../backend/.local/old-web-openapi-final-20261009.xml).
+	After an idle API reload, the actual HTTP OpenAPI document matches all **212 stored paths**, and readiness returns 200.
+- [Client/BFF checks: 359/359](../.local/old-web-client-20261009.xml), no skips.
+	The [Windows verification runner passes 39/39](../.local/verify/20261009-125405/summary.md).
+- One new [real API/mail/database journey passes](../.local/old-web-api-transport-final-20261009.xml): two synthetic accounts,
+	actual mail verification, exact task creation/completion retries, stale-write refusal, foreign-account and unauthenticated
+	denial, logout revocation, and the same saved task after a fresh login. Test sessions are closed. This is API evidence,
+	**not browser interaction or model-quality evidence**; no Agent endpoint is called.
+- The [reviewed transport checks pass 3/3](../.local/old-web-api-transport-reviewed-20261009.xml): two fixture regressions
+	plus the same real journey with exact persisted title/Space/assignee/completer checks and unauthorized-write denials.
+	Mail reads reject redirects and share a bounded abort signal; cleanup attempts every synthetic logout and reports failures.
+- The [complete backend run passed 1,210/1,210](../backend/.local/old-web-backend-full-20261009.xml), with no failures or skips,
+	in 5,772 seconds. Its 29 warnings concern Alembic's comparison of a computed search-vector default. The
+	[final evidence capture](../.local/old-web-evidence-20261009-141800719.json) found three Agent files changed from the
+	during-run source capture, so this is not a full qualification of the latest working tree. Their edits were preserved.
+- The [offline web-component run](../.local/old-web-components-20261009.xml) completed **828 cases: 633 passed, 195 failed,
+	zero skipped**. The [failure classification](../.local/old-web-components-causes-20261009.json) identifies all 195 as missing
+	dependency/bundling failures. Those screens remain unverified; they are not passing cases or established UI assertion defects.
+- The separate [read-only Agent snapshot run](../.local/old-web-agent-20261009-142134594-dbe07d/reports/agent.xml)
+	finished **437/437 passing**, with zero failures/errors/skips, in 1,214 seconds. Its
+	[completion record](../.local/old-web-agent-20261009-142134594-dbe07d/result.json) confirms all **255 captured inputs**
+	unchanged and matching the workspace. A [subsequent verification](../.local/old-web-frozen-agent-verified-20261009.json)
+	confirms that match again. This overlaps the working-tree Agent run below; their counts must not be added.
+
+Remaining gates are not waived:
+
+- The initial npm attempt was denied by the editor's network policy; the hostname approval is now resolved as recorded
+	above, but validated TLS transport still fails. Cache-only installation lacks required packages, and the failed attempts
+	have not repaired the partial installation. No registry mirror, TLS bypass or removal of Markdown/math features was used.
+	Typechecking fails on missing types;
+	browser compilation also reports missing `@ungap/structured-clone`. The [two browser smoke cases failed](../.local/old-web-smoke-20261009.xml)
+	before the account form appeared. A started preview is not a passing website.
+- The [offline archive audit](../.local/old-web-offline-archives-1791533979125.json) checks platform-compatible missing
+	package manifests against the lockfile's archive integrity values using npm's own cache API. It found **35 missing
+	manifests and zero verified cached archives**, with no network requests or package writes. No supplied ZIP was available
+	in the project locations checked. The dedicated `Community Platform: inspect offline web archives` task can repeat this
+	Windows cache check after an owner supplies packages. A source-only ZIP does not resolve missing dependency archives.
+- The retained API container still has the project's Azure configuration despite deletion of its host environment file.
+	A [presence/count-only check](../.local/old-web-model-presence-20261009.json) confirms the existing 10,000-token call cap,
+	2,000,000-token total cap, configured ledger and 1,532,116 recorded tokens. No credential value was printed or copied and
+	no provider request was made by this check. Earlier combined permission questions received no affirmative selection;
+  the later registry-only continuation resolved package-host access, not LLM spending. Live-model verification still needs
+  its bounded approval. Configuration is not proof of a successful model call.
+- The broader [offline tooling run](../.local/old-web-tooling-20261009.xml) has **114 passes and 35 failures**, no skips.
+	The supervisor explicitly requires Linux/macOS; launcher tests use POSIX executable/signal and symlink behavior. Guards and
+	assertions were not disabled. No Linux Node runtime is cached. The raw JUnit report contains ANSI control text; counts were
+	recovered with standard ANSI stripping in memory, leaving the failed report unchanged.
+- [255 backend input hashes](../.local/old-web-backend-inputs-20261009.json) were captured during the full run. The final
+	differences are `backend/app/modules/agents/runtime.py`, `backend/app/modules/agents/toolkit.py` and
+	`backend/tests/test_agent_runtime.py`. The subsequent read-only snapshot run above qualifies the current Agent slice,
+	not a new full-backend run or live model evaluation. Historical governance files remain absent and were not recreated.
+	New-website implementation is gated on resolving the old-web and model blockers.
+- After the later browser checks below, account routes again returned the same missing-Agent-dependency HTTP 500.
+	An ownership-checked restart of only the idle Next preview did not restore the manual test pages. The additional
+	[manual browser run](../.local/old-web-extended-manual-20261009.xml) was interrupted after repeated startup failures;
+	it has no qualifying suite verdict. Only its verified test process tree was stopped; backend/data services were untouched.
+	Do not substitute preview restarts or placeholder renderers for restoring the locked packages.
+
+## Resumed Agent And Browser Verification (2026-10-09)
+
+The resumed work kept Android, `website/`, credentials and network policy unchanged. Existing concurrent task,
+test and documentation edits were preserved. This is local synthetic verification, not production qualification.
+
+- The interrupted comment-review test demonstrated a stale-parent approval. The repair stores the authorized
+	internal post revision, then checks it while holding the post lock in the approval transaction. Public read DTOs
+	still do not give non-owners a management ETag. Both roles reject changed parents and accept unchanged comments
+	with exactly one effect on approval replay: [four focused cases pass](../backend/.local/agent-comment-review-roles-after-20261009.xml).
+- The dedicated `Community Platform: qualify current Agent backend 20261009 d53da4bc` task completed
+	[437/437 tests](../backend/.local/agent-resume-regression-task-20261009.xml), zero failures/errors/skips, in
+	1,736.49 seconds. Its five warnings concern Alembic computed-default comparison. It covers runtime, model
+	transport/accounting, auto-approval, Main/Space boundaries, registry, mentions and metrics, including the token,
+	transaction, document-paging, compaction and comment repairs. This run used the working tree, not the separate
+	read-only source-snapshot run recorded above. The earlier delegated summary had no corresponding JUnit report
+	and is not accepted as test evidence.
+- The full-backend manifest comparison found only `runtime.py`, `toolkit.py` and `test_agent_runtime.py` changed
+	since that run's capture. Do not add the overlapping 1,210 and 437 counts or call the changing tree a frozen release.
+- Before activation, source and database both reported `0062`, there were zero queued/running/verifying Agent runs
+	and zero Node test runners, and the retained API mount was confirmed as this repository's backend. Only
+	`community-platform-api-1` was restarted; readiness returned `ready`. Existing configuration, volumes, keys,
+	workers, token limits and ledger were preserved; the account-deletion worker was not started.
+- After reload, the [real API/mail/database journey passes 1/1](../.local/old-web-api-transport-resume-20261009.xml).
+	It checks synthetic account verification, exact task retries, persisted fields, unauthorized writes, logout and
+	fresh-session reads. This is not a model or browser interaction test.
+- The original Next.js preview was restarted at `http://127.0.0.1:3000` after confirming the port was free.
+	[Mobile signup/offline recovery and pre-hydration form safety pass 2/2](../.local/old-web-smoke-resume-20261009.xml).
+	The [ten core browser journeys passed 9/10 initially](../.local/old-web-core-resume-20261009.xml): Space/event polls,
+	Spaces, tasks, public content/lifecycle, event time zones and document search/deletion passed. Desktop account
+	signup/profile/revocation/recovery captured an uncaught `Connection closed.` error. The same journey
+	[passes its focused retry](../.local/old-web-desktop-diagnostic-20261009.xml) with added stack/path diagnostics and
+	the unchanged no-browser-errors assertion. Its cause remains unproven. Twelve distinct browser journeys have
+	passing results across these runs, not one clean combined run.
+- Opening `/app/agent` directly confirms HTTP 500: `mdast-util-to-hast/lib/footer.js` cannot resolve the locked
+	`@ungap/structured-clone` dependency. QA found 34 required missing packages plus the optional `@emnapi/runtime`
+	entry, reconciling the 35-manifest archive audit. No matching cached archives were found. The Agent UI, rich
+	content, affected Messages views, full web build/types and wider browser suite remain unqualified.
+- Explicit requests to permit `registry.npmjs.org` and one synthetic Azure call of at most 10,000 tokens within
+	the existing 2,000,000-token cap received no affirmative selection. No package retry, allowlist/TLS change,
+	provider request, credential reconstruction or budget reset followed. Live LLM connectivity and quality remain
+	unverified. Restore the locked dependencies through approved access, then run these gates before new-website work.
+
 ## Windows Setup Check (2026-10-09)
 
 Scope is the existing `web/`, backend and supporting tooling only. Android was neither changed nor tested, and the concurrent
